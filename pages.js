@@ -5766,45 +5766,67 @@ window.editMemberPricing = function(memberId) {
     return st ? String(st).slice(0, 7) : null;
   }
 
-  // One row per sport: current line price + discount + classes + coach, mapped to an invoice.
-  const rows = sports.map((sp, idx) => {
+  // v6.479: ONE ROW PER INVOICE LINE, across EVERY membership invoice — not one row per sport
+  // mapped to the newest invoice. The old model hid any earlier/duplicate invoice that touched a
+  // sport already on a newer invoice (e.g. a second Summer-Camp invoice), so its payments were
+  // invisible and un-editable — which looked like "I can't edit the total paid". Now every invoice
+  // is its own editable group with its own payment box, so all of the member's money is visible.
+  //
+  // The Price field shows the GROSS (pre-discount) price so that (price − disc) — the formula both
+  // the live recompute and the save use to derive the net — round-trips to the stored net (li.price
+  // / inv.amount is ALREADY net; invoiceTotal ignores inv.discount). Showing gross keeps the
+  // discount lossless (v6.478 fix — otherwise it double-subtracts on every re-save).
+  const memberInvs = (state.invoices || [])
+    .filter(i => !i.deleted && i.customerId === m.id && (i.category || 'Membership') === 'Membership')
+    .sort((a, b) => (b.date || '').localeCompare(a.date || '') || ((b.id || 0) - (a.id || 0)));   // newest first
+  const rows = [];
+  let _ri = 0;
+  const linkedSport = new Set();   // a sport's enrollment/subscription is synced from its FIRST (newest) line only —
+  const coveredSport = new Set();  // duplicate lines on other invoices edit ONLY their own line, never the profile.
+  for (const inv of memberInvs) {
+    let lis = (Array.isArray(inv.lineItems) && inv.lineItems.length) ? inv.lineItems : null;
+    if (!lis) lis = [{ sport: inv.sport, price: Number(inv.amount) || 0, classes: inv.classes, coachId: inv.coachId }];
+    const multi = lis.filter(li => li.sport).length > 1;
+    const lineSum = lis.reduce((s, x) => s + (Number(x.price) || 0), 0) || 1;
+    for (const li of lis) {
+      const sp = li.sport || inv.sport || '—';
+      coveredSport.add(sp);
+      const isPrimary = !linkedSport.has(sp);   // newest line for this sport owns the profile linkage
+      linkedSport.add(sp);
+      const enr = isPrimary ? (m.enrollments || []).find(e => e.sport === sp) : null;
+      const sub = isPrimary
+        ? ((m.subscriptions || []).find(s => s.activity === sp && String(s.invoiceNumber || '') === String(inv.ref || ''))
+           || (m.subscriptions || []).find(s => s.activity === sp))
+        : null;
+      const linePrice = Number(li.price) || 0;
+      const disc  = multi ? Math.round((Number(inv.discount) || 0) * (linePrice / lineSum)) : (Number(inv.discount) || 0);
+      const price = linePrice + disc;   // GROSS
+      const classes = (li.classes != null) ? li.classes
+        : (sub && sub.totalClasses != null) ? sub.totalClasses
+        : (enr && enr.classes != null) ? enr.classes : null;
+      const coachId = (li.coachId != null) ? li.coachId
+        : (sub && sub.coachId != null) ? sub.coachId
+        : (enr && enr.coachId != null) ? enr.coachId : null;
+      rows.push({ idx: _ri++, sport: sp, enr, sub, inv, isNew: false, price, disc, classes, coachId });
+    }
+  }
+  // Enrolled sports with NO invoice line anywhere yet → a NEW row on the primary invoice.
+  for (const sp of sports) {
+    if (coveredSport.has(sp)) continue;
     const enr = (m.enrollments || []).find(e => e.sport === sp);
     const sub = (m.subscriptions || []).find(s => s.activity === sp);
-    let inv = invForSport(sp);
-    const isNew = !inv;
-    if (!inv) inv = primaryInv;   // new sport will attach to the primary invoice
-    const multi = !!(inv && Array.isArray(inv.lineItems) && inv.lineItems.length > 1);
-    const li = (inv && Array.isArray(inv.lineItems)) ? inv.lineItems.find(x => x.sport === sp) : null;
-    let price, disc;
-    if (multi) {
-      const lineSum = inv.lineItems.reduce((s, x) => s + (Number(x.price) || 0), 0) || 1;
-      const linePrice = li ? (Number(li.price) || 0) : ((enr && enr.price) || 0);
-      price = linePrice;
-      disc  = Math.round((Number(inv.discount) || 0) * (linePrice / lineSum));
-    } else if (inv && !isNew) {
-      price = Number(inv.amount) || 0;
-      disc  = Number(inv.discount) || 0;
-    } else {
-      price = (enr && enr.price) || (m.price || 0) || 0;
-      disc  = 0;
-    }
-    // Current classes + coach (v6.476: now editable). Prefer the invoice line, then the
-    // subscription, then the enrollment.
-    const classes = (li && li.classes != null) ? li.classes
-      : (sub && sub.totalClasses != null) ? sub.totalClasses
-      : (enr && enr.classes != null) ? enr.classes : null;
-    const coachId = (li && li.coachId != null) ? li.coachId
-      : (sub && sub.coachId != null) ? sub.coachId
-      : (enr && enr.coachId != null) ? enr.coachId : null;
-    return { idx, sport: sp, enr, sub, inv, isNew, price, disc, classes, coachId };
-  });
+    const price = (enr && enr.price) || (m.price || 0) || 0;
+    const classes = (sub && sub.totalClasses != null) ? sub.totalClasses : (enr && enr.classes != null ? enr.classes : null);
+    const coachId = (sub && sub.coachId != null) ? sub.coachId : (enr && enr.coachId != null ? enr.coachId : null);
+    rows.push({ idx: _ri++, sport: sp, enr, sub, inv: primaryInv, isNew: true, price, disc: 0, classes, coachId });
+  }
   // Coach options for the per-line picker: active coaches + the line's current coach
   // (even if now inactive, so an old assignment still shows and can be kept).
   const _coachActive = (c) => c && (c.active === 'Y' || c.active === true || c.active === 1 || c.active === 'Yes');
   const coachSelectHtml = (r) => {
     const cur = r.coachId;
     const list = (state.coaches || []).filter(c => _coachActive(c) || String(c.id) === String(cur));
-    return `<select class="pri-coach" data-i="${r.idx}" style="font-size:12px;min-width:0"><option value="">${t('— no coach', '— بدون مدرب')}</option>${list.map(c => `<option value="${c.id}" ${String(c.id) === String(cur) ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}</select>`;
+    return `<select class="pri-coach" data-i="${r.idx}" style="font-size:14px;min-width:0"><option value="">${t('— no coach', '— بدون مدرب')}</option>${list.map(c => `<option value="${c.id}" ${String(c.id) === String(cur) ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}</select>`;
   };
 
   // Group rows by their invoice — each invoice gets its OWN dated payment box, so a
@@ -5821,12 +5843,12 @@ window.editMemberPricing = function(memberId) {
 
   const groupHtml = [...groups.entries()].map(([key, g]) => {
     const sportsHtml = g.rows.map(r => `
-      <div style="display:grid;grid-template-columns:1fr 66px 128px 86px 78px;gap:8px;align-items:end;margin-bottom:6px">
-        <div style="font-weight:700;font-size:13px;padding-bottom:6px">${escapeHtml(r.sport)}${r.isNew ? ` <span class="badge" style="font-size:9px">${t('new', 'جديد')}</span>` : ''}</div>
-        <div class="field" style="margin:0"><label style="font-size:10px">${t('Classes', 'الحصص')}</label><input class="pri-classes" data-i="${r.idx}" type="number" min="0" step="1" value="${r.classes != null ? r.classes : ''}" placeholder="—" /></div>
-        <div class="field" style="margin:0"><label style="font-size:10px">${t('Coach', 'المدرب')}</label>${coachSelectHtml(r)}</div>
-        <div class="field" style="margin:0"><label style="font-size:10px">${t('Price (QAR)', 'السعر')}</label><input class="pri-price" data-i="${r.idx}" type="number" min="0" step="1" value="${r.price}" /></div>
-        <div class="field" style="margin:0"><label style="font-size:10px">${t('Discount', 'خصم')}</label><input class="pri-disc" data-i="${r.idx}" type="number" min="0" step="1" value="${r.disc}" /></div>
+      <div style="display:grid;grid-template-columns:1fr 74px 148px 100px 90px;gap:9px;align-items:end;margin-bottom:9px">
+        <div style="font-weight:700;font-size:15px;padding-bottom:7px">${escapeHtml(r.sport)}${r.isNew ? ` <span class="badge" style="font-size:9px">${t('new', 'جديد')}</span>` : ''}</div>
+        <div class="field" style="margin:0"><label style="font-size:11px;font-weight:600">${t('Classes', 'الحصص')}</label><input class="pri-classes" data-i="${r.idx}" type="number" min="0" step="1" value="${r.classes != null ? r.classes : ''}" placeholder="—" style="font-size:14px" /></div>
+        <div class="field" style="margin:0"><label style="font-size:11px;font-weight:600">${t('Coach', 'المدرب')}</label>${coachSelectHtml(r)}</div>
+        <div class="field" style="margin:0"><label style="font-size:11px;font-weight:600">${t('Price (QAR)', 'السعر')}</label><input class="pri-price" data-i="${r.idx}" type="number" min="0" step="1" value="${r.price}" style="font-size:14px;font-weight:600" /></div>
+        <div class="field" style="margin:0"><label style="font-size:11px;font-weight:600">${t('Discount', 'خصم')}</label><input class="pri-disc" data-i="${r.idx}" type="number" min="0" step="1" value="${r.disc}" style="font-size:14px" /></div>
       </div>`).join('');
     const inv = g.inv;
     const pays = (inv && Array.isArray(inv.payments)) ? inv.payments : [];
@@ -5848,18 +5870,19 @@ window.editMemberPricing = function(memberId) {
     // ONE payments list: existing installments (edit date/method · remove) PLUS a
     // single "add a row" at the bottom (date · method · amount). No separate section.
     // ── Existing installments as an aligned mini-table (Date · Method · [For] · Amount · ✕) ──
-    const _cols = multiSport ? '122px 1fr 1fr 84px 26px' : '122px 1fr 84px 26px';
+    const _cols = multiSport ? '132px 1fr 1fr 118px 30px' : '132px 1fr 118px 30px';
+    const _payInput = 'font-size:13.5px;min-width:0;padding:6px 8px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text)';
     const existHeader = pays.length ? `
-            <div style="display:grid;grid-template-columns:${_cols};gap:6px;padding:0 2px 4px;font-size:9px;font-weight:700;color:var(--text-mute);text-transform:uppercase;letter-spacing:.04em">
-              <div>${t('Date', 'التاريخ')}</div><div>${t('Method', 'الطريقة')}</div>${multiSport ? `<div>${t('For sport', 'للرياضة')}</div>` : ''}<div style="text-align:right">${t('Amount', 'المبلغ')}</div><div style="text-align:center">🗑</div>
+            <div style="display:grid;grid-template-columns:${_cols};gap:8px;padding:0 2px 5px;font-size:10.5px;font-weight:700;color:var(--text-mute);text-transform:uppercase;letter-spacing:.04em">
+              <div>${t('Date', 'التاريخ')}</div><div>${t('Method', 'الطريقة')}</div>${multiSport ? `<div>${t('For sport', 'للرياضة')}</div>` : ''}<div style="text-align:right">${t('Paid amount', 'المبلغ المدفوع')}</div><div style="text-align:center">🗑</div>
             </div>` : '';
     const existRowsHtml = pays.map((p, pi) => { const amt = Number(p.amount) || 0; return `
-            <div class="pay-row" data-inv="${inv.id}" data-pi="${pi}" style="display:grid;grid-template-columns:${_cols};gap:6px;align-items:center;margin-bottom:5px">
-              <input type="date" class="pri-exist-date" data-inv="${inv.id}" data-pi="${pi}" value="${p.date || ''}" style="font-size:12px;min-width:0" />
-              <select class="pri-exist-method" data-inv="${inv.id}" data-pi="${pi}" style="font-size:12px;min-width:0">${methodOpts.map(([v, l]) => `<option value="${v}" ${normMethod(p.method) === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
-              ${multiSport ? `<select class="pri-exist-sport" data-inv="${inv.id}" data-pi="${pi}" title="${t('Which sport this installment pays for', 'لأي رياضة هذا القسط')}" style="font-size:11px;min-width:0"><option value="">${t('— any', '— أي')}</option>${sportOpts(p.sport)}</select>` : ''}
-              <input type="number" step="1" class="pri-exist-amt" data-inv="${inv.id}" data-pi="${pi}" value="${amt}" title="${t('Edit amount (a negative value = refund)', 'تعديل المبلغ (سالب = استرداد)')}" style="font-size:12px;font-weight:600;text-align:right;min-width:0;${amt < 0 ? 'color:var(--red)' : ''}" />
-              <label style="cursor:pointer;text-align:center" title="${t('Remove this row', 'حذف هذا السطر')}"><input type="checkbox" class="pri-exist-del" data-inv="${inv.id}" data-pi="${pi}" style="margin:0;cursor:pointer"></label>
+            <div class="pay-row" data-inv="${inv.id}" data-pi="${pi}" style="display:grid;grid-template-columns:${_cols};gap:8px;align-items:center;margin-bottom:7px">
+              <input type="date" class="pri-exist-date" data-inv="${inv.id}" data-pi="${pi}" value="${p.date || ''}" style="${_payInput}" />
+              <select class="pri-exist-method" data-inv="${inv.id}" data-pi="${pi}" style="${_payInput}">${methodOpts.map(([v, l]) => `<option value="${v}" ${normMethod(p.method) === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+              ${multiSport ? `<select class="pri-exist-sport" data-inv="${inv.id}" data-pi="${pi}" title="${t('Which sport this installment pays for', 'لأي رياضة هذا القسط')}" style="${_payInput};font-size:12px"><option value="">${t('— any', '— أي')}</option>${sportOpts(p.sport)}</select>` : ''}
+              <input type="number" step="1" class="pri-exist-amt" data-inv="${inv.id}" data-pi="${pi}" value="${amt}" title="${t('Edit this paid amount — the Paid + Balance above update instantly (a negative value = refund)', 'عدّل هذا المبلغ — يتحدث المدفوع والمتبقي فوراً (قيمة سالبة = استرداد)')}" style="font-size:15px;font-weight:700;text-align:right;min-width:0;padding:6px 8px;border:1.5px solid color-mix(in srgb, var(--green) 40%, var(--border));border-radius:7px;background:var(--surface);color:${amt < 0 ? 'var(--red)' : 'var(--text)'}" />
+              <label style="cursor:pointer;text-align:center" title="${t('Remove this row', 'حذف هذا السطر')}"><input type="checkbox" class="pri-exist-del" data-inv="${inv.id}" data-pi="${pi}" style="margin:0;cursor:pointer;width:16px;height:16px"></label>
             </div>`; }).join('');
     const methodCardsHtml = [['cash', '💵', t('Cash', 'نقدي'), '#16a34a'], ['card', '💳', t('Card', 'بطاقة'), '#3b82f6'], ['fawran', '📲', t('Fawran', 'فوران'), '#8b5cf6'], ['transfer', '🏦', t('Transfer', 'تحويل'), '#f59e0b']].map(([mk, ic, lbl, col]) => `
                 <div style="flex:1;min-width:100px;background:color-mix(in srgb, ${col} 9%, var(--surface));border:1px solid color-mix(in srgb, ${col} 35%, transparent);border-radius:10px;padding:6px 9px">
@@ -5897,8 +5920,8 @@ window.editMemberPricing = function(memberId) {
     return `
       <div class="card" data-grp="${key}" style="background:var(--surface-2);padding:10px 12px;margin-bottom:10px">
         <div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;color:var(--text-mute);margin-bottom:6px;gap:8px">
-          <span>${inv ? 'invoice #' + inv.id : t('no invoice yet — Save creates one', 'لا توجد فاتورة — سيتم إنشاؤها')}</span>
-          <span><span style="background:${status[1]};color:#fff;border-radius:6px;padding:1px 7px;font-size:9px;font-weight:700;margin-inline-end:6px">${status[0]}</span>${t('Paid', 'المدفوع')}: ${fmt(paid)} · ${t('Balance', 'المتبقي')}: <b class="grp-bal" data-grp="${key}" style="color:${bal > 0 ? 'var(--accent-2)' : 'var(--green)'}">${fmt(bal)}</b></span>
+          <span style="font-weight:700">${inv ? '🧾 ' + (inv.ref ? escapeHtml(inv.ref) : 'invoice #' + inv.id) + (inv.date ? ' · ' + fmtDate(inv.date) : '') : t('no invoice yet — Save creates one', 'لا توجد فاتورة — سيتم إنشاؤها')}</span>
+          <span style="font-size:13px">${t('Paid', 'المدفوع')}: <b class="grp-paid" data-grp="${key}">${fmt(paid)}</b> · ${t('Balance', 'المتبقي')}: <b class="grp-bal" data-grp="${key}" style="color:${bal > 0 ? 'var(--accent-2)' : 'var(--green)'}">${fmt(bal)}</b></span>
         </div>
         ${sportsHtml}
         ${paymentsHtml}
@@ -5914,7 +5937,7 @@ window.editMemberPricing = function(memberId) {
       <div style="display:none">
         <div class="field" style="margin:0;max-width:190px"><label style="font-size:12px;font-weight:600">📅 ${t('Date for the NEW payment only', 'تاريخ الدفعة الجديدة فقط')}</label><input type="date" id="pri-paydate" value="${TODAY}" /><div class="text-mute" style="font-size:10px;margin-top:3px">${t('Collection counts in this date\u2019s month.', 'يُحتسب التحصيل في شهر هذا التاريخ.')}</div></div>
       </div>
-      <div class="text-mute" style="font-size:11px;margin-top:4px">${t('Each invoice has one 🧾 Payments list: edit a row to re-date or change its method, tick 🗑 to remove it, or use the ➕ bottom row to add a new payment (with its own date & method).', 'لكل فاتورة قائمة دفعات واحدة: عدّل سطراً لتغيير تاريخه أو طريقته، أو ضع علامة 🗑 لحذفه، أو استخدم سطر ➕ بالأسفل لإضافة دفعة جديدة بتاريخها وطريقتها.')}</div>`,
+      <div class="text-mute" style="font-size:12px;margin-top:6px;line-height:1.6">${t('Fully editable: change a line’s classes, coach, price or discount; edit any 🧾 payment’s amount, date or method (the Paid + Balance update instantly), tick 🗑 to remove a payment, or use the ➕ box to collect a new one. A negative amount records a refund.', 'قابل للتعديل بالكامل: غيّر حصص السطر أو المدرب أو السعر أو الخصم؛ عدّل مبلغ أي دفعة أو تاريخها أو طريقتها (يتحدث المدفوع والمتبقي فوراً)، أو ضع 🗑 لحذف دفعة، أو استخدم ➕ لتحصيل دفعة جديدة. المبلغ السالب يسجّل استرداداً.')}</div>`,
     actions: [
       { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
       { label: t('Save', 'حفظ'), class: 'btn primary', onclick: () => {
@@ -5979,12 +6002,28 @@ window.editMemberPricing = function(memberId) {
           const rmEl = document.querySelector(`.pri-refund-method[data-grp="${key}"]`);
           groupRefunds[key] = { amount: Math.round(rAmt * 100) / 100, method: (rmEl && rmEl.value) || 'cash' };
         });
-        // A payment can never push an invoice's paid above its net price.
+        // v6.478: guard only the NEW collection. Editing EXISTING amounts (even to an overpayment)
+        // is always allowed — the old guard read the STORED sum, so an already-overpaid invoice
+        // (paid > price) aborted EVERY save, which is exactly why edits looked like they "did
+        // nothing". Compute paid from the EDITED amounts (minus removals) instead.
+        const _editedPaidFor = (invId) => {
+          const iv = (state.invoices || []).find(x => x.id === invId);
+          if (!iv || !Array.isArray(iv.payments)) return 0;
+          let s = 0;
+          iv.payments.forEach((p, pi) => {
+            if (removals.some(r => r.invId === invId && r.pi === pi)) return;
+            const e = existEdits.find(x => x.invId === invId && x.pi === pi);
+            s += (e && e.amount != null) ? e.amount : (Number(p.amount) || 0);
+          });
+          return s;
+        };
         for (const [key, g] of groups.entries()) {
           const gNet = rowVals.filter(rv => (rv.r.inv ? String(rv.r.inv.id) : 'new') === key)
             .reduce((s, rv) => s + Math.max(0, rv.price - rv.disc), 0);
-          const paid = g.inv ? invoicePaymentsSum(g.inv) : 0;
-          if (paid + (groupPays[key] || 0) > gNet + 0.001) { toast(t('Payment exceeds the balance for one invoice', 'الدفعة تتجاوز رصيد الفاتورة'), 'error'); return; }
+          const newPay = groupPays[key] || 0;
+          const editedPaid = g.inv ? _editedPaidFor(g.inv.id) : 0;
+          // Only block a NEW collection that would push a not-yet-overpaid invoice past its price.
+          if (newPay > 0 && editedPaid + newPay > gNet + 0.001) { toast(t('The new payment would exceed the balance for one invoice', 'الدفعة الجديدة تتجاوز رصيد الفاتورة'), 'error'); return; }
         }
         const mLabel = (mm) => (methodOpts.find(x => x[0] === mm) || [, mm])[1];
         let totalPay = 0; Object.values(groupPays).forEach(v => totalPay += v);
@@ -6071,27 +6110,47 @@ window.editMemberPricing = function(memberId) {
     ],
   });
 
-  // Live balance recompute per invoice group + live split-payment total.
-  document.querySelectorAll('.pri-price, .pri-disc, .pri-pay-m').forEach(inp => {
-    inp.addEventListener('input', () => {
-      groups.forEach((g, key) => {
-        let net = 0;
-        g.rows.forEach(r => {
-          const p = parseFloat(document.querySelector(`.pri-price[data-i="${r.idx}"]`).value) || 0;
-          const d = parseFloat(document.querySelector(`.pri-disc[data-i="${r.idx}"]`).value) || 0;
-          net += Math.max(0, p - d);
-        });
-        const paid = g.inv ? invoicePaymentsSum(g.inv) : 0;
-        let pay = 0;
-        document.querySelectorAll(`.pri-pay-m[data-grp="${key}"]`).forEach(mi => { pay += Math.max(0, parseFloat(mi.value) || 0); });
-        const totEl = document.querySelector(`.pri-pay-total[data-grp="${key}"]`);
-        if (totEl) { totEl.textContent = fmt(pay); totEl.style.color = (paid + pay > net + 0.001) ? 'var(--red)' : 'var(--green)'; }
-        const bal = Math.max(0, net - paid - pay);
-        const el = document.querySelector(`.grp-bal[data-grp="${key}"]`);
-        if (el) { el.textContent = fmt(bal); el.style.color = bal > 0 ? 'var(--accent-2)' : 'var(--green)'; }
-      });
+  // Live balance recompute per invoice group + live split-payment total. (v6.478)
+  // The PAID figure is computed from the LIVE, EDITED installment amounts (skipping rows ticked
+  // for removal) — NOT the stored sum — so editing a payment amount updates Paid + Balance on the
+  // spot. This is what made it look like the amount "couldn't be edited": the numbers never moved.
+  const _paidLive = (inv) => {
+    if (!inv || !Array.isArray(inv.payments)) return 0;
+    let s = 0;
+    inv.payments.forEach((p, pi) => {
+      const del = document.querySelector(`.pri-exist-del[data-inv="${inv.id}"][data-pi="${pi}"]`);
+      if (del && del.checked) return;
+      const aEl = document.querySelector(`.pri-exist-amt[data-inv="${inv.id}"][data-pi="${pi}"]`);
+      s += (aEl && aEl.value !== '') ? (parseFloat(aEl.value) || 0) : (Number(p.amount) || 0);
     });
-  });
+    return s;
+  };
+  const _recomputeGroups = () => {
+    groups.forEach((g, key) => {
+      let net = 0;
+      g.rows.forEach(r => {
+        const p = parseFloat(document.querySelector(`.pri-price[data-i="${r.idx}"]`).value) || 0;
+        const d = parseFloat(document.querySelector(`.pri-disc[data-i="${r.idx}"]`).value) || 0;
+        net += Math.max(0, p - d);
+      });
+      const paid = _paidLive(g.inv);
+      let pay = 0;
+      document.querySelectorAll(`.pri-pay-m[data-grp="${key}"]`).forEach(mi => { pay += Math.max(0, parseFloat(mi.value) || 0); });
+      const totEl = document.querySelector(`.pri-pay-total[data-grp="${key}"]`);
+      if (totEl) { totEl.textContent = fmt(pay); totEl.style.color = (paid + pay > net + 0.001) ? 'var(--red)' : 'var(--green)'; }
+      const paidEl = document.querySelector(`.grp-paid[data-grp="${key}"]`);
+      if (paidEl) paidEl.textContent = fmt(paid + pay);
+      const bal = Math.max(0, net - paid - pay);
+      const overpay = (paid + pay) - net;   // >0 = overpaid
+      const el = document.querySelector(`.grp-bal[data-grp="${key}"]`);
+      if (el) {
+        el.textContent = overpay > 0.5 ? fmt(overpay) + ' ' + t('overpaid', 'زائد') : fmt(bal);
+        el.style.color = overpay > 0.5 ? 'var(--red)' : (bal > 0 ? 'var(--accent-2)' : 'var(--green)');
+      }
+    });
+  };
+  document.querySelectorAll('.pri-price, .pri-disc, .pri-pay-m, .pri-exist-amt').forEach(inp => inp.addEventListener('input', _recomputeGroups));
+  document.querySelectorAll('.pri-exist-del').forEach(cb => cb.addEventListener('change', _recomputeGroups));
 
   // Visual feedback: dim a payment row marked for removal; dim ALL rows of an invoice
   // marked for "clean up" (and disable their inputs so they can't also be edited).
@@ -6319,8 +6378,11 @@ window.editCampMember = function(id) {
     .filter(i => i.customerId === m.id && !i.deleted && ((i.sport === SUMMER_CAMP) || (i.lineItems || []).some(li => li.sport === SUMMER_CAMP)))
     .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
   const driverList = (state.drivers || []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  const curPrice = campInv ? (campInv.amount || 0) : (campEnr && campEnr.price) || (m.price || 0);
   const curDiscount = campInv ? (campInv.discount || 0) : 0;
+  // Price field shows GROSS (net amount + discount) so (price − disc) round-trips to the stored net
+  // and curDue = gross − disc − paid = net − paid = invoiceBalance. Previously curPrice was the net,
+  // so the discount was subtracted a SECOND time (wrong due shown, and re-saving shrank the invoice).
+  const curPrice = campInv ? ((campInv.amount || 0) + curDiscount) : (campEnr && campEnr.price) || (m.price || 0);
   const curPaid = campInv ? invoicePaid(campInv) : 0;
   const curDue = Math.max(0, curPrice - curDiscount - curPaid);
 

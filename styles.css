@@ -912,8 +912,8 @@ tbody tr:last-child td {
   overflow-y: auto;
   box-shadow: var(--shadow-lg);
 }
-.modal.wide { max-width: 920px; }
-@media (max-width: 980px) {
+.modal.wide { max-width: 1040px; }   /* v6.478: roomier for the pricing/payment panel */
+@media (max-width: 1080px) {
   .modal.wide { max-width: 95vw; }
 }
 

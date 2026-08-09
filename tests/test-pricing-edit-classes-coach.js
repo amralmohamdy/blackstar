@@ -13,7 +13,8 @@ R.section('the panel renders a Classes input + a Coach picker per line');
 ok('a Classes number input per line', /<input class="pri-classes" data-i="\$\{r\.idx\}"/.test(src));
 ok('a Coach <select> per line (coachSelectHtml)', /coachSelectHtml = \(r\) =>/.test(src) && /class="pri-coach" data-i="\$\{r\.idx\}"/.test(src));
 ok('the coach picker includes the current coach even if inactive', /_coachActive\(c\) \|\| String\(c\.id\) === String\(cur\)/.test(src));
-ok('the row derives current classes + coach (line→sub→enrollment)', /const classes = \(li && li\.classes != null\)/.test(src) && /const coachId = \(li && li\.coachId != null\)/.test(src));
+// v6.479: per-line rows — li always exists in the loop, so the guard is (li.classes != null), line→sub→enrollment.
+ok('the row derives current classes + coach (line→sub→enrollment)', /const classes = \(li\.classes != null\) \? li\.classes/.test(src) && /const coachId = \(li\.coachId != null\) \? li\.coachId/.test(src));
 
 R.section('the Save handler captures the new classes + coach');
 ok('rowVals reads .pri-classes', /classes: \(clsEl && clsEl\.value !== ''\) \? Math\.max\(0, parseInt\(clsEl\.value, 10\) \|\| 0\) : null/.test(src));
