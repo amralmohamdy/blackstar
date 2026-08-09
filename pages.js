@@ -5673,16 +5673,17 @@ window.editMemberPricing = function(memberId) {
     return st ? String(st).slice(0, 7) : null;
   }
 
-  // One row per sport: current line price + discount, mapped to an invoice.
+  // One row per sport: current line price + discount + classes + coach, mapped to an invoice.
   const rows = sports.map((sp, idx) => {
     const enr = (m.enrollments || []).find(e => e.sport === sp);
+    const sub = (m.subscriptions || []).find(s => s.activity === sp);
     let inv = invForSport(sp);
     const isNew = !inv;
     if (!inv) inv = primaryInv;   // new sport will attach to the primary invoice
     const multi = !!(inv && Array.isArray(inv.lineItems) && inv.lineItems.length > 1);
+    const li = (inv && Array.isArray(inv.lineItems)) ? inv.lineItems.find(x => x.sport === sp) : null;
     let price, disc;
     if (multi) {
-      const li = inv.lineItems.find(x => x.sport === sp);
       const lineSum = inv.lineItems.reduce((s, x) => s + (Number(x.price) || 0), 0) || 1;
       const linePrice = li ? (Number(li.price) || 0) : ((enr && enr.price) || 0);
       price = linePrice;
@@ -5694,8 +5695,24 @@ window.editMemberPricing = function(memberId) {
       price = (enr && enr.price) || (m.price || 0) || 0;
       disc  = 0;
     }
-    return { idx, sport: sp, enr, inv, isNew, price, disc };
+    // Current classes + coach (v6.476: now editable). Prefer the invoice line, then the
+    // subscription, then the enrollment.
+    const classes = (li && li.classes != null) ? li.classes
+      : (sub && sub.totalClasses != null) ? sub.totalClasses
+      : (enr && enr.classes != null) ? enr.classes : null;
+    const coachId = (li && li.coachId != null) ? li.coachId
+      : (sub && sub.coachId != null) ? sub.coachId
+      : (enr && enr.coachId != null) ? enr.coachId : null;
+    return { idx, sport: sp, enr, sub, inv, isNew, price, disc, classes, coachId };
   });
+  // Coach options for the per-line picker: active coaches + the line's current coach
+  // (even if now inactive, so an old assignment still shows and can be kept).
+  const _coachActive = (c) => c && (c.active === 'Y' || c.active === true || c.active === 1 || c.active === 'Yes');
+  const coachSelectHtml = (r) => {
+    const cur = r.coachId;
+    const list = (state.coaches || []).filter(c => _coachActive(c) || String(c.id) === String(cur));
+    return `<select class="pri-coach" data-i="${r.idx}" style="font-size:12px;min-width:0"><option value="">${t('— no coach', '— بدون مدرب')}</option>${list.map(c => `<option value="${c.id}" ${String(c.id) === String(cur) ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}</select>`;
+  };
 
   // Group rows by their invoice — each invoice gets its OWN dated payment box, so a
   // June invoice and a July invoice are never paid from the same row.
@@ -5711,8 +5728,10 @@ window.editMemberPricing = function(memberId) {
 
   const groupHtml = [...groups.entries()].map(([key, g]) => {
     const sportsHtml = g.rows.map(r => `
-      <div style="display:grid;grid-template-columns:1fr 100px 100px;gap:8px;align-items:end;margin-bottom:6px">
-        <div style="font-weight:700;font-size:13px;padding-bottom:6px">${escapeHtml(r.sport)}${r.enr && r.enr.coachId ? ` <span class="text-mute" style="font-size:11px;font-weight:400">· ${escapeHtml(coachName(r.enr.coachId) || '')}</span>` : ''}${r.isNew ? ` <span class="badge" style="font-size:9px">${t('new', 'جديد')}</span>` : ''}</div>
+      <div style="display:grid;grid-template-columns:1fr 66px 128px 86px 78px;gap:8px;align-items:end;margin-bottom:6px">
+        <div style="font-weight:700;font-size:13px;padding-bottom:6px">${escapeHtml(r.sport)}${r.isNew ? ` <span class="badge" style="font-size:9px">${t('new', 'جديد')}</span>` : ''}</div>
+        <div class="field" style="margin:0"><label style="font-size:10px">${t('Classes', 'الحصص')}</label><input class="pri-classes" data-i="${r.idx}" type="number" min="0" step="1" value="${r.classes != null ? r.classes : ''}" placeholder="—" /></div>
+        <div class="field" style="margin:0"><label style="font-size:10px">${t('Coach', 'المدرب')}</label>${coachSelectHtml(r)}</div>
         <div class="field" style="margin:0"><label style="font-size:10px">${t('Price (QAR)', 'السعر')}</label><input class="pri-price" data-i="${r.idx}" type="number" min="0" step="1" value="${r.price}" /></div>
         <div class="field" style="margin:0"><label style="font-size:10px">${t('Discount', 'خصم')}</label><input class="pri-disc" data-i="${r.idx}" type="number" min="0" step="1" value="${r.disc}" /></div>
       </div>`).join('');
@@ -5833,11 +5852,18 @@ window.editMemberPricing = function(memberId) {
         document.querySelectorAll('.pri-exist-del:checked').forEach(el => removals.push({ invId: +el.dataset.inv, pi: +el.dataset.pi }));
         const cleanups = new Set();
         document.querySelectorAll('.pri-cleanup:checked').forEach(el => cleanups.add(+el.dataset.inv));
-        const rowVals = rows.map(r => ({
-          r,
-          price: Math.max(0, parseFloat(document.querySelector(`.pri-price[data-i="${r.idx}"]`).value) || 0),
-          disc:  Math.max(0, parseFloat(document.querySelector(`.pri-disc[data-i="${r.idx}"]`).value) || 0),
-        }));
+        const rowVals = rows.map(r => {
+          const clsEl = document.querySelector(`.pri-classes[data-i="${r.idx}"]`);
+          const coEl = document.querySelector(`.pri-coach[data-i="${r.idx}"]`);
+          return {
+            r,
+            price: Math.max(0, parseFloat(document.querySelector(`.pri-price[data-i="${r.idx}"]`).value) || 0),
+            disc:  Math.max(0, parseFloat(document.querySelector(`.pri-disc[data-i="${r.idx}"]`).value) || 0),
+            // null classes = leave as-is; a number = set it. undefined coach = no picker; '' = clear coach.
+            classes: (clsEl && clsEl.value !== '') ? Math.max(0, parseInt(clsEl.value, 10) || 0) : null,
+            coachId: coEl ? (coEl.value === '' ? null : (parseInt(coEl.value, 10) || coEl.value)) : undefined,
+          };
+        });
         const groupPays = {};
         const groupPayMeta = {};   // per-invoice: date + amount PER method (split payment)
         document.querySelectorAll('.pri-pay-date').forEach(dEl => {
@@ -6004,15 +6030,20 @@ window.editMemberPricing = function(memberId) {
       const { r, price, disc } = rv;
       const net = Math.max(0, price - disc);
       const d = dateFor(keyOf(r));
+      // v6.476: per-line CLASSES + COACH are now editable. null classes / undefined coach = leave as-is.
+      const newClasses = rv.classes;             // number | null
+      const newCoachId = rv.coachId;             // id | null | undefined
+      const effCoach = (newCoachId !== undefined) ? newCoachId : ((r.enr && r.enr.coachId) != null ? r.enr.coachId : null);
+      const effClasses = (newClasses != null) ? newClasses : ((r.enr && r.enr.classes != null) ? r.enr.classes : null);
       let inv = r.inv;
       if (!inv) {
         inv = {
           id: nextId(state.invoices), customerId: m.id, customerType: 'member', category: 'Membership',
           sport: r.sport, description: r.sport, date: d, month: String(d).slice(0, 7),
           amount: net, discount: 0, amountPaid: 0, method: '',
-          coachId: (r.enr && r.enr.coachId) || null,
+          coachId: effCoach,
           ref: (typeof nextInvoiceRef === 'function' ? nextInvoiceRef() : undefined),
-          lineItems: [{ sport: r.sport, coachId: (r.enr && r.enr.coachId) || null, classes: (r.enr && r.enr.classes) || null, price: net, issueDate: d }],
+          lineItems: [{ sport: r.sport, coachId: effCoach, coach: effCoach != null ? coachName(effCoach) : '', classes: effClasses, price: net, issueDate: d }],
           payments: [],
         };
         state.invoices.push(inv);
@@ -6023,16 +6054,28 @@ window.editMemberPricing = function(memberId) {
         }
         const li = inv.lineItems.find(x => x.sport === r.sport);
         if (!li) {
-          const nli = { sport: r.sport, coachId: (r.enr && r.enr.coachId) || null, classes: (r.enr && r.enr.classes) || null, price: net, issueDate: d };
+          const nli = { sport: r.sport, coachId: effCoach, coach: effCoach != null ? coachName(effCoach) : '', classes: effClasses, price: net, issueDate: d };
           const sm = startMonthForSport(r.sport);
           if (sm && sm !== invoiceBillMonth(inv)) nli.billMonth = sm;   // revenue in the sport's START month
           inv.lineItems.push(nli);
         } else {
           li.price = net;
+          if (newClasses != null) li.classes = newClasses;
+          if (newCoachId !== undefined) { li.coachId = newCoachId; li.coach = newCoachId != null ? coachName(newCoachId) : ''; }
         }
       }
+      // Reflect classes/coach onto the matching subscription + enrollment so the member card,
+      // attendance windows and coach commission all follow the corrected values.
+      if (r.sub) {
+        if (newClasses != null) r.sub.totalClasses = newClasses;
+        if (newCoachId !== undefined) { r.sub.coachId = newCoachId; r.sub.coach = newCoachId != null ? coachName(newCoachId) : ''; }
+      }
+      if (r.enr) {
+        r.enr.price = net;
+        if (newClasses != null) r.enr.classes = newClasses;
+        if (newCoachId !== undefined) r.enr.coachId = newCoachId;
+      }
       discByInv.set(inv, (discByInv.get(inv) || 0) + disc);
-      if (r.enr) r.enr.price = net;
       invDate.set(inv, d);
       touched.add(inv);
     }
