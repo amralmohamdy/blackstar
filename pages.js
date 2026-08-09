@@ -13052,21 +13052,43 @@ function generateLatestInvoice(onDone) {
       const earliestStart = startDates[0] || m.startDate || TODAY;
       const dateInput = document.getElementById('gli-date');
       if (dateInput && !dateInput.dataset.touched) dateInput.value = earliestStart;
+      // v6.480: reconcile the preview against reality. If a membership invoice already exists for the
+      // target month, clicking Generate RE-PRINTS it (never a fresh charge) — so show THAT invoice's
+      // real total, not the raw profile sum (which can differ when the profile drifted from what was
+      // actually billed). And if the profile total disagrees with the member's last membership
+      // invoice, warn that the profile may be stale before it's used to bill a new month.
+      const mth = String((dateInput && dateInput.value) || earliestStart).slice(0, 7);
+      const _memInvs = (state.invoices || []).filter(inv => inv.customerId === m.id && (inv.category || 'Membership') === 'Membership' && !inv.deleted);
+      const existingThisMonth = _memInvs.filter(inv => inv.month === mth).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.id - a.id))[0] || null;
+      const lastMembership = _memInvs.slice().sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.id - a.id))[0] || null;
+      const _iTotal = (inv) => (typeof invoiceTotal === 'function') ? invoiceTotal(inv) : (Number(inv.amount) || 0);
+      const existTotal = existingThisMonth ? _iTotal(existingThisMonth) : null;
+      const lastTotal = lastMembership ? _iTotal(lastMembership) : null;
+      const reconcileNote = existingThisMonth
+        ? `<div style="margin-bottom:8px;padding:8px 10px;background:rgba(59,130,246,.10);border:1px solid rgba(59,130,246,.35);border-radius:8px;font-size:11.5px;line-height:1.5">↩ <b>${escapeHtml(m.name)}</b> already has a <b>${fmtMonth(mth)}</b> invoice (${escapeHtml(existingThisMonth.ref || ('#' + existingThisMonth.id))} · <b>${fmt(existTotal)} QAR</b>). Generate will <b>RE-PRINT that invoice</b> — the profile total below is NOT re-charged.${Math.abs((existTotal || 0) - total) > 0.5 ? ` <span style="color:var(--accent-2)">The profile total (${fmt(total)}) differs from that invoice — if the profile is out of date, fix the member's sports/prices; the existing invoice is what stands.</span>` : ''}</div>`
+        : (lastTotal != null && Math.abs(lastTotal - total) > 0.5
+          ? `<div style="margin-bottom:8px;padding:8px 10px;background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.35);border-radius:8px;font-size:11.5px;line-height:1.5">⚠ These profile prices total <b>${fmt(total)}</b>, but this member's last membership invoice was <b>${fmt(lastTotal)}</b> (${escapeHtml(lastMembership.ref || ('#' + lastMembership.id))}). If the profile is out of date, fix the sports/prices before generating a new month.</div>`
+          : '');
       preview.style.display = 'block';
       preview.innerHTML = enrollments.length ? `
-        <div style="font-weight:600;margin-bottom:6px">Will invoice:</div>
+        ${reconcileNote}
+        <div style="font-weight:600;margin-bottom:6px">${existingThisMonth ? 'Profile (for reference):' : 'Will invoice:'}</div>
         ${enrollments.map(e => `<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0">
           <span>${escapeHtml(e.sport)}${e.classes ? ` · ${e.classes} classes` : ''} · ${escapeHtml(state.coaches.find(c=>c.id===e.coachId)?.name || '—')}</span>
           <span class="font-bold">${fmt(e.price || 0)} QAR</span>
         </div>`).join('')}
         <div style="border-top:1px solid var(--border);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between">
-          <span class="font-bold">Total</span><span class="font-bold" style="color:var(--green)">${fmt(total)} QAR</span>
+          <span class="font-bold">${existingThisMonth ? 'Profile total' : 'Total'}</span><span class="font-bold" style="color:var(--green)">${fmt(total)} QAR</span>
         </div>` : '<div class="text-mute">No enrollment data — generate not possible.</div>';
     }
     // Poll for hidden-value changes (the member picker sets `.value` via
     // property assignment, which MutationObserver can't see).
     let lastVal = hidden.value;
     update();
+    // Changing the date can change the target month → re-run so the "already has a <month>
+    // invoice" reconcile note stays accurate. (dataset.touched stops the auto-date overwrite.)
+    const dEl = document.getElementById('gli-date');
+    if (dEl) dEl.addEventListener('input', () => { dEl.dataset.touched = '1'; update(); });
     const poll = setInterval(() => {
       if (!document.body.contains(hidden)) { clearInterval(poll); return; }
       if (hidden.value !== lastVal) { lastVal = hidden.value; update(); }
