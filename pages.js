@@ -2269,7 +2269,7 @@ function viewMember(id) {
             const editable = currentRole() === 'admin' || currentRole() === 'receptionist';
             return ob > 0.001 ? ` <span class="badge" ${editable ? `onclick="event.stopPropagation();editMemberPricing(${m.id})" style="background:rgba(242,163,60,.18);color:var(--accent-2);cursor:pointer" title="Click to record a payment / edit pricing"` : `style="background:rgba(242,163,60,.18);color:var(--accent-2)" title="Outstanding balance across this member's invoices"`}>💰 ${fmt(ob)} due</span>` : '';
           })()}</div>
-          ${(currentRole() === 'admin' || currentRole() === 'receptionist') ? `<div style="margin-top:8px"><button class="btn primary sm" onclick="editMemberPricing(${m.id})" title="Edit price / discount / paid for each enrolled sport" style="font-weight:700">💰 ${t('Edit pricing / record payment', 'تعديل السعر / تسجيل دفعة')}</button></div>` : ''}
+          ${(currentRole() === 'admin' || currentRole() === 'receptionist') ? `<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary sm" onclick="editMemberPricing(${m.id})" title="Edit price / discount / classes / coach for each enrolled sport" style="font-weight:700">💰 ${t('Edit pricing / record payment', 'تعديل السعر / تسجيل دفعة')}</button>${currentRole() === 'admin' ? `<button class="btn ghost sm" onclick="rebuildMemberFromProfile(${m.id})" title="${t('Sync the subscription + invoice to the current enrollments (the profile) so salary + invoice agree', 'مزامنة الاشتراك والفاتورة مع التسجيلات الحالية ليتطابق الراتب والفاتورة')}">🔄 ${t('Rebuild from profile', 'إعادة البناء من الملف')}</button>` : ''}</div>` : ''}
         </div>
       </div>
       <div class="row row-2 mb-3">
@@ -5644,6 +5644,99 @@ window.deleteMemberSport = function(memberId, sport) {
 // for that sport and reconciles the payments log. Admins AND receptionists can
 // use it (front-desk collects money). Reached from the Members table, the
 // member profile, the Expiring page Due flag, or anywhere viewMember is shown.
+// ── Rebuild from profile (v6.477) ────────────────────────────────────────────
+// The member's ENROLLMENTS are the source of truth for what they're currently signed
+// up for. A switch or a manual edit can leave the SUBSCRIPTIONS (which drive salary /
+// commission) and the INVOICE LINES out of step with the enrollments — so "Generate
+// latest invoice" (reads enrollments) and the salary report (reads subscriptions)
+// disagree. This admin tool re-syncs every enrolled sport's active subscription +
+// invoice line to its enrollment (classes, price, coach), completes any active
+// subscription for a sport no longer enrolled (so it drops off the salary report), and
+// optionally removes invoice lines for those dropped sports so the invoice total matches
+// the profile. Preview-first, backup-first, audited — nothing changes until you confirm.
+// Paid amounts are never touched; if the new total is below what was paid, the difference
+// shows as an overpayment to refund.
+window.rebuildMemberFromProfile = function (memberId) {
+  if (currentRole() !== 'admin') { toast(t('Admins only', 'للمشرفين فقط'), 'error'); return; }
+  const m = state.members.find(x => x.id === memberId);
+  if (!m) return;
+  const enrollments = (m.enrollments || []).filter(e => e.sport);
+  if (!enrollments.length) { toast(t('This member has no enrolled sports (profile is empty)', 'لا توجد رياضات مسجلة في الملف'), 'info'); return; }
+  const enrolledSports = new Set(enrollments.map(e => e.sport));
+  const membershipInvs = (state.invoices || []).filter(i => !i.deleted && i.customerId === m.id
+    && (i.category || 'Membership') === 'Membership' && !i.switchCredit && i.activityType !== 'switch-credit');
+  const findLine = (sp) => { for (const iv of membershipInvs) { if (Array.isArray(iv.lineItems)) { const li = iv.lineItems.find(x => x.sport === sp); if (li) return { inv: iv, li }; } } return null; };
+  const activeSub = (sp) => (m.subscriptions || []).find(s => s.activity === sp && !['withdrawn', 'completed'].includes((s.status || '').toLowerCase()))
+    || (m.subscriptions || []).find(s => s.activity === sp && (s.status || '').toLowerCase() !== 'withdrawn');
+  const cn = (id) => id != null ? (coachName(id) || '—') : '—';
+
+  const rows = [], applies = [];
+  const touchedInvs = new Set();
+  // 1) Enrolled sports → sync sub + invoice line to the enrollment.
+  for (const e of enrollments) {
+    const eCls = parseInt(e.classes) || 0, ePrice = Number(e.price) || 0, eCoach = (e.coachId != null) ? e.coachId : null;
+    const L = findLine(e.sport);
+    if (L) {
+      const li = L.li, iv = L.inv;
+      if ((Number(li.price) || 0) !== ePrice || (parseInt(li.classes) || 0) !== eCls || String(li.coachId) !== String(eCoach)) {
+        rows.push(`<tr><td>${escapeHtml(e.sport)}</td><td>${t('Invoice line', 'سطر الفاتورة')}</td><td class="text-mute">${fmt(li.price)} · ${li.classes || 0}cl · ${escapeHtml(cn(li.coachId))}</td><td class="font-bold">${fmt(ePrice)} · ${eCls}cl · ${escapeHtml(cn(eCoach))}</td></tr>`);
+        applies.push(() => { li.price = ePrice; li.classes = eCls; li.coachId = eCoach; li.coach = eCoach != null ? coachName(eCoach) : ''; touchedInvs.add(iv); });
+      }
+    }
+    const sub = activeSub(e.sport);
+    if (sub) {
+      if ((parseInt(sub.totalClasses) || 0) !== eCls || (Number(sub.amountPaid) || 0) !== ePrice || String(sub.coachId) !== String(eCoach)) {
+        rows.push(`<tr><td>${escapeHtml(e.sport)}</td><td>${t('Subscription', 'الاشتراك')}</td><td class="text-mute">${fmt(sub.amountPaid)} · ${sub.totalClasses || 0}cl · ${escapeHtml(cn(sub.coachId))}</td><td class="font-bold">${fmt(ePrice)} · ${eCls}cl · ${escapeHtml(cn(eCoach))}</td></tr>`);
+        applies.push(() => { sub.totalClasses = eCls; sub.amountPaid = ePrice; sub.coachId = eCoach; sub.coach = eCoach != null ? coachName(eCoach) : ''; });
+      }
+    }
+  }
+  // 2) Active subs for sports NOT in the profile → complete (drop from salary).
+  for (const s of (m.subscriptions || [])) {
+    if (!s.activity || enrolledSports.has(s.activity)) continue;
+    if (['completed', 'withdrawn'].includes((s.status || '').toLowerCase())) continue;
+    rows.push(`<tr><td>${escapeHtml(s.activity)}</td><td>${t('Subscription', 'الاشتراك')}</td><td class="text-mute">${s.status || 'active'}</td><td class="font-bold" style="color:var(--accent-2)">${t('→ completed (not in profile)', '→ مكتمل (خارج الملف)')}</td></tr>`);
+    applies.push(() => { s.status = 'completed'; });
+  }
+  // 3) Invoice lines for sports NOT in the profile → offer to remove (opt-in).
+  const orphanLines = [];
+  for (const iv of membershipInvs) { if (Array.isArray(iv.lineItems)) iv.lineItems.forEach((li, idx) => { if (li.sport && !enrolledSports.has(li.sport)) orphanLines.push({ iv, li, idx }); }); }
+  const orphanHtml = orphanLines.map((o, i) => `<label style="display:flex;align-items:center;gap:8px;font-size:12px;padding:3px 0;cursor:pointer"><input type="checkbox" class="rbp-orphan" data-i="${i}"> ${t('Remove line', 'حذف سطر')} <b>${escapeHtml(o.li.sport)}</b> · ${fmt(o.li.price)} (${escapeHtml(cn(o.li.coachId))})</label>`).join('');
+
+  if (!rows.length && !orphanLines.length) { toast(t('Already matches the profile — nothing to rebuild', 'مطابق للملف بالفعل — لا شيء لإعادة بنائه'), 'success'); return; }
+
+  showModal({
+    title: '🔄 ' + t('Rebuild from profile', 'إعادة البناء من الملف'),
+    body: `
+      <div class="text-mute" style="font-size:12px;margin-bottom:8px">${escapeHtml(m.name)} — ${t('sync the subscription + invoice to the current enrollments (the profile).', 'مزامنة الاشتراك والفاتورة مع التسجيلات الحالية (الملف).')}</div>
+      ${rows.length ? `<div class="table-wrap"><table style="font-size:12px;width:100%"><thead><tr><th>${t('Sport', 'الرياضة')}</th><th>${t('Record', 'السجل')}</th><th>${t('From', 'من')}</th><th>${t('To', 'إلى')}</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>` : `<div class="text-mute" style="font-size:12px">${t('Enrolled sports already match.', 'الرياضات المسجلة مطابقة.')}</div>`}
+      ${orphanLines.length ? `<div style="margin-top:12px;padding:10px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.25);border-radius:8px"><div style="font-size:11px;font-weight:700;color:var(--accent-2);margin-bottom:6px">⚠ ${t('Invoice lines for sports no longer in the profile', 'أسطر فواتير لرياضات خارج الملف')}</div>${orphanHtml}<div class="text-mute" style="font-size:10px;margin-top:5px">${t('Removing a line lowers the invoice total and that sport commission base. Leave unchecked to keep it.', 'حذف السطر يقلل إجمالي الفاتورة وقاعدة عمولة تلك الرياضة. اتركه بدون تحديد للإبقاء عليه.')}</div></div>` : ''}
+      <div class="text-mute" style="font-size:11px;margin-top:10px">${t('A backup is downloaded first. Paid amounts are NOT changed — if the new total is below what was paid, the difference shows as an overpayment to refund.', 'يتم تنزيل نسخة احتياطية أولاً. المبالغ المدفوعة لا تتغيّر — إذا أصبح الإجمالي أقل من المدفوع يظهر الفرق كدفع زائد للاسترجاع.')}</div>`,
+    actions: [
+      { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
+      { label: '🔄 ' + t('Rebuild', 'إعادة البناء'), class: 'btn primary', onclick: () => {
+        if (typeof assertCloudWritable === 'function' && !assertCloudWritable('rebuild this member from their profile', 'إعادة بناء بيانات العضو من الملف')) return;
+        const rm = [];
+        document.querySelectorAll('.rbp-orphan:checked').forEach(el => { const o = orphanLines[+el.dataset.i]; if (o) rm.push(o); });
+        try { if (typeof window.downloadBackup === 'function') window.downloadBackup(); } catch (_) {}
+        applies.forEach(fn => { try { fn(); } catch (_) {} });
+        const byInv = new Map();
+        rm.forEach(o => { if (!byInv.has(o.iv)) byInv.set(o.iv, []); byInv.get(o.iv).push(o.idx); });
+        for (const [iv, idxs] of byInv.entries()) { idxs.sort((a, b) => b - a).forEach(i => iv.lineItems.splice(i, 1)); touchedInvs.add(iv); }
+        for (const iv of touchedInvs) {
+          if (Array.isArray(iv.lineItems) && iv.lineItems.length) iv.amount = iv.lineItems.reduce((s, x) => s + (Number(x.price) || 0), 0);
+          if (typeof sportListWithDuration === 'function') iv.sport = sportListWithDuration(iv.lineItems) || iv.lineItems.map(x => x.sport).join(', ');
+          iv.lastUpdated = TODAY;
+        }
+        if (typeof stampUpdate === 'function') stampUpdate(m);
+        if (typeof audit === 'function') audit('member.rebuildFromProfile', 'member:' + m.id, `Rebuilt ${m.name} from enrollments (${applies.length} record edits, ${rm.length} line(s) removed)`, { memberId: m.id, edits: applies.length, removed: rm.length });
+        closeModal(); render();
+        if (typeof confirmSaved === 'function') confirmSaved(t('Rebuilt from profile', 'تمت إعادة البناء من الملف')); else toast(t('Rebuilt', 'تم'));
+      } },
+    ],
+  });
+};
+
 window.editMemberPricing = function(memberId) {
   if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast('Admins or receptionists only', 'error'); return; }
   const m = state.members.find(x => x.id === memberId);
