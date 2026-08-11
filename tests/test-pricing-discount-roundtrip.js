@@ -20,7 +20,8 @@ ok('the OLD multi-sport net-only read is gone', !/price = linePrice;\s*\n\s*disc
 
 R.section('save + live still derive net = price − disc (unchanged)');
 ok('save computes net = price − disc', /const net = Math\.max\(0, price - disc\);/.test(src));
-ok('live recompute computes net = price − disc', /net \+= Math\.max\(0, p - d\);/.test(src));
+// v6.482: prices are read-only in Installments, so the live recompute takes the STORED net (price − disc).
+ok('live recompute uses the stored net (price − disc)', /const net = g\.rows\.reduce\(\(s, r\) => s \+ Math\.max\(0, \(Number\(r\.price\) \|\| 0\) - \(Number\(r\.disc\) \|\| 0\)\), 0\);/.test(src));
 // Algebra: with price = amount + disc, net = (amount + disc) − disc = amount = the stored net. Stable.
 
 R.section('camp editor: same gross round-trip');

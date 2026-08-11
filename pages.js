@@ -2168,7 +2168,11 @@ function viewMember(id) {
           // grid — otherwise a real 8/8 kept reading a stale "active". (v6.359)
           const isCompleted = total != null && total > 0 && attended != null && attended >= total;
           let label, cls;
-          if (isCompleted) { label = 'completed'; cls = 'completed'; }
+          // v6.483: a sport the member SWITCHED AWAY FROM stays visible in the history, clearly flagged
+          // "switched" (it was re-deriving as "active" because its end date hadn't passed). The coach kept
+          // the classes attended here; the rest moved to the new sport.
+          if (s.switchedAwayTo) { label = 'switched'; cls = 'switched'; }
+          else if (isCompleted) { label = 'completed'; cls = 'completed'; }
           else if (s.end && s.end < TODAY) { label = 'expired'; cls = 'expired'; }
           else if (s.start && s.end) { label = 'active'; cls = 'active'; }
           else if (s.status) { const sl = s.status.toLowerCase(); label = sl; cls = sl === 'expired' ? 'expired' : (sl === 'completed' ? 'completed' : 'active'); }
@@ -2184,9 +2188,11 @@ function viewMember(id) {
             // FULL delete: a completed / attended sport — also removes its attendance.
             delBtn = ` <button onclick="event.stopPropagation();deleteSportFull(${m.id}, '${sid}')" title="Delete this sport from the member — also removes its attendance + linked invoice (admin, permanent)" style="background:transparent;border:0;color:var(--red);opacity:.85;cursor:pointer;padding:0 3px;font-size:13px">🗑</button>`;
           }
-          const badge = cls === 'completed'
-            ? `<span class="badge" style="background:rgba(139,92,246,.16);color:#7c3aed;font-weight:700" title="All classes attended">✓ ${label}</span>`
-            : `<span class="badge ${cls}">${label}</span>`;
+          const badge = cls === 'switched'
+            ? `<span class="badge" style="background:rgba(245,158,11,.18);color:var(--accent-2);font-weight:700" title="${t('Switched to', 'محوّل إلى')} ${escapeHtml(s.switchedAwayTo)}${s.switchedAt ? ' · ' + fmtDate(s.switchedAt) : ''} — ${t('the coach keeps the classes attended here; the remaining classes moved to the new sport', 'المدرب يحتفظ بالحصص التي حضرها هنا؛ والباقي انتقل للرياضة الجديدة')}">🔀 ${t('switched', 'محوّل')} → ${escapeHtml(s.switchedAwayTo)}</span>`
+            : cls === 'completed'
+              ? `<span class="badge" style="background:rgba(139,92,246,.16);color:#7c3aed;font-weight:700" title="All classes attended">✓ ${label}</span>`
+              : `<span class="badge ${cls}">${label}</span>`;
           // Admin ✎ EDIT — change this sport's class count, price and status directly (v6.441). Handy
           // for a switched sport: set the old sport Completed at what was attended, the new sport to the
           // remaining classes/price. Saving also syncs the linked invoice line so commission follows.
@@ -2269,7 +2275,7 @@ function viewMember(id) {
             const editable = currentRole() === 'admin' || currentRole() === 'receptionist';
             return ob > 0.001 ? ` <span class="badge" ${editable ? `onclick="event.stopPropagation();editMemberPricing(${m.id})" style="background:rgba(242,163,60,.18);color:var(--accent-2);cursor:pointer" title="Click to record a payment / edit pricing"` : `style="background:rgba(242,163,60,.18);color:var(--accent-2)" title="Outstanding balance across this member's invoices"`}>💰 ${fmt(ob)} due</span>` : '';
           })()}</div>
-          ${(currentRole() === 'admin' || currentRole() === 'receptionist') ? `<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary sm" onclick="editMemberPricing(${m.id})" title="Edit price / discount / classes / coach for each enrolled sport" style="font-weight:700">💰 ${t('Edit pricing / record payment', 'تعديل السعر / تسجيل دفعة')}</button>${currentRole() === 'admin' ? `<button class="btn ghost sm" onclick="rebuildMemberFromProfile(${m.id})" title="${t('Sync the subscription + invoice to the current enrollments (the profile) so salary + invoice agree', 'مزامنة الاشتراك والفاتورة مع التسجيلات الحالية ليتطابق الراتب والفاتورة')}">🔄 ${t('Rebuild from profile', 'إعادة البناء من الملف')}</button>` : ''}</div>` : ''}
+          ${(currentRole() === 'admin' || currentRole() === 'receptionist') ? `<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary sm" onclick="editMemberPricing(${m.id})" title="${t('Log payment installments (method + date + amount). Prices are set per-sport in the profile above.', 'تسجيل أقساط الدفع (الطريقة + التاريخ + المبلغ). الأسعار تُحدَّد لكل رياضة في الملف أعلاه.')}" style="font-weight:700">💳 ${t('Installments', 'الأقساط')}</button>${currentRole() === 'admin' ? `<button class="btn ghost sm" onclick="rebuildMemberFromProfile(${m.id})" title="${t('Sync the subscription + invoice to the current enrollments (the profile) so salary + invoice agree', 'مزامنة الاشتراك والفاتورة مع التسجيلات الحالية ليتطابق الراتب والفاتورة')}">🔄 ${t('Rebuild from profile', 'إعادة البناء من الملف')}</button>` : ''}</div>` : ''}
         </div>
       </div>
       <div class="row row-2 mb-3">
@@ -5820,15 +5826,6 @@ window.editMemberPricing = function(memberId) {
     const coachId = (sub && sub.coachId != null) ? sub.coachId : (enr && enr.coachId != null ? enr.coachId : null);
     rows.push({ idx: _ri++, sport: sp, enr, sub, inv: primaryInv, isNew: true, price, disc: 0, classes, coachId });
   }
-  // Coach options for the per-line picker: active coaches + the line's current coach
-  // (even if now inactive, so an old assignment still shows and can be kept).
-  const _coachActive = (c) => c && (c.active === 'Y' || c.active === true || c.active === 1 || c.active === 'Yes');
-  const coachSelectHtml = (r) => {
-    const cur = r.coachId;
-    const list = (state.coaches || []).filter(c => _coachActive(c) || String(c.id) === String(cur));
-    return `<select class="pri-coach" data-i="${r.idx}" style="font-size:14px;min-width:0"><option value="">${t('— no coach', '— بدون مدرب')}</option>${list.map(c => `<option value="${c.id}" ${String(c.id) === String(cur) ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}</select>`;
-  };
-
   // Group rows by their invoice — each invoice gets its OWN dated payment box, so a
   // June invoice and a July invoice are never paid from the same row.
   const groups = new Map();
@@ -5842,14 +5839,19 @@ window.editMemberPricing = function(memberId) {
   const normMethod = (mRaw) => { const x = String(mRaw || '').toLowerCase(); if (x.indexOf('card') >= 0 || x.indexOf('visa') >= 0) return 'card'; if (x.indexOf('fawran') >= 0 || x.indexOf('فوران') >= 0) return 'fawran'; if (x.indexOf('transfer') >= 0 || x.indexOf('bank') >= 0 || x.indexOf('online') >= 0) return 'transfer'; return 'cash'; };
 
   const groupHtml = [...groups.entries()].map(([key, g]) => {
-    const sportsHtml = g.rows.map(r => `
-      <div style="display:grid;grid-template-columns:1fr 74px 148px 100px 90px;gap:9px;align-items:end;margin-bottom:9px">
-        <div style="font-weight:700;font-size:15px;padding-bottom:7px">${escapeHtml(r.sport)}${r.isNew ? ` <span class="badge" style="font-size:9px">${t('new', 'جديد')}</span>` : ''}</div>
-        <div class="field" style="margin:0"><label style="font-size:11px;font-weight:600">${t('Classes', 'الحصص')}</label><input class="pri-classes" data-i="${r.idx}" type="number" min="0" step="1" value="${r.classes != null ? r.classes : ''}" placeholder="—" style="font-size:14px" /></div>
-        <div class="field" style="margin:0"><label style="font-size:11px;font-weight:600">${t('Coach', 'المدرب')}</label>${coachSelectHtml(r)}</div>
-        <div class="field" style="margin:0"><label style="font-size:11px;font-weight:600">${t('Price (QAR)', 'السعر')}</label><input class="pri-price" data-i="${r.idx}" type="number" min="0" step="1" value="${r.price}" style="font-size:14px;font-weight:600" /></div>
-        <div class="field" style="margin:0"><label style="font-size:11px;font-weight:600">${t('Discount', 'خصم')}</label><input class="pri-disc" data-i="${r.idx}" type="number" min="0" step="1" value="${r.disc}" style="font-size:14px" /></div>
-      </div>`).join('');
+    // v6.482: prices are READ-ONLY here. The PROFILE is the single place to set a sport's price /
+    // classes / coach (member card → ✎). This screen only LOGS PAYMENTS against what the profile
+    // already priced, so the two can never drift. Editing a wrong price → fix it in the profile.
+    const sportsHtml = g.rows.map(r => {
+      const net = Math.max(0, (Number(r.price) || 0) - (Number(r.disc) || 0));
+      const coachNm = r.coachId != null ? (coachName(r.coachId) || '—') : '—';
+      return `
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:6px">
+        <div style="font-weight:700;font-size:14px">${escapeHtml(r.sport)}${r.isNew ? ` <span class="badge" style="font-size:9px;background:var(--surface);color:var(--accent-2)">${t('not invoiced', 'بلا فاتورة')}</span>` : ''}
+          <span class="text-mute" style="font-weight:400;font-size:11.5px">· ${r.classes != null ? r.classes + ' ' + t('cls', 'حصة') : '—'} · ${escapeHtml(coachNm)}</span></div>
+        <div style="font-weight:700;font-size:14px;white-space:nowrap">${fmt(net)} <span class="text-mute" style="font-size:10px;font-weight:400">QAR</span>${(Number(r.disc) || 0) > 0 ? ` <span class="text-mute" style="font-size:10px">(-${fmt(r.disc)})</span>` : ''}</div>
+      </div>`;
+    }).join('');
     const inv = g.inv;
     const pays = (inv && Array.isArray(inv.payments)) ? inv.payments : [];
     // Per-payment sport tag: only meaningful when an invoice has MORE than one sport
@@ -5920,7 +5922,7 @@ window.editMemberPricing = function(memberId) {
     return `
       <div class="card" data-grp="${key}" style="background:var(--surface-2);padding:10px 12px;margin-bottom:10px">
         <div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;color:var(--text-mute);margin-bottom:6px;gap:8px">
-          <span style="font-weight:700">${inv ? '🧾 ' + (inv.ref ? escapeHtml(inv.ref) : 'invoice #' + inv.id) + (inv.date ? ' · ' + fmtDate(inv.date) : '') : t('no invoice yet — Save creates one', 'لا توجد فاتورة — سيتم إنشاؤها')}</span>
+          <span style="font-weight:700;${inv ? '' : 'color:var(--accent-2)'}">${inv ? '🧾 ' + (inv.ref ? escapeHtml(inv.ref) : 'invoice #' + inv.id) + (inv.date ? ' · ' + fmtDate(inv.date) : '') : '⚠ ' + t('not invoiced yet — Generate an invoice first, then collect', 'بلا فاتورة — أنشئ الفاتورة أولاً ثم حصّل')}</span>
           <span style="font-size:13px">${t('Paid', 'المدفوع')}: <b class="grp-paid" data-grp="${key}">${fmt(paid)}</b> · ${t('Balance', 'المتبقي')}: <b class="grp-bal" data-grp="${key}" style="color:${bal > 0 ? 'var(--accent-2)' : 'var(--green)'}">${fmt(bal)}</b></span>
         </div>
         ${sportsHtml}
@@ -5929,15 +5931,16 @@ window.editMemberPricing = function(memberId) {
   }).join('');
 
   showModal({
-    title: '💰 ' + t('Edit pricing & payment', 'تعديل السعر والدفع'),
+    title: '💳 ' + t('Installments', 'الأقساط'),
     wide: true,
     body: `
-      <div class="text-mute" style="font-size:12px;margin-bottom:10px">${escapeHtml(m.name)}${m.nameArabic ? ` · <span dir="rtl">${escapeHtml(m.nameArabic)}</span>` : ''}${m.phone ? ' · ' + phoneCell(m.phone) : ''}</div>
+      <div class="text-mute" style="font-size:12px;margin-bottom:4px">${escapeHtml(m.name)}${m.nameArabic ? ` · <span dir="rtl">${escapeHtml(m.nameArabic)}</span>` : ''}${m.phone ? ' · ' + phoneCell(m.phone) : ''}</div>
+      <div style="font-size:11px;margin-bottom:10px;padding:7px 10px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);border-radius:8px;line-height:1.5">💡 ${t('This screen LOGS PAYMENTS only. Prices/sports are set in the member profile (card → ✎ per sport). If a price is wrong, fix it there.', 'هذه الشاشة لتسجيل الدفعات فقط. الأسعار/الرياضات تُحدَّد في ملف العضو (البطاقة ← ✎ لكل رياضة). إذا كان السعر خاطئاً صحّحه هناك.')}</div>
       ${groupHtml}
       <div style="display:none">
         <div class="field" style="margin:0;max-width:190px"><label style="font-size:12px;font-weight:600">📅 ${t('Date for the NEW payment only', 'تاريخ الدفعة الجديدة فقط')}</label><input type="date" id="pri-paydate" value="${TODAY}" /><div class="text-mute" style="font-size:10px;margin-top:3px">${t('Collection counts in this date\u2019s month.', 'يُحتسب التحصيل في شهر هذا التاريخ.')}</div></div>
       </div>
-      <div class="text-mute" style="font-size:12px;margin-top:6px;line-height:1.6">${t('Fully editable: change a line’s classes, coach, price or discount; edit any 🧾 payment’s amount, date or method (the Paid + Balance update instantly), tick 🗑 to remove a payment, or use the ➕ box to collect a new one. A negative amount records a refund.', 'قابل للتعديل بالكامل: غيّر حصص السطر أو المدرب أو السعر أو الخصم؛ عدّل مبلغ أي دفعة أو تاريخها أو طريقتها (يتحدث المدفوع والمتبقي فوراً)، أو ضع 🗑 لحذف دفعة، أو استخدم ➕ لتحصيل دفعة جديدة. المبلغ السالب يسجّل استرداداً.')}</div>`,
+      <div class="text-mute" style="font-size:12px;margin-top:6px;line-height:1.6">${t('Payments: edit any 🧾 installment’s amount, date or method (Paid + Balance update instantly), tick 🗑 to remove one, or use the ➕ box to collect a new one. A negative amount records a refund. Sports & prices above are read-only — set them in the member profile.', 'الدفعات: عدّل مبلغ أي قسط 🧾 أو تاريخه أو طريقته (يتحدث المدفوع والمتبقي فوراً)، أو ضع 🗑 لحذف قسط، أو استخدم ➕ لتحصيل دفعة جديدة. المبلغ السالب يسجّل استرداداً. الرياضات والأسعار أعلاه للقراءة فقط — تُحدَّد في ملف العضو.')}</div>`,
     actions: [
       { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
       { label: t('Save', 'حفظ'), class: 'btn primary', onclick: () => {
@@ -5968,18 +5971,10 @@ window.editMemberPricing = function(memberId) {
         document.querySelectorAll('.pri-exist-del:checked').forEach(el => removals.push({ invId: +el.dataset.inv, pi: +el.dataset.pi }));
         const cleanups = new Set();
         document.querySelectorAll('.pri-cleanup:checked').forEach(el => cleanups.add(+el.dataset.inv));
-        const rowVals = rows.map(r => {
-          const clsEl = document.querySelector(`.pri-classes[data-i="${r.idx}"]`);
-          const coEl = document.querySelector(`.pri-coach[data-i="${r.idx}"]`);
-          return {
-            r,
-            price: Math.max(0, parseFloat(document.querySelector(`.pri-price[data-i="${r.idx}"]`).value) || 0),
-            disc:  Math.max(0, parseFloat(document.querySelector(`.pri-disc[data-i="${r.idx}"]`).value) || 0),
-            // null classes = leave as-is; a number = set it. undefined coach = no picker; '' = clear coach.
-            classes: (clsEl && clsEl.value !== '') ? Math.max(0, parseInt(clsEl.value, 10) || 0) : null,
-            coachId: coEl ? (coEl.value === '' ? null : (parseInt(coEl.value, 10) || coEl.value)) : undefined,
-          };
-        });
+        // v6.482: PAYMENTS-ONLY screen. Prices are read-only (owned by the profile), so rowVals just
+        // carry the STORED net per line — used to compute each group's balance for the guard. No
+        // price / classes / coach is written from here (paymentsOnly flag below).
+        const rowVals = rows.map(r => ({ r, price: Number(r.price) || 0, disc: Number(r.disc) || 0, classes: null, coachId: undefined }));
         const groupPays = {};
         const groupPayMeta = {};   // per-invoice: date + amount PER method (split payment)
         document.querySelectorAll('.pri-pay-date').forEach(dEl => {
@@ -6018,9 +6013,13 @@ window.editMemberPricing = function(memberId) {
           return s;
         };
         for (const [key, g] of groups.entries()) {
+          const newPay = groupPays[key] || 0;
+          // v6.483: a payment against a sport that has NO invoice yet would be SILENTLY DROPPED — this
+          // payments-only screen never creates invoices (the profile/Generate does). Block it with
+          // guidance instead of taking the money and losing it.
+          if (newPay > 0 && !g.inv) { toast(t('This sport isn’t invoiced yet — use “Generate latest invoice” first, then collect the payment', 'هذه الرياضة بلا فاتورة — أنشئ الفاتورة أولاً ثم سجّل الدفعة'), 'error'); return; }
           const gNet = rowVals.filter(rv => (rv.r.inv ? String(rv.r.inv.id) : 'new') === key)
             .reduce((s, rv) => s + Math.max(0, rv.price - rv.disc), 0);
-          const newPay = groupPays[key] || 0;
           const editedPaid = g.inv ? _editedPaidFor(g.inv.id) : 0;
           // Only block a NEW collection that would push a not-yet-overpaid invoice past its price.
           if (newPay > 0 && editedPaid + newPay > gNet + 0.001) { toast(t('The new payment would exceed the balance for one invoice', 'الدفعة الجديدة تتجاوز رصيد الفاتورة'), 'error'); return; }
@@ -6099,10 +6098,10 @@ window.editMemberPricing = function(memberId) {
                   if (typeof audit === 'function') audit('invoice.refund', 'invoice:' + g.inv.id, `refund ${fmt(r.amount)} (${r.method})`);
                 }
               }
-              applyPricingSafe(rowVals, groupPays, payDate, payMethod, groupPayMeta);
+              applyPricingSafe(rowVals, groupPays, payDate, payMethod, groupPayMeta, true /* paymentsOnly */);
               closeModal(); render();
-              // v6.388: money (pricing + payments + refunds) — confirm it reached the cloud before "saved".
-              confirmSaved(t('Saved', 'تم الحفظ'));
+              // v6.388: money (payments + refunds) — confirm it reached the cloud before "saved".
+              confirmSaved(t('Payments saved', 'تم حفظ الدفعات'));
             } },
           ],
         });
@@ -6127,12 +6126,8 @@ window.editMemberPricing = function(memberId) {
   };
   const _recomputeGroups = () => {
     groups.forEach((g, key) => {
-      let net = 0;
-      g.rows.forEach(r => {
-        const p = parseFloat(document.querySelector(`.pri-price[data-i="${r.idx}"]`).value) || 0;
-        const d = parseFloat(document.querySelector(`.pri-disc[data-i="${r.idx}"]`).value) || 0;
-        net += Math.max(0, p - d);
-      });
+      // v6.482: prices are read-only (owned by the profile), so the net is the STORED line sum.
+      const net = g.rows.reduce((s, r) => s + Math.max(0, (Number(r.price) || 0) - (Number(r.disc) || 0)), 0);
       const paid = _paidLive(g.inv);
       let pay = 0;
       document.querySelectorAll(`.pri-pay-m[data-grp="${key}"]`).forEach(mi => { pay += Math.max(0, parseFloat(mi.value) || 0); });
@@ -6149,7 +6144,7 @@ window.editMemberPricing = function(memberId) {
       }
     });
   };
-  document.querySelectorAll('.pri-price, .pri-disc, .pri-pay-m, .pri-exist-amt').forEach(inp => inp.addEventListener('input', _recomputeGroups));
+  document.querySelectorAll('.pri-pay-m, .pri-exist-amt').forEach(inp => inp.addEventListener('input', _recomputeGroups));
   document.querySelectorAll('.pri-exist-del').forEach(cb => cb.addEventListener('change', _recomputeGroups));
 
   // Visual feedback: dim a payment row marked for removal; dim ALL rows of an invoice
@@ -6169,7 +6164,7 @@ window.editMemberPricing = function(memberId) {
   // ── Safe apply: set line prices/discounts, then APPEND one dated payment per
   //    invoice via recordPayment. No per-sport payment tagging, no re-splitting —
   //    so the ledger cannot be corrupted by re-derivation.
-  function applyPricingSafe(rowVals, groupPays, payDate, payMethod, groupPayMeta) {
+  function applyPricingSafe(rowVals, groupPays, payDate, payMethod, groupPayMeta, paymentsOnly) {
     groupPayMeta = groupPayMeta || {};
     // Each invoice/group carries its OWN new-payment date + amount PER method (split).
     const dateFor = (key) => (groupPayMeta[key] && groupPayMeta[key].date) || payDate || TODAY;
@@ -6178,7 +6173,9 @@ window.editMemberPricing = function(memberId) {
     const touched = new Set();
     const discByInv = new Map();
     const invDate = new Map();   // each invoice's effective date (for issue/lastUpdated)
-    for (const rv of rowVals) {
+    // v6.482: paymentsOnly (the Installments screen) NEVER writes prices/classes/coach/enrollment or
+    // creates invoices — the profile owns all of that. It only records payments (loop below).
+    if (!paymentsOnly) for (const rv of rowVals) {
       const { r, price, disc } = rv;
       const net = Math.max(0, price - disc);
       const d = dateFor(keyOf(r));
@@ -6248,8 +6245,10 @@ window.editMemberPricing = function(memberId) {
       if (any) { invDate.set(inv, d); touched.add(inv); }
     }
     for (const inv of touched) {
-      if (Array.isArray(inv.lineItems) && inv.lineItems.length) {
-        inv.amount = inv.lineItems.reduce((s, x) => s + (Number(x.price) || 0), 0);
+      // v6.483: paymentsOnly (Installments) must NOT touch the invoice total — a payment never re-prices.
+      // Otherwise use the summary-guarded total so a legacy redundant summary line can't double inv.amount.
+      if (!paymentsOnly && Array.isArray(inv.lineItems) && inv.lineItems.length) {
+        inv.amount = (typeof invoiceTotal === 'function') ? invoiceTotal(inv) : inv.lineItems.reduce((s, x) => s + (Number(x.price) || 0), 0);
       }
       if (discByInv.has(inv)) inv.discount = discByInv.get(inv);
       inv.amountPaid = Array.isArray(inv.payments) ? inv.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0) : 0;
@@ -23673,18 +23672,33 @@ window.editSubscription = function(memberId, sid) {
   const sub = m.subscriptions.find(s => (s._sid || s._rid) === sid);
   if (!sub) { toast(t('Subscription not found', 'الاشتراك غير موجود'), 'error'); return; }
   const inv = (state.invoices || []).find(v => !v.deleted && !v.switchCredit && v.ref === sub.invoiceNumber);
-  const line = inv && Array.isArray(inv.lineItems) ? inv.lineItems.find(l => l.sport === sub.activity && (l.coachId == null || sub.coachId == null || l.coachId === sub.coachId)) : null;
+  // v6.483: find the sport's line ROBUSTLY. Prefer an exact sport+coach match (string-normalized, so a
+  // legacy string coachId "5" still matches a numeric 5), then fall back to a sport-only match — so the
+  // line is always found and its price/coach actually get synced (else invoice + commission go stale).
+  const line = inv && Array.isArray(inv.lineItems)
+    ? (inv.lineItems.find(l => l.sport === sub.activity && String(l.coachId) === String(sub.coachId))
+       || inv.lineItems.find(l => l.sport === sub.activity))
+    : null;
   const linePrice = line ? (Number(line.price) || 0) : (Number(sub.amountPaid) || 0);
   const hasSwitchCredit = (state.invoices || []).some(v => !v.deleted && v.switchCredit && v.customerId === m.id && Array.isArray(v.lineItems) && v.lineItems.some(l => l.sport === sub.activity));
   const statuses = ['active', 'completed', 'expired', 'frozen'];
+  // Coach picker (v6.482): the PROFILE is the single place to set a sport's price / classes / coach.
+  // Saving here syncs the invoice line + subscription + ENROLLMENT together, so "Generate latest
+  // invoice" (which reads enrollments) always agrees with the invoice — no more drift to rebuild.
+  const _coachActiveES = (c) => c && (c.active === 'Y' || c.active === true || c.active === 1 || c.active === 'Yes');
+  const curCoach = (sub.coachId != null) ? sub.coachId : (line && line.coachId != null ? line.coachId : null);
+  const coachOpts = `<option value="">${t('— no coach', '— بدون مدرب')}</option>` + (state.coaches || []).filter(c => _coachActiveES(c) || String(c.id) === String(curCoach)).map(c => `<option value="${c.id}" ${String(c.id) === String(curCoach) ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
   showModal({
-    title: `✎ ${t('Edit subscription', 'تعديل الاشتراك')} · ${escapeHtml(sub.activity || '')}`,
+    title: `✎ ${t('Edit sport (price · classes · coach)', 'تعديل الرياضة (السعر · الحصص · المدرب)')} · ${escapeHtml(sub.activity || '')}`,
     body: `
       <div style="display:grid;gap:12px;font-size:13px">
+        <div class="text-mute" style="font-size:11px;line-height:1.5">${t('The profile is the source of truth — this updates the invoice line, commission and the enrollment together.', 'الملف هو المصدر — هذا يحدّث بند الفاتورة والعمولة والتسجيل معاً.')}</div>
         <label style="display:grid;gap:4px">${t('Total classes', 'إجمالي الحصص')}
           <input id="es-classes" type="number" min="0" value="${sub.totalClasses != null ? sub.totalClasses : 0}" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)"></label>
-        <label style="display:grid;gap:4px">${t('Price (QAR)', 'السعر')} <span class="text-mute" style="font-size:10px">${t('updates the invoice line + commission', 'يحدّث بند الفاتورة والعمولة')}</span>
+        <label style="display:grid;gap:4px">${t('Price (QAR)', 'السعر')} <span class="text-mute" style="font-size:10px">${t('updates the invoice line + commission + profile', 'يحدّث بند الفاتورة والعمولة والملف')}</span>
           <input id="es-price" type="number" min="0" step="0.01" value="${linePrice}" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)"></label>
+        <label style="display:grid;gap:4px">${t('Coach', 'المدرب')} <span class="text-mute" style="font-size:10px">${t('commission for this sport follows the coach', 'عمولة هذه الرياضة تتبع المدرب')}</span>
+          <select id="es-coach" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)">${coachOpts}</select></label>
         <label style="display:grid;gap:4px">${t('Status', 'الحالة')}
           <select id="es-status" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)">
             ${statuses.map(o => `<option value="${o}" ${(sub.status || 'active') === o ? 'selected' : ''}>${t(o.charAt(0).toUpperCase() + o.slice(1), o)}</option>`).join('')}</select></label>
@@ -23696,15 +23710,35 @@ window.editSubscription = function(memberId, sid) {
         const cls = parseInt(($('#es-classes') || {}).value) || 0;
         const price = parseFloat(($('#es-price') || {}).value);
         const st = ($('#es-status') || {}).value || 'active';
+        const coEl = $('#es-coach');
+        const newCoachId = coEl ? (coEl.value === '' ? null : (parseInt(coEl.value, 10) || coEl.value)) : undefined;
         sub.totalClasses = cls;
         sub.status = st;
-        if (!isNaN(price)) {
-          sub.amountPaid = price;
-          if (line) { line.price = price; if (Array.isArray(inv.lineItems)) { inv.amount = inv.lineItems.reduce((s, l) => s + (Number(l.price) || 0), 0); if (typeof stampUpdate === 'function') stampUpdate(inv); } }
+        if (newCoachId !== undefined) { sub.coachId = newCoachId; sub.coach = newCoachId != null ? coachName(newCoachId) : ''; }
+        if (!isNaN(price)) sub.amountPaid = price;
+        // Keep the invoice LINE (price + coach → commission + total) in sync with this profile edit.
+        if (line) {
+          if (!isNaN(price)) line.price = price;
+          if (newCoachId !== undefined) { line.coachId = newCoachId; line.coach = newCoachId != null ? coachName(newCoachId) : ''; }
+          if (Array.isArray(inv.lineItems)) { inv.amount = (typeof invoiceTotal === 'function') ? invoiceTotal(inv) : inv.lineItems.reduce((s, l) => s + (Number(l.price) || 0), 0); if (typeof stampUpdate === 'function') stampUpdate(inv); }
         }
-        if (typeof audit === 'function') audit('subscription.edit', 'member:' + m.id, `Edited ${sub.activity}: ${cls} classes · ${fmt(isNaN(price) ? linePrice : price)} · ${st}`, { memberId: m.id, sport: sub.activity });
+        // v6.482: the ENROLLMENT is the source of truth — sync it too, so "Generate latest invoice"
+        // (reads enrollments) always matches the invoice and the drift that used to need
+        // "Rebuild from profile" can't happen.
+        if (Array.isArray(m.enrollments)) {
+          const enr = m.enrollments.find(e => e.sport === sub.activity);
+          if (enr) {
+            enr.classes = cls;
+            if (!isNaN(price)) enr.price = price;
+            if (newCoachId !== undefined) enr.coachId = newCoachId;
+          } else if (st !== 'completed' && st !== 'expired' && st !== 'withdrawn') {
+            m.enrollments.push({ sport: sub.activity, coachId: (newCoachId !== undefined ? newCoachId : (sub.coachId != null ? sub.coachId : null)), classes: cls, price: isNaN(price) ? linePrice : price, start: sub.start || m.startDate || TODAY });
+          }
+        }
+        if (typeof stampUpdate === 'function') stampUpdate(m);
+        if (typeof audit === 'function') audit('subscription.edit', 'member:' + m.id, `Edited ${sub.activity}: ${cls} classes · ${fmt(isNaN(price) ? linePrice : price)} · ${st}${newCoachId !== undefined ? ' · coach ' + (coachName(newCoachId) || '—') : ''} (profile+invoice synced)`, { memberId: m.id, sport: sub.activity });
         closeModal();
-        confirmSaved(t('Subscription updated', 'تم تحديث الاشتراك'), { onOk: () => viewMember(m.id) });
+        confirmSaved(t('Sport updated (profile + invoice)', 'تم تحديث الرياضة (الملف والفاتورة)'), { onOk: () => viewMember(m.id) });
       } },
     ],
   });

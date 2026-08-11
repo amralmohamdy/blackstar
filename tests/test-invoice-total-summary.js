@@ -29,8 +29,10 @@ R.section('source wiring — invoiceTotal guard + subscription editor');
 {
   const src = H.readSrc();
   R.ok('invoiceTotal drops a sport-less line equal to the itemized sum', /REDUNDANT-SUMMARY GUARD/.test(src) && /hasSported && li && !li\.sport && Math\.abs\(price - sportedSum\) < 0\.5\) continue/.test(src));
-  R.ok('editSubscription lets an admin change classes / price / status', /window\.editSubscription = function/.test(src) && /Edit classes \/ price \/ status/.test(src));
-  R.ok('the editor syncs the invoice line price so commission follows', /line\.price = price;[\s\S]{0,120}inv\.amount = inv\.lineItems\.reduce/.test(src));
+  R.ok('editSubscription lets an admin change classes / price / coach / status', /window\.editSubscription = function/.test(src) && /id="es-price"/.test(src) && /id="es-coach"/.test(src));
+  // v6.482: the profile ✎ (editSubscription) is now the single price editor — it syncs the line price + coach, recomputes inv.amount, and (below) the enrollment.
+  // v6.483: inv.amount now uses the summary-guarded invoiceTotal (so a legacy redundant summary line can't double it).
+  R.ok('the editor syncs the invoice line price so commission follows', /if \(!isNaN\(price\)\) line\.price = price;/.test(src) && /inv\.amount = \(typeof invoiceTotal === 'function'\) \? invoiceTotal\(inv\)/.test(src));
 }
 
 R.done();

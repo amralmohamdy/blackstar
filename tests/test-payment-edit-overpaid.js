@@ -11,7 +11,8 @@ const src = H.readSrc();
 const ok = (n, c) => R.ok(n, c);
 
 R.section('live recompute reads the EDITED amounts');
-ok('the recompute listens to .pri-exist-amt', /querySelectorAll\('\.pri-price, \.pri-disc, \.pri-pay-m, \.pri-exist-amt'\)\.forEach\(inp => inp\.addEventListener\('input', _recomputeGroups\)/.test(src));
+// v6.482: prices are read-only now, so the recompute listens to the PAYMENT inputs only (still incl. .pri-exist-amt).
+ok('the recompute listens to .pri-exist-amt', /querySelectorAll\('\.pri-pay-m, \.pri-exist-amt'\)\.forEach\(inp => inp\.addEventListener\('input', _recomputeGroups\)/.test(src));
 ok('and to the remove checkbox', /querySelectorAll\('\.pri-exist-del'\)\.forEach\(cb => cb\.addEventListener\('change', _recomputeGroups\)/.test(src));
 ok('paid is computed LIVE from the inputs (not the stored sum)', /_paidLive = \(inv\) =>/.test(src) && /aEl && aEl\.value !== ''\) \? \(parseFloat\(aEl\.value\)/.test(src));
 ok('the Paid figure in the header updates live (grp-paid)', /class="grp-paid" data-grp/.test(src) && /paidEl\.textContent = fmt\(paid \+ pay\)/.test(src));

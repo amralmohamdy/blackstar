@@ -37,10 +37,15 @@ R.section('Leina (destination) — paid only the attended class, switch credit P
   R.ok('only the attended class is paid (≈42)', r.paid.some(l => l.kind === 'attended' && l.amt === 42), r.paid);
 }
 
-R.section('Jennifer (source) — the deduction pends too, keeping the books balanced');
+R.section('Jennifer (source) — v6.483 profit-split: the negative clawback is SKIPPED, she is NOT deducted');
 {
-  const r = JSON.parse(run(ctx, `JSON.stringify((computeAttendanceCommission(2,'2026-07').pendingLines||[]).filter(l=>/switch credit pending/.test(l.note||'')).map(l=>Math.round(l.amountBase)))`));
-  R.ok('the -417 source deduction is deferred (pending), not applied while frozen', r.includes(-417), r);
+  // Before v6.483 the source coach's -(price-aShare) clawback was applied (or deferred while frozen),
+  // leaving her NEGATIVE for a member she taught 0 of (the "why did my coach get deducted on a switch"
+  // bug). Now the negative switch line is skipped entirely — the source coach earns only her ATTENDED
+  // classes from the original invoice; the transferred value pays the DESTINATION coach.
+  const paid = JSON.parse(run(ctx, `JSON.stringify((computeAttendanceCommission(2,'2026-07').lines||[]).map(l=>Math.round(l.amountBase)))`));
+  const pend = JSON.parse(run(ctx, `JSON.stringify((computeAttendanceCommission(2,'2026-07').pendingLines||[]).map(l=>Math.round(l.amountBase)))`));
+  R.ok('the -417 source clawback is NOT applied anywhere (skipped, not deferred)', !paid.includes(-417) && !pend.includes(-417), { paid, pend });
 }
 
 R.section('source wiring');
