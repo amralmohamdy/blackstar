@@ -23,7 +23,7 @@ R.section('the DEST coach is credited the transferred bShare, once');
 ok('a synthesis loop credits the destination coach bShare', /for \(const sw of _unreconciledSwitchesFor\(mem\)\) \{[\s\S]{0,300}?String\(sw\.toCoachId\) !== String\(coachId\)/.test(src));
 ok('it uses the locked snapshot bShare', /const bShare = Math\.round\(\(Number\(sw\.snapshot\.bShare\) \|\| 0\) \* 100\) \/ 100;/.test(src));
 ok('it credits in the switch month / up-to window', /const inWindow = uptoDate \? \(sw\.date && sw\.date <= uptoDate\) : \(swMonth === monthKey\);/.test(src));
-ok('the line is tagged as an auto switched-in share', /note: 'switched-in share \(auto split\)'/.test(src));
+ok('the line is tagged as an auto switched-in share', /'switched-in share \(auto split\)'/.test(src));
 
 R.section('the member card flags an old-way switch too');
 ok('the card switched-status also reads m.sportSwitches', /const _switchedTo = s\.switchedAwayTo \|\| \(Array\.isArray\(m\.sportSwitches\)/.test(src));

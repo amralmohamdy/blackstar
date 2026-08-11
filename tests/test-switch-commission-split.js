@@ -15,7 +15,8 @@ const src = H.readSrc();
 const ok = (n, c) => R.ok(n, c);
 
 R.section('the negative clawback line is skipped, not deducted');
-ok('a negative switch-credit line earns nothing (skipped)', /if \(isSwitch && fee < 0\) continue;/.test(src));
+// v6.486: narrowed to switch-credit invoices only (a manual negative deduction still counts).
+ok('a negative switch-credit line earns nothing (skipped)', /if \(\(inv\.switchCredit \|\| inv\.activityType === 'switch-credit'\) && fee < 0\) continue;/.test(src));
 ok('the reason is documented (attendance-based, never credited the full fee)', /SWITCH PROFIT-SPLIT[\s\S]{0,400}?clawback/.test(src));
 
 R.section('a switched-away sub is capped to its attended classes');
@@ -27,7 +28,7 @@ ok('monthly true-up excludes a switched-away sub', /endMonth === monthKey && end
 ok('monthly pending excludes a switched-away sub', /if \(!ended && remaining > 0 && !settledMonth && !switchedAway\) \{\s*\n\s*pendingBase \+= perClass \* remaining;/.test(src));
 
 R.section('the POSITIVE (destination) switch line is untouched — the new coach still earns it');
-ok('the skip is guarded by fee < 0 (positive switch lines are NOT skipped)', /if \(isSwitch && fee < 0\) continue;/.test(src));
+ok('the skip is guarded by fee < 0 (positive switch lines are NOT skipped)', /\(inv\.switchCredit \|\| inv\.activityType === 'switch-credit'\) && fee < 0\) continue;/.test(src));
 ok('the switch-credit still routes through the flat-fee payment path for the positive line', /if \(isSwitch \|\| totalClasses <= 0\)/.test(src));
 
 R.done();

@@ -2424,6 +2424,15 @@ function viewMember(id) {
         const multi = memberInvs.length > 1;
         return [{ label: multi ? `🧾 Get Invoice (${memberInvs.length} sports)` : '🧾 Get Invoice', class: 'btn ghost', onclick: () => { closeModal(); printMemberInvoicePDF(id); } }];
       })(),
+      ...(() => {
+        // v6.488: "🔧 Rebuild invoice" — ONLY when the member has PAID subscriptions but NO membership
+        // invoice (deleted-invoice case), so Paid + coach commission wrongly read 0. Admin only.
+        if (currentRole() !== 'admin') return [];
+        const hasMemInv = (state.invoices || []).some(iv => !iv.deleted && iv.customerId === id && (iv.category || 'Membership') === 'Membership' && !iv.switchCredit && iv.activityType !== 'switch-credit' && (Number(iv.amount) || 0) > 0);
+        const paidSubs = (m.subscriptions || []).some(s => s.activity && (s.status || '').toLowerCase() !== 'withdrawn' && (Number(s.amountPaid) || 0) > 0);
+        if (hasMemInv || !paidSubs) return [];
+        return [{ label: '🔧 ' + t('Rebuild invoice', 'إعادة بناء الفاتورة'), class: 'btn ghost', onclick: () => window._regenInvoiceFromSubs(id) }];
+      })(),
       ...(isViewerRole() ? [] : (() => {
         // Show "Apply carry-forward" only when the member has an ACTIVE membership for a
         // sport AND eligible unused classes on the previous finished period for that sport
@@ -17997,7 +18006,10 @@ function _switchedUnreconciled() {
     if (m.deleted || !Array.isArray(m.sportSwitches)) continue;
     for (const sw of m.sportSwitches) {
       if (!sw || !sw.snapshot || sw.distributed) continue;   // multi-target distribution not handled here
-      const fromSub = (m.subscriptions || []).find(s => (s.activity || '') === sw.fromSport && s.coachId === sw.fromCoachId);
+      // v6.486: String-normalize coachId (a legacy string "5" must match a numeric 5) so this detection
+      // agrees with the compute-path helper — else auto-reconcile could miss a switch the salary treats
+      // as unreconciled, leaving a double-pay un-healed.
+      const fromSub = (m.subscriptions || []).find(s => (s.activity || '') === sw.fromSport && String(s.coachId) === String(sw.fromCoachId));
       if (!fromSub || fromSub.status === 'completed' || fromSub.switchedAwayTo) continue;   // already reconciled / gone
       out.push({ m, sw, snap: sw.snapshot, fromSub });
     }
@@ -18025,10 +18037,13 @@ window._applySwitchReconcile = function (memberId) {
     const inv = (state.invoices || []).find(v => !v.deleted && !v.switchCredit && v.customerId === m.id
       && (v.ref === invRef || (Array.isArray(v.lineItems) && v.lineItems.some(li => li.sport === sw.fromSport && li.coachId === sw.fromCoachId))));
     if (inv && Array.isArray(inv.lineItems)) {
-      const fl = inv.lineItems.find(li => li.sport === sw.fromSport && li.coachId === sw.fromCoachId);
-      if (fl) fl.price = aShare;
-      const tl = inv.lineItems.find(li => li.sport === sw.toSport && li.coachId === sw.toCoachId);
-      if (tl) tl.price = bShare;
+      // v6.487: split BOTH the price AND the class count — the source keeps what was attended, the
+      // destination gets the remaining classes — so the printed invoice reads e.g. "Karate 3 classes ·
+      // 100" + "Kick Boxing 9 classes · 300", not the old "Karate 12 classes · 100".
+      const fl = inv.lineItems.find(li => li.sport === sw.fromSport && String(li.coachId) === String(sw.fromCoachId));
+      if (fl) { fl.price = aShare; fl.classes = attended; }
+      const tl = inv.lineItems.find(li => li.sport === sw.toSport && String(li.coachId) === String(sw.toCoachId));
+      if (tl) { tl.price = bShare; tl.classes = remaining; }
       inv.amount = inv.lineItems.reduce((s, li) => s + (Number(li.price) || 0), 0);
       if (typeof stampUpdate === 'function') stampUpdate(inv);
     }
@@ -18054,13 +18069,87 @@ window._applySwitchReconcile = function (memberId) {
 window._autoReconcileSwitches = function () {
   try {
     const pending = _switchedUnreconciled();
-    if (!pending.length) return 0;
-    const memberIds = [...new Set(pending.map(r => r.m.id))];
+    // v6.487: also HEAL already-reconciled switches whose invoice line CLASS COUNT is stale — earlier
+    // reconciles split the price but left the source line at its original 12 classes (so the invoice
+    // read "Karate 12 classes · 100"). Sync each switched-away line's classes to its subscription.
+    const staleClassSubs = [];
+    for (const m of (state.members || [])) {
+      if (m.deleted) continue;
+      for (const s of (m.subscriptions || [])) {
+        if (!s.switchedAwayTo) continue;
+        const inv = (state.invoices || []).find(v => !v.deleted && !v.switchCredit && v.customerId === m.id
+          && Array.isArray(v.lineItems) && v.lineItems.some(li => li.sport === s.activity && String(li.coachId) === String(s.coachId)));
+        if (!inv) continue;
+        const li = inv.lineItems.find(x => x.sport === s.activity && String(x.coachId) === String(s.coachId));
+        if (li && (parseInt(li.classes) || 0) !== (parseInt(s.totalClasses) || 0)) staleClassSubs.push({ m, inv, li, s });
+      }
+    }
+    if (!pending.length && !staleClassSubs.length) return 0;
     try { if (typeof window.downloadBackup === 'function') window.downloadBackup(); } catch (_) {}
     let n = 0;
+    const memberIds = [...new Set(pending.map(r => r.m.id))];
     for (const id of memberIds) { try { n += (window._applySwitchReconcile(id) || 0); } catch (_) {} }
+    // Heal stale line class counts (skip any member just reconciled above — that path already fixed them).
+    for (const { m, inv, li, s } of staleClassSubs) {
+      if (memberIds.includes(m.id)) continue;
+      li.classes = parseInt(s.totalClasses) || 0;
+      if (typeof stampUpdate === 'function') stampUpdate(inv);
+      n++;
+    }
     return n;
   } catch (_) { return 0; }
+};
+// v6.488: REBUILD A MISSING MEMBERSHIP INVOICE from the member's subscriptions. Some members lost their
+// membership invoice (deleted during manual edits) — so Paid shows only stray product sales, the balance
+// is wrong, and every coach earns 0 (commission reads invoices). The SUBSCRIPTIONS still hold the truth
+// (per-sport coach / class count / amount paid), so this recreates ONE membership invoice from them and
+// records it as paid. Preview + backup-first + audited. Refuses to run if a membership invoice already
+// exists (that would double-bill) — this is a repair for the MISSING-invoice case only.
+window._regenInvoiceFromSubs = function (memberId) {
+  if (currentRole() !== 'admin') { toast(t('Admins only', 'للمشرفين فقط'), 'error'); return; }
+  const m = (state.members || []).find(x => x.id === memberId);
+  if (!m) return;
+  const subs = (m.subscriptions || []).filter(s => s.activity && (s.status || '').toLowerCase() !== 'withdrawn' && (Number(s.amountPaid) || 0) > 0);
+  if (!subs.length) { toast(t('No paid subscriptions to rebuild an invoice from', 'لا توجد اشتراكات مدفوعة'), 'error'); return; }
+  const existing = (state.invoices || []).filter(i => !i.deleted && i.customerId === m.id && (i.category || 'Membership') === 'Membership' && !i.switchCredit && i.activityType !== 'switch-credit' && (Number(i.amount) || 0) > 0);
+  const lines = subs.map(s => ({ sport: s.activity, coachId: s.coachId, coach: s.coach || (s.coachId != null ? coachName(s.coachId) : ''), classes: parseInt(s.totalClasses) || 0, price: Math.round((Number(s.amountPaid) || 0) * 100) / 100 }));
+  const total = Math.round(lines.reduce((a, l) => a + l.price, 0) * 100) / 100;
+  const date = subs.map(s => s.start).filter(Boolean).sort()[0] || m.startDate || TODAY;
+  const body = `
+    <div class="text-mute" style="font-size:12px;margin-bottom:8px">${escapeHtml(m.name)}</div>
+    ${existing.length ? `<div style="background:rgba(242,96,96,.10);border:1px solid rgba(242,96,96,.35);border-radius:8px;padding:9px 11px;font-size:11.5px;margin-bottom:10px;color:var(--red)">⚠ ${t('This member ALREADY has a membership invoice — rebuilding would DOUBLE-bill. Only use this when the invoice is missing.', 'لهذا العضو فاتورة اشتراك بالفعل — إعادة البناء ستُكرّر الفوترة. استخدمه فقط عند فقدان الفاتورة.')}</div>` : `<div style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);border-radius:8px;padding:9px 11px;font-size:11.5px;margin-bottom:10px">💡 ${t('No membership invoice on file — this rebuilds one from the subscriptions below and records it as paid, so Paid + Balance + coach commission become correct.', 'لا توجد فاتورة اشتراك — هذا يعيد بناءها من الاشتراكات أدناه ويسجّلها مدفوعة، فيصبح المدفوع والرصيد والعمولة صحيحة.')}</div>`}
+    <div class="table-wrap"><table style="font-size:12.5px;width:100%"><thead><tr><th style="text-align:left">${t('Sport', 'الرياضة')}</th><th>${t('Coach', 'المدرب')}</th><th class="text-right">${t('Classes', 'الحصص')}</th><th class="text-right">${t('Price', 'السعر')}</th></tr></thead><tbody>
+      ${lines.map(l => `<tr><td class="font-bold">${escapeHtml(l.sport)}</td><td>${escapeHtml(l.coach || '—')}</td><td class="text-right">${l.classes}</td><td class="text-right num">${fmt(l.price)}</td></tr>`).join('')}
+      <tr style="border-top:2px solid var(--border)"><td class="font-bold" colspan="3">${t('Total (marked paid)', 'الإجمالي (يُسجَّل مدفوعاً)')}</td><td class="text-right font-bold" style="color:var(--green)">${fmt(total)} QAR</td></tr>
+    </tbody></table></div>
+    <div class="text-mute" style="font-size:11px;margin-top:8px">${t('A backup is downloaded first. Dated', 'يتم تنزيل نسخة احتياطية أولاً. بتاريخ')} ${fmtDate(date)}.</div>`;
+  showModal({
+    title: '🔧 ' + t('Rebuild invoice from subscriptions', 'إعادة بناء الفاتورة من الاشتراكات'),
+    body,
+    actions: [
+      { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
+      { label: '🔧 ' + t('Rebuild', 'إعادة البناء'), class: 'btn primary', onclick: () => {
+        if (typeof assertCloudWritable === 'function' && !assertCloudWritable('rebuild this member’s invoice', 'إعادة بناء فاتورة العضو')) return;
+        try { if (typeof window.downloadBackup === 'function') window.downloadBackup(); } catch (_) {}
+        const inv = {
+          id: nextId(state.invoices), date, month: String(date).slice(0, 7),
+          ref: (typeof nextInvoiceRef === 'function' ? nextInvoiceRef() : undefined),
+          category: 'Membership', activityType: 'subscription', customerId: m.id, customerName: m.name,
+          coachId: lines[0].coachId, coach: lines[0].coach, amount: total, method: 'cash',
+          sport: (typeof sportListWithDuration === 'function' ? sportListWithDuration(lines) : null) || lines.map(l => l.sport).join(', '),
+          lineItems: lines,
+          payments: [{ amount: total, date, month: String(date).slice(0, 7), method: 'cash', note: 'Rebuilt from subscriptions' }],
+          amountPaid: total,
+        };
+        if (typeof stampUpdate === 'function') stampUpdate(inv);
+        state.invoices.push(inv);
+        subs.forEach(s => { if (!s.invoiceNumber) s.invoiceNumber = inv.ref; });   // link subs to the new invoice
+        if (typeof audit === 'function') audit('invoice.rebuildFromSubs', 'member:' + m.id, `Rebuilt membership invoice ${inv.ref} from ${lines.length} subscription(s) = ${fmt(total)} paid`, { memberId: m.id, total, lines: lines.length });
+        closeModal(); render();
+        if (typeof confirmSaved === 'function') confirmSaved(t('Invoice rebuilt', 'تمت إعادة بناء الفاتورة'), { onOk: () => viewMember(m.id) }); else toast(t('Invoice rebuilt', 'تم'));
+      } },
+    ],
+  });
 };
 window.switchReconcileCheck = function () {
   if (currentRole() !== 'admin') { toast(t('Admins only', 'للمسؤولين فقط'), 'error'); return; }
