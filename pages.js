@@ -18046,6 +18046,22 @@ window._applySwitchReconcile = function (memberId) {
   }
   return did;
 };
+// v6.485: AUTO-APPLY the switch reconciliation for EVERY member with an unreconciled switch, so the
+// split (old coach = classes attended, new coach = the remainder) AND the corrected member card happen
+// with NO manual "Switch reconciliation" screen. Backup-first (once), audited per member, idempotent
+// (a reconciled switch is never detected again). Called on load for admins — mirrors the v6.297
+// duplicate-subscription auto-heal. Returns the number of switches fixed.
+window._autoReconcileSwitches = function () {
+  try {
+    const pending = _switchedUnreconciled();
+    if (!pending.length) return 0;
+    const memberIds = [...new Set(pending.map(r => r.m.id))];
+    try { if (typeof window.downloadBackup === 'function') window.downloadBackup(); } catch (_) {}
+    let n = 0;
+    for (const id of memberIds) { try { n += (window._applySwitchReconcile(id) || 0); } catch (_) {} }
+    return n;
+  } catch (_) { return 0; }
+};
 window.switchReconcileCheck = function () {
   if (currentRole() !== 'admin') { toast(t('Admins only', 'للمسؤولين فقط'), 'error'); return; }
   const rows = _switchedUnreconciled();
