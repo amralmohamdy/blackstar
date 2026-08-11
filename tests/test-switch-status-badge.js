@@ -8,12 +8,13 @@ const src = H.readSrc();
 const ok = (n, c) => R.ok(n, c);
 
 R.section('status derivation flags a switched-away sub first');
-ok('switchedAwayTo wins over the re-derived active/completed status', /if \(s\.switchedAwayTo\) \{ label = 'switched'; cls = 'switched'; \}/.test(src));
-ok('it is checked BEFORE the isCompleted / end-date branches', /if \(s\.switchedAwayTo\) \{ label = 'switched'[\s\S]{0,120}else if \(isCompleted\)/.test(src));
+// v6.484: the destination is _switchedTo — from s.switchedAwayTo (reconciled) OR m.sportSwitches (old-way).
+ok('a switched sub is flagged "switched" (wins over active/completed)', /if \(_switchedTo\) \{ label = 'switched'; cls = 'switched'; \}/.test(src));
+ok('it is checked BEFORE the isCompleted / end-date branches', /if \(_switchedTo\) \{ label = 'switched'[\s\S]{0,120}else if \(isCompleted\)/.test(src));
 
 R.section('the "switched" badge renders with its own style');
 ok('a dedicated switched badge branch exists', /const badge = cls === 'switched'/.test(src));
-ok('the badge shows 🔀 switched → the new sport', /🔀 \$\{t\('switched', 'محوّل'\)\} → \$\{escapeHtml\(s\.switchedAwayTo\)\}/.test(src));
+ok('the badge shows 🔀 switched → the new sport', /🔀 \$\{t\('switched', 'محوّل'\)\} → \$\{escapeHtml\(_switchedTo\)\}/.test(src));
 ok('the tooltip explains the coach keeps the attended classes', /the coach keeps the classes attended here; the remaining classes moved to the new sport/.test(src));
 
 R.done();

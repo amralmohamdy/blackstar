@@ -19,7 +19,8 @@ ok('a negative switch-credit line earns nothing (skipped)', /if \(isSwitch && fe
 ok('the reason is documented (attendance-based, never credited the full fee)', /SWITCH PROFIT-SPLIT[\s\S]{0,400}?clawback/.test(src));
 
 R.section('a switched-away sub is capped to its attended classes');
-ok('a switchedAway flag is derived from the sub', /const switchedAway = !!\(sub && sub\.switchedAwayTo\);/.test(src));
+// v6.484: switchedAway also fires for an OLD-WAY switch recorded only in m.sportSwitches.
+ok('a switchedAway flag is derived from the sub (+ old-way switches)', /const switchedAway = !!\(sub && sub\.switchedAwayTo\) \|\| \(!!sub && !!mem && _memberSwitchedAwayFrom\(mem, sub\.activity, sub\.coachId\)\);/.test(src));
 ok('settlement true-up excludes a switched-away sub', /ended && remaining > 0 && attended > 0 && !settledMonth && !switchedAway\)/.test(src));
 ok('settlement pending excludes a switched-away sub', /!ended && remaining > 0 && !settledMonth && !switchedAway\) \{  \/\/ still active/.test(src));
 ok('monthly true-up excludes a switched-away sub', /endMonth === monthKey && ended && remaining > 0 && attendedAll > 0 && !settledMonth && !switchedAway\)/.test(src));
