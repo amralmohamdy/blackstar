@@ -5964,7 +5964,7 @@ window.editMemberPricing = function(memberId) {
     return `
       <div class="card" data-grp="${key}" style="background:var(--surface-2);padding:10px 12px;margin-bottom:10px">
         <div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;color:var(--text-mute);margin-bottom:6px;gap:8px">
-          <span style="font-weight:700;${inv ? '' : 'color:var(--accent-2)'}">${inv ? '🧾 ' + (inv.ref ? escapeHtml(inv.ref) : 'invoice #' + inv.id) + (inv.date ? ' · ' + fmtDate(inv.date) : '') : '⚠ ' + t('not invoiced yet — Generate an invoice first, then collect', 'بلا فاتورة — أنشئ الفاتورة أولاً ثم حصّل')}</span>
+          <span style="font-weight:700;${inv ? '' : 'color:var(--accent-2)'}">${inv ? '🧾 ' + (inv.ref ? escapeHtml(inv.ref) : 'invoice #' + inv.id) + (inv.date ? ' · ' + fmtDate(inv.date) : '') : '🧾 ' + t('no invoice yet — one is created automatically when you collect a payment below', 'بلا فاتورة بعد — تُنشأ تلقائياً عند تحصيل دفعة أدناه')}</span>
           <span style="font-size:13px">${t('Paid', 'المدفوع')}: <b class="grp-paid" data-grp="${key}">${fmt(paid)}</b> · ${t('Balance', 'المتبقي')}: <b class="grp-bal" data-grp="${key}" style="color:${bal > 0 ? 'var(--accent-2)' : 'var(--green)'}">${fmt(bal)}</b></span>
         </div>
         ${sportsHtml}
@@ -6056,10 +6056,14 @@ window.editMemberPricing = function(memberId) {
         };
         for (const [key, g] of groups.entries()) {
           const newPay = groupPays[key] || 0;
-          // v6.483: a payment against a sport that has NO invoice yet would be SILENTLY DROPPED — this
-          // payments-only screen never creates invoices (the profile/Generate does). Block it with
-          // guidance instead of taking the money and losing it.
-          if (newPay > 0 && !g.inv) { toast(t('This sport isn’t invoiced yet — use “Generate latest invoice” first, then collect the payment', 'هذه الرياضة بلا فاتورة — أنشئ الفاتورة أولاً ثم سجّل الدفعة'), 'error'); return; }
+          // v6.493: a payment for a not-yet-invoiced sport used to be BLOCKED here ("Generate an invoice
+          // first"), which stranded members whose membership invoice was deleted — their Paid stuck wrong
+          // and Installments couldn't fix it (Alreem: Paid stuck at a stray 20). Now we let it through:
+          // applyPricingSafe AUTO-CREATES the invoice from the PROFILE (the priced sports on this screen)
+          // so the payment always lands. Only stop if there is genuinely nothing priced to invoice.
+          if (newPay > 0 && !g.inv && !g.rows.some(r => (Number(r.price) || 0) > 0)) {
+            toast(t('Set a price for this sport in the member profile first, then collect the payment', 'حدّد سعر هذه الرياضة في ملف العضو أولاً ثم سجّل الدفعة'), 'error'); return;
+          }
           const gNet = rowVals.filter(rv => (rv.r.inv ? String(rv.r.inv.id) : 'new') === key)
             .reduce((s, rv) => s + Math.max(0, rv.price - rv.disc), 0);
           const editedPaid = g.inv ? _editedPaidFor(g.inv.id) : 0;
@@ -6273,12 +6277,40 @@ window.editMemberPricing = function(memberId) {
     // Append the NEW payment per group/invoice — ONE clean ledger row PER method used
     // (a split payment = several rows, same date). Never re-splits existing rows.
     for (const [key, g] of groups.entries()) {
-      const inv = g.inv || (g.rows[0] && g.rows[0].inv);
-      if (!inv) continue;
+      let inv = g.inv || (g.rows[0] && g.rows[0].inv);
       const d = dateFor(key);
       const meta = groupPayMeta[key] || {};
       const methods = meta.methods || {};
       const paySport = meta.sport || undefined;   // tag every method-row of this collection to the chosen sport
+      const groupNewPay = Object.values(methods).reduce((s, v) => s + Math.max(0, Number(v) || 0), 0);
+      // v6.493: collecting a payment for a sport with NO invoice yet → build one from the PROFILE
+      // (the priced sports shown on this screen) so the payment has a home instead of being dropped.
+      // This is what lets the Installments screen FIX a member whose membership invoice was deleted
+      // (Alreem) — the admin just records what was actually paid and Paid/Balance become correct.
+      if (!inv && groupNewPay > 0) {
+        const liList = g.rows.filter(r => (Number(r.price) || 0) > 0 || (Number(r.disc) || 0) > 0).map(r => ({
+          sport: r.sport, coachId: r.coachId, coach: r.coachId != null ? coachName(r.coachId) : '',
+          classes: (r.classes != null) ? r.classes : ((r.enr && r.enr.classes != null) ? r.enr.classes : ((r.sub && r.sub.totalClasses != null) ? r.sub.totalClasses : null)),
+          price: Math.max(0, (Number(r.price) || 0) - (Number(r.disc) || 0)), issueDate: d,
+        }));
+        if (liList.length) {
+          const amt0 = Math.round(liList.reduce((s, l) => s + (Number(l.price) || 0), 0) * 100) / 100;
+          inv = {
+            id: nextId(state.invoices), customerId: m.id, customerType: 'member', category: 'Membership', activityType: 'subscription',
+            sport: (typeof sportListWithDuration === 'function' ? sportListWithDuration(liList) : null) || liList.map(l => l.sport).join(', '),
+            description: liList.map(l => l.sport).join(', '), date: d, month: String(d).slice(0, 7),
+            amount: amt0, discount: 0, amountPaid: 0, method: '',
+            coachId: liList[0] ? liList[0].coachId : null,
+            ref: (typeof nextInvoiceRef === 'function' ? nextInvoiceRef() : undefined),
+            lineItems: liList, payments: [],
+          };
+          if (typeof stampUpdate === 'function') stampUpdate(inv);
+          state.invoices.push(inv);
+          g.inv = inv;
+          g.rows.forEach(r => { if (r.inv == null) r.inv = inv; if (r.sub && !r.sub.invoiceNumber) r.sub.invoiceNumber = inv.ref; });
+        }
+      }
+      if (!inv) continue;
       let any = false;
       for (const [mk, mv] of Object.entries(methods)) {
         const amt = Math.round((Number(mv) || 0) * 100) / 100;
