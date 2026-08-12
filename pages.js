@@ -23011,7 +23011,18 @@ window.switchSport = function(memberId) {
         // won't see the switched-in sport as "missing" and re-charge it a full membership.
         const _remainingCls = skipReconciliation ? (from.classes || 0) : Math.max(0, totalClasses - attendedA);
         const _destPrice = skipReconciliation ? (from.price || 0) : bShare;
-        const targetIdx = m.enrollments.findIndex(e => e.sport === from.sport && e.coachId === from.coachId);
+        // v6.494: coachId can be a string on one record and a number on another (imported data), so
+        // ALWAYS compare with String() — otherwise the enrollment / source-sub / dest-sub below aren't
+        // found, the source sport is never marked "switched away", the destination never gets the
+        // REMAINING classes, and the old coach keeps earning the full fee. This is the switch bug.
+        const _sameCoach = (a, b) => String(a) === String(b);
+        // v6.494: `from` is a LIVE reference INTO m.enrollments — the enrollment update just below
+        // rewrites its .sport/.coachId to the destination. Capture the ORIGINAL source sport/coach
+        // NOW, so the subscription lookup afterwards still finds the Karate sub (not the now-Boxing
+        // enrollment). Without this the source sub was NEVER marked "switched away", the destination
+        // sub was NEVER created/sized, and the card's remaining classes were wrong. THE switch bug.
+        const _fromSport = from.sport, _fromCoachId = from.coachId;
+        const targetIdx = m.enrollments.findIndex(e => e.sport === _fromSport && _sameCoach(e.coachId, _fromCoachId));
         if (targetIdx >= 0) {
           m.enrollments[targetIdx].sport = toSport;
           m.enrollments[targetIdx].coachId = finalToCoachId;
@@ -23025,15 +23036,23 @@ window.switchSport = function(memberId) {
         // attended, completed) and size/repurpose the destination subscription to the remaining
         // classes + transferred value, so the card and payroll read one split package.
         if (!skipReconciliation && Array.isArray(m.subscriptions)) {
-          const srcSub = m.subscriptions.find(s => (s.activity || '') === from.sport && s.coachId === from.coachId && s.status !== 'completed' && !s.switchedAwayTo);
+          const srcSub = m.subscriptions.find(s => (s.activity || '') === _fromSport && _sameCoach(s.coachId, _fromCoachId) && s.status !== 'completed' && !s.switchedAwayTo);
           if (srcSub) {
             srcSub.status = 'completed';
             srcSub.switchedAwayTo = toSport;
             srcSub.switchedAt = switchDate;
+            // v6.494: set the source sub's PAID to the earned share (aShare) so any profile-based read
+            // (Installments / Rebuild) shows the split total correctly. Do NOT shrink totalClasses here:
+            // this path keeps the FULL original invoice + a switch-credit line, so under the attendance
+            // basis the per-class rate = base/total must stay base/ORIGINAL-total (800/8=100). Capping
+            // total to attended would make it 800/3 and pay the old coach the FULL fee. (Only the
+            // _applySwitchReconcile path caps total — because it ALSO shrinks the invoice line to aShare.)
+            srcSub.amountPaid = aShare;
           }
-          const destSub = m.subscriptions.find(s => (s.activity || '') === toSport && s.coachId === finalToCoachId);
+          const destSub = m.subscriptions.find(s => (s.activity || '') === toSport && _sameCoach(s.coachId, finalToCoachId));
           if (destSub) {
             destSub.totalClasses = _remainingCls;
+            destSub.amountPaid = _destPrice;
             destSub.switchFunded = true;
           } else if (srcSub) {
             m.subscriptions.push({ activity: toSport, coachId: finalToCoachId, totalClasses: _remainingCls,
@@ -23042,8 +23061,9 @@ window.switchSport = function(memberId) {
           }
         }
 
-        // If the old sport was the member's PRIMARY sport (legacy fields), update those too
-        if (m.sport === from.sport && m.coachId === from.coachId) {
+        // If the old sport was the member's PRIMARY sport (legacy fields), update those too.
+        // Use the CAPTURED source sport/coach (from.* was mutated by the enrollment update above).
+        if (m.sport === _fromSport && _sameCoach(m.coachId, _fromCoachId)) {
           m.sport = toSport;
           m.coachId = finalToCoachId;
         }

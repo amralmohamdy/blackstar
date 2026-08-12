@@ -29,7 +29,7 @@ R.section('Switch carries classes + price to the destination sport (source compl
   R.ok('the destination enrollment takes the TRANSFERRED price (bShare)', /_destPrice = skipReconciliation \? \(from\.price \|\| 0\) : bShare/.test(src));
   R.ok('the destination is flagged switchedInto (never re-billed as a fresh membership)', /switchedInto: true/.test(src));
   R.ok('the source subscription is marked completed + switchedAwayTo', /srcSub\.status = 'completed'[\s\S]{0,80}switchedAwayTo = toSport/.test(src));
-  R.ok('the destination subscription is sized to the remaining classes + switchFunded', /destSub\.totalClasses = _remainingCls[\s\S]{0,60}switchFunded = true/.test(src));
+  R.ok('the destination subscription is sized to the remaining classes + switchFunded', /destSub\.totalClasses = _remainingCls[\s\S]{0,140}switchFunded = true/.test(src));
 }
 
 R.done();
