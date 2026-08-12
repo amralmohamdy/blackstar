@@ -917,6 +917,23 @@ window.runSyncCheck = async function () {
 // The only values the Members status filter accepts. Anything else in a saved
 // filter is stale and gets dropped on load.
 const MEMBER_STATUS_FILTERS = ['Active', 'Completed', 'Frozen', 'Expired', 'Withdrawn', 'Archived'];
+// v6.489: the status of ONE subscription (not the member overall), used so a Sport+Status filter
+// combination means "an ACTIVE Summer Camp" rather than "an active member who also has Summer Camp".
+// Mirrors the member-card per-sub status derivation (switched > withdrawn > frozen > completed >
+// expired > active), using LIVE attendance for the completion check.
+function _subFilterStatus(m, s) {
+  if (!s) return '';
+  if (s.switchedAwayTo) return 'Switched';                                   // switched away — not Active
+  if ((s.status || '').toLowerCase() === 'withdrawn') return 'Withdrawn';
+  if (typeof isMemberFrozenAt === 'function' && isMemberFrozenAt(m, TODAY)) return 'Frozen';
+  const total = parseInt(s.totalClasses) || 0;
+  const att = (typeof liveAttendanceCount === 'function') ? (liveAttendanceCount(m, s.activity, s.start, s.end).y || 0) : (parseInt(s.attendedClasses) || 0);
+  if (total > 0 && att >= total) return 'Completed';
+  if (s.end && s.end < TODAY) return 'Expired';
+  if (s.start && s.end) return 'Active';
+  const sl = (s.status || '').toLowerCase();
+  return sl === 'completed' ? 'Completed' : sl === 'expired' ? 'Expired' : 'Active';
+}
 // Clicking a status chip in the Members header filters the table to that status.
 // Clicking the same chip again clears the filter (toggle). Persists the filter and
 // re-renders the Members page.
@@ -1213,13 +1230,25 @@ PAGES.members = (main) => {
         if (!hit && q.length >= 3 && !/\d/.test(q)) hit = fuzzyMatch(m.name, q) || fuzzyMatch(m.nameArabic, q);
         if (!hit) return false;
       }
-      // Status filter (multi-select): for non-archived members, match any chosen status.
+      // Status + Sport filters. v6.489: when BOTH are chosen they must agree on the SAME sport —
+      // "Active + Summer Camp" means an ACTIVE Summer Camp subscription, not "an active member who ALSO
+      // (once) did Summer Camp" (the bug: Muna had an EXPIRED Summer Camp + an ACTIVE Gymnastic and
+      // wrongly matched). So a status filter is applied to the member OVERALL only when no sport filter
+      // is set; with a sport filter it's applied PER-SPORT below.
       // ("Expiring within N days" lives in its own Expiry dropdown, not here.)
-      if (statusSel.length && !m.deleted && !statusSel.includes(memberStatus(m))) return false;
-      // Sport filter (multi-select): keep if the member is in ANY selected sport
-      if (f.sports && f.sports.length) {
-        const sports = new Set([m.sport, ...((m.enrollments||[]).map(e=>e.sport))].filter(Boolean));
-        if (!f.sports.some(sp => sports.has(sp))) return false;
+      const hasSportFilter = !!(f.sports && f.sports.length);
+      if (statusSel.length && !m.deleted && !hasSportFilter && !statusSel.includes(memberStatus(m))) return false;
+      if (hasSportFilter) {
+        const subs = (m.subscriptions || []).filter(s => s.activity && f.sports.includes(s.activity));
+        if (statusSel.length) {
+          // Combined: keep only if the member has a subscription for a selected sport whose OWN status
+          // matches a selected status.
+          if (!subs.some(s => statusSel.includes(_subFilterStatus(m, s)))) return false;
+        } else {
+          // Sport only: keep if the member has a sub for, or is currently enrolled in, any selected sport.
+          const enrolled = new Set([m.sport, ...((m.enrollments || []).map(e => e.sport))].filter(Boolean));
+          if (!subs.length && !f.sports.some(sp => enrolled.has(sp))) return false;
+        }
       }
       // Enrollment-month filter (multi-select): keep members who STARTED a membership
       // (any subscription/enrollment start date) in ANY selected month.
@@ -23823,6 +23852,19 @@ window.editSubscription = function(memberId, sid) {
         const newCoachId = coEl ? (coEl.value === '' ? null : (parseInt(coEl.value, 10) || coEl.value)) : undefined;
         sub.totalClasses = cls;
         sub.status = st;
+        // v6.490: For a Summer Camp the class-day LIMIT comes from the duration LABEL
+        // (subClassLimit maps "1 week"→5, "1 month"→22, …) and IGNORES totalClasses. So
+        // editing the class count here had NO effect on a PRESET camp — e.g. Hossam's
+        // 7-working-day camp (5→13 Aug, 415 QAR) was saved as "1 week" (=5 class-days), so
+        // it stayed 5/5 and wrongly read "completed". When the edited count no longer matches
+        // the preset label's class-days, mark the camp CUSTOM so the edited count is what
+        // subClassLimit — and therefore the denominator + status — actually use (5/7 → active).
+        if ((sub.activity || '') === SUMMER_CAMP) {
+          const labelClasses = (sub.durationLabel && sub.durationLabel !== 'Custom'
+            && typeof campDaysForLabel === 'function' && typeof campClassCount === 'function')
+            ? campClassCount(campDaysForLabel(sub.durationLabel)) : null;
+          if (labelClasses == null || labelClasses !== cls) sub.durationLabel = 'Custom';
+        }
         if (newCoachId !== undefined) { sub.coachId = newCoachId; sub.coach = newCoachId != null ? coachName(newCoachId) : ''; }
         if (!isNaN(price)) sub.amountPaid = price;
         // Keep the invoice LINE (price + coach → commission + total) in sync with this profile edit.
@@ -23840,6 +23882,8 @@ window.editSubscription = function(memberId, sid) {
             enr.classes = cls;
             if (!isNaN(price)) enr.price = price;
             if (newCoachId !== undefined) enr.coachId = newCoachId;
+            // v6.490: keep the camp duration in sync so the enrollment-driven invoice agrees.
+            if ((sub.activity || '') === SUMMER_CAMP && sub.durationLabel === 'Custom') enr.durationLabel = 'Custom';
           } else if (st !== 'completed' && st !== 'expired' && st !== 'withdrawn') {
             m.enrollments.push({ sport: sub.activity, coachId: (newCoachId !== undefined ? newCoachId : (sub.coachId != null ? sub.coachId : null)), classes: cls, price: isNaN(price) ? linePrice : price, start: sub.start || m.startDate || TODAY });
           }
@@ -25451,6 +25495,41 @@ PAGES.mymembership = (main) => {
         <button class="btn ghost" onclick="promptPasswordChange(false)">🔐 ${t('Change password', 'تغيير كلمة المرور')}</button>
       </div>
     </div>
+    ${(function () {
+      // Family login (v6.492): a "smart" overview of EVERY family member at the top of My
+      // Membership — status, sport(s), classes left / expiry, dues — each card switches the
+      // active member (setActiveMember) so their full details render below. Active = highlighted.
+      // Shown only when this login covers more than one member.
+      if (typeof effectiveMemberIds !== 'function') return '';
+      const famIds = effectiveMemberIds();
+      if (famIds.length <= 1) return '';
+      const totalDue = famIds.reduce((s, id) => s + ((typeof memberOutstanding === 'function') ? memberOutstanding(id) : 0), 0);
+      const cards = famIds.map(id => {
+        const fm = state.members.find(x => x.id === id); if (!fm) return '';
+        const st = memberStatus(fm);
+        const stCol = st === 'Active' ? 'var(--green)' : st === 'Frozen' ? 'var(--blue)' : st === 'Withdrawn' ? 'var(--text-mute)' : 'var(--red)';
+        const sportsArr = (fm.enrollments && fm.enrollments.length ? fm.enrollments.map(e => e.sport) : (fm.subscriptions || []).map(s => s.activity)).filter(Boolean);
+        const uniqSports = Array.from(new Set(sportsArr));
+        const due = (typeof memberOutstanding === 'function') ? memberOutstanding(id) : 0;
+        const exp = fm.expiryDate ? daysUntil(fm.expiryDate) : null;
+        const isActive = id === m.id;
+        return `<button onclick="setActiveMember(${id})" style="text-align:start;cursor:pointer;flex:1 1 150px;min-width:150px;padding:10px 12px;border-radius:10px;border:1px solid ${isActive ? 'var(--accent)' : 'var(--border)'};background:${isActive ? 'rgba(245,158,11,.10)' : 'var(--surface)'};color:var(--text)">
+          <div style="display:flex;align-items:center;gap:6px"><b style="font-size:13px">${escapeHtml(fm.name)}</b>${isActive ? ` <span class="badge" style="font-size:8px;background:var(--accent);color:#fff">${t('viewing', 'معروض')}</span>` : ''}</div>
+          <div style="font-size:11px;color:${stCol};font-weight:600;margin-top:2px">${t(st, st)}</div>
+          <div class="text-mute" style="font-size:11px;margin-top:2px">${uniqSports.length ? escapeHtml(uniqSports.join(', ')) : t('no sport', 'لا رياضة')}</div>
+          <div style="font-size:11px;margin-top:3px">${exp != null ? (exp < 0 ? `<span style="color:var(--red)">${t('expired', 'منتهٍ')}</span>` : `${exp} ${t('days left', 'يوم متبقٍ')}`) : ''}${due > 0 ? ` · <span style="color:var(--red)">${fmt(due)} ${t('due', 'مستحق')}</span>` : ` · <span style="color:var(--green)">${t('paid', 'مدفوع')}</span>`}</div>
+        </button>`;
+      }).join('');
+      const famLabel = (typeof effectiveFamilyId === 'function' && effectiveFamilyId() != null && typeof familyName === 'function') ? familyName(effectiveFamilyId()) : t('My Family', 'عائلتي');
+      return `<div class="card" style="margin-bottom:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+          <div style="font-weight:800;font-size:15px">👨‍👩‍👧 ${escapeHtml(famLabel)} <span class="text-mute" style="font-size:12px;font-weight:500">· ${famIds.length} ${t('members', 'أفراد')}</span></div>
+          <div style="font-size:12px">${t('Family balance', 'رصيد العائلة')}: <b style="color:${totalDue > 0 ? 'var(--red)' : 'var(--green)'}">${fmt(totalDue)}</b></div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">${cards}</div>
+        <div class="text-mute" style="font-size:11px;margin-top:8px">${t('Tap a member to see their full details below.', 'اضغط على فرد لعرض تفاصيله كاملة بالأسفل.')}</div>
+      </div>`;
+    })()}
     ${(status === 'Expired' || (dLeft != null && dLeft >= 0 && dLeft <= 7)) ? `
     <div class="card" style="margin-bottom:16px;border:1px solid ${status === 'Expired' ? 'rgba(239,68,68,.5)' : 'rgba(245,158,11,.5)'};background:${status === 'Expired' ? 'rgba(239,68,68,.08)' : 'rgba(245,158,11,.08)'}">
       <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
@@ -26571,13 +26650,28 @@ window.generateMemberLogins = function() {
   });
 };
 
+// v6.491: the coach name(s) a mapping is linked to — comma-joined for a multi-coach login.
+function _coachMapNames(r) {
+  const ids = (r && Array.isArray(r.coachIds) && r.coachIds.length) ? r.coachIds : (r && r.coachId != null ? [r.coachId] : []);
+  return ids.map(id => coachName(id)).filter(Boolean).join(', ');
+}
+// v6.492: the label for a student mapping — a family name (+ member count) for a family
+// login, else the single member's name.
+function _memberMapLabel(r) {
+  if (r && r.familyId != null && typeof familyName === 'function') {
+    const n = (typeof familyMembers === 'function') ? familyMembers(r.familyId).length : 0;
+    return `👨‍👩‍👧 ${familyName(r.familyId)}${n ? ` · ${n}` : ''}`;
+  }
+  const m = state.members.find(x => x.id === (r && r.memberId));
+  return m ? m.name : '';
+}
 function userRolesListHtml() {
   const map = (state.settings && state.settings.userRoles) || {};
   let emails = Object.keys(map);
   if (!emails.length) return `<div class="text-mute" style="font-size:12px;padding:8px 0">No mappings yet — every signed-in account is currently <b>Admin</b>. Add your admin email plus your coach/member logins below.</div>`;
   const linkedName = (r) => {
-    if (r.role === 'coach') return coachName(r.coachId) || '';
-    if (r.role === 'student') { const m = state.members.find(x => x.id === r.memberId); return m ? m.name : ''; }
+    if (r.role === 'coach') return _coachMapNames(r) || '';
+    if (r.role === 'student') return _memberMapLabel(r);
     return '';
   };
   // Search: match email, linked name, or role label (v6.330 UX)
@@ -26589,8 +26683,8 @@ function userRolesListHtml() {
   const rowHtml = (e) => {
     const r = map[e] || {};
     let linked;
-    if (r.role === 'coach') linked = escapeHtml(coachName(r.coachId) || '— pick a coach —');
-    else if (r.role === 'student') { const m = state.members.find(x => x.id === r.memberId); linked = m ? escapeHtml(m.name) : '<span class="text-mute">— pick a member —</span>'; }
+    if (r.role === 'coach') linked = escapeHtml(_coachMapNames(r) || '— pick a coach —');
+    else if (r.role === 'student') { const lbl = _memberMapLabel(r); linked = lbl ? escapeHtml(lbl) : '<span class="text-mute">— pick a member —</span>'; }
     else if (r.role === 'receptionist') linked = '<span class="text-mute">front-desk, read-only finance</span>';
     else linked = '<span class="text-mute">full access</span>';
     return `<tr style="border-top:1px solid var(--border)${r.disabled ? ';opacity:.55' : ''}">
@@ -26645,8 +26739,8 @@ window.lookupUserRole = function() {
   const mapped = map[email];
   const r = roleForEmail(email);
   let linked = '';
-  if (r.role === 'coach') linked = ' · ' + (coachName(r.coachId) || 'unlinked coach');
-  else if (r.role === 'student') { const m = state.members.find(x => x.id === r.memberId); linked = m ? ' · ' + escapeHtml(m.name) : (looksPhone ? ' · no member matches this mobile' : ''); }
+  if (r.role === 'coach') linked = ' · ' + (_coachMapNames(r) || 'unlinked coach');
+  else if (r.role === 'student') { const lbl = _memberMapLabel(r); linked = lbl ? ' · ' + escapeHtml(lbl) : (looksPhone ? ' · no member matches this mobile' : ''); }
   const how = mapped ? 'mapped explicitly' : (isMemberEmail(email) ? 'member mobile login' : 'not mapped → default');
   const revoked = mapped && mapped.disabled ? ' <span class="badge" style="background:var(--red);color:#fff">revoked</span>' : '';
   const upd = (mapped && mapped.updatedAt) ? `<div class="text-mute" style="font-size:11px;margin-top:2px">🕓 ${t('Last updated by', 'آخر تعديل بواسطة')} <b>${escapeHtml(mapped.updatedByName || mapped.updatedBy)}</b> · ${fmtDateTime(mapped.updatedAt)}</div>` : '';
@@ -26767,6 +26861,12 @@ window.editUserRole = function(email) {
   const existing = email ? map[email] : null;
   const role0 = (existing && existing.role) || 'coach';
   const coachSel = id => (state.coaches || []).map(c => `<option value="${c.id}" ${id === c.id ? 'selected' : ''}>${escapeHtml(c.name)}${isCoachActive(c) ? '' : ' (inactive)'}</option>`).join('');
+  // v6.491: a login can be linked to MULTIPLE coaches (tick several) and switch between
+  // them from the sidebar. Pre-tick the existing coachIds (or the legacy single coachId).
+  const _selCoachIds = (existing && Array.isArray(existing.coachIds) && existing.coachIds.length)
+    ? existing.coachIds.map(String)
+    : (existing && existing.coachId != null ? [String(existing.coachId)] : []);
+  const coachChecks = (state.coaches || []).map(c => `<label style="display:flex;align-items:center;gap:8px;padding:4px 2px;font-weight:400;cursor:pointer"><input type="checkbox" class="ur-coach-cb" value="${c.id}" ${_selCoachIds.includes(String(c.id)) ? 'checked' : ''}> ${escapeHtml(c.name)}${isCoachActive(c) ? '' : ' <span class="text-mute">(inactive)</span>'}</label>`).join('');
   const preMember = (existing && existing.memberId != null) ? (state.members || []).find(m => m.id === existing.memberId) : null;
   const memberSel = () => '';
   showModal({
@@ -26781,11 +26881,16 @@ window.editUserRole = function(email) {
             <option value="coach" ${role0 === 'coach' ? 'selected' : ''}>Coach</option>
             <option value="student" ${role0 === 'student' ? 'selected' : ''}>Student / member</option>
           </select></div>
-        <div class="field" id="ur-coach-wrap" style="display:${role0 === 'coach' ? 'block' : 'none'}"><label>Which coach</label><select id="ur-coach">${coachSel(existing && existing.coachId)}</select></div>
+        <div class="field" id="ur-coach-wrap" style="display:${role0 === 'coach' ? 'block' : 'none'}"><label>Which coach(es) <span class="text-mute" style="font-size:10px">— tick one or more; a login linked to several coaches switches between them from the sidebar</span></label>
+          <div style="max-height:200px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:6px 10px;background:var(--surface-2)">${coachChecks}</div></div>
         <div class="field" id="ur-member-wrap" style="display:${role0 === 'student' ? 'block' : 'none'};position:relative"><label>Which member</label>
           <input id="ur-member-search" autocomplete="off" placeholder="Type a name, mobile or email…" value="${preMember ? escapeHtml(preMember.name) : ''}" />
           <input type="hidden" id="ur-member" value="${preMember ? preMember.id : ''}" />
           <div id="ur-member-results" style="position:absolute;left:0;right:0;z-index:60;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-top:2px;max-height:220px;overflow:auto;display:none;box-shadow:0 8px 24px rgba(0,0,0,.18)"></div>
+          <div style="margin-top:10px"><label style="font-size:11px" class="text-mute">👨‍👩‍👧 ${t('… or link a whole FAMILY — one login sees & switches between all its members', '… أو اربط عائلة كاملة — لوجن واحد يرى ويبدّل بين كل أفرادها')}</label>
+            <select id="ur-family" style="width:100%"><option value="">${t('— single member above —', '— عضو واحد أعلاه —')}</option>${(state.families || []).slice().sort((a, b) => familyName(a.id).localeCompare(familyName(b.id))).map(f => `<option value="${f.id}" ${existing && existing.familyId === f.id ? 'selected' : ''}>${escapeHtml(familyName(f.id))} · ${familyMembers(f.id).length} ${t('members', 'عضو')}</option>`).join('')}</select>
+            <div class="text-mute" style="font-size:10px;margin-top:3px">${t('Pick a family to give the login access to every member in it (siblings added later are included automatically).', 'اختر عائلة لمنح الحساب صلاحية على كل أفرادها (الأشقاء المضافون لاحقاً يُضمّون تلقائياً).')}</div>
+          </div>
         </div>
         ${email ? '' : `<div class="field"><label>Password <span class="text-mute" style="font-size:10px">(optional — fill to CREATE the login now; leave blank if you already made it in Firebase)</label><input id="ur-pass" type="text" placeholder="at least 6 characters" autocomplete="new-password" /></div>`}
       </div>`,
@@ -26796,8 +26901,29 @@ window.editUserRole = function(email) {
           if (!/.+@.+\..+/.test(e)) { toast('Enter a valid email', 'error'); return; }
           const role = $('#ur-role').value;
           const entry = { role };
-          if (role === 'coach') { entry.coachId = parseInt($('#ur-coach').value) || null; if (!entry.coachId) { toast('Pick which coach', 'error'); return; } }
-          if (role === 'student') { entry.memberId = parseInt($('#ur-member').value) || null; if (!entry.memberId) { toast('Pick which member', 'error'); return; } }
+          if (role === 'coach') {
+            const coachIds = Array.from(document.querySelectorAll('.ur-coach-cb')).filter(cb => cb.checked).map(cb => parseInt(cb.value, 10) || cb.value);
+            if (!coachIds.length) { toast('Pick at least one coach', 'error'); return; }
+            entry.coachIds = coachIds;
+            entry.coachId = coachIds[0];   // primary — back-compat with single-coach readers
+          }
+          if (role === 'student') {
+            const famEl = document.getElementById('ur-family');
+            const famId = famEl && famEl.value ? (parseInt(famEl.value, 10) || null) : null;
+            if (famId != null) {
+              // Family login: store the familyId; the member list is derived live from it so a
+              // sibling added later is included without re-editing. Keep memberId = first (primary).
+              const mids = (typeof familyMembers === 'function') ? familyMembers(famId).map(x => x.id) : [];
+              if (!mids.length) { toast('That family has no members', 'error'); return; }
+              entry.familyId = famId;
+              entry.memberIds = mids;
+              entry.memberId = mids[0];
+            } else {
+              entry.memberId = parseInt($('#ur-member').value) || null;
+              if (!entry.memberId) { toast('Pick a member or a family', 'error'); return; }
+              entry.familyId = null;
+            }
+          }
           // Optionally CREATE the Firebase login in the same step.
           const passEl = document.getElementById('ur-pass');
           const pass = passEl ? passEl.value : '';
@@ -26817,7 +26943,7 @@ window.editUserRole = function(email) {
           if (!state.settings.userRoles) state.settings.userRoles = {};
           stampUpdate(entry);   // who/when created-or-changed this account mapping (req #5)
           state.settings.userRoles[e] = entry;
-          audit('user.role_map', `user:${e}`, `Mapped ${e} → ${role}${pass ? ' (login created)' : ''}`, { name: e, recordName: e, new: { role, coachId: entry.coachId ?? null, memberId: entry.memberId ?? null } });
+          audit('user.role_map', `user:${e}`, `Mapped ${e} → ${role}${entry.coachIds && entry.coachIds.length > 1 ? ` (${entry.coachIds.length} coaches)` : ''}${entry.familyId != null ? ` (family ${familyName(entry.familyId)})` : ''}${pass ? ' (login created)' : ''}`, { name: e, recordName: e, new: { role, coachId: entry.coachId ?? null, coachIds: entry.coachIds || null, memberId: entry.memberId ?? null, familyId: entry.familyId ?? null } });
           closeModal(); renderUserRolesList();
           // Write-through: confirm the mapping reached Firebase before saying "saved".
           // User roles live on the parent meta doc, so verify the mapping is really on the
