@@ -10,10 +10,10 @@ const ok = (n, c) => R.ok(n, c);
 
 R.section('the screen is titled + framed as payments-only');
 ok('titled 💳 Installments', /title: '💳 ' \+ t\('Installments', 'الأقساط'\)/.test(src));
-ok('a note says prices are set in the profile', /This screen LOGS PAYMENTS only\. Prices\/sports are set in the member profile/.test(src));
+ok('a note says the CURRENT invoice is shown + editable (v6.497)', /Showing the CURRENT invoice\. Edit the price/.test(src));
 
 R.section('sport rows are READ-ONLY (no price/discount/classes/coach inputs)');
-ok('no editable price input class is rendered', !/class="pri-price"/.test(src));
+ok('the price is now EDITABLE (pri-price input) — v6.497', /class="pri-price"/.test(src));
 ok('no editable discount input class is rendered', !/class="pri-disc"/.test(src));
 ok('no editable classes input class is rendered', !/class="pri-classes"/.test(src));
 ok('no coach <select> class is rendered', !/class="pri-coach"/.test(src));
@@ -27,6 +27,6 @@ R.section('the save path writes PAYMENTS ONLY — never prices/enrollment/invoic
 ok('applyPricingSafe takes a paymentsOnly flag', /function applyPricingSafe\(rowVals, groupPays, payDate, payMethod, groupPayMeta, paymentsOnly\)/.test(src));
 ok('paymentsOnly skips the entire pricing/line/enrollment loop', /if \(!paymentsOnly\) for \(const rv of rowVals\) \{/.test(src));
 ok('the Installments save calls it with paymentsOnly = true', /applyPricingSafe\(rowVals, groupPays, payDate, payMethod, groupPayMeta, true \/\* paymentsOnly \*\/\)/.test(src));
-ok('rowVals carry the STORED net (no input reads)', /const rowVals = rows\.map\(r => \(\{ r, price: Number\(r\.price\) \|\| 0, disc: Number\(r\.disc\) \|\| 0, classes: null, coachId: undefined \}\)\)/.test(src));
+ok('rowVals now READ the edited price input (v6.497)', /const edited = \(pEl && pEl\.value !== ''\)/.test(src));
 
 R.done();

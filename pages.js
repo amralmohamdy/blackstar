@@ -5980,22 +5980,33 @@ window.editMemberPricing = function(memberId) {
     if (!groups.has(key)) groups.set(key, { inv: r.inv, rows: [] });
     groups.get(key).rows.push(r);
   });
+  // v6.496: show ONLY the CURRENT (latest) invoice on this screen — older invoices are edited
+  // elsewhere. Keeps the uninvoiced ('new') group too so a just-priced sport can still be collected.
+  // (User: "don't show all invoices in this screen.")
+  const _allInvKeys = [...groups.keys()].filter(k => k !== 'new');
+  if (_allInvKeys.length > 1) {
+    const _latest = [...groups.entries()].filter(([k]) => k !== 'new')
+      .sort((a, b) => (((b[1].inv && b[1].inv.date) || '').localeCompare((a[1].inv && a[1].inv.date) || '')) || (((b[1].inv && b[1].inv.id) || 0) - ((a[1].inv && a[1].inv.id) || 0)))[0];
+    const keep = new Set(['new']);
+    if (_latest) keep.add(_latest[0]);
+    for (const k of [...groups.keys()]) if (!keep.has(k)) groups.delete(k);
+  }
+  const _hiddenInvoiceCount = _allInvKeys.length - [...groups.keys()].filter(k => k !== 'new').length;
 
   const methodOpts = [['cash', t('Cash', 'نقدي')], ['card', t('Card', 'بطاقة')], ['fawran', t('Fawran', 'فوران')], ['transfer', t('Bank transfer', 'تحويل بنكي')]];
   const normMethod = (mRaw) => { const x = String(mRaw || '').toLowerCase(); if (x.indexOf('card') >= 0 || x.indexOf('visa') >= 0) return 'card'; if (x.indexOf('fawran') >= 0 || x.indexOf('فوران') >= 0) return 'fawran'; if (x.indexOf('transfer') >= 0 || x.indexOf('bank') >= 0 || x.indexOf('online') >= 0) return 'transfer'; return 'cash'; };
 
   const groupHtml = [...groups.entries()].map(([key, g]) => {
-    // v6.482: prices are READ-ONLY here. The PROFILE is the single place to set a sport's price /
-    // classes / coach (member card → ✎). This screen only LOGS PAYMENTS against what the profile
-    // already priced, so the two can never drift. Editing a wrong price → fix it in the profile.
+    // v6.496: the price is now EDITABLE here for the current invoice (user request). Editing it syncs
+    // the invoice line + subscription + enrollment together on Save, so nothing drifts.
     const sportsHtml = g.rows.map(r => {
       const net = Math.max(0, (Number(r.price) || 0) - (Number(r.disc) || 0));
       const coachNm = r.coachId != null ? (coachName(r.coachId) || '—') : '—';
       return `
-      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:6px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px">
         <div style="font-weight:700;font-size:14px">${escapeHtml(r.sport)}${r.isNew ? ` <span class="badge" style="font-size:9px;background:var(--surface);color:var(--accent-2)">${t('not invoiced', 'بلا فاتورة')}</span>` : ''}
           <span class="text-mute" style="font-weight:400;font-size:11.5px">· ${r.classes != null ? r.classes + ' ' + t('cls', 'حصة') : '—'} · ${escapeHtml(coachNm)}</span></div>
-        <div style="font-weight:700;font-size:14px;white-space:nowrap">${fmt(net)} <span class="text-mute" style="font-size:10px;font-weight:400">QAR</span>${(Number(r.disc) || 0) > 0 ? ` <span class="text-mute" style="font-size:10px">(-${fmt(r.disc)})</span>` : ''}</div>
+        <div style="display:flex;align-items:center;gap:4px;white-space:nowrap"><input type="number" class="pri-price" data-idx="${r.idx}" min="0" step="1" value="${net}" title="${t('Edit this price — updates the invoice + profile on Save', 'عدّل السعر — يحدّث الفاتورة والملف عند الحفظ')}" style="width:92px;font-size:14px;font-weight:700;text-align:right;padding:5px 8px;border:1.5px solid color-mix(in srgb, var(--accent) 45%, var(--border));border-radius:7px;background:var(--surface);color:var(--text)"><span class="text-mute" style="font-size:10px;font-weight:400">QAR</span></div>
       </div>`;
     }).join('');
     const inv = g.inv;
@@ -6080,13 +6091,16 @@ window.editMemberPricing = function(memberId) {
     title: '💳 ' + t('Installments', 'الأقساط'),
     wide: true,
     body: `
-      <div class="text-mute" style="font-size:12px;margin-bottom:4px">${escapeHtml(m.name)}${m.nameArabic ? ` · <span dir="rtl">${escapeHtml(m.nameArabic)}</span>` : ''}${m.phone ? ' · ' + phoneCell(m.phone) : ''}</div>
-      <div style="font-size:11px;margin-bottom:10px;padding:7px 10px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);border-radius:8px;line-height:1.5">💡 ${t('This screen LOGS PAYMENTS only. Prices/sports are set in the member profile (card → ✎ per sport). If a price is wrong, fix it there.', 'هذه الشاشة لتسجيل الدفعات فقط. الأسعار/الرياضات تُحدَّد في ملف العضو (البطاقة ← ✎ لكل رياضة). إذا كان السعر خاطئاً صحّحه هناك.')}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+        <div class="text-mute" style="font-size:12px">${escapeHtml(m.name)}${m.nameArabic ? ` · <span dir="rtl">${escapeHtml(m.nameArabic)}</span>` : ''}${m.phone ? ' · ' + phoneCell(m.phone) : ''}</div>
+        <button class="btn ghost sm" onclick="closeModal();rebuildMemberFromProfile(${m.id})" title="${t('Rebuild this member’s invoice + payments from the profile (subscription history)', 'إعادة بناء فاتورة العضو ودفعاته من الملف (سجل الاشتراكات)')}">🔄 ${t('Rebuild from profile', 'إعادة البناء من الملف')}</button>
+      </div>
+      <div style="font-size:11px;margin-bottom:10px;padding:7px 10px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);border-radius:8px;line-height:1.5">💡 ${t('Showing the CURRENT invoice. Edit the price and the payments below, then Save. To reset everything from the profile, use 🔄 Rebuild from profile.', 'يعرض الفاتورة الحالية. عدّل السعر والدفعات بالأسفل ثم احفظ. لإعادة الضبط بالكامل من الملف استخدم 🔄 إعادة البناء من الملف.')}${_hiddenInvoiceCount > 0 ? ` <span style="color:var(--text-mute)">· ${_hiddenInvoiceCount} ${t('older invoice(s) hidden', 'فاتورة أقدم مخفية')}</span>` : ''}</div>
       ${groupHtml}
       <div style="display:none">
         <div class="field" style="margin:0;max-width:190px"><label style="font-size:12px;font-weight:600">📅 ${t('Date for the NEW payment only', 'تاريخ الدفعة الجديدة فقط')}</label><input type="date" id="pri-paydate" value="${TODAY}" /><div class="text-mute" style="font-size:10px;margin-top:3px">${t('Collection counts in this date\u2019s month.', 'يُحتسب التحصيل في شهر هذا التاريخ.')}</div></div>
       </div>
-      <div class="text-mute" style="font-size:12px;margin-top:6px;line-height:1.6">${t('Payments: edit any 🧾 installment’s amount, date or method (Paid + Balance update instantly), tick 🗑 to remove one, or use the ➕ box to collect a new one. A negative amount records a refund. Sports & prices above are read-only — set them in the member profile.', 'الدفعات: عدّل مبلغ أي قسط 🧾 أو تاريخه أو طريقته (يتحدث المدفوع والمتبقي فوراً)، أو ضع 🗑 لحذف قسط، أو استخدم ➕ لتحصيل دفعة جديدة. المبلغ السالب يسجّل استرداداً. الرياضات والأسعار أعلاه للقراءة فقط — تُحدَّد في ملف العضو.')}</div>`,
+      <div class="text-mute" style="font-size:12px;margin-top:6px;line-height:1.6">${t('Edit the PRICE above, and any 🧾 installment’s amount / date / method (Paid + Balance update on Save). Tick 🗑 to remove an installment, or use the ➕ box to collect a new one (split it across methods or add several dated installments). A negative amount records a refund.', 'عدّل السعر بالأعلى، وأي قسط 🧾 (المبلغ / التاريخ / الطريقة) — يتحدث المدفوع والمتبقي عند الحفظ. ضع 🗑 لحذف قسط، أو استخدم ➕ لتحصيل دفعة جديدة (قسّمها على الطرق أو أضف عدة أقساط بتواريخ). المبلغ السالب يسجّل استرداداً.')}</div>`,
     actions: [
       { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
       { label: t('Save', 'حفظ'), class: 'btn primary', onclick: () => {
@@ -6120,7 +6134,16 @@ window.editMemberPricing = function(memberId) {
         // v6.482: PAYMENTS-ONLY screen. Prices are read-only (owned by the profile), so rowVals just
         // carry the STORED net per line — used to compute each group's balance for the guard. No
         // price / classes / coach is written from here (paymentsOnly flag below).
-        const rowVals = rows.map(r => ({ r, price: Number(r.price) || 0, disc: Number(r.disc) || 0, classes: null, coachId: undefined }));
+        // v6.496: the price is now EDITABLE on this screen — read each row's price input. A changed
+        // price is applied to the invoice line + enrollment (+ a fully-paid camp sub) on Save. Only the
+        // DISPLAYED groups' rows are considered (older/hidden invoices are never touched here). (v6.497)
+        const rowVals = [...groups.values()].flatMap(g => g.rows).map(r => {
+          const oldNet = Math.max(0, (Number(r.price) || 0) - (Number(r.disc) || 0));
+          const pEl = document.querySelector(`.pri-price[data-idx="${r.idx}"]`);
+          const edited = (pEl && pEl.value !== '') ? Math.round((parseFloat(pEl.value) || 0) * 100) / 100 : null;
+          const priceEdited = edited != null && Math.abs(edited - oldNet) > 0.001;
+          return { r, price: (edited != null ? edited : (Number(r.price) || 0)), disc: (priceEdited ? 0 : (Number(r.disc) || 0)), oldNet, classes: null, coachId: undefined, priceEdited };
+        });
         const groupPays = {};
         const groupPayMeta = {};   // per-invoice: date + amount PER method (split payment)
         document.querySelectorAll('.pri-pay-date').forEach(dEl => {
@@ -6323,8 +6346,26 @@ window.editMemberPricing = function(memberId) {
     const touched = new Set();
     const discByInv = new Map();
     const invDate = new Map();   // each invoice's effective date (for issue/lastUpdated)
-    // v6.482: paymentsOnly (the Installments screen) NEVER writes prices/classes/coach/enrollment or
-    // creates invoices — the profile owns all of that. It only records payments (loop below).
+    // v6.496: PRICE EDITS on the Installments screen (paymentsOnly). Apply a changed price to the
+    // invoice LINE (+ invoice total) + ENROLLMENT, and to the SUBSCRIPTION only when its stored amount
+    // was tracking the price (a fully-paid camp). We do NOT touch what was PAID — that is the payments
+    // ledger below. So editing the price fixes the Balance (price − paid) without faking a payment.
+    if (paymentsOnly) for (const rv of rowVals) {
+      if (!rv.priceEdited) continue;
+      const r = rv.r, newP = Math.max(0, Number(rv.price) || 0);
+      const inv = r.inv;
+      if (inv && Array.isArray(inv.lineItems) && inv.lineItems.length) {
+        const li = inv.lineItems.find(x => x.sport === r.sport && r.sub && String(x.coachId) === String(r.sub.coachId)) || inv.lineItems.find(x => x.sport === r.sport);
+        if (li) { li.price = newP; if (li.discount) li.discount = 0; }
+        inv.discount = 0;
+        inv.amount = (typeof invoiceTotal === 'function') ? invoiceTotal(inv) : inv.lineItems.reduce((s, x) => s + (Number(x.price) || 0), 0);
+        touched.add(inv); invDate.set(inv, inv.date || TODAY);
+      }
+      if (r.enr) r.enr.price = newP;
+      if (r.sub && Math.abs((Number(r.sub.amountPaid) || 0) - (Number(rv.oldNet) || 0)) < 0.01) r.sub.amountPaid = newP;
+    }
+    // v6.482: paymentsOnly (the Installments screen) still never CREATES invoices or changes
+    // classes/coach — the profile owns those. It records payments (loop below) + the price edit above.
     if (!paymentsOnly) for (const rv of rowVals) {
       const { r, price, disc } = rv;
       const net = Math.max(0, price - disc);
