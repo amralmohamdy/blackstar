@@ -5747,6 +5747,18 @@ window.rebuildMemberFromProfile = function (memberId) {
   if (currentRole() !== 'admin') { toast(t('Admins only', 'للمشرفين فقط'), 'error'); return; }
   const m = state.members.find(x => x.id === memberId);
   if (!m) return;
+  // v6.496: when the SUBSCRIPTION HISTORY (the real packages bought + paid) no longer matches the
+  // member's membership INVOICES, the enrollment-sync below can't fix it — the classic case is a
+  // Summer Camp member with SEVERAL renewals but only ONE enrollment, whose invoices went stale /
+  // duplicated (Tamim: subs total 2,615 but invoices 2,912 → a phantom "297 due"). Detect that gap
+  // and rebuild the invoices STRAIGHT from the subscription history instead.
+  const _truthSubs = (m.subscriptions || []).filter(s => s.activity && (s.status || '').toLowerCase() !== 'withdrawn' && ((Number(s.amountPaid) || 0) > 0 || (parseInt(s.totalClasses) || 0) > 0));
+  if (_truthSubs.length) {
+    const _mi = (state.invoices || []).filter(i => !i.deleted && i.customerId === m.id && (i.category || 'Membership') === 'Membership' && !i.switchCredit && i.activityType !== 'switch-credit');
+    const _subsPaid = _truthSubs.reduce((a, s) => a + (Number(s.amountPaid) || 0), 0);
+    const _invTotal = _mi.reduce((a, i) => a + ((typeof invoiceTotal === 'function') ? invoiceTotal(i) : (Number(i.amount) || 0)), 0);
+    if (Math.abs(_subsPaid - _invTotal) > 0.5) return window._reconcileInvoicesFromSubs(memberId);
+  }
   const enrollments = (m.enrollments || []).filter(e => e.sport);
   if (!enrollments.length) { toast(t('This member has no enrolled sports (profile is empty)', 'لا توجد رياضات مسجلة في الملف'), 'info'); return; }
   const enrolledSports = new Set(enrollments.map(e => e.sport));
@@ -5819,6 +5831,59 @@ window.rebuildMemberFromProfile = function (memberId) {
         if (typeof audit === 'function') audit('member.rebuildFromProfile', 'member:' + m.id, `Rebuilt ${m.name} from enrollments (${applies.length} record edits, ${rm.length} line(s) removed)`, { memberId: m.id, edits: applies.length, removed: rm.length });
         closeModal(); render();
         if (typeof confirmSaved === 'function') confirmSaved(t('Rebuilt from profile', 'تمت إعادة البناء من الملف')); else toast(t('Rebuilt', 'تم'));
+      } },
+    ],
+  });
+};
+
+// v6.496: rebuild a member's membership invoices STRAIGHT from their Subscription History — one clean
+// invoice per package (sport / duration / classes / paid = the sub's amountPaid), replacing stale or
+// duplicated invoices. This is what fixes a Summer Camp member with several renewals whose invoices
+// drifted (Tamim): Paid + Total become the sum of the packages and Due goes to 0. Backup-first, preview,
+// audited. rebuildMemberFromProfile routes here automatically when the subs don't match the invoices.
+window._reconcileInvoicesFromSubs = function (memberId) {
+  if (currentRole() !== 'admin') { toast(t('Admins only', 'للمشرفين فقط'), 'error'); return; }
+  const m = state.members.find(x => x.id === memberId);
+  if (!m) return;
+  const subs = (m.subscriptions || []).filter(s => s.activity && (s.status || '').toLowerCase() !== 'withdrawn' && ((Number(s.amountPaid) || 0) > 0 || (parseInt(s.totalClasses) || 0) > 0));
+  if (!subs.length) { toast(t('No subscriptions to rebuild from', 'لا توجد اشتراكات لإعادة البناء منها'), 'error'); return; }
+  const memInvs = (state.invoices || []).filter(i => !i.deleted && i.customerId === m.id && (i.category || 'Membership') === 'Membership' && !i.switchCredit && i.activityType !== 'switch-credit');
+  const oldTotal = memInvs.reduce((a, i) => a + ((typeof invoiceTotal === 'function') ? invoiceTotal(i) : (Number(i.amount) || 0)), 0);
+  const oldPaid = memInvs.reduce((a, i) => a + ((typeof invoicePaid === 'function') ? invoicePaid(i) : 0), 0);
+  const newTotal = Math.round(subs.reduce((a, s) => a + (Number(s.amountPaid) || 0), 0) * 100) / 100;
+  const rows = subs.map(s => `<tr><td>${escapeHtml(s.activity)}${s.durationLabel ? ` · ${escapeHtml(s.durationLabel)}` : ''}</td><td class="text-mute">${s.start ? fmtDate(s.start) : '—'}</td><td class="text-right">${s.totalClasses || 0}</td><td class="text-right font-bold">${fmt(Number(s.amountPaid) || 0)}</td></tr>`).join('');
+  showModal({
+    title: '🧾 ' + t('Rebuild invoices from subscription history', 'إعادة بناء الفواتير من سجل الاشتراكات'),
+    body: `
+      <div class="text-mute" style="font-size:12px;margin-bottom:8px">${escapeHtml(m.name)} — ${t('replaces the messy invoices with one clean invoice per package from the Subscription History. Each package is recorded paid at its amount.', 'يستبدل الفواتير المكرّرة بفاتورة نظيفة لكل باقة من سجل الاشتراكات. كل باقة تُسجَّل مدفوعة بمبلغها.')}</div>
+      <div class="table-wrap"><table style="font-size:12px;width:100%"><thead><tr><th>${t('Package', 'الباقة')}</th><th>${t('Date', 'التاريخ')}</th><th class="text-right">${t('Classes', 'الحصص')}</th><th class="text-right">${t('Paid', 'المدفوع')}</th></tr></thead><tbody>${rows}<tr style="border-top:2px solid var(--border)"><td class="font-bold" colspan="3">${t('New total (all marked paid)', 'الإجمالي الجديد (كله مدفوع)')}</td><td class="text-right font-bold" style="color:var(--green)">${fmt(newTotal)}</td></tr></tbody></table></div>
+      <div style="margin-top:10px;font-size:12px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.25);border-radius:8px;padding:9px 11px">${t('Now', 'الآن')}: ${memInvs.length} ${t('invoice(s)', 'فاتورة')} · ${t('total', 'إجمالي')} ${fmt(oldTotal)} · ${t('paid', 'مدفوع')} ${fmt(oldPaid)} · ${t('due', 'مستحق')} ${fmt(Math.max(0, oldTotal - oldPaid))} → <b>${t('after', 'بعد')}: ${t('total', 'إجمالي')} ${fmt(newTotal)} · ${t('paid', 'مدفوع')} ${fmt(newTotal)} · ${t('due', 'مستحق')} 0</b></div>
+      <div class="text-mute" style="font-size:11px;margin-top:8px">${t('A backup is downloaded first. The old membership invoices are voided (kept as history) and replaced.', 'يتم تنزيل نسخة احتياطية أولاً. تُلغى الفواتير القديمة (تبقى كسجل) وتُستبدل.')}</div>`,
+    actions: [
+      { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
+      { label: '🧾 ' + t('Rebuild', 'إعادة البناء'), class: 'btn primary', onclick: () => {
+        if (typeof assertCloudWritable === 'function' && !assertCloudWritable('rebuild invoices from subscriptions', 'إعادة بناء الفواتير من الاشتراكات')) return;
+        try { if (typeof window.downloadBackup === 'function') window.downloadBackup(); } catch (_) {}
+        for (const iv of memInvs) { iv.deleted = true; iv.deletedAt = new Date().toISOString(); iv.deletedBy = (typeof currentUserName === 'function' ? currentUserName() : 'admin'); iv.deleteReason = 'rebuilt from subscriptions'; }
+        for (const s of subs) {
+          const paid = Math.round((Number(s.amountPaid) || 0) * 100) / 100;
+          const d = s.start || m.startDate || TODAY;
+          const ref = (typeof nextInvoiceRef === 'function' ? nextInvoiceRef() : undefined);
+          const li = { sport: s.activity, coachId: s.coachId != null ? s.coachId : null, coach: s.coachId != null ? coachName(s.coachId) : '', classes: parseInt(s.totalClasses) || 0, price: paid, durationLabel: s.durationLabel || null, issueDate: d };
+          const inv = { id: nextId(state.invoices), date: d, month: String(d).slice(0, 7), ref,
+            category: 'Membership', activityType: 'subscription', customerId: m.id, customerName: m.name,
+            coachId: li.coachId, coach: li.coach, amount: paid, method: 'cash',
+            sport: (typeof sportListWithDuration === 'function' ? sportListWithDuration([li]) : s.activity) || s.activity,
+            lineItems: [li],
+            payments: paid > 0 ? [{ amount: paid, date: d, month: String(d).slice(0, 7), method: 'cash', note: 'Rebuilt from subscription' }] : [],
+            amountPaid: paid };
+          if (typeof stampUpdate === 'function') stampUpdate(inv);
+          state.invoices.push(inv);
+          s.invoiceNumber = ref;
+        }
+        if (typeof audit === 'function') audit('member.rebuildInvoicesFromSubs', 'member:' + m.id, `Rebuilt ${subs.length} invoice(s) from subscriptions = ${fmt(newTotal)} (voided ${memInvs.length})`, { memberId: m.id, subs: subs.length, newTotal, voided: memInvs.length });
+        closeModal(); render();
+        if (typeof confirmSaved === 'function') confirmSaved(t('Invoices rebuilt from the subscription history', 'تمت إعادة بناء الفواتير من سجل الاشتراكات'), { onOk: () => viewMember(m.id) }); else toast(t('Rebuilt', 'تم'));
       } },
     ],
   });
