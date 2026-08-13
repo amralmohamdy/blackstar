@@ -46,6 +46,10 @@ function computeStats(monthKey) {
   // expense left the Dashboard as the only screen overstating cost and understating profit.
   const currExpenses = state.expenses.filter(e => !e.deleted && e.month === curr && !isSalaryCategory(e.category)).reduce((s,e) => s+e.amount, 0);
   const prevExpenses = state.expenses.filter(e => !e.deleted && e.month === prev && !isSalaryCategory(e.category)).reduce((s,e) => s+e.amount, 0);
+  // Cash actually PAID OUT this month = EVERY recorded expense, incl. the salary payments already
+  // entered. This equals the Expenses screen's monthly total, and is shown on the dashboard NEXT TO
+  // the accrual figure so the two screens are never confused (v6.495).
+  const currCashExpenses = state.expenses.filter(e => !e.deleted && e.month === curr).reduce((s,e) => s + (Number(e.amount) || 0), 0);
 
   // Total payroll cost = sum of gross pay for every active coach/staff this month.
   // Previously this read `state.salaries[].salary` which doesn't exist in the
@@ -79,7 +83,7 @@ function computeStats(monthKey) {
     currRentalRevenue, prevRentalRevenue,
     currRentalCount, prevRentalCount,
     currSalesRevenue, prevSalesRevenue,
-    currExpenses, prevExpenses,
+    currExpenses, prevExpenses, currCashExpenses,
     currSalaries, prevSalaries,
     currSales, prevSales,
     currProfit, prevProfit,
@@ -359,8 +363,8 @@ PAGES.dashboard = (main) => {
       <div class="kpi orange">
         <div class="kpi-icon">💸</div>
         <div class="kpi-label" title="${t('Accrual view — operating expenses PLUS all coach pay EARNED this month (fixed salaries + commission), whether paid yet or not. This differs from the Expenses screen, which shows cash actually PAID OUT; coach commission earned but not yet paid is the main gap.', 'عرض الاستحقاق — مصروفات التشغيل + كامل أجور المدربين المستحقة هذا الشهر (رواتب ثابتة + عمولة)، سواء دُفعت أم لا. يختلف عن شاشة المصروفات التي تعرض النقد المدفوع فعلياً؛ الفرق الأساسي هو عمولة المدربين المستحقة غير المدفوعة.')}">${t('Total Expenses','إجمالي المصروفات')} (${fmtMonth(s.currMonth).split(' ')[0]})</div>
-        <div class="kpi-value num">${fmt(s.currExpenses + s.currSalaries)} <span style="font-size:13px;color:var(--text-dim);font-weight:500">QAR</span></div>
-        <div class="kpi-delta flat">${t('Ops', 'تشغيل')} ${fmt(s.currExpenses)} · ${t('payroll earned', 'رواتب مستحقة')} ${fmt(s.currSalaries)}</div>
+        <div class="kpi-value num">${fmt(s.currExpenses + s.currSalaries)} <span style="font-size:13px;color:var(--text-dim);font-weight:500">QAR · ${t('accrual', 'استحقاق')}</span></div>
+        <div class="kpi-delta flat" title="${t('Cash paid out = what the Expenses screen shows (all recorded expenses this month, incl. salary payments entered). Payroll earned = all coach pay earned this month whether paid yet or not — the accrual headline above = Ops + payroll earned.', 'النقد المدفوع = ما تعرضه شاشة المصروفات (كل المصروفات المسجّلة هذا الشهر شاملة رواتب مدفوعة). الرواتب المستحقة = كامل أجور المدربين هذا الشهر سواء دُفعت أم لا — رقم الاستحقاق بالأعلى = التشغيل + الرواتب المستحقة.')}">💵 ${fmt(s.currCashExpenses)} ${t('cash paid', 'مدفوع نقداً')} · 🧮 ${fmt(s.currSalaries)} ${t('payroll earned', 'رواتب مستحقة')}</div>
       </div>
       <div class="kpi ${s.currProfit >= 0 ? 'green' : 'red'}">
         <div class="kpi-icon">${s.currProfit >= 0 ? '📈' : '📉'}</div>
@@ -4540,59 +4544,94 @@ window.deleteCoach = function(id) {
 //    coach, as if they had these students from the start.
 window.transferCoachStudents = function(fromId) {
   if (currentRole() !== 'admin') { toast('Only admins can transfer students between coaches', 'error'); return; }
-  const from = state.coaches.find(c => c.id === fromId);
+  const from = state.coaches.find(c => String(c.id) === String(fromId));
   if (!from) return;
-  const targets = activeCoaches().filter(c => c.id !== fromId);
+  const targets = activeCoaches().filter(c => String(c.id) !== String(fromId));
   if (!targets.length) { toast('No other active coach to transfer to', 'error'); return; }
-  const studentCount = coachStudents(fromId).length;
-  const enrollCount = state.members.reduce((n, m) => n + ((m.enrollments || []).filter(e => e.coachId === fromId).length) + (m.coachId === fromId ? 1 : 0), 0);
-  const schedCount = (state.schedule || []).filter(s => s.coachId === fromId).length;
+  const _sameC = (a, b) => String(a) === String(b);
+  // Only NOT-YET-FINISHED courses are split: an EXPIRED course is over (no future classes to hand to a
+  // new coach), so it stays with the old coach — who keeps whatever they earned, incl. its expiry
+  // true-up. Completed / withdrawn / already-switched subs are history too. (v6.495)
+  const _isActiveSub = (s) => s && (s.status || '').toLowerCase() !== 'completed' && (s.status || '').toLowerCase() !== 'withdrawn' && !s.switchedAwayTo && !(s.end && String(s.end).slice(0, 10) < TODAY);
+  const activeSubCount = state.members.reduce((n, m) => n + (m.deleted ? 0 : (m.subscriptions || []).filter(s => _sameC(s.coachId, fromId) && _isActiveSub(s)).length), 0);
+  const schedCount = (state.schedule || []).filter(s => _sameC(s.coachId, fromId)).length;
   showModal({
     title: `🔁 Transfer · ${from.name}`,
     body: `
-      <div style="font-size:13px;line-height:1.6;margin-bottom:14px">Move <b>${from.name}</b>'s students and classes to another coach.
-        <div class="text-mute" style="font-size:12px;margin-top:6px">${studentCount} student${studentCount === 1 ? '' : 's'} · ${enrollCount} enrolment link${enrollCount === 1 ? '' : 's'} · ${schedCount} scheduled class${schedCount === 1 ? '' : 'es'} will move.</div>
+      <div style="font-size:13px;line-height:1.6;margin-bottom:14px">Move <b>${escapeHtml(from.name)}</b>'s students to another coach — each active course is <b>split</b>:
+        <div class="text-mute" style="font-size:12px;margin-top:6px"><b>${escapeHtml(from.name)}</b> is paid for the classes already <b>attended</b> (that part becomes <b>completed</b>), and the <b>new coach</b> turns <b>active</b> for the <b>remaining</b> classes and earns those. Finished courses stay as ${escapeHtml(from.name)}'s history.</div>
+        <div class="text-mute" style="font-size:12px;margin-top:6px">${activeSubCount} active course${activeSubCount === 1 ? '' : 's'} · ${schedCount} scheduled class${schedCount === 1 ? '' : 'es'} will move. A backup is downloaded first.</div>
       </div>
       <div class="form-row">
         <div class="field"><label>New coach</label><select id="tr-to">${targets.map(c => `<option value="${c.id}">${escapeHtml(c.name)} · ${c.rate || 0}%</option>`).join('')}</select></div>
         <div class="field"><label>Effective date</label><input id="tr-date" type="date" value="${TODAY}" /></div>
-      </div>
-      <div class="field"><label>Salary / commission basis</label>
-        <label style="display:flex;gap:8px;align-items:flex-start;padding:8px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;cursor:pointer">
-          <input type="radio" name="tr-basis" value="transfer" checked style="margin-top:2px" />
-          <span style="font-size:12px"><b>From transfer date</b><br><span class="text-mute">Past pay stays with ${escapeHtml(from.name)}. The new coach earns from future renewals.</span></span>
-        </label>
-        <label style="display:flex;gap:8px;align-items:flex-start;padding:8px;border:1px solid var(--border);border-radius:8px;cursor:pointer">
-          <input type="radio" name="tr-basis" value="registration" style="margin-top:2px" />
-          <span style="font-size:12px"><b>From registration date</b><br><span class="text-mute">Re-credit ${escapeHtml(from.name)}'s past membership invoices to the new coach too (full hand-over — lets you delete the old coach afterwards).</span></span>
-        </label>
       </div>`,
     actions: [
       { label: 'Cancel', class: 'btn ghost', onclick: closeModal },
-      { label: '🔁 Transfer', class: 'btn primary', onclick: () => {
-        const toId = parseInt($('#tr-to').value);
-        const to = state.coaches.find(c => c.id === toId);
+      { label: '🔁 Transfer & split', class: 'btn primary', onclick: () => {
+        const toRaw = $('#tr-to').value;
+        const to = state.coaches.find(c => _sameC(c.id, toRaw));
         const eff = $('#tr-date').value || TODAY;
-        const basis = (document.querySelector('input[name="tr-basis"]:checked') || {}).value || 'transfer';
         if (!to) { toast('Pick a coach', 'error'); return; }
-        let moved = 0;
+        if (typeof assertCloudWritable === 'function' && !assertCloudWritable('transfer these students', 'نقل هؤلاء الطلاب')) return;
+        try { if (typeof window.downloadBackup === 'function') window.downloadBackup(); } catch (_) {}
+        const nextDay = (typeof addDays === 'function') ? addDays(eff, 1) : eff;
+        let split = 0, moved = 0, movedSched = 0;
         for (const m of state.members) {
-          if (m.coachId === fromId) { m.coachId = toId; moved++; }
-          for (const e of (m.enrollments || [])) if (e.coachId === fromId) { e.coachId = toId; moved++; }
-        }
-        let movedSched = 0;
-        for (const s of (state.schedule || [])) if (s.coachId === fromId) { s.coachId = toId; movedSched++; }
-        let movedInv = 0;
-        if (basis === 'registration') {
-          for (const inv of (state.invoices || [])) {
-            if (inv.coachId === fromId) { inv.coachId = toId; inv.coach = to.name; movedInv++; }
-            for (const li of (inv.lineItems || [])) if (li.coachId === fromId) { li.coachId = toId; li.coach = to.name; movedInv++; }
+          if (m.deleted) continue;
+          for (const sub of (m.subscriptions || []).slice()) {
+            if (!_sameC(sub.coachId, fromId) || !_isActiveSub(sub)) continue;
+            const sport = sub.activity;
+            const origEnd = sub.end || null;
+            const total = parseInt(sub.totalClasses) || 0;
+            // Attended = classes done on/before the effective date, windowed to THIS sub's period.
+            const win = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, sub) : { from: sub.start || null, to: sub.end || null };
+            const winTo = (win.to && eff && win.to < eff) ? win.to : eff;
+            const attended = (typeof liveAttendanceCount === 'function') ? Math.min(total, liveAttendanceCount(m, sport, win.from, winTo).y || 0) : Math.min(total, parseInt(sub.attendedClasses) || 0);
+            const remaining = Math.max(0, total - attended);
+            const inv = (state.invoices || []).find(v => !v.deleted && v.customerId === m.id && (v.ref === sub.invoiceNumber || v.invoiceNumber === sub.invoiceNumber));
+            const line = (inv && Array.isArray(inv.lineItems)) ? (inv.lineItems.find(l => l.sport === sport && _sameC(l.coachId, fromId)) || inv.lineItems.find(l => l.sport === sport)) : null;
+            const base = line ? (Number(line.price) || 0) : (Number(sub.amountPaid) || 0);
+            if (remaining <= 0) continue;   // fully attended — the whole course belongs to the old coach; leave it as history
+            if (attended <= 0) {
+              // Old coach earned nothing on this course → hand it over whole (no split).
+              sub.coachId = to.id; sub.coach = to.name;
+              if (line) { line.coachId = to.id; line.coach = to.name; }
+              const e0 = (m.enrollments || []).find(e => e.sport === sport);
+              if (e0) e0.coachId = to.id;
+              moved++; continue;
+            }
+            const aShare = Math.round((attended / total) * base * 100) / 100;
+            const bShare = Math.round((base - aShare) * 100) / 100;
+            // OLD sub → completed at the attended classes, paid its share (attendance basis: per-class ×
+            // attended = aShare, remaining 0 so it never pends; payment basis: its line = aShare).
+            sub.totalClasses = attended; sub.status = 'completed'; sub.amountPaid = aShare;
+            sub.transferredToCoachId = to.id; sub.transferredAt = eff;
+            // NEW sub → same sport, new coach, the remaining classes, active (earns bShare).
+            m.subscriptions.push({ activity: sport, coachId: to.id, coach: to.name, totalClasses: remaining, amountPaid: bShare,
+              start: nextDay, end: origEnd, status: 'active', switchFunded: true, invoiceNumber: sub.invoiceNumber,
+              _sid: 's' + Date.now() + '_tr' + split });
+            // Split the invoice line: old coach keeps aShare/attended, new coach gets bShare/remaining.
+            if (inv && line) {
+              line.price = aShare; line.classes = attended;
+              inv.lineItems.push({ sport, coachId: to.id, coach: to.name, price: bShare, classes: remaining, issueDate: eff });
+              inv.amount = (typeof invoiceTotal === 'function') ? invoiceTotal(inv) : inv.lineItems.reduce((s, l) => s + (Number(l.price) || 0), 0);
+              if (typeof stampUpdate === 'function') stampUpdate(inv);
+            }
+            // Enrollment → the new coach + remaining classes (so future renewals are theirs).
+            const enr = (m.enrollments || []).find(e => e.sport === sport);
+            if (enr) { enr.coachId = to.id; enr.classes = remaining; enr.price = bShare; enr.switchedInto = true; }
+            else { if (!Array.isArray(m.enrollments)) m.enrollments = []; m.enrollments.push({ sport, coachId: to.id, classes: remaining, price: bShare, start: nextDay, switchedInto: true }); }
+            split++;
           }
+          // Defensive: any FUTURE pointers still on the old coach (primary / enrollment) move over.
+          if (_sameC(m.coachId, fromId)) m.coachId = to.id;
+          for (const e of (m.enrollments || [])) if (_sameC(e.coachId, fromId)) e.coachId = to.id;
         }
-        audit('coach.transfer', 'coach:' + fromId, `Transferred ${from.name} → ${to.name} (${basis}, eff ${eff})`, { fromId, toId, basis, eff, moved, movedSched, movedInv });
+        for (const s of (state.schedule || [])) if (_sameC(s.coachId, fromId)) { s.coachId = to.id; movedSched++; }
+        if (typeof audit === 'function') audit('coach.transfer', 'coach:' + fromId, `Transferred ${from.name} → ${to.name} (split @ ${eff}): ${split} course(s) split, ${moved} moved whole, ${movedSched} classes`, { fromId, toId: to.id, eff, split, moved, movedSched });
         closeModal(); render();
-        // v6.388: confirm the transfer (students + invoices) reached the cloud before saying so.
-        confirmSaved(`Transferred ${from.name}'s students to ${to.name}${basis === 'registration' ? ' (incl. past invoices)' : ''}`);
+        if (typeof confirmSaved === 'function') confirmSaved(`Transferred ${from.name}'s students to ${to.name} — ${split} course${split === 1 ? '' : 's'} split (old coach paid for attended, new coach takes the rest)${moved ? `, ${moved} moved whole` : ''}`);
       } },
     ],
   });
