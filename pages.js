@@ -4589,7 +4589,16 @@ window.transferCoachStudents = function(fromId) {
             const winTo = (win.to && eff && win.to < eff) ? win.to : eff;
             const attended = (typeof liveAttendanceCount === 'function') ? Math.min(total, liveAttendanceCount(m, sport, win.from, winTo).y || 0) : Math.min(total, parseInt(sub.attendedClasses) || 0);
             const remaining = Math.max(0, total - attended);
-            const inv = (state.invoices || []).find(v => !v.deleted && v.customerId === m.id && (v.ref === sub.invoiceNumber || v.invoiceNumber === sub.invoiceNumber));
+            // Find THIS sub's invoice. By ref first; but a sub's stored invoiceNumber can be stale (a
+            // regenerated invoice gets a new ref — Adham's sub named INV946292 but the real one is
+            // INV946297). Fall back to a Membership invoice that carries a matching sport+coach line,
+            // disambiguating a renewal by the closest date — else the line isn't found, only the SUB's
+            // class count is capped, and the un-shrunk line pays the old coach a doubled per-class. (v6.498)
+            let inv = (state.invoices || []).find(v => !v.deleted && v.customerId === m.id && (v.ref === sub.invoiceNumber || v.invoiceNumber === sub.invoiceNumber));
+            if (!inv || !(Array.isArray(inv.lineItems) && inv.lineItems.some(l => l.sport === sport && _sameC(l.coachId, fromId)))) {
+              const cands = (state.invoices || []).filter(v => !v.deleted && v.customerId === m.id && (v.category || 'Membership') === 'Membership' && !v.switchCredit && v.activityType !== 'switch-credit' && Array.isArray(v.lineItems) && v.lineItems.some(l => l.sport === sport && _sameC(l.coachId, fromId)));
+              if (cands.length) inv = cands.slice().sort((a, b) => Math.abs((Date.parse(a.date) || 0) - (Date.parse(sub.start) || 0)) - Math.abs((Date.parse(b.date) || 0) - (Date.parse(sub.start) || 0)))[0];
+            }
             const line = (inv && Array.isArray(inv.lineItems)) ? (inv.lineItems.find(l => l.sport === sport && _sameC(l.coachId, fromId)) || inv.lineItems.find(l => l.sport === sport)) : null;
             const base = line ? (Number(line.price) || 0) : (Number(sub.amountPaid) || 0);
             if (remaining <= 0) continue;   // fully attended — the whole course belongs to the old coach; leave it as history
@@ -4623,6 +4632,12 @@ window.transferCoachStudents = function(fromId) {
             if (enr) { enr.coachId = to.id; enr.classes = remaining; enr.price = bShare; enr.switchedInto = true; }
             else { if (!Array.isArray(m.enrollments)) m.enrollments = []; m.enrollments.push({ sport, coachId: to.id, classes: remaining, price: bShare, start: nextDay, switchedInto: true }); }
             split++;
+          }
+          // v6.498: the old coach's DATE-EXPIRED subs were skipped above (they're finished history), but
+          // some still carry status 'active' and would linger as an "active" record under the departed
+          // coach. Stamp them 'expired' so the History reads correctly (they stay HIS — he taught them).
+          for (const sub of (m.subscriptions || [])) {
+            if (_sameC(sub.coachId, fromId) && sub.end && String(sub.end).slice(0, 10) < eff && (sub.status || '').toLowerCase() === 'active' && !sub.switchedAwayTo) sub.status = 'expired';
           }
           // Defensive: any FUTURE pointers still on the old coach (primary / enrollment) move over.
           if (_sameC(m.coachId, fromId)) m.coachId = to.id;
