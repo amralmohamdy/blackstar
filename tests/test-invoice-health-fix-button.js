@@ -86,7 +86,7 @@ R.section('the popup wires the fix actions + gates them to admin/receptionist (s
   R.ok('a Generate-invoice action calls generateInvoiceForMember', /generateInvoiceForMember\(m\.id\)/.test(src));
   R.ok('a Fix-invoice action opens editMemberPricing', /editMemberPricing\(m\.id\)/.test(src));
   R.ok('the fix is gated to admin/receptionist', /const canFix = \(currentRole\(\) === 'admin' \|\| currentRole\(\) === 'receptionist'\);/.test(src));
-  R.ok('the RED case offers Fix invoice', /h\.status === 'red'[\s\S]{0,160}Fix invoice/.test(src));
+  R.ok('the RED case offers a fix (Rebuild from profile + Edit pricing) — v6.499', /h\.status === 'red' \|\| h\.status === 'noinv'[\s\S]{0,600}rebuildMemberFromProfile/.test(src) && /Edit pricing/.test(src));
   R.ok('the noinv case offers Generate invoice', /h\.status === 'noinv'[\s\S]{0,200}Generate invoice/.test(src));
 }
 
@@ -94,7 +94,7 @@ R.section('a NON-privileged viewer gets NO fix button');
 {
   const src = H.readSrc();
   // The fixActions array only fills when canFix; a coach/member role must see just Open/Close.
-  R.ok('fixActions is guarded by canFix', /if \(canFix && h\.status === 'noinv'\)/.test(src) && /else if \(canFix && h\.status === 'red'\)/.test(src));
+  R.ok('fixActions is guarded by canFix (v6.499)', /if \(canFix && \(h\.status === 'red' \|\| h\.status === 'noinv'\)\)/.test(src));
 }
 
 R.done();

@@ -1446,6 +1446,9 @@ PAGES.members = (main) => {
       // "Freeze" is a single-member action — show it only when exactly one is selected.
       const frzBtn = $('#members-bulk-freeze');
       if (frzBtn) frzBtn.style.display = selected.size === 1 ? '' : 'none';
+      // "Switch sport / coach" is also a single-member action (it splits one member's course).
+      const swBtn = $('#members-bulk-switch');
+      if (swBtn) swBtn.style.display = selected.size === 1 ? '' : 'none';
       const pageIds = rows.map(m => m.id);
       const sa = $('#members-select-all');
       if (sa) {
@@ -1557,6 +1560,7 @@ PAGES.members = (main) => {
         <div style="flex:1;font-size:13px;font-weight:600"><span id="members-bulk-count">0</span> ${t('selected','محدد')}</div>
         ${isViewerRole() ? '' : `<button class="btn ghost sm" id="members-bulk-family" title="Group the selected members under one family/household">👨‍👩‍👧 ${t('Add to family','إضافة إلى عائلة')}</button>
         ${canManageFreeze() ? `<button class="btn ghost sm" id="members-bulk-freeze" title="Freeze the selected member (pause membership and shift expiry)">❄️ ${t('Freeze','تجميد')}</button>` : ''}
+        <button class="btn ghost sm" id="members-bulk-switch" title="Switch the selected member's sport / coach — splits the commission (old coach keeps the attended classes, new coach gets the rest)">🔀 ${t('Switch sport / coach','تبديل الرياضة / المدرب')}</button>
         <button class="btn ghost sm" id="members-bulk-export" title="Export the selected members to CSV">📥 ${t('Export selected','تصدير المحدد')}</button>
         <button class="btn ghost sm" id="members-bulk-archive" title="Archive (soft-delete) the selected members" style="color:var(--red)">🗑 ${t('Archive selected','أرشفة المحدد')}</button>`}
         <button class="btn ghost sm" id="members-bulk-clear">${t('Clear','مسح')}</button>
@@ -1744,6 +1748,15 @@ PAGES.members = (main) => {
     const list = state.members.filter(m => selected.has(m.id) && !m.deleted);
     if (list.length !== 1) { toast('Select exactly one member to freeze', 'error'); return; }
     freezeMember(list[0].id);   // opens the freeze dialog (date-range supported)
+  });
+  // v6.499: Switch sport / coach from the selection toolbar — reuses the SAME switchSport flow the
+  // member card uses, so the commission split (old coach keeps the attended classes at their share,
+  // the new coach gets the remainder) is calculated identically. One member at a time.
+  $('#members-bulk-switch')?.addEventListener('click', () => {
+    if (currentRole() !== 'admin') { toast('Only admins can switch a member\'s sport / coach', 'error'); return; }
+    const list = state.members.filter(m => selected.has(m.id) && !m.deleted);
+    if (list.length !== 1) { toast('Select exactly one member to switch', 'error'); return; }
+    switchSport(list[0].id);   // opens the Switch Sport dialog (attendance-based commission split)
   });
   $('#members-bulk-archive')?.addEventListener('click', () => {
     const list = state.members.filter(m => selected.has(m.id) && !m.deleted);
@@ -12484,22 +12497,26 @@ window.showMemberInvoiceHealth = function (id) {
   const canFix = (currentRole() === 'admin' || currentRole() === 'receptionist');
   const fixHint = (canFix && (h.status === 'red' || h.status === 'noinv'))
     ? `<div style="margin-top:14px;padding:10px 12px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);border-radius:8px;font-size:12px;color:var(--text)">
-         ${h.status === 'noinv'
-           ? t('Click <b>Generate invoice</b> to create the latest invoice from this member’s enrolled sports & prices.', 'اضغط <b>إنشاء فاتورة</b> لإنشاء أحدث فاتورة من رياضات وأسعار هذا العضو.')
-           : t('Click <b>Fix invoice</b> to open pricing — it adds any missing sport, corrects the price, and Save re-aligns the invoice. Nothing changes until you Save.', 'اضغط <b>إصلاح الفاتورة</b> لفتح التسعير — يضيف أي رياضة ناقصة ويصحّح السعر، والحفظ يعيد مطابقة الفاتورة. لا شيء يتغيّر حتى تحفظ.')}
+         ${t('Fastest fix: <b>🔄 Rebuild from profile</b> rebuilds the invoice + payments from this member’s subscription history, so Paid, Total and Due all become consistent (a backup is taken first).', 'أسرع إصلاح: <b>🔄 إعادة البناء من الملف</b> يعيد بناء الفاتورة والدفعات من سجل اشتراكات العضو، فيصبح المدفوع والإجمالي والمستحق متطابقة (تُؤخذ نسخة احتياطية أولاً).')}
        </div>`
     : '';
   const fixActions = [];
-  if (canFix && h.status === 'noinv') {
-    fixActions.push({ label: '🧾 ' + t('Generate invoice', 'إنشاء فاتورة'), class: 'btn primary', onclick: () => {
-      closeModal();
-      let r; try { r = generateInvoiceForMember(m.id); } catch (e) { r = { created: false, message: (e && e.message) || 'error' }; }
-      if (r && r.created) { toast('✅ ' + r.message, 'success'); try { render(); } catch (_) {} if (typeof printInvoicePDF === 'function') printInvoicePDF(r.invoice.id); }
-      else if (r && r.existing) { toast(r.message + ' — ' + t('opening it', 'يتم فتحها'), 'info'); if (typeof printInvoicePDF === 'function') printInvoicePDF(r.existing.id); }
-      else toast((r && r.message) || t('Could not generate the invoice', 'تعذّر إنشاء الفاتورة'), 'error');
-    } });
-  } else if (canFix && h.status === 'red') {
-    fixActions.push({ label: '🔧 ' + t('Fix invoice', 'إصلاح الفاتورة'), class: 'btn primary', onclick: () => { closeModal(); try { editMemberPricing(m.id); } catch (_) {} } });
+  if (canFix && (h.status === 'red' || h.status === 'noinv')) {
+    // v6.499: one-click reconcile straight from the ledger conflict popup — rebuilds the invoice(s)
+    // from the profile / subscription history so Paid + Total + Due become consistent (fixes a member
+    // whose invoices drifted from what they actually bought/paid, e.g. Tamim's camp renewals).
+    fixActions.push({ label: '🔄 ' + t('Rebuild from profile', 'إعادة البناء من الملف'), class: 'btn primary', onclick: () => { closeModal(); try { rebuildMemberFromProfile(m.id); } catch (_) {} } });
+    if (h.status === 'noinv') {
+      fixActions.push({ label: '🧾 ' + t('Generate invoice', 'إنشاء فاتورة'), class: 'btn ghost', onclick: () => {
+        closeModal();
+        let r; try { r = generateInvoiceForMember(m.id); } catch (e) { r = { created: false, message: (e && e.message) || 'error' }; }
+        if (r && r.created) { toast('✅ ' + r.message, 'success'); try { render(); } catch (_) {} if (typeof printInvoicePDF === 'function') printInvoicePDF(r.invoice.id); }
+        else if (r && r.existing) { toast(r.message + ' — ' + t('opening it', 'يتم فتحها'), 'info'); if (typeof printInvoicePDF === 'function') printInvoicePDF(r.existing.id); }
+        else toast((r && r.message) || t('Could not generate the invoice', 'تعذّر إنشاء الفاتورة'), 'error');
+      } });
+    } else {
+      fixActions.push({ label: '🔧 ' + t('Edit pricing', 'تعديل التسعير'), class: 'btn ghost', onclick: () => { closeModal(); try { editMemberPricing(m.id); } catch (_) {} } });
+    }
   }
   showModal({
     title: '🧾 ' + escapeHtml(m.name),
