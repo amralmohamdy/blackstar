@@ -17087,9 +17087,6 @@ PAGES.salaries = (main) => {
   // render() → re-runs this page) KEEPS the month the user was viewing instead of snapping back to
   // the latest/current month. (v6.363)
   let filter = { month: window._salMonth || latestDataMonth() || currentMonth(), settleDate: window._salSettleDate || null };
-  // Last calendar day of a "YYYY-MM" month — used to scope the "up to day" date picker to the
-  // selected month so you pick a day WITHIN it (e.g. July → 1..31). (v6.500)
-  const _salMonthEnd = (ym) => { const pp = String(ym || '').split('-'); const y = +pp[0], mo = +pp[1]; if (!y || !mo) return ''; return ym + '-' + String(new Date(y, mo, 0).getDate()).padStart(2, '0'); };
 
   function refresh() {
     // Compute pay rows for every active coach/staff — either for the selected
@@ -17316,16 +17313,16 @@ PAGES.salaries = (main) => {
           <option value="attendance" ${state.settings?.commissionBasis === 'attendance' ? 'selected' : ''}>By attendance (per class attended)</option>
         </select>
         <span style="opacity:.35">|</span>
-        <select id="sal-month" class="btn ghost">
+        <select id="sal-month" class="btn ghost" ${filter.settleDate ? 'disabled style="opacity:.5"' : ''}>
           ${months.map(m => `<option value="${m}" ${filter.month === m ? 'selected' : ''}>${fmtMonth(m)}</option>`).join('')}
         </select>
         <span style="opacity:.35">|</span>
         <span style="font-size:12px;color:var(--text-mute)" title="Commission only counts memberships dated on or after this date. Fixed salary is not affected.">Commission from:</span>
         <input type="date" id="sal-comm-start" value="${(state.settings && state.settings.commissionStartDate) || ''}" class="btn ghost" style="font-size:12px" title="Only memberships starting on or after this date earn commission. Leave empty for no cutoff. Fixed salary is unaffected." />
         <span style="opacity:.35">|</span>
-        <span style="font-size:12px;color:var(--text-mute)" title="Calculate each coach's pay from the 1st of the selected month up to and including this day. Leave empty for the whole month.">📅 ${t('up to day (optional):', 'حتى يوم (اختياري):')}</span>
-        <input type="date" id="sal-date" class="btn ghost" value="${filter.settleDate || ''}" min="${filter.month}-01" max="${_salMonthEnd(filter.month)}" title="${t('Calculate each coach’s pay from the 1st of the selected month up to and including this day. Leave empty for the whole month.', 'احسب راتب كل مدرب من أول الشهر المختار حتى هذا اليوم شاملاً. اتركه فارغاً للشهر كاملاً.')}" />
-        <span id="sal-mode-note" style="font-size:11px;color:var(--accent-2);font-weight:600">${filter.settleDate ? '📅 ' + fmtDate(filter.month + '-01') + ' → ' + fmtDate(filter.settleDate) : ''}</span>
+        <span style="font-size:12px;color:var(--text-mute)">or settle up to:</span>
+        <input type="date" id="sal-date" class="btn ghost" value="${filter.settleDate || ''}" title="Calculate pay up to this date — e.g. a coach's last working day. Clear it to go back to the whole month." />
+        <span id="sal-mode-note" style="font-size:11px;color:var(--accent-2);font-weight:600">${filter.settleDate ? '📅 Settlement — month up to ' + fmtDate(filter.settleDate) + ' only' : ''}</span>
       </div>
       <div class="table-wrap">
         <table>
@@ -17348,20 +17345,7 @@ PAGES.salaries = (main) => {
     <div id="sal-adhoc" style="margin-top:14px"></div>
   `;
   window._salRecalc = refresh;   // v6.436 — the 🔄 Recalculate button re-runs the live commission compute
-  $('#sal-month').addEventListener('change', e => {
-    filter.month = e.target.value; window._salMonth = filter.month;
-    // v6.500: re-scope the "up to day" picker to the new month; a settle date now out of that month
-    // is cleared (so July's day-filter doesn't leak into August).
-    const dEl = $('#sal-date');
-    if (dEl) {
-      dEl.min = filter.month + '-01'; dEl.max = _salMonthEnd(filter.month);
-      if (filter.settleDate && (filter.settleDate < dEl.min || filter.settleDate > dEl.max)) {
-        filter.settleDate = null; window._salSettleDate = null; dEl.value = '';
-        const note = $('#sal-mode-note'); if (note) note.textContent = '';
-      }
-    }
-    refresh();
-  });
+  $('#sal-month').addEventListener('change', e => { filter.month = e.target.value; window._salMonth = filter.month; refresh(); });
   const salBasisChange = $('#sal-basis-change');
   if (salBasisChange) salBasisChange.addEventListener('click', () => {
     if (currentRole() !== 'admin') { toast('Only an admin can change the commission basis.'); return; }
@@ -17398,12 +17382,10 @@ PAGES.salaries = (main) => {
   if (salDate) salDate.addEventListener('change', e => {
     filter.settleDate = e.target.value || null;
     window._salSettleDate = filter.settleDate;
-    // v6.500: keep the month dropdown ENABLED and in sync — the settle date's month IS the reporting
-    // month, so "July + up-to-15" reads July 1 → 15. (Was: the month select got disabled, which
-    // hid what month you were settling.)
-    if (filter.settleDate) { const mo = filter.settleDate.slice(0, 7); filter.month = mo; window._salMonth = mo; const sel = $('#sal-month'); if (sel) sel.value = mo; }
+    const sel = $('#sal-month');
+    if (sel) { sel.disabled = !!filter.settleDate; sel.style.opacity = filter.settleDate ? '.5' : ''; }
     const note = $('#sal-mode-note');
-    if (note) note.textContent = filter.settleDate ? '📅 ' + fmtDate(filter.month + '-01') + ' → ' + fmtDate(filter.settleDate) : '';
+    if (note) note.textContent = filter.settleDate ? '📅 Settlement — month up to ' + fmtDate(filter.settleDate) + ' only' : '';
     refresh();
   });
   refresh();
