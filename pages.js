@@ -4589,11 +4589,16 @@ window.transferCoachStudents = function(fromId) {
         if (typeof assertCloudWritable === 'function' && !assertCloudWritable('transfer these students', 'نقل هؤلاء الطلاب')) return;
         try { if (typeof window.downloadBackup === 'function') window.downloadBackup(); } catch (_) {}
         const nextDay = (typeof addDays === 'function') ? addDays(eff, 1) : eff;
+        // v6.501: eligibility is judged AS OF the handover date, NOT today. A back-dated handover (e.g.
+        // "Iyad's last day was 31 Jul") must still split a sub that was active THEN but has expired since
+        // — otherwise its August classes wrongly stay crediting the departed coach. (_isActiveSub used
+        // TODAY, so a sub ending 7 Aug was skipped on 15 Aug and left on the old coach.)
+        const _eligibleAtEff = (s) => s && (s.status || '').toLowerCase() !== 'completed' && (s.status || '').toLowerCase() !== 'withdrawn' && !s.switchedAwayTo && !(s.end && String(s.end).slice(0, 10) < eff);
         let split = 0, moved = 0, movedSched = 0;
         for (const m of state.members) {
           if (m.deleted) continue;
           for (const sub of (m.subscriptions || []).slice()) {
-            if (!_sameC(sub.coachId, fromId) || !_isActiveSub(sub)) continue;
+            if (!_sameC(sub.coachId, fromId) || !_eligibleAtEff(sub)) continue;
             const sport = sub.activity;
             const origEnd = sub.end || null;
             const total = parseInt(sub.totalClasses) || 0;
