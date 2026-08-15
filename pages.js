@@ -4568,6 +4568,13 @@ window.transferCoachStudents = function(fromId) {
   const _isActiveSub = (s) => s && (s.status || '').toLowerCase() !== 'completed' && (s.status || '').toLowerCase() !== 'withdrawn' && !s.switchedAwayTo && !(s.end && String(s.end).slice(0, 10) < TODAY);
   const activeSubCount = state.members.reduce((n, m) => n + (m.deleted ? 0 : (m.subscriptions || []).filter(s => _sameC(s.coachId, fromId) && _isActiveSub(s)).length), 0);
   const schedCount = (state.schedule || []).filter(s => _sameC(s.coachId, fromId)).length;
+  // v6.503: when the coach teaches MORE THAN ONE sport, let the admin transfer just ONE of them
+  // (e.g. hand off Football but keep coaching Swimming). Offer every sport the old coach has an
+  // eligible (active, not-expired) course in, plus an "All sports" default.
+  const _fromSports = Array.from(new Set(state.members.reduce((arr, m) => {
+    if (!m.deleted) for (const s of (m.subscriptions || [])) if (_sameC(s.coachId, fromId) && _isActiveSub(s) && s.activity) arr.push(s.activity);
+    return arr;
+  }, []))).sort();
   showModal({
     title: `🔁 Transfer · ${from.name}`,
     body: `
@@ -4578,7 +4585,8 @@ window.transferCoachStudents = function(fromId) {
       <div class="form-row">
         <div class="field"><label>New coach</label><select id="tr-to">${targets.map(c => `<option value="${c.id}">${escapeHtml(c.name)} · ${c.rate || 0}%</option>`).join('')}</select></div>
         <div class="field"><label>Effective date</label><input id="tr-date" type="date" value="${TODAY}" /></div>
-      </div>`,
+      </div>
+      ${_fromSports.length > 1 ? `<div class="form-row"><div class="field"><label>Sport to transfer</label><select id="tr-sport"><option value="__ALL__">All sports (${_fromSports.length})</option>${_fromSports.map(sp => `<option value="${escapeHtml(sp)}">${escapeHtml(sp)}</option>`).join('')}</select><div class="text-mute" style="font-size:11px;margin-top:4px">${escapeHtml(from.name)} teaches ${_fromSports.length} sports — pick one to hand off only that, or leave "All sports".</div></div></div>` : ''}`,
     actions: [
       { label: 'Cancel', class: 'btn ghost', onclick: closeModal },
       { label: '🔁 Transfer & split', class: 'btn primary', onclick: () => {
@@ -4586,6 +4594,9 @@ window.transferCoachStudents = function(fromId) {
         const to = state.coaches.find(c => _sameC(c.id, toRaw));
         const eff = $('#tr-date').value || TODAY;
         if (!to) { toast('Pick a coach', 'error'); return; }
+        // v6.503: scope to ONE sport when the admin picked one (multi-sport coach). '__ALL__' = every sport.
+        const sportFilter = ($('#tr-sport') && $('#tr-sport').value) || '__ALL__';
+        const _sportMatch = (sp) => sportFilter === '__ALL__' || sp === sportFilter;
         if (typeof assertCloudWritable === 'function' && !assertCloudWritable('transfer these students', 'نقل هؤلاء الطلاب')) return;
         try { if (typeof window.downloadBackup === 'function') window.downloadBackup(); } catch (_) {}
         const nextDay = (typeof addDays === 'function') ? addDays(eff, 1) : eff;
@@ -4600,6 +4611,7 @@ window.transferCoachStudents = function(fromId) {
           for (const sub of (m.subscriptions || []).slice()) {
             if (!_sameC(sub.coachId, fromId) || !_eligibleAtEff(sub)) continue;
             const sport = sub.activity;
+            if (!_sportMatch(sport)) continue;   // v6.503: single-sport transfer skips the other sports
             const origEnd = sub.end || null;
             const total = parseInt(sub.totalClasses) || 0;
             // Attended = classes done on/before the effective date, windowed to THIS sub's period.
@@ -4655,13 +4667,16 @@ window.transferCoachStudents = function(fromId) {
           // some still carry status 'active' and would linger as an "active" record under the departed
           // coach. Stamp them 'expired' so the History reads correctly (they stay HIS — he taught them).
           for (const sub of (m.subscriptions || [])) {
-            if (_sameC(sub.coachId, fromId) && sub.end && String(sub.end).slice(0, 10) < eff && (sub.status || '').toLowerCase() === 'active' && !sub.switchedAwayTo) sub.status = 'expired';
+            if (_sportMatch(sub.activity) && _sameC(sub.coachId, fromId) && sub.end && String(sub.end).slice(0, 10) < eff && (sub.status || '').toLowerCase() === 'active' && !sub.switchedAwayTo) sub.status = 'expired';
           }
           // Defensive: any FUTURE pointers still on the old coach (primary / enrollment) move over.
-          if (_sameC(m.coachId, fromId)) m.coachId = to.id;
-          for (const e of (m.enrollments || [])) if (_sameC(e.coachId, fromId)) e.coachId = to.id;
+          // v6.503: when scoped to one sport, only that sport's pointers move — the primary coach field
+          // (which isn't sport-specific) is left alone unless we're transferring everything.
+          if (sportFilter === '__ALL__' && _sameC(m.coachId, fromId)) m.coachId = to.id;
+          for (const e of (m.enrollments || [])) if (_sportMatch(e.sport) && _sameC(e.coachId, fromId)) e.coachId = to.id;
         }
-        for (const s of (state.schedule || [])) if (_sameC(s.coachId, fromId)) { s.coachId = to.id; movedSched++; }
+        // Schedule rows carry a sport (activity/sport) — move only the matching ones on a scoped transfer.
+        for (const s of (state.schedule || [])) if (_sameC(s.coachId, fromId) && _sportMatch(s.sport || s.activity)) { s.coachId = to.id; movedSched++; }
         if (typeof audit === 'function') audit('coach.transfer', 'coach:' + fromId, `Transferred ${from.name} → ${to.name} (split @ ${eff}): ${split} course(s) split, ${moved} moved whole, ${movedSched} classes`, { fromId, toId: to.id, eff, split, moved, movedSched });
         closeModal(); render();
         if (typeof confirmSaved === 'function') confirmSaved(`Transferred ${from.name}'s students to ${to.name} — ${split} course${split === 1 ? '' : 's'} split (old coach paid for attended, new coach takes the rest)${moved ? `, ${moved} moved whole` : ''}`);
@@ -22904,9 +22919,11 @@ window.switchSport = function(memberId) {
   // One switch per membership cycle. Count switches made on/after the current
   // cycle start (renewing resets the allowance). If they've already switched,
   // block it — a member can't keep hopping sports on a single paid membership.
+  // v6.503: an ADMIN may override this and switch the same member again (e.g. to correct a
+  // mistaken switch, or a genuine second change). Reception/others are still limited to one.
   const cycleStart = m.startDate || m.firstRegistration || '0000-00-00';
   const switchesThisCycle = (m.sportSwitches || []).filter(sw => (sw.date || '') >= cycleStart);
-  if (switchesThisCycle.length >= 1) {
+  if (switchesThisCycle.length >= 1 && currentRole() !== 'admin') {
     const last = switchesThisCycle[switchesThisCycle.length - 1];
     const what = last.distributed
       ? `${last.fromSport} → ${(last.targets || []).map(t => t.sport).join(', ')}`
