@@ -3281,6 +3281,7 @@ function showMemberForm(m) {
         paid: isEnrollmentPaid(m.id, e.sport),
         attended: (typeof liveAttendanceCount === 'function' ? (liveAttendanceCount(m, e.sport).y || 0) : 0),
         originalSport: e.sport,  // remember original sport for paid-row lookup if user edits
+        originalCoachId: e.coachId,  // v6.504: remember original coach → change-coach vs add-coach at save
       };
     });
   } else if (m.subscriptions && m.subscriptions.length) {
@@ -3298,6 +3299,7 @@ function showMemberForm(m) {
       paid: isEnrollmentPaid(m.id, s.activity),
       attended: (typeof liveAttendanceCount === 'function' ? (liveAttendanceCount(m, s.activity).y || 0) : 0),
       originalSport: s.activity,
+      originalCoachId: s.coachId,  // v6.504
     }));
     if (!window._enrollRows.length) {
       window._enrollRows = [{ sport: m.sport || SPORTS[0], coachId: m.coachId || state.coaches[0]?.id, classes: '', price: '', start: m.startDate || TODAY, validity: m.validity || DEFAULT_VALIDITY, paid: false }];
@@ -3600,6 +3602,7 @@ function showMemberForm(m) {
           start: r.start || null,
           validity: r.sport === SUMMER_CAMP ? (parseInt(r.validity) || parseInt(r.classes) || DEFAULT_VALIDITY) : (parseInt(r.validity) || DEFAULT_VALIDITY),
           _originalSport: r.originalSport || null,   // for paid-but-unattended sport rename
+          _originalCoachId: (r.originalCoachId != null ? r.originalCoachId : null),  // v6.504: change-coach vs add-coach
           _paid: !!r.paid,
           _attended: r.attended || 0,
         }));
@@ -3641,7 +3644,7 @@ function showMemberForm(m) {
           subscriptions: m.subscriptions || [],
           renewals: m.renewals || [],
           months: m.months || [],
-          enrollments: enrollments.map(({ _originalSport, _paid, _attended, ...e }) => e),                        // <-- all concurrent sports stored here
+          enrollments: enrollments.map(({ _originalSport, _originalCoachId, _paid, _attended, ...e }) => e),                        // <-- all concurrent sports stored here
         };
 
         if (isNew) {
@@ -3854,21 +3857,44 @@ function showMemberForm(m) {
             { memberId: existing.id, from, to: e.sport });
         }
 
+        // v6.504: a member may hold the SAME sport under two coaches. To keep the normal
+        // "change this row's coach" working (update the sub, don't double-charge) while ALSO
+        // allowing a fresh "+ Add sport" row of an existing sport to become its OWN subscription,
+        // we use ROW IDENTITY: a pre-populated row carries its original coach (_originalCoachId).
+        //   • existing row → find its sub by sport + ORIGINAL coach, then sync (handles coach/price change).
+        //   • new row (no _originalSport) → match an existing sub only if sport + coach BOTH already
+        //     match an unfinished sub (true duplicate); otherwise it is a brand-new subscription.
+        const _sameCoach = (a, b) => String(a) === String(b);
+        const _finished = (s) => (s.status || '').toLowerCase() === 'completed' || (s.status || '').toLowerCase() === 'withdrawn' || !!s.switchedAwayTo;
         for (const e of enrollments) {
-          // Find this sport's existing subscription (by SPORT — one per sport).
-          // Changing the coach updates that sub instead of creating a duplicate.
           let matched = false;
-          for (let i = subs.length - 1; i >= 0; i--) {
-            const s = subs[i];
-            if (s.activity === e.sport) {
-              syncSubToEnrollment(s, e, existing, state.invoices);
-              matched = true;
-              break;
+          if (e._originalSport) {
+            // Existing row: match its own subscription by sport + original coach.
+            for (let i = subs.length - 1; i >= 0; i--) {
+              const s = subs[i];
+              if (s.activity === e.sport && _sameCoach(s.coachId, e._originalCoachId)) {
+                syncSubToEnrollment(s, e, existing, state.invoices); matched = true; break;
+              }
+            }
+            // Legacy fallback: original coach not recorded / already renamed → match by sport once.
+            if (!matched) {
+              for (let i = subs.length - 1; i >= 0; i--) {
+                if (subs[i].activity === e.sport) { syncSubToEnrollment(subs[i], e, existing, state.invoices); matched = true; break; }
+              }
+            }
+          } else {
+            // New row: only fold into an existing sub if the SAME sport + SAME coach is still
+            // active — otherwise it is a genuinely new (second-coach) enrollment.
+            for (let i = subs.length - 1; i >= 0; i--) {
+              const s = subs[i];
+              if (s.activity === e.sport && _sameCoach(s.coachId, e.coachId) && !_finished(s)) {
+                syncSubToEnrollment(s, e, existing, state.invoices); matched = true; break;
+              }
             }
           }
           if (!matched && e.price > 0) {
-            // Brand-new sport for this member — record it as a subscription
-            // and create an invoice for it.
+            // Brand-new sport (or same sport under a NEW coach) — record it as a subscription
+            // and create/merge an invoice line for it.
             newSubs.push(e);
           }
         }
