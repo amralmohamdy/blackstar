@@ -21023,17 +21023,36 @@ PAGES.attendance = (main) => {
           const want = rowAttended(m, sp) ? 'attended' : 'notattended';
           if (!filter.atts.includes(want)) continue;
         }
-        // Resolve the coach for THIS sport: prefer the matching enrollment, then
-        // the matching subscription (a sport may live only in subscriptions, e.g.
-        // legacy/imported data), and only fall back to the member's primary coach
-        // as a last resort. This prevents showing the wrong coach (the headline
-        // coach) for a sport that isn't in enrollments.
+        // v6.505: if this sport was taught by MORE THAN ONE coach (a switch/transfer split, or the
+        // v6.504 two-coach enrolment), show ONE row PER coach, each scoped to that coach's attendance
+        // WINDOW — so a switched student's classes credit the RIGHT coach (Iyad's window vs Abdel
+        // Salam's), never all of them under both. The windows come from subAttendanceWindow, the same
+        // boundaries salary uses, so the attendance view and the pay agree.
+        const spSubs = (m.subscriptions || []).filter(s => s.activity === sp && s.coachId != null);
+        const coachIds = [...new Set(spSubs.map(s => String(s.coachId)))];
+        if (sp !== SUMMER_CAMP && coachIds.length > 1) {
+          for (const cid of coachIds) {
+            if (filter.coaches.length && !filter.coaches.map(String).includes(cid)) continue;
+            if (myCoachId != null && String(myCoachId) !== cid) continue;   // a coach sees only their own window
+            let from = null, to = null;
+            spSubs.filter(s => String(s.coachId) === cid).forEach(s => {
+              const w = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, s) : { from: s.start || null, to: s.end || null };
+              if (w.from && (!from || w.from < from)) from = w.from;
+              if (w.to && (!to || w.to > to)) to = w.to;
+            });
+            rows.push({ m, sport: sp, coachId: parseInt(cid), window: { from, to } });
+          }
+          continue;
+        }
+        // Single coach for this sport (the normal case). Resolve it: prefer the matching enrollment,
+        // then the matching subscription (a sport may live only in subscriptions, e.g. legacy/imported
+        // data), and only fall back to the member's primary coach as a last resort.
         const enr = (m.enrollments || []).find(e => e.sport === sp);
         const sub = (m.subscriptions || []).find(s => s.activity === sp);
         const rowCoachId = (enr && enr.coachId != null) ? enr.coachId
           : (sub && sub.coachId != null) ? sub.coachId
           : m.coachId;
-        rows.push({ m, sport: sp, coachId: rowCoachId });
+        rows.push({ m, sport: sp, coachId: rowCoachId, window: null });
       }
     }
     // Sort: active members first, then expired ones (so admin's attention
@@ -21069,6 +21088,15 @@ PAGES.attendance = (main) => {
       ? filter.days.filter(d => d >= 1 && d <= total)
       : Array.from({ length: total }, (_, i) => i + 1);
     return days.some(d => data[String(d)] === 'Y');
+  }
+
+  // v6.505: is a given day inside a split row's coach WINDOW? (window null = whole sport, no split)
+  function inWin(win, mo, dayKey) {
+    if (!win) return true;
+    const iso = `${mo}-${String(dayKey).padStart(2, '0')}`;
+    if (win.from && iso < win.from) return false;
+    if (win.to && iso > win.to) return false;
+    return true;
   }
 
   // Months that actually have any attendance marks (for the "All months" summary).
@@ -21347,12 +21375,13 @@ PAGES.attendance = (main) => {
     const totalMonths = (filter.month === 'all') ? _summaryMonths : [gMonth];
     const dayFilter = (filter.month === 'all') ? [] : (filter.days || []).filter(d => d >= 1 && d <= 31);
     let clubAttended = 0;
-    for (const { m, sport } of rows) {
+    for (const { m, sport, window } of rows) {
       for (const mk of totalMonths) {
         const dd = m.dailyAttendance?.[mk]?.[sport] || {};
         for (const k in dd) {
           if (dd[k] !== 'Y') continue;
           if (dayFilter.length && !dayFilter.includes(parseInt(k))) continue;
+          if (!inWin(window, mk, k)) continue;   // v6.505: split rows count only their coach's window (no double-count)
           clubAttended++;
         }
       }
@@ -21366,11 +21395,11 @@ PAGES.attendance = (main) => {
     if (filter.month === 'all') {
       const months = _summaryMonths;
       const monthHeaders = months.map(mo => `<th class="att-day-h" style="min-width:62px;width:62px">${fmtMonth(mo)}</th>`).join('');
-      const body = rows.map(({ m, sport, coachId }) => {
+      const body = rows.map(({ m, sport, coachId, window }) => {
         let grandY = 0;
         const cells = months.map(mo => {
           const dd = m.dailyAttendance?.[mo]?.[sport] || {};
-          let y = 0; for (const k in dd) if (dd[k] === 'Y') y++;
+          let y = 0; for (const k in dd) if (dd[k] === 'Y' && inWin(window, mo, k)) y++;   // v6.505
           grandY += y;
           return `<td class="att-total" style="text-align:center">${y ? `<span style="color:var(--green);font-weight:600">${y}</span>` : '<span class="text-mute">·</span>'}</td>`;
         }).join('');
@@ -21416,12 +21445,17 @@ PAGES.attendance = (main) => {
     const dayHeaders = dayList.map(d => `<th class="att-day-h${isFiltered ? ' att-day-active' : ''}">${d}</th>`).join('');
 
     // One row per (member, sport) — multi-sport members get multiple rows
-    const body = rows.map(({ m, sport, coachId }) => {
+    const body = rows.map(({ m, sport, coachId, window }) => {
       const dayData = m.dailyAttendance?.[gMonth]?.[sport] || {};
       let y = 0, n = 0;
       // Totals reflect the full selected scope (baseDays), not just shown columns.
-      baseDays.forEach(d => { const mk = dayData[String(d)]; if (mk === 'Y') y++; if (mk === 'N') n++; });
-      const cells = dayList.map(d => cellRender(m.id, sport, d, dayData[String(d)])).join('');
+      // v6.505: a split row only counts days inside its coach's window.
+      baseDays.forEach(d => { if (!inWin(window, gMonth, d)) return; const mk = dayData[String(d)]; if (mk === 'Y') y++; if (mk === 'N') n++; });
+      // v6.505: cells OUTSIDE this coach's window are muted + non-clickable (they belong to the
+      // other coach's row), so a day can only be marked on the coach who taught it.
+      const cells = dayList.map(d => inWin(window, gMonth, d)
+        ? cellRender(m.id, sport, d, dayData[String(d)])
+        : `<td class="att-cell att-empty" style="opacity:.2" title="outside ${escapeHtml(coachName(coachId))}'s period">·</td>`).join('');
       const total = y + n;
       const rate = total ? Math.round(y/total*100) : 0;
       const sportEsc = sport.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
