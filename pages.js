@@ -12910,6 +12910,7 @@ PAGES.invoicechecker = (main) => {
       </div>
       <div class="topbar-actions" style="display:flex;gap:8px;align-items:center">
         <button class="btn ${payLedger.length ? 'primary' : 'ghost'}" id="ic-payledger" title="${t('Review invoices whose payment rows do not reconcile — a duplicated installment, or a paid-total that does not match the rows', 'مراجعة الفواتير التي لا تتطابق دفعاتها — دفعة مكررة أو إجمالي مدفوع لا يطابق الصفوف')}">💳 ${t('Payment ledger', 'دفتر الدفعات')}${payLedger.length ? ` (${payLedger.length})` : ''}</button>
+        <button class="btn ghost" id="ic-switchrepair" title="${t('Restore a switched member subscription + invoice line from the profile (only when already paid)', 'استرجاع الاشتراك وبند الفاتورة الناقص للعضو المحوّل من ملفه (فقط عند الدفع المسبق)')}">🔀 ${t('Repair switched', 'إصلاح المحوّلين')}</button>
         ${monthMultiHTML('ic-month', months, window._icMonths)}
       </div>
     </div>
@@ -12933,6 +12934,54 @@ PAGES.invoicechecker = (main) => {
   bindMonthMulti('ic-month', (mSel) => { window._icMonths = mSel; PAGES.invoicechecker(main); });
   $('#ic-fixall')?.addEventListener('click', () => window._icFixAll());
   $('#ic-payledger')?.addEventListener('click', () => window.reviewPaymentLedger());
+  $('#ic-switchrepair')?.addEventListener('click', () => window.showSwitchRepairTool());
+};
+
+// ── Repair switched members (admin, v6.506) ──────────────────────────────────────
+// A same-sport coach switch could leave the destination coach's portion in the PROFILE (enrollment)
+// only — no matching active subscription or invoice line — so the card / attendance / salary couldn't
+// see it and the Edit form showed a sport the read-only card didn't. This preview + one-click repair
+// restores the missing subscription + invoice line FROM THE PROFILE, but ONLY when the member's
+// existing payment already covers it (an overpayment) — so it never bills anyone; unfunded cases are
+// listed separately as "manual review". See repairSwitchedMembers() in app.js.
+window.showSwitchRepairTool = function () {
+  if (currentRole() !== 'admin') { toast(t('Only admins can run this repair', 'الإصلاح للمشرف فقط'), 'error'); return; }
+  const dry = repairSwitchedMembers({ apply: false });
+  const money = (v) => fmt(Math.round((Number(v) || 0) * 100) / 100);
+  const repHead = `<tr><th style="text-align:start">${t('Member', 'العضو')}</th><th>${t('Sport', 'الرياضة')}</th><th>${t('Coach', 'المدرب')}</th><th style="text-align:center">${t('Cls', 'حصص')}</th><th style="text-align:end">${t('Restore', 'استرجاع')}</th><th style="text-align:end">${t('Already paid', 'مدفوع مسبقاً')}</th></tr>`;
+  const repRows = dry.repaired.map(r => `<tr>
+      <td>${escapeHtml(r.member)}</td><td>${escapeHtml(r.sport)}</td><td>${escapeHtml(r.coach)}</td>
+      <td style="text-align:center">${r.classes}</td><td style="text-align:end">${money(r.price)}</td>
+      <td style="text-align:end;color:var(--green)">✓ ${money(r.overpay)}</td></tr>`).join('');
+  const skipRows = dry.skipped.map(r => `<tr style="opacity:.75">
+      <td>${escapeHtml(r.member)}</td><td>${escapeHtml(r.sport)}</td><td>${escapeHtml(r.coach)}</td>
+      <td style="text-align:end">${money(r.price)}</td><td style="text-align:end;color:var(--red)">${money(r.overpay)}</td></tr>`).join('');
+  const actions = [{ label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal }];
+  if (dry.repaired.length) actions.push({
+    label: `🔀 ${t('Apply repair', 'تنفيذ الإصلاح')} (${dry.repaired.length})`, class: 'btn primary',
+    onclick: () => {
+      if (typeof assertCloudWritable === 'function' && !assertCloudWritable('repair switched members', 'إصلاح الأعضاء المحوّلين')) return;
+      try { if (typeof window.downloadBackup === 'function') window.downloadBackup(); } catch (_) {}
+      const res = repairSwitchedMembers({ apply: true });
+      closeModal();
+      const done = () => { render(); toast(`✓ ${t('Repaired', 'تم إصلاح')} ${res.repaired.length} ${t('member(s)', 'عضو')}`, 'success'); };
+      if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: res.repaired.slice(0, 3).map(r => ({ collection: 'members', id: r.memberId })), okMsg: t('Switched members repaired & saved to cloud', 'تم إصلاح الأعضاء وحفظهم في السحابة'), afterOk: done });
+      else { if (typeof save === 'function') save(); done(); }
+    }
+  });
+  showModal({
+    title: `🔀 ${t('Repair switched members', 'إصلاح الأعضاء المحوّلين')}`,
+    body: `
+      <div style="font-size:12.5px;line-height:1.6;margin-bottom:12px;color:var(--text-dim)">
+        ${t('A same-sport coach switch can leave the new coach classes in the profile only — with no subscription or invoice line — so the card, attendance and salary miss them. This restores the missing records <b>from the profile</b>, and <b>only</b> for members whose payment already covers it (so no one is billed).', 'تحويل المدرب لنفس الرياضة قد يترك حصص المدرب الجديد في الملف فقط — بدون اشتراك أو بند فاتورة. هذا يسترجع السجلات الناقصة من الملف، وفقط لمن يغطي دفعه ذلك (بدون أي محاسبة جديدة).')}
+      </div>
+      <div style="font-weight:700;color:var(--green);margin-bottom:6px">✓ ${t('Will repair', 'سيتم الإصلاح')} (${dry.repaired.length}) — ${t('already paid, safe', 'مدفوع مسبقاً، آمن')}</div>
+      ${dry.repaired.length ? `<div class="table-wrap" style="max-height:230px;overflow:auto;margin-bottom:14px"><table class="mini">${repHead}<tbody>${repRows}</tbody></table></div>` : `<div class="text-mute" style="margin-bottom:14px">${t('Nothing to repair — every profile sport already has its subscription.', 'لا شيء للإصلاح — كل رياضة في الملف لها اشتراك.')}</div>`}
+      ${dry.skipped.length ? `<div style="font-weight:700;color:var(--accent-2);margin-bottom:6px">⚠ ${t('Manual review', 'مراجعة يدوية')} (${dry.skipped.length}) — ${t('payment does NOT cover it — NOT touched', 'الدفع لا يغطيها — لن تُمَس')}</div>
+        <div class="table-wrap" style="max-height:180px;overflow:auto"><table class="mini"><tr><th style="text-align:start">${t('Member', 'العضو')}</th><th>${t('Sport', 'الرياضة')}</th><th>${t('Coach', 'المدرب')}</th><th style="text-align:end">${t('Would add', 'ستضاف')}</th><th style="text-align:end">${t('Overpay', 'فائض')}</th></tr><tbody>${skipRows}</tbody></table></div>` : ''}
+      <div style="font-size:11px;color:var(--text-mute);margin-top:12px">${t('A backup is downloaded before applying. Only adds missing records — never deletes. Safe to run again.', 'يتم تنزيل نسخة احتياطية قبل التنفيذ. يضيف فقط — لا يحذف. آمن للتكرار.')}</div>`,
+    actions,
+  });
 };
 
 // ── Payment-ledger review (admin, v6.355) ────────────────────────────────────────
