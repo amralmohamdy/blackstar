@@ -1606,8 +1606,9 @@ PAGES.members = (main) => {
             <div style="display:flex;justify-content:space-between;padding:2px 6px 6px;border-bottom:1px solid var(--border);margin-bottom:4px"><button type="button" class="mfilter-all" data-cb="filter-coach-cb" data-group="coaches" style="background:none;border:none;color:var(--accent);font-size:12px;cursor:pointer;font-weight:600">All</button><button type="button" class="mfilter-none" data-cb="filter-coach-cb" data-group="coaches" style="background:none;border:none;color:var(--text-mute);font-size:12px;cursor:pointer">Clear</button></div>
             ${(() => {
               const cbHtml = (c, faded) => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px${faded ? ';opacity:.72' : ''}"><input type="checkbox" class="filter-coach-cb" value="${c.id}" ${(filter.coaches || []).map(String).includes(String(c.id)) ? 'checked' : ''} /> ${escapeHtml(c.name)}${faded ? ' <span class="text-mute" style="font-size:10px">(former)</span>' : ''}</label>`;
-              const act = state.coaches.filter(c => isCoachActive(c));
-              const inact = state.coaches.filter(c => !isCoachActive(c));
+              const _teach = state.coaches.filter(isCoachRole);   // v6.507: exclude staff (Ester etc.) — they don't coach members
+              const act = _teach.filter(c => isCoachActive(c));
+              const inact = _teach.filter(c => !isCoachActive(c));
               let html = act.map(c => cbHtml(c, false)).join('');
               if (inact.length) html += `<div style="margin:6px 0 2px;padding:5px 6px 3px;font-size:10px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;border-top:1px solid var(--border)">Former / inactive</div>` + inact.map(c => cbHtml(c, true)).join('');
               return html;
@@ -3892,10 +3893,25 @@ function showMemberForm(m) {
               }
             }
           }
-          if (!matched && e.price > 0) {
+          if (!matched && e.price > 0 && !e.switchedInto && !e.switchFunded) {
             // Brand-new sport (or same sport under a NEW coach) — record it as a subscription
             // and create/merge an invoice line for it.
             newSubs.push(e);
+          } else if (!matched && (e.switchedInto || e.switchFunded)) {
+            // v6.511: this enrollment was funded by a sport SWITCH (its value moved from the old
+            // sport via a net-zero switch credit). Its subscription is missing here — usually
+            // because it was deleted, or the sport/coach was edited so the match above failed.
+            // It must NEVER be re-billed (that double-charges the member and creates a phantom
+            // due — exactly the switched-member bug). Re-create the switch-funded subscription
+            // instead of charging for it, so the profile/attendance/payroll stay whole.
+            if (!Array.isArray(existing.subscriptions)) existing.subscriptions = [];
+            existing.subscriptions.push({
+              activity: e.sport, coachId: e.coachId, totalClasses: parseInt(e.classes) || 0,
+              start: e.start || TODAY, end: e.end || null, status: 'active', switchFunded: true,
+              amountPaid: Number(e.price) || 0, _sid: 's' + Date.now() + '_swfix',
+            });
+            if (typeof audit === 'function') audit('member.switch_refund_guard', 'member:' + existing.id,
+              `Skipped re-billing switch-funded ${e.sport} (restored its subscription instead)`, { memberId: existing.id, sport: e.sport });
           }
         }
 
@@ -10644,8 +10660,9 @@ PAGES.schedule = (main) => {
           </button>
           <div id="sch-filter-coach-menu" style="display:none;position:absolute;left:0;top:100%;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-top:4px;padding:8px;min-width:200px;max-height:300px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.4)">
             ${(() => {
-              const active = state.coaches.filter(c => isCoachActive(c));
-              const inactive = state.coaches.filter(c => !isCoachActive(c));
+              const _teach = state.coaches.filter(isCoachRole);   // v6.507: exclude staff
+              const active = _teach.filter(c => isCoachActive(c));
+              const inactive = _teach.filter(c => !isCoachActive(c));
               const row = (c, faded) => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px${faded ? ';opacity:.72' : ''}"><input type="checkbox" class="sch-coach-cb" value="${c.id}" ${filter.coaches.includes(c.id) ? 'checked' : ''} /> ${escapeHtml(c.name)}${faded ? ' <span class="text-mute" style="font-size:10px">(inactive)</span>' : ''}</label>`;
               return active.map(c => row(c, false)).join('') + (inactive.length ? '<div style="height:1px;background:var(--border);margin:6px 0"></div>' + inactive.map(c => row(c, true)).join('') : '');
             })()}
@@ -20966,7 +20983,7 @@ PAGES.attendance = (main) => {
   // filter.days is an array of day-numbers; empty = all days
   const _defaultDays = _defaultMonth === _todayMonth ? [_now.getDate()] : [];
   // v6.398: `coaches` and `atts` are ARRAYS (empty = all), matching the sports filter beside them.
-  let filter = { month: _defaultMonth, coaches: [], search: '', sports: [], memberId: null, days: _defaultDays, atts: [] };
+  let filter = { month: _defaultMonth, coaches: [], search: '', sports: [], memberId: null, days: _defaultDays, atts: [], statuses: [] };
   // Month MULTI-select: filter.months = [] → summary over ALL months; exactly ONE →
   // the editable day-grid for that month; TWO+ → summary over just those months.
   // filter.month stays derived (single month or 'all') so all the grid logic below
@@ -21017,6 +21034,23 @@ PAGES.attendance = (main) => {
     return [...set];
   }
 
+  // v6.509: attendance is stored per SPORT (m.dailyAttendance[month][sport][day]). When a member takes
+  // the SAME sport with 2+ coaches AT THE SAME TIME (the v6.504 two-coach enrolment), each coach's grid
+  // row must write an INDEPENDENT cell — otherwise marking one toggles BOTH rows, and the club total
+  // double-counts the day. Returns the storage key for THIS coach's row: the FIRST active coach keeps
+  // the plain `sport` key (so all existing attendance + salary stay exactly as they are), and each
+  // additional SIMULTANEOUS coach gets a per-coach key. A sequential SWITCH (one completed + one active
+  // sub) has only ONE active coach → stays on the shared `sport` key, since its non-overlapping windows
+  // already separate the days by date.
+  function attKeyForSport(m, sport, coachId) {
+    const active = (m.subscriptions || []).filter(s => (s.activity || '') === sport && s.coachId != null
+      && (s.status || '').toLowerCase() !== 'completed' && (s.status || '').toLowerCase() !== 'withdrawn'
+      && (s.status || '').toLowerCase() !== 'expired' && !s.switchedAwayTo);
+    const coaches = [...new Set(active.map(s => String(s.coachId)))];
+    if (coaches.length < 2) return sport;                 // single active coach → shared key (normal)
+    return String(coachId) === coaches[0] ? sport : sport + ' ' + coachId;   // extra coaches → own cell
+  }
+
   function getRows() {
     // Show every member who has ANY enrollment (active OR expired).
     // The grid is for marking attendance; admin needs to see expired members
@@ -21026,6 +21060,9 @@ PAGES.attendance = (main) => {
     const rows = [];
     for (const m of state.members) {
       if (m.deleted) continue;  // archived members are out of the active roster
+      // v6.508: MEMBER-STATUS filter (Active / Frozen / Expired / Completed). Combines with every
+      // other filter (coach, sport, attendance, day) — a row must pass ALL active filters to show.
+      if (filter.statuses.length && !filter.statuses.includes(memberStatus(m))) continue;
       // COACH FILTER (v6.385 — was a real bug): this used to test the member's HEADLINE
       // `m.coachId`, but each row resolves its coach PER SPORT from the enrollment/subscription.
       // A member whose primary sport is Summer Camp (no coach at all) yet who also does Kick
@@ -21089,7 +21126,7 @@ PAGES.attendance = (main) => {
               if (w.from && (!from || w.from < from)) from = w.from;
               if (w.to && (!to || w.to > to)) to = w.to;
             });
-            rows.push({ m, sport: sp, coachId: parseInt(cid), window: { from, to } });
+            rows.push({ m, sport: sp, coachId: parseInt(cid), window: { from, to }, attKey: attKeyForSport(m, sp, cid) });
           }
           continue;
         }
@@ -21101,7 +21138,7 @@ PAGES.attendance = (main) => {
         const rowCoachId = (enr && enr.coachId != null) ? enr.coachId
           : (sub && sub.coachId != null) ? sub.coachId
           : m.coachId;
-        rows.push({ m, sport: sp, coachId: rowCoachId, window: null });
+        rows.push({ m, sport: sp, coachId: rowCoachId, window: null, attKey: sp });
       }
     }
     // Sort: active members first, then expired ones (so admin's attention
@@ -21385,11 +21422,14 @@ PAGES.attendance = (main) => {
       const name = m ? m.name : 'this member';
       const fromLabel = current === 'Y' ? 'Present (Y)' : 'Absent (N)';
       const toLabel = next === 'Y' ? 'Present (Y)' : next === 'N' ? 'Absent (N)' : 'cleared (blank)';
+      // storage key may be coach-qualified ("Kick Boxing 1786…") for a same-sport two-coach row;
+      // show only the sport name (no real sport ends in " <number>").
+      const dispSport = String(sport).replace(/ \d+$/, '');
       const badge = (txt, kind) => `<span class="badge" style="background:${kind==='Y'?'rgba(16,185,129,.15)':kind==='N'?'rgba(242,96,96,.15)':'rgba(120,120,140,.15)'};color:${kind==='Y'?'var(--green)':kind==='N'?'var(--red)':'var(--text-mute)'}">${txt}</span>`;
       showModal({
         title: 'Change attendance?',
         body: `<div style="font-size:13px;line-height:1.7">
-            <p>Change <b>${escapeHtml(name)}</b> · ${escapeHtml(sport)} on <b>day ${day}</b> of ${fmtMonth(gridMonth())}?</p>
+            <p>Change <b>${escapeHtml(name)}</b> · ${escapeHtml(dispSport)} on <b>day ${day}</b> of ${fmtMonth(gridMonth())}?</p>
             <p style="margin-top:8px">${badge(fromLabel, current)} <span style="opacity:.6">→</span> ${badge(toLabel, next)}</p>
           </div>`,
         actions: [
@@ -21424,9 +21464,9 @@ PAGES.attendance = (main) => {
     const totalMonths = (filter.month === 'all') ? _summaryMonths : [gMonth];
     const dayFilter = (filter.month === 'all') ? [] : (filter.days || []).filter(d => d >= 1 && d <= 31);
     let clubAttended = 0;
-    for (const { m, sport, window } of rows) {
+    for (const { m, attKey, sport, window } of rows) {
       for (const mk of totalMonths) {
-        const dd = m.dailyAttendance?.[mk]?.[sport] || {};
+        const dd = m.dailyAttendance?.[mk]?.[attKey || sport] || {};
         for (const k in dd) {
           if (dd[k] !== 'Y') continue;
           if (dayFilter.length && !dayFilter.includes(parseInt(k))) continue;
@@ -21444,10 +21484,10 @@ PAGES.attendance = (main) => {
     if (filter.month === 'all') {
       const months = _summaryMonths;
       const monthHeaders = months.map(mo => `<th class="att-day-h" style="min-width:62px;width:62px">${fmtMonth(mo)}</th>`).join('');
-      const body = rows.map(({ m, sport, coachId, window }) => {
+      const body = rows.map(({ m, attKey, sport, coachId, window }) => {
         let grandY = 0;
         const cells = months.map(mo => {
-          const dd = m.dailyAttendance?.[mo]?.[sport] || {};
+          const dd = m.dailyAttendance?.[mo]?.[attKey || sport] || {};
           let y = 0; for (const k in dd) if (dd[k] === 'Y' && inWin(window, mo, k)) y++;   // v6.505
           grandY += y;
           return `<td class="att-total" style="text-align:center">${y ? `<span style="color:var(--green);font-weight:600">${y}</span>` : '<span class="text-mute">·</span>'}</td>`;
@@ -21494,8 +21534,9 @@ PAGES.attendance = (main) => {
     const dayHeaders = dayList.map(d => `<th class="att-day-h${isFiltered ? ' att-day-active' : ''}">${d}</th>`).join('');
 
     // One row per (member, sport) — multi-sport members get multiple rows
-    const body = rows.map(({ m, sport, coachId, window }) => {
-      const dayData = m.dailyAttendance?.[gMonth]?.[sport] || {};
+    const body = rows.map(({ m, attKey, sport, coachId, window }) => {
+      const aKey = attKey || sport;   // v6.509: per-coach storage cell for same-sport two-coach rows
+      const dayData = m.dailyAttendance?.[gMonth]?.[aKey] || {};
       let y = 0, n = 0;
       // Totals reflect the full selected scope (baseDays), not just shown columns.
       // v6.505: a split row only counts days inside its coach's window.
@@ -21503,7 +21544,7 @@ PAGES.attendance = (main) => {
       // v6.505: cells OUTSIDE this coach's window are muted + non-clickable (they belong to the
       // other coach's row), so a day can only be marked on the coach who taught it.
       const cells = dayList.map(d => inWin(window, gMonth, d)
-        ? cellRender(m.id, sport, d, dayData[String(d)])
+        ? cellRender(m.id, aKey, d, dayData[String(d)])
         : `<td class="att-cell att-empty" style="opacity:.2" title="outside ${escapeHtml(coachName(coachId))}'s period">·</td>`).join('');
       const total = y + n;
       const rate = total ? Math.round(y/total*100) : 0;
@@ -21725,7 +21766,8 @@ PAGES.attendance = (main) => {
           <option value="4">${t('Week', 'أسبوع')} 4 (22–28)</option>
           <option value="5">${t('Week', 'أسبوع')} 5 (29–${t('end', 'النهاية')})</option>
         </select>
-        <span ${myCoachId != null ? 'style="display:none"' : ''}>${multiFilterHTML('att-coach', state.coaches.map(c => [String(c.id), c.name]), filter.coaches, { allText: t('All coaches', 'كل المدربين'), noun: t('coaches', 'مدربين'), minWidth: 150 })}</span>
+        <span ${myCoachId != null ? 'style="display:none"' : ''}>${multiFilterHTML('att-coach', state.coaches.filter(isCoachRole).map(c => [String(c.id), c.name]), filter.coaches, { allText: t('All coaches', 'كل المدربين'), noun: t('coaches', 'مدربين'), minWidth: 150 })}</span>
+        ${multiFilterHTML('att-mstatus', [['Active', '🟢 ' + t('Active', 'نشط')], ['Frozen', '🔵 ' + t('Frozen', 'مجمّد')], ['Expired', '⚪ ' + t('Expired', 'منتهي')], ['Completed', '🟣 ' + t('Completed', 'مكتمل')], ['Withdrawn', '🔴 ' + t('Withdrawn', 'منسحب')]], filter.statuses, { allText: t('All statuses', 'كل الحالات'), noun: t('statuses', 'حالات'), minWidth: 150 })}
         ${multiFilterHTML('att-status', [['attended', '✓ ' + t('Attended', 'حضر')], ['notattended', '✗ ' + t('Not attended', 'لم يحضر')]], filter.atts, { allText: t('All attendance', 'كل الحضور'), noun: t('selected', 'محدد'), minWidth: 150 })}
         <div style="position:relative">
           <button type="button" id="att-sports-btn" style="min-width:150px;text-align:left;display:inline-flex;align-items:center;justify-content:space-between;gap:8px">${t('All sports', 'كل الرياضات')} <span style="opacity:.6">▾</span></button>
@@ -21775,6 +21817,7 @@ PAGES.attendance = (main) => {
     applyDays();
   });
   bindMultiFilter('att-coach', v => { filter.coaches = v; refresh(); }, { allText: t('All coaches', 'كل المدربين'), noun: t('coaches', 'مدربين') });
+  bindMultiFilter('att-mstatus', v => { filter.statuses = v; refresh(); }, { allText: t('All statuses', 'كل الحالات'), noun: t('statuses', 'حالات') });
   bindMultiFilter('att-status', v => { filter.atts = v; refresh(); }, { allText: t('All attendance', 'كل الحضور'), noun: t('selected', 'محدد') });
 
   // Day multi-select dropdown
@@ -23376,20 +23419,22 @@ window.switchSport = function(memberId) {
           m.coachId = finalToCoachId;
         }
 
+        // v6.511: use the CAPTURED source sport/coach (from.sport/from.coachId were mutated to the
+        // destination by the enrollment update above — that's why the audit read "Gymnastic → Gymnastic").
         audit('sport.switch', `member:${m.id}`,
-          `Switched ${from.sport} → ${toSport} for ${m.name || m.nameArabic}`,
-          { memberId: m.id, name: m.name, fromSport: from.sport, toSport, fromCoachId: from.coachId, toCoachId });
+          `Switched ${_fromSport} → ${toSport} for ${m.name || m.nameArabic}`,
+          { memberId: m.id, name: m.name, fromSport: _fromSport, toSport, fromCoachId: _fromCoachId, toCoachId });
 
         save();
         closeModal();
         render();
         let msg;
         if (skipReconciliation) {
-          msg = `Switched · ${from.sport} → ${toSport} · no commission (Summer Camp involved)`;
+          msg = `Switched · ${_fromSport} → ${toSport} · no commission (Summer Camp involved)`;
         } else if (attendedA === 0) {
-          msg = `Switched · no commission earned (no attendance under ${from.sport})`;
+          msg = `Switched · no commission earned (no attendance under ${_fromSport})`;
         } else {
-          msg = `Switched · ${coachName(from.coachId)} keeps ${fmt(aShare)} · ${coachName(toCoachId)} gets ${fmt(bShare)}`;
+          msg = `Switched · ${coachName(_fromCoachId)} keeps ${fmt(aShare)} · ${coachName(toCoachId)} gets ${fmt(bShare)}`;
         }
         toast(msg);
       }},
@@ -24276,7 +24321,13 @@ window.deleteSubscription = function(memberId, sid) {
   }
   const label = `${sub.activity || 'sport'} (${sub.start ? fmtDate(sub.start) : '?'} → ${sub.end ? fmtDate(sub.end) : '?'})`;
   const dupNote = hasTwin ? '\n\n⚠ This is a DUPLICATE of an identical period — the attendance stays on the remaining one.' : '';
-  if (!confirm(`Delete this subscription period?\n\n${label}\nPaid: ${fmt(sub.amountPaid || 0)} QAR${dupNote}\n\nThis removes just this one period and its linked invoice (no refund record). The member's other subscriptions are untouched.`)) return;
+  // v6.511: a switch-funded destination sport (its value moved here from another sport via a
+  // net-zero switch credit) is NOT a stray row — deleting it strands the switch credit and can
+  // make a later Edit re-bill the sport at full price (the switched-member double-charge). Warn.
+  const switchNote = (sub.switchFunded && !hasTwin)
+    ? '\n\n⚠ This sport was funded by a SPORT SWITCH (its value moved here from another sport). Deleting it will leave the switch credit stranded and may cause the sport to be re-billed later. To undo a switch, use Switch Sport again or Edit pricing instead.'
+    : '';
+  if (!confirm(`Delete this subscription period?\n\n${label}\nPaid: ${fmt(sub.amountPaid || 0)} QAR${dupNote}${switchNote}\n\nThis removes just this one period and its linked invoice (no refund record). The member's other subscriptions are untouched.`)) return;
 
   // Remove the linked invoice line / invoice for this sub, so PAID drops.
   const ref = sub.invoiceNumber || null;
@@ -26960,6 +27011,240 @@ PAGES.onboarding = (main) => {
   $('#onb-search').addEventListener('input', e => { filter.search = e.target.value; pg.page = 1; refresh(); });
   $('#onb-status').addEventListener('change', e => { filter.status = e.target.value; pg.page = 1; refresh(); });
   refresh();
+};
+
+// ─── WELCOME MESSAGES ─────────────────────────────────────────────────────────
+// A front-desk screen that surfaces recent NEW JOINERS and RENEWALS and lets the
+// admin/receptionist WhatsApp each one a warm welcome PRE-FILLED with their own
+// membership details (sport, coach, start, valid-until, sessions). Sending stamps
+// m.welcomedAt so nobody is greeted twice for the same joining/renewal — a later
+// renewal (a newer start date) makes the member "pending" again. (v6.510)
+
+// The reference date = the most recent of joinDate and any subscription start.
+function welcomeRefDate(m) {
+  const jd = m.joinDate || null;
+  const starts = (m.subscriptions || []).map(s => s.start).filter(Boolean);
+  const all = (jd ? starts.concat(jd) : starts).slice().sort();
+  return { earliest: all[0] || null, latest: all[all.length - 1] || null, jd };
+}
+// 'new' (a first membership within the window), 'renewal' (an existing member whose
+// latest period started within the window), or null (nothing recent).
+function welcomeKind(m, cutoff) {
+  if (!m || m.deleted) return null;
+  if (typeof memberStatus === 'function' && memberStatus(m) === 'Withdrawn') return null;
+  const { earliest, latest, jd } = welcomeRefDate(m);
+  if (!latest) return null;
+  const joinedRecently = (jd && jd >= cutoff) || (earliest && earliest >= cutoff);
+  if (joinedRecently) return 'new';
+  if (latest >= cutoff) return 'renewal';
+  return null;
+}
+// Already welcomed FOR THIS joining/renewal? (welcomedAt on/after the reference date.)
+function welcomeDone(m) {
+  const ref = welcomeRefDate(m).latest;
+  return !!(m && m.welcomedAt && ref && m.welcomedAt >= ref);
+}
+// Family contact number when the member belongs to a household, else their own.
+function welcomeContactPhone(m) {
+  return (typeof familyContactPhone === 'function' && m.familyId) ? (familyContactPhone(m.familyId) || m.phone) : m.phone;
+}
+// The CURRENT membership lines to describe in the message (active/unexpired, not
+// withdrawn or switched-away). Falls back to the latest period if none is current.
+function welcomeMemberships(m) {
+  const today = (typeof TODAY !== 'undefined') ? TODAY : '9999-99-99';
+  let subs = (m.subscriptions || []).filter(s => s.activity && !s.switchedAwayTo
+    && (s.status || '').toLowerCase() !== 'withdrawn'
+    && (!s.end || s.end >= today));
+  if (!subs.length) subs = (m.subscriptions || []).filter(s => s.activity).slice(-1);
+  return subs.map(s => ({
+    sport: s.activity,
+    coach: (typeof coachName === 'function') ? coachName(s.coachId) : '',
+    start: s.start || null,
+    end: (typeof subscriptionValidEnd === 'function') ? subscriptionValidEnd(s) : (s.end || null),
+    classes: parseInt(s.totalClasses) || null,
+  }));
+}
+// Bilingual (Arabic-first) welcome / renewal message with the membership details inlined.
+function buildWelcomeMsg(m, kind) {
+  const nameAr = m.nameArabic || m.name || '';
+  const nameEn = m.name || '';
+  const dets = welcomeMemberships(m);
+  const fD = d => (typeof fmtDate === 'function' && d) ? fmtDate(d) : (d || '');
+  const lineAr = d => `• ${d.sport}${d.coach ? ' — مع الكابتن ' + d.coach : ''}` +
+    `${d.start ? '\n   🗓️ يبدأ: ' + fD(d.start) : ''}${d.end ? '\n   ⏳ ساري حتى: ' + fD(d.end) : ''}` +
+    `${d.classes ? '\n   🎟️ عدد الحصص: ' + d.classes : ''}`;
+  const lineEn = d => `• ${d.sport}${d.coach ? ' — with Coach ' + d.coach : ''}` +
+    `${d.start ? '\n   🗓️ Starts: ' + fD(d.start) : ''}${d.end ? '\n   ⏳ Valid until: ' + fD(d.end) : ''}` +
+    `${d.classes ? '\n   🎟️ Sessions: ' + d.classes : ''}`;
+  const detAr = dets.map(lineAr).join('\n\n');
+  const detEn = dets.map(lineEn).join('\n\n');
+  let ar, en;
+  if (kind === 'renewal') {
+    ar = `مرحباً ${nameAr} 🖤⭐\n\nشكراً لتجديد اشتراكك في نادي بلاك ستارز الرياضي! سعداء باستمرارك معنا 💚\n\nتفاصيل اشتراكك:\n${detAr}\n\nنتمنى لك موسماً رياضياً ممتعاً! لأي استفسار، نحن في خدمتك.\nنادي بلاك ستارز الرياضي 🖤⭐`;
+    en = `Hello ${nameEn} 🖤⭐\n\nThank you for renewing your membership at Black Stars Sports Club — we're happy to have you continue with us! 💚\n\nYour membership details:\n${detEn}\n\nWishing you a great season. For any questions, we're here to help.\nBlack Stars Sports Club 🖤⭐`;
+  } else {
+    ar = `أهلاً وسهلاً ${nameAr} 🖤⭐\n\nيسعدنا انضمامك إلى عائلة نادي بلاك ستارز الرياضي! مرحباً بك 💚\n\nتفاصيل اشتراكك:\n${detAr}\n\nنتمنى لك رحلة رياضية ممتعة! لأي استفسار، نحن في خدمتك.\nنادي بلاك ستارز الرياضي 🖤⭐`;
+    en = `Welcome ${nameEn} 🖤⭐\n\nWe're delighted to have you join the Black Stars Sports Club family! 💚\n\nYour membership details:\n${detEn}\n\nWishing you a wonderful sporting journey. We're here for anything you need.\nBlack Stars Sports Club 🖤⭐`;
+  }
+  return ar + '\n\n———\n\n' + en;
+}
+function welcomeWaLink(m, kind) {
+  return (typeof waLink === 'function') ? waLink(welcomeContactPhone(m), buildWelcomeMsg(m, kind)) : null;
+}
+// Badge: how many recent joiners/renewals (last 30d) still need a welcome.
+function pendingWelcomeCount() {
+  try {
+    const cutoff = addDays(TODAY, -30);
+    return (state.members || []).filter(m => welcomeKind(m, cutoff) && !welcomeDone(m)).length;
+  } catch (_) { return 0; }
+}
+// Stamp a member as welcomed today (no immediate re-render — the WhatsApp tab is opening).
+window.markWelcomed = function(id, opts) {
+  const m = state.members.find(x => x.id === id);
+  if (!m) return;
+  m.welcomedAt = TODAY;
+  if (typeof audit === 'function') audit('member.welcome', 'member:' + id, 'welcome message sent');
+  if (typeof save === 'function') save();
+  if (opts && opts.rerender && typeof PAGES.welcome === 'function') {
+    const main = document.querySelector('#main') || document.querySelector('.main') || document.querySelector('main');
+    if (main) PAGES.welcome(main);
+  }
+};
+// Preview the exact message before sending (with Copy + Send buttons).
+window.previewWelcome = function(id, kind) {
+  const m = state.members.find(x => x.id === id);
+  if (!m) return;
+  const msg = buildWelcomeMsg(m, kind);
+  const wa = welcomeWaLink(m, kind);
+  window._welcomeMsgCache = msg;
+  showModal({
+    title: (kind === 'renewal' ? '🔄 ' : '👋 ') + t('Welcome message', 'رسالة الترحيب') + ' — ' + escapeHtml(m.name || ''),
+    body: `<div style="font-size:12.5px;line-height:1.65;white-space:pre-wrap;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:12px;max-height:52vh;overflow:auto">${escapeHtml(msg)}</div>
+      <div class="text-mute" style="font-size:11px;margin-top:8px">${wa ? t('Opens WhatsApp with this text pre-filled. Add a photo or tweak before hitting send.', 'يفتح واتساب بهذا النص جاهزاً. يمكنك التعديل أو إضافة صورة قبل الإرسال.') : t('This member has no valid phone number.', 'لا يوجد رقم هاتف صالح لهذا العضو.')}</div>`,
+    actions: [
+      { label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal },
+      { label: '📋 ' + t('Copy', 'نسخ'), class: 'btn ghost', onclick: () => { try { navigator.clipboard.writeText(window._welcomeMsgCache || msg); toast(t('Copied', 'تم النسخ'), 'success'); } catch (_) { toast(t('Copy failed', 'تعذر النسخ'), 'error'); } } },
+      ...(wa ? [{ label: '💬 ' + t('Send on WhatsApp', 'إرسال عبر واتساب'), class: 'btn primary', onclick: () => { window.open(wa, '_blank', 'noopener'); window.markWelcomed(id, { rerender: true }); closeModal(); } }] : []),
+    ],
+  });
+};
+
+PAGES.welcome = (main) => {
+  if (!['admin', 'receptionist'].includes(currentRole())) {
+    main.innerHTML = `<div class="card" style="text-align:center;padding:40px"><div style="font-size:40px">🔒</div><h2>${t('Admins or receptionists only', 'للمسؤولين أو موظفي الاستقبال فقط')}</h2></div>`;
+    return;
+  }
+  if (window._welWin == null) window._welWin = 30;
+  if (window._welType == null) window._welType = 'all';   // all | new | renewal
+  if (window._welHideDone == null) window._welHideDone = true;
+  if (window._welSearch == null) window._welSearch = '';
+
+  const render = () => {
+    const win = window._welWin;
+    const cutoff = addDays(TODAY, -win);
+    let rows = [];
+    for (const m of (state.members || [])) {
+      const kind = welcomeKind(m, cutoff);
+      if (!kind) continue;
+      rows.push({ m, kind, ref: welcomeRefDate(m).latest, done: welcomeDone(m) });
+    }
+    const totalNew = rows.filter(r => r.kind === 'new').length;
+    const totalRenew = rows.filter(r => r.kind === 'renewal').length;
+    const totalDone = rows.filter(r => r.done).length;
+    // filters
+    const q = (window._welSearch || '').trim().toLowerCase();
+    let list = rows.filter(r => {
+      if (window._welType !== 'all' && r.kind !== window._welType) return false;
+      if (window._welHideDone && r.done) return false;
+      if (q) {
+        const hay = [r.m.name, r.m.nameArabic, r.m.phone].filter(Boolean).join(' ').toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+    // newest activity first
+    list.sort((a, b) => String(b.ref || '').localeCompare(String(a.ref || '')));
+
+    const typeBadge = (kind) => kind === 'new'
+      ? `<span class="badge" style="background:rgba(34,197,94,.15);color:var(--green)">🎉 ${t('New joiner', 'عضو جديد')}</span>`
+      : `<span class="badge" style="background:rgba(59,130,246,.15);color:#3b82f6">🔄 ${t('Renewal', 'تجديد')}</span>`;
+
+    const rowHtml = list.length ? list.map((r, i) => {
+      const m = r.m;
+      const dets = welcomeMemberships(m);
+      const sportChips = dets.map(d => `<span class="badge" style="font-size:10px;background:rgba(242,163,60,.15);color:var(--accent-2)" title="${escapeHtml(d.coach ? d.sport + ' · ' + d.coach : d.sport)}">${escapeHtml(d.sport)}${d.coach ? ' · ' + escapeHtml(d.coach) : ''}</span>`).join(' ');
+      const wa = welcomeWaLink(m, r.kind);
+      const dateLabel = r.kind === 'new' ? (m.joinDate ? fmtDate(m.joinDate) : (r.ref ? fmtDate(r.ref) : '—')) : (r.ref ? fmtDate(r.ref) : '—');
+      return `<tr>
+        <td class="text-mute" style="text-align:center;font-size:12px">${i + 1}</td>
+        <td><div class="font-bold">${escapeHtml(m.name || '—')}</div>${m.nameArabic ? `<div class="text-mute" style="font-size:11px" dir="rtl">${escapeHtml(m.nameArabic)}</div>` : ''}</td>
+        <td style="font-size:12px">${phoneCell(m.phone)}</td>
+        <td>${typeBadge(r.kind)}</td>
+        <td><div style="display:flex;flex-wrap:wrap;gap:4px">${sportChips || '<span class="text-mute">—</span>'}</div></td>
+        <td style="font-size:12px">${dateLabel}</td>
+        <td>${r.done ? `<span class="badge" style="font-size:10px;background:rgba(120,120,140,.15);color:var(--text-mute)">✓ ${t('welcomed', 'تم الترحيب')}${m.welcomedAt ? ' · ' + (m.welcomedAt === TODAY ? t('today', 'اليوم') : fmtDate(m.welcomedAt)) : ''}</span>` : `<span class="text-mute" style="font-size:11px">—</span>`}</td>
+        <td class="text-right" style="white-space:nowrap">
+          <button class="btn ghost sm" onclick="previewWelcome(${m.id}, '${r.kind}')" title="${t('Preview the message', 'معاينة الرسالة')}">👁 ${t('Preview', 'معاينة')}</button>
+          ${wa
+            ? `<a class="btn ${r.done ? 'ghost' : 'primary'} sm" style="text-decoration:none" href="${wa}" target="_blank" rel="noopener" onclick="markWelcomed(${m.id})" title="${t('Open WhatsApp with the welcome pre-filled', 'فتح واتساب برسالة الترحيب الجاهزة')}">💬 ${r.done ? t('Send again', 'إرسال مجدداً') : t('Send welcome', 'إرسال الترحيب')}</a>`
+            : `<span class="text-mute" style="font-size:11px">${t('no phone', 'لا يوجد هاتف')}</span>`}
+          ${r.done ? '' : `<button class="btn ghost sm" onclick="markWelcomed(${m.id}, {rerender:true})" title="${t('Mark welcomed without sending', 'وضع علامة تم الترحيب دون إرسال')}">✓</button>`}
+          <button class="btn ghost sm" onclick="viewMember(${m.id})" title="${t('Open profile', 'فتح الملف')}">👤</button>
+        </td>
+      </tr>`;
+    }).join('') : `<tr><td colspan="8" class="empty"><div class="empty-icon">🎉</div>${t('No joiners or renewals in this window', 'لا يوجد أعضاء جدد أو تجديدات في هذه الفترة')}</td></tr>`;
+
+    main.innerHTML = `
+      <div class="topbar">
+        <div>
+          <h1>👋 ${t('Welcome Messages', 'رسائل الترحيب')}</h1>
+          <div class="subtitle">${t('Greet new joiners & renewals over WhatsApp — the message is pre-filled with their membership details', 'رحّب بالأعضاء الجدد والتجديدات عبر واتساب — الرسالة جاهزة بتفاصيل اشتراكهم')}</div>
+        </div>
+        <div class="topbar-actions">
+          <select id="wel-window" class="btn ghost">
+            ${[7, 14, 30, 60, 90].map(n => `<option value="${n}" ${win === n ? 'selected' : ''}>${t('Last', 'آخر')} ${n} ${t('days', 'يوم')}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
+        <div class="kpi green"><div class="kpi-label">🎉 ${t('New joiners', 'أعضاء جدد')}</div><div class="kpi-value num">${totalNew}</div></div>
+        <div class="kpi"><div class="kpi-label" style="color:#3b82f6">🔄 ${t('Renewals', 'تجديدات')}</div><div class="kpi-value num">${totalRenew}</div></div>
+        <div class="kpi"><div class="kpi-label">✓ ${t('Welcomed', 'تم الترحيب')}</div><div class="kpi-value num">${totalDone}</div><div class="kpi-sub">${t('of', 'من')} ${rows.length}</div></div>
+      </div>
+      <div class="card">
+        <div class="filter-bar" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;align-items:center">
+          <input id="wel-search" class="btn ghost" type="text" placeholder="${t('Search name or phone…', 'ابحث بالاسم أو الهاتف…')}" value="${escapeHtml(window._welSearch)}" style="flex:1;min-width:180px" />
+          <div style="display:flex;gap:4px">
+            ${[['all', t('All', 'الكل')], ['new', '🎉 ' + t('New', 'جدد')], ['renewal', '🔄 ' + t('Renewals', 'تجديدات')]].map(([k, lbl]) => `<button class="btn ${window._welType === k ? 'primary' : 'ghost'} sm wel-type" data-type="${k}">${lbl}</button>`).join('')}
+          </div>
+          <label class="text-mute" style="font-size:12px;display:inline-flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" id="wel-hidedone" ${window._welHideDone ? 'checked' : ''} /> ${t('Hide already welcomed', 'إخفاء من تم الترحيب بهم')}</label>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th style="width:36px;text-align:center">#</th>
+              <th>${t('Member', 'العضو')}</th>
+              <th>${t('Phone', 'الهاتف')}</th>
+              <th>${t('Type', 'النوع')}</th>
+              <th>${t('Membership', 'الاشتراك')}</th>
+              <th>${t('Joined / Renewed', 'انضم / جدّد')}</th>
+              <th>${t('Welcomed', 'الترحيب')}</th>
+              <th class="text-right"></th>
+            </tr></thead>
+            <tbody>${rowHtml}</tbody>
+          </table>
+        </div>
+        <div class="text-mute" style="font-size:11px;margin-top:8px">${t('Clicking 💬 opens WhatsApp with the message ready and marks the member welcomed. Family members use the household contact number when set. Use 👁 Preview to read or copy the text first.', 'الضغط على 💬 يفتح واتساب برسالة جاهزة ويضع علامة تم الترحيب. أعضاء العائلات يُستخدم لهم رقم تواصل العائلة إن وُجد. استخدم 👁 معاينة لقراءة النص أو نسخه أولاً.')}</div>
+      </div>`;
+
+    const debounce = (fn, ms) => { let to; return (...a) => { clearTimeout(to); to = setTimeout(() => fn(...a), ms); }; };
+    $('#wel-window')?.addEventListener('change', e => { window._welWin = parseInt(e.target.value); render(); });
+    $('#wel-search')?.addEventListener('input', debounce(e => { window._welSearch = e.target.value; render(); }, 200));
+    $('#wel-hidedone')?.addEventListener('change', e => { window._welHideDone = e.target.checked; render(); });
+    document.querySelectorAll('.wel-type').forEach(b => b.addEventListener('click', () => { window._welType = b.dataset.type; render(); }));
+  };
+
+  render();
 };
 
 window.generateMemberLogins = function() {
