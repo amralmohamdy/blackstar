@@ -2276,7 +2276,11 @@ function viewMember(id) {
   const activeSubs = allSubs.filter(x => {
     const ended = x.end && x.end < _today;
     const withdrawn = (x.status || '').toLowerCase() === 'withdrawn';
-    return !ended && !withdrawn;
+    // v6.517: a sub SWITCHED to another sport, or TRANSFERRED to another coach, is no longer an active
+    // package — it must not add its classes to the "N/M classes" KPI even if its end date is still in
+    // the future (that's the "Maryam shows 13 instead of 12" family: a switched sub double-counted).
+    const movedAway = !!x.switchedAwayTo || x.transferredToCoachId != null;
+    return !ended && !withdrawn && !movedAway;
   });
   const curSubs = activeSubs.length ? activeSubs : allSubs.slice(-1);   // fallback: latest period
   const curTotalClasses = curSubs.reduce((s, x) => s + (typeof subClassLimit === 'function' ? subClassLimit(x) : (x.totalClasses || 0)), 0);
@@ -4626,7 +4630,7 @@ window.transferCoachStudents = function(fromId) {
       </div>
       <div class="form-row">
         <div class="field"><label>New coach</label><select id="tr-to">${targets.map(c => `<option value="${c.id}">${escapeHtml(c.name)} · ${c.rate || 0}%</option>`).join('')}</select></div>
-        <div class="field"><label>Effective date</label><input id="tr-date" type="date" value="${TODAY}" /></div>
+        <div class="field"><label>${escapeHtml(from.name)}'s last day</label><input id="tr-date" type="date" value="${TODAY}" /><div class="text-mute" style="font-size:11px;margin-top:4px">Classes on/before this date stay with ${escapeHtml(from.name)}; the new coach starts the next day. (For "left 31 Jul", enter 31 Jul.)</div></div>
       </div>
       ${_fromSports.length > 1 ? `<div class="form-row"><div class="field"><label>Sport to transfer</label><select id="tr-sport"><option value="__ALL__">All sports (${_fromSports.length})</option>${_fromSports.map(sp => `<option value="${escapeHtml(sp)}">${escapeHtml(sp)}</option>`).join('')}</select><div class="text-mute" style="font-size:11px;margin-top:4px">${escapeHtml(from.name)} teaches ${_fromSports.length} sports — pick one to hand off only that, or leave "All sports".</div></div></div>` : ''}`,
     actions: [
@@ -4678,7 +4682,9 @@ window.transferCoachStudents = function(fromId) {
               // Old coach earned nothing on this course → hand it over whole (no split).
               sub.coachId = to.id; sub.coach = to.name;
               if (line) { line.coachId = to.id; line.coach = to.name; }
-              const e0 = (m.enrollments || []).find(e => e.sport === sport);
+              // v6.517: match the DEPARTING coach's enrollment, not just the sport — a member with the
+              // same sport under two coaches must not have the OTHER coach's enrollment rewritten.
+              const e0 = (m.enrollments || []).find(e => e.sport === sport && _sameC(e.coachId, fromId)) || (m.enrollments || []).find(e => e.sport === sport);
               if (e0) e0.coachId = to.id;
               moved++; continue;
             }
@@ -4700,7 +4706,9 @@ window.transferCoachStudents = function(fromId) {
               if (typeof stampUpdate === 'function') stampUpdate(inv);
             }
             // Enrollment → the new coach + remaining classes (so future renewals are theirs).
-            const enr = (m.enrollments || []).find(e => e.sport === sport);
+            // v6.517: match the DEPARTING coach's enrollment (coach-aware), so a same-sport two-coach
+            // member's other coach isn't clobbered.
+            const enr = (m.enrollments || []).find(e => e.sport === sport && _sameC(e.coachId, fromId)) || (m.enrollments || []).find(e => e.sport === sport);
             if (enr) { enr.coachId = to.id; enr.classes = remaining; enr.price = bShare; enr.switchedInto = true; }
             else { if (!Array.isArray(m.enrollments)) m.enrollments = []; m.enrollments.push({ sport, coachId: to.id, classes: remaining, price: bShare, start: nextDay, switchedInto: true }); }
             split++;
@@ -15460,8 +15468,12 @@ window.printInvoicePDF = function(id) {
     font-size: 11px;
     margin-top: 12px;
   }
+  /* Zero the page margin so the browser has NO room to draw its own header/footer
+     (the "blob:https://…" URL + page title Chrome prints in the margin). The body
+     padding below restores a clean visual margin for the invoice content. */
+  @page { margin: 0; }
   @media print {
-    body { padding: 0; }
+    body { padding: 14mm 16mm; }
     .print-btn-wrap, .hint { display: none !important; }
   }
 </style>
@@ -18380,7 +18392,7 @@ window._applySwitchReconcile = function (memberId) {
     fromSub.totalClasses = attended; fromSub.status = 'completed';
     fromSub.switchedAwayTo = sw.toSport; fromSub.switchedAt = sw.date; fromSub.amountPaid = aShare;
     // 2) DEST sub → the remaining classes, switch-funded.
-    const toSub = (m.subscriptions || []).find(s => (s.activity || '') === sw.toSport && s.coachId === sw.toCoachId);
+    const toSub = (m.subscriptions || []).find(s => (s.activity || '') === sw.toSport && String(s.coachId) === String(sw.toCoachId));   // v6.517: String() — coachId is string on one record, number on another (imports)
     if (toSub) { toSub.totalClasses = remaining; toSub.amountPaid = bShare; toSub.switchFunded = true; }
     // 3) Split the membership invoice line prices (source→aShare, dest→bShare) so the slot is ONE payment.
     const invRef = fromSub.invoiceNumber || (toSub && toSub.invoiceNumber);
@@ -18402,7 +18414,7 @@ window._applySwitchReconcile = function (memberId) {
       && Array.isArray(v.lineItems) && v.lineItems.some(li => li.sport === sw.fromSport) && v.lineItems.some(li => li.sport === sw.toSport));
     if (swInv) { swInv.deleted = true; swInv.deletedAt = new Date().toISOString(); swInv.deletedBy = currentUserName(); }
     // 5) Destination enrollment reflects the transferred classes/price.
-    const enr = (m.enrollments || []).find(e => e.sport === sw.toSport && e.coachId === sw.toCoachId);
+    const enr = (m.enrollments || []).find(e => e.sport === sw.toSport && String(e.coachId) === String(sw.toCoachId));   // v6.517: String() coachId match
     if (enr) { enr.classes = remaining; enr.price = bShare; enr.switchedInto = true; }
     if (typeof audit === 'function') audit('switch.reconcile', 'member:' + m.id,
       `Reconciled ${sw.fromSport}→${sw.toSport} for ${m.name}: ${sw.fromSport} completed @${attended} (${fmt(aShare)}), ${sw.toSport} ${remaining} classes (${fmt(bShare)})`,
@@ -21048,7 +21060,7 @@ PAGES.attendance = (main) => {
       && (s.status || '').toLowerCase() !== 'expired' && !s.switchedAwayTo);
     const coaches = [...new Set(active.map(s => String(s.coachId)))];
     if (coaches.length < 2) return sport;                 // single active coach → shared key (normal)
-    return String(coachId) === coaches[0] ? sport : sport + ' ' + coachId;   // extra coaches → own cell
+    return String(coachId) === coaches[0] ? sport : sport + ' ' + coachId;   // extra coaches → own cell
   }
 
   function getRows() {
@@ -21120,13 +21132,18 @@ PAGES.attendance = (main) => {
           for (const cid of coachIds) {
             if (filter.coaches.length && !filter.coaches.map(String).includes(cid)) continue;
             if (myCoachId != null && String(myCoachId) !== cid) continue;   // a coach sees only their own window
-            let from = null, to = null;
+            // v6.516: UNION this coach's windows. A null bound means "open" (no limit) — an ongoing
+            // sub (to=null) or one with no start must make the whole union open on that side. The old
+            // code skipped null bounds (`w.to && …`), so a coach who had BOTH a short funded remainder
+            // (e.g. Aug 1–7) AND a live open-ended package (Aug 12→) got the union capped at Aug 7 —
+            // "outside <coach>'s period" for every later day, blocking attendance (Ali Salem Kick Boxing).
+            let from = null, to = null, openStart = false, openEnd = false;
             spSubs.filter(s => String(s.coachId) === cid).forEach(s => {
               const w = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, s) : { from: s.start || null, to: s.end || null };
-              if (w.from && (!from || w.from < from)) from = w.from;
-              if (w.to && (!to || w.to > to)) to = w.to;
+              if (w.from == null) openStart = true; else if (!from || w.from < from) from = w.from;
+              if (w.to == null) openEnd = true; else if (!to || w.to > to) to = w.to;
             });
-            rows.push({ m, sport: sp, coachId: parseInt(cid), window: { from, to }, attKey: attKeyForSport(m, sp, cid) });
+            rows.push({ m, sport: sp, coachId: parseInt(cid), window: { from: openStart ? null : from, to: openEnd ? null : to }, attKey: attKeyForSport(m, sp, cid) });
           }
           continue;
         }
@@ -21182,6 +21199,16 @@ PAGES.attendance = (main) => {
     const iso = `${mo}-${String(dayKey).padStart(2, '0')}`;
     if (win.from && iso < win.from) return false;
     if (win.to && iso > win.to) return false;
+    return true;
+  }
+  // v6.514: does a split row's coach WINDOW reach a given month at all? Used to DROP the row from a
+  // month it doesn't touch — e.g. a departed/transferred coach (Iyad left 31 Jul → his window ends
+  // 31 Jul) must not be LISTED under the August grid; only the successor coach's row shows. (window
+  // null = single-coach whole-sport row → always kept, so ongoing/expired members still appear.)
+  function winReachesMonth(win, mo) {
+    if (!win) return true;
+    if (win.to && win.to < `${mo}-01`) return false;    // coach's period ended before this month
+    if (win.from && win.from > `${mo}-31`) return false; // coach's period starts after this month
     return true;
   }
 
@@ -21353,7 +21380,10 @@ PAGES.attendance = (main) => {
     const nameAr = doc.nameArabic || '';
     const shown = nameEn || nameAr || ('#' + cell.id);
     const status = (typeof memberStatus === 'function') ? memberStatus(doc) : '';
-    const sess = _sessionsLeftFromDoc(doc, cell.sport, cell.iso);
+    // cell.sport may be a same-sport two-coach STORAGE key ("Kick Boxing 1786…"); the sessions
+    // lookup and the on-screen label both need the real sport name, not the coach-qualified key.
+    const dispSport = String(cell.sport || '').replace(/ \d+$/, '');
+    const sess = _sessionsLeftFromDoc(doc, dispSport, cell.iso);
 
     const statusColor = status === 'Active' ? 'var(--green)'
       : status === 'Frozen' ? 'var(--blue)'
@@ -21388,7 +21418,7 @@ PAGES.attendance = (main) => {
           <div style="font-size:46px;line-height:1">${_icon}</div>
           <div style="font-size:22px;font-weight:900;margin-top:8px;color:var(--text)">${escapeHtml(shown)}</div>
           ${nameAr ? `<div dir="rtl" style="font-size:18px;font-weight:700;margin-top:2px;color:var(--text)">${escapeHtml(nameAr)}</div>` : ''}
-          <div style="font-size:13px;color:var(--text-mute);margin-top:6px">${escapeHtml(_verb)} · ${escapeHtml(cell.sport)} · ${escapeHtml(cell.iso)}</div>
+          <div style="font-size:13px;color:var(--text-mute);margin-top:6px">${escapeHtml(_verb)} · ${escapeHtml(dispSport)} · ${escapeHtml(cell.iso)}</div>
 
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px;text-align:center">
             <div style="${cellStyle}">
@@ -21453,7 +21483,11 @@ PAGES.attendance = (main) => {
   function refresh() {
     const gMonth = gridMonth();
     window._attCurrentMonth = gMonth;
-    const rows = getRows();
+    let rows = getRows();
+    // v6.514: in single-month view, drop any coach-split row whose window doesn't reach the shown
+    // month (a departed/transferred coach — e.g. Iyad, gone 31 Jul — must not be listed in August;
+    // the successor coach's own row is kept). "All months" keeps every row.
+    if (filter.month !== 'all') rows = rows.filter(r => winReachesMonth(r.window, gMonth));
 
     // Club-wide total of attended (present / 'Y') classes across the rows shown.
     // Respects the day filter: if specific day(s) are selected we count only those
@@ -21744,7 +21778,7 @@ PAGES.attendance = (main) => {
     </div>
 
     <div class="card">
-      <div class="filter-bar att-filter-bar" style="flex-wrap:wrap;align-items:stretch">
+      <div class="filter-bar att-filter-bar" style="flex-wrap:wrap;align-items:flex-start">
         ${_coachLockToday ? `<div class="btn ghost" style="pointer-events:none;font-weight:700;background:rgba(16,185,129,.10);border-color:rgba(16,185,129,.4);color:var(--green)">📅 ${t('Today', 'اليوم')} · ${fmtDate(TODAY)}</div>` : ''}
         ${_coachLockToday ? '' : monthMultiHTML('att-month', availableMonths({ includeFuture: true }), filter.months)}
         <div style="position:relative${_coachLockToday ? ';display:none' : ''}">

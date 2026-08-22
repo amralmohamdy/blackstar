@@ -1138,7 +1138,7 @@ tbody tr:last-child td {
 
 /* Attendance filter bar — make all controls (dropdowns, sports button, student
    search) share the same height/background/border so the row is uniform. */
-.att-filter-bar { align-items: stretch; }
+.att-filter-bar { align-items: flex-start; }
 .att-filter-bar > select.btn,
 .att-filter-bar #att-sports-btn,
 .att-filter-bar #att-day-btn,
