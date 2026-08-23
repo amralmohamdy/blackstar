@@ -5946,6 +5946,27 @@ window._reconcileInvoicesFromSubs = function (memberId) {
   const subs = (m.subscriptions || []).filter(s => s.activity && (s.status || '').toLowerCase() !== 'withdrawn' && ((Number(s.amountPaid) || 0) > 0 || (parseInt(s.totalClasses) || 0) > 0));
   if (!subs.length) { toast(t('No subscriptions to rebuild from', 'لا توجد اشتراكات لإعادة البناء منها'), 'error'); return; }
   const memInvs = (state.invoices || []).filter(i => !i.deleted && i.customerId === m.id && (i.category || 'Membership') === 'Membership' && !i.switchCredit && i.activityType !== 'switch-credit');
+  // v6.518 SAFETY: the rebuild recreates invoices ONLY from subscriptions, so a PAID sport that lives
+  // on an invoice but has NO matching subscription (e.g. a switched-in sport whose sub was lost) would
+  // be silently DELETED — losing paid classes. This is exactly how Bakhit's Zakaria Karate vanished.
+  // Detect it and refuse, so nothing paid is dropped.
+  {
+    const _subKey = new Set((m.subscriptions || []).map(s => (s.activity || '') + '|' + String(s.coachId)));
+    const _orphan = [];
+    for (const iv of memInvs) for (const li of (iv.lineItems || [])) {
+      if ((Number(li.price) || 0) <= 0) continue;
+      const key = (li.sport || '') + '|' + String(li.coachId);
+      if (!_subKey.has(key) && !_subKey.has((li.sport || '') + '|null')) _orphan.push(`${li.sport}${li.coach ? ' · ' + li.coach : ''} (${fmt(li.price)})`);
+    }
+    if (_orphan.length) {
+      showModal({ title: '⚠ ' + t('Rebuild blocked — a paid sport has no subscription', 'إعادة البناء موقوفة — رياضة مدفوعة بلا اشتراك'),
+        body: `<div style="font-size:13px;line-height:1.7"><p>${t('These paid sports are on an invoice but have NO matching subscription, so rebuilding from subscriptions would DELETE them (losing the paid classes):', 'هذه الرياضات المدفوعة على فاتورة لكن بلا اشتراك مطابق، لذا إعادة البناء ستحذفها (وتفقد الحصص المدفوعة):')}</p>
+          <ul style="margin:8px 0 8px 18px;color:var(--red);font-weight:600">${[...new Set(_orphan)].map(x => `<li>${escapeHtml(x)}</li>`).join('')}</ul>
+          <p class="text-mute" style="font-size:12px">${t('Add the missing subscription first (Edit → add the sport), then rebuild.', 'أضف الاشتراك المفقود أولاً (تعديل ← أضف الرياضة)، ثم أعد البناء.')}</p></div>`,
+        actions: [{ label: t('OK', 'حسناً'), class: 'btn primary', onclick: closeModal }] });
+      return;
+    }
+  }
   const oldTotal = memInvs.reduce((a, i) => a + ((typeof invoiceTotal === 'function') ? invoiceTotal(i) : (Number(i.amount) || 0)), 0);
   const oldPaid = memInvs.reduce((a, i) => a + ((typeof invoicePaid === 'function') ? invoicePaid(i) : 0), 0);
   const newTotal = Math.round(subs.reduce((a, s) => a + (Number(s.amountPaid) || 0), 0) * 100) / 100;
@@ -17916,7 +17937,7 @@ window._salUndoSettlePending = function (coachId, monthKey) {
     if (!mem || mem.deleted) continue;
     const lines = (typeof commissionLineItems === 'function') ? commissionLineItems(inv, mem) : (inv.lineItems || []);
     for (const li of lines) {
-      if (li.coachId !== coachId || li.sport === SUMMER_CAMP) continue;
+      if (String(li.coachId) !== String(coachId) || li.sport === SUMMER_CAMP) continue;
       const sub = (typeof findSubForLine === 'function') ? findSubForLine(mem, inv, li) : null;
       if (sub && sub.commissionSettled === monthKey) { delete sub.commissionSettled; reopened++; }
     }
@@ -18553,7 +18574,7 @@ window.showRevenueDetail = function(coachId, monthKey) {
       ? inv.lineItems
       : [{ sport: inv.sport, coachId: inv.coachId, price: inv.amount || 0 }];
     for (const li of lineItems) {
-      if (li.coachId !== coachId) continue;
+      if (String(li.coachId) !== String(coachId)) continue;
       if (lineBillMonth(li, inv) !== monthKey) continue;   // per-line month (sport added later shows in its own month)
       // Summer Camp doesn't generate coach commission — skip it
       if (li.sport === SUMMER_CAMP) continue;
@@ -18673,7 +18694,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
       ? inv.lineItems
       : [{ sport: inv.sport, coachId: inv.coachId, price: inv.amount || 0 }];
     for (const li of lineItems) {
-      if (li.coachId !== coachId) continue;
+      if (String(li.coachId) !== String(coachId)) continue;
       if (lineBillMonth(li, inv) !== monthKey) continue;   // per-line month (sport added later shows in its own month)
       // Summer Camp generates no coach commission — skip
       if (li.sport === SUMMER_CAMP) continue;
