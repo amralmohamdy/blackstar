@@ -10569,6 +10569,10 @@ PAGES.schedule = (main) => {
         ctx.save();
         ctx.shadowColor = 'rgba(0,0,0,0.32)'; ctx.shadowBlur = 5; ctx.shadowOffsetY = 1;
         ctx.fillStyle = '#fff'; ctx.textAlign = ar ? 'right' : 'left';
+        // v6.519: set the canvas bidi BASE DIRECTION for Arabic. Without it the emoji+Arabic-name and
+        // the "المدرب: <name>" (Arabic label + Latin name) strings were reordered/clipped, so Arabic
+        // sport names showed only their last few letters. RTL base direction lays them out correctly.
+        ctx.direction = ar ? 'rtl' : 'ltr';
         ctx.font = 'bold 40px sans-serif';
         ctx.fillText(sportEmoji(c.sport) + '  ' + nm, TX, y + (coach ? 54 : cardH / 2 + 14));
         if (coach) {
@@ -10577,6 +10581,7 @@ PAGES.schedule = (main) => {
           ctx.fillText((ar ? 'المدرب: ' : 'Coach: ') + cn, TX, y + 96);
         }
         ctx.restore();
+        ctx.direction = 'ltr';   // reset for the LTR header/footer/time labels drawn outside this block
         y += cardH + cardGap;
       }
       y += sectGap;
@@ -20319,8 +20324,8 @@ PAGES.settings = (main, section) => {
         </div>
         <div class="field">
           <label>Admin fee after grace (%)</label>
-          <input id="pref-refundfee" type="number" min="0" max="100" value="${cur.refundFeePct ?? 20}" />
-          <div class="text-mute" style="font-size:11px;margin-top:4px">After the grace period, this % of the unused amount is kept as an admin fee on withdrawals. (You can still override the refund per withdrawal.)</div>
+          <input id="pref-refundfee" type="number" min="0" max="100" value="${cur.refundFeePct ?? 15}" />
+          <div class="text-mute" style="font-size:11px;margin-top:4px">After the grace period, this % of the <b>total paid</b> is kept as an admin fee on withdrawals (default 15%). The refund then deducts both the attended value and this fee. (You can still override the refund per withdrawal.)</div>
         </div>
       </div>
       ${currentRole() === 'admin' ? `
@@ -22922,7 +22927,7 @@ window.withdrawSport = function(memberId, sport) {
   sportStart = sportStart || enrollment.start || m.startDate || null;
 
   const graceDefault = (state.settings && state.settings.refundGraceDays != null) ? state.settings.refundGraceDays : 7;
-  const feeDefault = (state.settings && state.settings.refundFeePct != null) ? state.settings.refundFeePct : 20;
+  const feeDefault = (state.settings && state.settings.refundFeePct != null) ? state.settings.refundFeePct : 15;
   const calc = computeWithdrawRefund({ price, totalClasses, attended, startDate: sportStart, refundDate: TODAY, graceDays: graceDefault, feePct: feeDefault });
   const usedAmount = calc.used;
   const refundAmount = calc.refund;
@@ -22940,7 +22945,7 @@ window.withdrawSport = function(memberId, sport) {
     set('wd-since', graceLine(c.daysSinceStart, c.withinGrace));
     set('wd-used', `${fmt(c.used)} QAR`);
     set('wd-unused', `${fmt(c.unused)} QAR`);
-    set('wd-fee-line', c.withinGrace ? 'No admin fee (within grace period)' : `Admin fee (${c.feePct}% of unused): −${fmt(c.fee)} QAR`);
+    set('wd-fee-line', c.withinGrace ? 'No admin fee (within grace period)' : `Admin fee (${c.feePct}% of total paid): −${fmt(c.fee)} QAR`);
     const rf = document.getElementById('wd-refund');
     if (rf && !rf.dataset.touched) rf.value = c.refund;
   };
@@ -22981,7 +22986,7 @@ window.withdrawSport = function(memberId, sport) {
         <div>📅 <span id="wd-since">${graceLine(calc.daysSinceStart, calc.withinGrace)}</span></div>
         <div>Used (kept by club): <b id="wd-used">${fmt(calc.used)} QAR</b></div>
         <div>Unused (refundable): <b id="wd-unused">${fmt(calc.unused)} QAR</b></div>
-        <div id="wd-fee-line" style="color:var(--text-mute)">${calc.withinGrace ? 'No admin fee (within grace period)' : `Admin fee (${calc.feePct}% of unused): −${fmt(calc.fee)} QAR`}</div>
+        <div id="wd-fee-line" style="color:var(--text-mute)">${calc.withinGrace ? 'No admin fee (within grace period)' : `Admin fee (${calc.feePct}% of total paid): −${fmt(calc.fee)} QAR`}</div>
       </div>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
@@ -23174,6 +23179,15 @@ window.switchSport = function(memberId) {
   // Reads m.dailyAttendance[YYYY-MM][sportName] = {day: 'Y'|'N'} structure.
   function countAttendedUpTo(sport, untilDateStr) {
     if (!m.dailyAttendance) return 0;
+    // v6.520 (F3) — window the count to the CURRENT package. Without a lower bound, a renewed sport
+    // sums every 'Y' since records began and over-counts attended (over-crediting the old coach on a
+    // switch). Use the active source subscription's start as the floor when one exists; otherwise fall
+    // back to unbounded (legacy behaviour for members with no subscription record).
+    let sinceStr = '';
+    if (Array.isArray(m.subscriptions)) {
+      const srcSub = m.subscriptions.find(s => (s.activity || '') === sport && s.status !== 'completed' && s.status !== 'withdrawn' && !s.switchedAwayTo);
+      if (srcSub && srcSub.start) sinceStr = String(srcSub.start).slice(0, 10);
+    }
     let total = 0;
     for (const monthKey of Object.keys(m.dailyAttendance)) {
       const mo = m.dailyAttendance[monthKey];
@@ -23182,7 +23196,7 @@ window.switchSport = function(memberId) {
       for (const day of Object.keys(sportMap)) {
         if (sportMap[day] !== 'Y') continue;
         const dateStr = `${monthKey}-${String(day).padStart(2, '0')}`;
-        if (dateStr <= untilDateStr) total++;
+        if (dateStr <= untilDateStr && (!sinceStr || dateStr >= sinceStr)) total++;
       }
     }
     return total;
@@ -23197,7 +23211,7 @@ window.switchSport = function(memberId) {
       <div style="background:rgba(91,141,239,.06);border:1px solid rgba(91,141,239,.2);border-radius:8px;padding:10px;margin-bottom:14px;display:flex;gap:10px;align-items:flex-start">
         <div style="font-size:18px">💡</div>
         <div style="font-size:12px;color:var(--text-dim);line-height:1.5">
-          The enrollment row is updated to the new sport/coach. Past attendance under the old sport stays as history. <b>Commission is split based on attended classes:</b> old coach gets <code>(attended / planned) × price</code>, new coach gets the remainder. If no classes were attended, nobody earns commission from this enrollment.
+          The one membership invoice is <b>split in place</b>: the old sport is capped to the classes attended (<code>attended/attended · Completed</code>, old coach keeps <code>attended × old rate</code>), and the remaining + carried-forward classes move to the new sport at the <b>price you set below</b>. The invoice is re-totalled, so a dearer new sport shows a top-up due and a cheaper one a refundable credit. Past attendance stays as history; no separate switch-credit is created.
         </div>
       </div>
 
@@ -23325,58 +23339,54 @@ window.switchSport = function(memberId) {
           aShare = split.aShare; bShare = split.bShare;
         }
         const switchMonth = switchDate.slice(0, 7);
+        // v6.520 — the CORRECT switch model (owner-confirmed):
+        //  • source coach keeps ONLY the classes attended (capped) at the OLD rate → aShare
+        //  • classes moved to the new sport = remaining + CARRY-FORWARD (carried valued at the old rate)
+        //  • the destination is RE-PRICED: the dialog's Price field (default below) is the new charge
+        //  • the ONE invoice is SPLIT (no separate net-zero switch-credit); the new total may differ
+        //    from what was paid → a top-up due (owes) or an over-payment credit.
+        const aRate = totalClasses > 0 ? price / totalClasses : 0;
+        const carried = (typeof carryForwardCredit === 'function') ? Math.max(0, Math.round(carryForwardCredit(m, from.sport) || 0)) : 0;
+        const remaining = Math.max(0, totalClasses - attendedA);
+        const moved = remaining + carried;
+        const _enteredPrice = parseFloat(($('#sw-price') || {}).value);
+        const bPrice = skipReconciliation ? (parseFloat(from.price) || 0)
+          : (Number.isFinite(_enteredPrice) && _enteredPrice >= 0 ? Math.round(_enteredPrice * 100) / 100 : Math.round((bShare + carried * aRate) * 100) / 100);
 
-        // ─── CREATE SWITCH-CREDIT INVOICE IN THE SWITCH MONTH ──────
-        // The original invoice is LEFT ALONE — Coach A keeps the historical
-        // record of what was paid to him for that month. Instead, we create
-        // an internal reconciliation invoice in the switch month with TWO
-        // lineItems that net to zero:
-        //   1. A's negative adjustment: -(price - aShare)
-        //      This deducts A's overpayment from his switch-month commission
-        //   2. B's positive earning: +bShare
-        //      This credits B for the new coach's share
-        // Net amount = 0 (it's pure accounting, not revenue).
-        // SKIP entirely for Summer Camp (no commission to split).
-        const deductionA = skipReconciliation ? 0 : -(price - aShare);
-        if (!skipReconciliation && (bShare > 0 || deductionA < 0)) {
-          const switchRef = `SW-${Date.now().toString().slice(-6)}`;
-          const lineItems = [];
-          if (deductionA < 0) {
-            lineItems.push({
-              sport: from.sport,
-              coach: coachName(from.coachId),
-              coachId: from.coachId,
-              classes: -(totalClasses - attendedA),  // negative class count for visual cue
-              price: deductionA,                     // NEGATIVE — deducts from A
+        // ─── SPLIT THE ONE MEMBERSHIP INVOICE (v6.520) ─────────────
+        // No separate net-zero switch-credit any more. The member's membership invoice is split in
+        // place: the source (Sport A) line is capped to attended/aShare, and a Sport B line is ADDED
+        // for the moved classes at the RE-PRICED amount. The invoice total becomes aShare + bPrice —
+        // so a dearer new sport creates a top-up due, a cheaper one an over-payment credit.
+        if (!skipReconciliation) {
+          const _inv = (state.invoices || []).find(v => !v.deleted && !v.switchCredit && v.activityType !== 'switch-credit'
+            && v.customerId === m.id && Array.isArray(v.lineItems)
+            && v.lineItems.some(li => li.sport === from.sport && String(li.coachId) === String(from.coachId)));
+          if (_inv) {
+            const _fl = _inv.lineItems.find(li => li.sport === from.sport && String(li.coachId) === String(from.coachId));
+            if (_fl) { _fl.price = aShare; _fl.classes = attendedA; }
+            _inv.lineItems.push({ sport: toSport, coach: coachName(toCoachId), coachId: toCoachId, classes: moved, price: bPrice, issueDate: switchDate });
+            _inv.amount = _inv.lineItems.reduce((s, li) => s + (Number(li.price) || 0), 0);
+            _inv.sport = (typeof sportListWithDuration === 'function' && sportListWithDuration(_inv.lineItems)) || _inv.lineItems.map(li => li.sport).join(', ');
+            _inv.description = `${m.name} — ${_inv.sport} subscription`;
+            if (typeof stampUpdate === 'function') stampUpdate(_inv);
+          } else {
+            // No membership invoice found (rare) → create one carrying both split lines, unpaid.
+            state.invoices.push({
+              id: nextId(state.invoices),
+              ref: `SW-${Date.now().toString().slice(-6)}`,
+              date: switchDate, month: switchMonth,
+              description: `${m.name} — ${from.sport} → ${toSport} switch`,
+              amount: aShare + bPrice,
+              method: 'cash', category: 'Membership', activityType: 'subscription',
+              coachId: null, customerId: m.id, customerName: m.name,
+              payments: [],
+              lineItems: [
+                { sport: from.sport, coach: coachName(from.coachId), coachId: from.coachId, classes: attendedA, price: aShare },
+                { sport: toSport, coach: coachName(toCoachId), coachId: toCoachId, classes: moved, price: bPrice, issueDate: switchDate },
+              ],
             });
           }
-          if (bShare > 0) {
-            lineItems.push({
-              sport: toSport,
-              coach: coachName(toCoachId),
-              coachId: toCoachId,
-              classes: Math.max(0, totalClasses - attendedA),
-              price: bShare,
-            });
-          }
-          state.invoices.push({
-            id: nextId(state.invoices),
-            date: switchDate,
-            description: `${m.name} — sport switch reconciliation: ${from.sport} → ${toSport}`,
-            amount: 0,           // lineItems net to zero — no revenue impact
-            method: 'transfer',  // internal accounting only
-            month: switchMonth,
-            ref: switchRef,
-            sport: `${from.sport} → ${toSport}`,
-            coach: `${coachName(from.coachId)} → ${coachName(toCoachId)}`,
-            coachId: null,       // mixed coaches — read from lineItems
-            customerId: m.id,
-            customerName: m.name,
-            category: 'Membership',
-            activityType: 'switch-credit',
-            switchCredit: true,  // flag for revenue report filtering
-            lineItems,
-          });
         }
 
         // ─── RECORD THE SWITCH ─────────────────────────────────────
@@ -23415,8 +23425,9 @@ window.switchSport = function(memberId) {
         // classes / aShare). So a switch splits ONE package instead of leaving two full-price
         // sports, the member card shows the right class counts, and a later invoice re-sync
         // won't see the switched-in sport as "missing" and re-charge it a full membership.
-        const _remainingCls = skipReconciliation ? (from.classes || 0) : Math.max(0, totalClasses - attendedA);
-        const _destPrice = skipReconciliation ? (from.price || 0) : bShare;
+        // v6.520 — destination carries remaining + CARRY-FORWARD (moved) at the RE-PRICED amount.
+        const _remainingCls = skipReconciliation ? (from.classes || 0) : moved;
+        const _destPrice = skipReconciliation ? (from.price || 0) : bPrice;
         // v6.494: coachId can be a string on one record and a number on another (imported data), so
         // ALWAYS compare with String() — otherwise the enrollment / source-sub / dest-sub below aren't
         // found, the source sport is never marked "switched away", the destination never gets the
@@ -23447,18 +23458,24 @@ window.switchSport = function(memberId) {
             srcSub.status = 'completed';
             srcSub.switchedAwayTo = toSport;
             srcSub.switchedAt = switchDate;
-            // v6.494: set the source sub's PAID to the earned share (aShare) so any profile-based read
-            // (Installments / Rebuild) shows the split total correctly. Do NOT shrink totalClasses here:
-            // this path keeps the FULL original invoice + a switch-credit line, so under the attendance
-            // basis the per-class rate = base/total must stay base/ORIGINAL-total (800/8=100). Capping
-            // total to attended would make it 800/3 and pay the old coach the FULL fee. (Only the
-            // _applySwitchReconcile path caps total — because it ALSO shrinks the invoice line to aShare.)
+            // v6.520: the invoice is now SPLIT in place (source line → attended/aShare), so the source
+            // sub is CAPPED to what was actually used — card reads "attended/attended · Completed" and
+            // the per-class rate (aShare/attended = A-rate) pays the old coach exactly the attended
+            // value, never the full fee. (Prior model kept the full invoice + a net-zero credit, so it
+            // could NOT cap here; this model can and must.)
+            srcSub.totalClasses = attendedA;
             srcSub.amountPaid = aShare;
           }
-          const destSub = m.subscriptions.find(s => (s.activity || '') === toSport && _sameCoach(s.coachId, finalToCoachId));
+          // v6.520 (F1): only REUSE a destination sub that is a switch placeholder or an empty/unpaid
+          // stub. A GENUINE existing paid package for the same sport+coach (v6.504 two-package model)
+          // must NOT be clobbered — create a separate switch-funded sub alongside it instead.
+          const destSub = m.subscriptions.find(s => (s.activity || '') === toSport && _sameCoach(s.coachId, finalToCoachId)
+            && s.status !== 'completed' && !s.switchedAwayTo
+            && (s.switchFunded || !(Number(s.amountPaid) > 0)));
           if (destSub) {
             destSub.totalClasses = _remainingCls;
             destSub.amountPaid = _destPrice;
+            destSub.status = 'active';
             destSub.switchFunded = true;
           } else if (srcSub) {
             m.subscriptions.push({ activity: toSport, coachId: finalToCoachId, totalClasses: _remainingCls,
@@ -23486,10 +23503,10 @@ window.switchSport = function(memberId) {
         let msg;
         if (skipReconciliation) {
           msg = `Switched · ${_fromSport} → ${toSport} · no commission (Summer Camp involved)`;
-        } else if (attendedA === 0) {
-          msg = `Switched · no commission earned (no attendance under ${_fromSport})`;
         } else {
-          msg = `Switched · ${coachName(_fromCoachId)} keeps ${fmt(aShare)} · ${coachName(toCoachId)} gets ${fmt(bShare)}`;
+          const _delta = Math.round(((aShare + bPrice) - price) * 100) / 100;
+          const _recon = Math.abs(_delta) < 0.01 ? '' : _delta > 0 ? ` · owes +${fmt(_delta)}` : ` · credit ${fmt(-_delta)}`;
+          msg = `Switched · ${coachName(_fromCoachId)} ${attendedA}/${attendedA} keeps ${fmt(aShare)} · ${coachName(toCoachId)} ${moved} cls @ ${fmt(bPrice)}${_recon}`;
         }
         toast(msg);
       }},
@@ -23501,6 +23518,22 @@ window.switchSport = function(memberId) {
     const from = enrolled[parseInt($('#sw-from')?.value || 0)] || defaultFrom;
     const attended = countAttendedUpTo(from.sport, $('#sw-date')?.value || TODAY);
     return Math.max(0, (parseInt(from.classes) || 0) - attended);
+  }
+  // v6.520 — the money-conserving DEFAULT price for the destination sport: every moved class
+  // (remaining + carry-forward) valued at the source's per-class rate. There is no per-sport
+  // package price in the data (coach.rate is a commission %, not a price), so the admin RE-PRICES
+  // this field to the real new-sport package price when it differs.
+  function destPriceDefault() {
+    const from = enrolled[parseInt($('#sw-from')?.value || 0)] || defaultFrom;
+    if (from.sport === SUMMER_CAMP) return parseFloat(from.price) || 0;
+    const attended = countAttendedUpTo(from.sport, $('#sw-date')?.value || TODAY);
+    const total = parseInt(from.classes) || 0;
+    const creditedBase = coachBaseForSport(m, from.sport, from.coachId);
+    const price = creditedBase > 0 ? creditedBase : (parseFloat(from.price) || 0);
+    const aRate = total > 0 ? price / total : 0;
+    const carried = (typeof carryForwardCredit === 'function') ? Math.max(0, Math.round(carryForwardCredit(m, from.sport) || 0)) : 0;
+    const moved = Math.max(0, total - attended) + carried;
+    return Math.round(moved * aRate * 100) / 100;
   }
   function rebuildRowCoaches(i) {
     const sportSel = $('#sw-sport-' + i), coachSel = $('#sw-coach-' + i);
@@ -23535,7 +23568,10 @@ window.switchSport = function(memberId) {
         <div class="field"><label>New coach</label><select id="sw-coach-${i}"></select></div>
         ${classCol}${rmBtn}
       </div>`;
-    }).join('');
+    }).join('') + (multi ? '' : `<div class="form-row" style="align-items:flex-end;gap:8px;margin-bottom:2px">
+        <div class="field" style="max-width:170px"><label>New sport price (QAR)</label><input type="number" min="0" step="0.01" id="sw-price" value="${destPriceDefault().toFixed(2)}" /></div>
+        <div class="field" style="padding-bottom:8px;font-size:11px;color:var(--text-mute)">Re-price the new sport if it differs — the invoice is re-totalled and any top-up/refund is shown below.</div>
+      </div>`);
     targets.forEach((t, i) => {
       rebuildRowCoaches(i);
       const sp = $('#sw-sport-' + i);
@@ -23550,6 +23586,8 @@ window.switchSport = function(memberId) {
       if (targets.length === 1) targets[0].classes = null;
       renderTargets();
     }));
+    const priceEl = $('#sw-price');
+    if (priceEl) priceEl.addEventListener('input', () => updatePreview());
     updateRemaining(); updatePreview();
   }
   function addTarget() {
@@ -23609,29 +23647,36 @@ window.switchSport = function(memberId) {
     if (fromIsCamp || toIsCamp) {
       body = `<div style="font-weight:700;color:var(--accent-2);margin-bottom:6px">🌞 Summer Camp · no commission reconciliation</div>
         <div style="color:var(--text-dim)">${fromIsCamp ? 'Switching FROM Summer Camp — no commission was earned to split.' : 'Switching TO Summer Camp — new sport generates no commission.'}</div>`;
-    } else if (attended === 0) {
-      body = `<div style="font-weight:700;color:var(--accent);margin-bottom:6px">⚠️ No commission earned</div>
-        <div>${escapeHtml(oldCoachName)} has 0 attended classes for ${from.sport} as of ${fmtDate(switchDate)}.</div>
-        <div style="margin-top:4px;color:var(--text-mute)">Neither coach earns commission from this enrollment.</div>`;
     } else {
-      const rate = parseFloat(state.coaches.find(c => c.id === from.coachId)?.rate) || 0;
-      const newRate = parseFloat(state.coaches.find(c => c.id === newCoachId)?.rate) || 0;
-      const aDeduction = (price * rate / 100) - (aShare * rate / 100);
-      const bCommission = bShare * newRate / 100;
-      body = `<div style="font-weight:700;margin-bottom:6px">📊 Commission reconciliation (${escapeHtml(monthLabel)})</div>
-        <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">${escapeHtml(oldCoachName)} attended ${attended} of ${totalClasses} classes (${totalClasses ? Math.round(attended / totalClasses * 100) : 0}%) — he keeps ${fmt(aShare)} QAR base, ${escapeHtml(newCoachName)} gets ${fmt(bShare)} QAR.</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      // v6.520 — the reconciled-split view: the old coach keeps attended/attended at the old rate;
+      // the moved classes (remaining + carry-forward) go to the new coach at the RE-PRICED amount;
+      // the invoice is re-totalled → member owes a top-up or holds a refundable credit.
+      const aRate = totalClasses > 0 ? price / totalClasses : 0;
+      const carried = (typeof carryForwardCredit === 'function') ? Math.max(0, Math.round(carryForwardCredit(m, from.sport) || 0)) : 0;
+      const moved = remaining + carried;
+      const enteredPrice = (() => { const v = parseFloat($('#sw-price')?.value); return Number.isFinite(v) && v >= 0 ? v : destPriceDefault(); })();
+      const newTotal = aShare + enteredPrice;
+      const delta = Math.round((newTotal - price) * 100) / 100;   // >0 owes · <0 refundable credit
+      const carryNote = carried > 0 ? ` <span style="color:var(--accent-2)">(incl. ${carried} carried)</span>` : '';
+      const reconcile = Math.abs(delta) < 0.01
+        ? `<div style="padding:7px 9px;background:rgba(148,163,184,.12);border-radius:6px;text-align:center">No balance change — invoice stays ${fmt(price)} QAR</div>`
+        : delta > 0
+          ? `<div style="padding:7px 9px;background:rgba(242,163,60,.12);border:1px solid rgba(242,163,60,.3);border-radius:6px;text-align:center"><b style="color:var(--accent-2)">Member owes +${fmt(delta)} QAR</b> top-up <span style="color:var(--text-mute);font-size:11px">(invoice ${fmt(price)} → ${fmt(newTotal)})</span></div>`
+          : `<div style="padding:7px 9px;background:rgba(16,185,129,.10);border:1px solid rgba(16,185,129,.3);border-radius:6px;text-align:center"><b style="color:var(--green)">Over-paid ${fmt(-delta)} QAR</b> — refundable per policy <span style="color:var(--text-mute);font-size:11px">(invoice ${fmt(price)} → ${fmt(newTotal)})</span></div>`;
+      body = `<div style="font-weight:700;margin-bottom:6px">🔄 Switch split (${escapeHtml(monthLabel)})</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
           <div style="padding:8px;background:rgba(242,96,96,.06);border:1px solid rgba(242,96,96,.2);border-radius:6px">
-            <div style="font-size:10px;color:var(--red);text-transform:uppercase;font-weight:600">${escapeHtml(oldCoachName)} · deduction</div>
-            <div style="font-size:16px;font-weight:700;margin-top:2px;color:var(--red)">−${fmt(aDeduction)} QAR</div>
-            <div style="font-size:10px;color:var(--text-mute);margin-top:2px">in ${escapeHtml(monthLabel)}'s payroll</div>
+            <div style="font-size:10px;color:var(--red);text-transform:uppercase;font-weight:600">${escapeHtml(oldCoachName)} · ${escapeHtml(from.sport)}</div>
+            <div style="font-size:14px;font-weight:700;margin-top:2px">${attended}/${attended} · Completed</div>
+            <div style="font-size:11px;color:var(--text-mute);margin-top:2px">keeps ${fmt(aShare)} QAR</div>
           </div>
           <div style="padding:8px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:6px">
-            <div style="font-size:10px;color:var(--green);text-transform:uppercase;font-weight:600">${escapeHtml(newCoachName)} · earning</div>
-            <div style="font-size:16px;font-weight:700;margin-top:2px;color:var(--green)">+${fmt(bCommission)} QAR</div>
-            <div style="font-size:10px;color:var(--text-mute);margin-top:2px">commission on ${fmt(bShare)} @ ${newRate}%</div>
+            <div style="font-size:10px;color:var(--green);text-transform:uppercase;font-weight:600">${escapeHtml(newCoachName)} · ${escapeHtml(toSport)}</div>
+            <div style="font-size:14px;font-weight:700;margin-top:2px">0/${moved} · Active${carryNote}</div>
+            <div style="font-size:11px;color:var(--text-mute);margin-top:2px">priced ${fmt(enteredPrice)} QAR</div>
           </div>
-        </div>`;
+        </div>
+        ${reconcile}`;
     }
     elPrev.innerHTML = body;
   }
@@ -24792,7 +24837,7 @@ PAGES.expiring = (main) => {
   const threshold = state.settings?.expiringSoonDays || 3;
   // Average renewal value used to estimate potential revenue (per KPI card + per section).
   const AVG_RENEWAL = (state.settings && Number(state.settings.avgRenewalValue)) || 350;
-  let filter = { sport: 'all', coach: 'all', search: '', bucket: 'all', sort: 'expiry', reminded: 'all' };
+  let filter = { sports: [], coach: 'all', search: '', bucket: 'all', sort: 'expiry', reminded: 'all' };   // v6.519: sports is a MULTI-select
   // Which sections are collapsed (default: all open)
   const collapsed = { soon: false, week: false, expired: false, upcoming: false, completed: false };
   // Bulk-selected member IDs (across all sections)
@@ -24855,9 +24900,9 @@ PAGES.expiring = (main) => {
     if (filter.bucket === 'recent' && !(days < 0 && days >= -recentDays)) return false;
     // "Expiring in ≤ 7 days" bucket: active memberships whose expiry is 0–7 days out. (v6.358)
     if (filter.bucket === 'd7' && !(days >= 0 && days <= 7)) return false;
-    if (filter.sport !== 'all') {
+    if (filter.sports.length) {   // v6.519: multi-select — keep if the member does ANY chosen sport
       const ms = new Set([m.sport, ...((m.enrollments||[]).map(e=>e.sport)), ...((m.subscriptions||[]).map(s=>s.activity))].filter(Boolean));
-      if (!ms.has(filter.sport)) return false;
+      if (!filter.sports.some(sp => ms.has(sp))) return false;
     }
     // SAME fix as the Attendance grid (v6.385): match the coach of ANY of the member's sports.
     // The headline `m.coachId` misses a multi-sport member whose PRIMARY sport has a different (or
@@ -25084,10 +25129,7 @@ PAGES.expiring = (main) => {
           <option value="upcoming">📅 Expiring in ≤ 30 days</option>
           <option value="completed">✅ Completed — finished classes</option>
         </select>
-        <select id="exp-sport" class="btn ghost">
-          <option value="all">All sports</option>
-          ${sportsInList.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('')}
-        </select>
+        ${multiFilterHTML('exp-sport', sportsInList.map(s => [s, s]), filter.sports, { allText: t('All sports', 'كل الرياضات'), noun: t('sports', 'رياضات'), minWidth: 150 })}
         <select id="exp-coach" class="btn ghost">
           <option value="all">All coaches</option>
           ${coachesInList.map(cid => `<option value="${cid}">${escapeHtml(coachName(cid))}</option>`).join('')}
@@ -25105,6 +25147,7 @@ PAGES.expiring = (main) => {
         <div class="search" style="flex:1;min-width:220px"><input id="exp-search" type="text" placeholder="Search by name, mobile, QID..." /></div>
         <button class="btn ghost sm" id="exp-collapse-all" title="Collapse all sections">⊟ Collapse all</button>
         <button class="btn ghost sm" id="exp-expand-all" title="Expand all sections">⊞ Expand all</button>
+        <button class="btn ghost sm" id="exp-clear-all" title="${t('Reset every filter', 'إعادة ضبط كل المرشحات')}">✕ ${t('Clear all filters', 'مسح كل المرشحات')}</button>
       </div>
     </div>
 
@@ -25252,8 +25295,13 @@ PAGES.expiring = (main) => {
   renderSections();
 
   $('#exp-bucket').addEventListener('change', e => { filter.bucket = e.target.value; renderSections(); });
-  $('#exp-sport').addEventListener('change', e => { filter.sport = e.target.value; renderSections(); });
+  bindMultiFilter('exp-sport', v => { filter.sports = v; renderSections(); }, { allText: t('All sports', 'كل الرياضات'), noun: t('sports', 'رياضات') });   // v6.519: multi-select sports
   $('#exp-coach').addEventListener('change', e => { filter.coach = e.target.value; renderSections(); });
+  // v6.519: reset EVERY filter to its default and re-render (fresh full list)
+  $('#exp-clear-all')?.addEventListener('click', () => {
+    filter = { sports: [], coach: 'all', search: '', bucket: 'all', sort: 'expiry', reminded: 'all' };
+    PAGES.expiring(main);
+  });
   $('#exp-reminded')?.addEventListener('change', e => { filter.reminded = e.target.value; renderSections(); });
   $('#exp-sort').addEventListener('change', e => { filter.sort = e.target.value; renderSections(); });
   $('#exp-search').addEventListener('input', e => { filter.search = e.target.value; renderSections(); });

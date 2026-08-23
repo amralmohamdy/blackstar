@@ -25,8 +25,8 @@ R.section('Salaries recalculate on open');
 R.section('Switch carries classes + price to the destination sport (source completed)');
 {
   const src = H.readSrc(); // app.js + storage.js + pages.js joined
-  R.ok('the destination enrollment takes the REMAINING classes', /_remainingCls = skipReconciliation \? \(from\.classes \|\| 0\) : Math\.max\(0, totalClasses - attendedA\)/.test(src));
-  R.ok('the destination enrollment takes the TRANSFERRED price (bShare)', /_destPrice = skipReconciliation \? \(from\.price \|\| 0\) : bShare/.test(src));
+  R.ok('the destination enrollment takes the MOVED classes (remaining + carry-forward, v6.520)', /_remainingCls = skipReconciliation \? \(from\.classes \|\| 0\) : moved/.test(src));
+  R.ok('the destination enrollment takes the RE-PRICED amount (bPrice, v6.520)', /_destPrice = skipReconciliation \? \(from\.price \|\| 0\) : bPrice/.test(src));
   R.ok('the destination is flagged switchedInto (never re-billed as a fresh membership)', /switchedInto: true/.test(src));
   R.ok('the source subscription is marked completed + switchedAwayTo', /srcSub\.status = 'completed'[\s\S]{0,80}switchedAwayTo = toSport/.test(src));
   R.ok('the destination subscription is sized to the remaining classes + switchFunded', /destSub\.totalClasses = _remainingCls[\s\S]{0,140}switchFunded = true/.test(src));

@@ -18,17 +18,22 @@ R.ok('the guard is audited (not silent)', /member\.switch_refund_guard/.test(src
 
 R.section('audit label fix (source)');
 R.ok('the switch audit uses the CAPTURED source sport, not the mutated enrollment', /Switched \$\{_fromSport\} → \$\{toSport\}/.test(src) && /fromSport: _fromSport, toSport, fromCoachId: _fromCoachId/.test(src));
-R.ok('the success toast also uses the captured source sport', /coachName\(_fromCoachId\) keeps/.test(src) || /coachName\(_fromCoachId\)\} keeps/.test(src));
+R.ok('the success toast also uses the captured source sport', /coachName\(_fromCoachId\)\} \$\{attendedA\}\/\$\{attendedA\} keeps/.test(src));
 
 R.section('delete warning (source)');
 R.ok('deleting a switch-funded sub warns it strands the credit', /sub\.switchFunded && !hasTwin/.test(src) && /funded by a SPORT SWITCH/.test(src));
 
-R.section('the switch itself stays clean — net-zero credit + funded flags (runtime invariant)');
+R.section('v6.520 — the switch SPLITS the one invoice (no net-zero credit) + funded flags');
 {
-  // The guard depends on switchSport producing (a) a net-zero switch-credit invoice and (b) an
-  // enrollment/sub flagged switchedInto/switchFunded. Assert those invariants live in the source
-  // so the guard has something to key on.
-  R.ok('switch credit invoice nets to zero (amount: 0)', /amount: 0,\s*\/\/ lineItems net to zero/.test(src));
+  // The rebuilt switch splits the membership invoice in place instead of adding a net-zero
+  // switch-credit. Assert the split invariants + the switchedInto/switchFunded flags the guard keys on.
+  // The SINGLE-TARGET switch no longer builds a net-zero credit (the distinctive commented form is
+  // gone). The multi-target "distribute" branch still uses a credit — that path is out of v6.520 scope.
+  R.ok('the single-target net-zero switch-credit invoice is GONE', !/amount: 0,\s*\/\/ lineItems net to zero/.test(src) && !/switchCredit: true,\s*\/\/ flag for revenue/.test(src));
+  R.ok('the source invoice line is capped to attended/aShare', /_fl\.price = aShare; _fl\.classes = attendedA;/.test(src));
+  R.ok('a destination line (moved classes @ re-price) is ADDED', /_inv\.lineItems\.push\(\{ sport: toSport, coach: coachName\(toCoachId\), coachId: toCoachId, classes: moved, price: bPrice/.test(src));
+  R.ok('the invoice is re-totalled from its lines', /_inv\.amount = _inv\.lineItems\.reduce/.test(src));
+  R.ok('the source subscription is CAPPED to attended + completed', /srcSub\.totalClasses = attendedA;/.test(src) && /srcSub\.status = 'completed';/.test(src) && /srcSub\.switchedAwayTo = toSport;/.test(src));
   R.ok('the destination enrollment is flagged switchedInto', /m\.enrollments\[targetIdx\]\.switchedInto = true;/.test(src));
   R.ok('the destination subscription is flagged switchFunded', /destSub\.switchFunded = true;/.test(src));
 }

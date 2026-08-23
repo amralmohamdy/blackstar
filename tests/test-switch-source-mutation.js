@@ -25,9 +25,9 @@ ok('switch uses a String() coach comparator', /const _sameCoach = \(a, b\) => St
 ok('dest-sub lookup normalizes coachId', /\(s\.activity \|\| ''\) === toSport && _sameCoach\(s\.coachId, finalToCoachId\)/.test(src));
 ok('coachBaseForSport normalizes line coachId', /String\(li\.coachId\) === String\(coachId\)/.test(src));
 
-R.section('source paid = earned share, but its class total is NOT shrunk (attendance per-class stays base/original)');
+R.section('v6.520 — source paid = earned share AND its class total IS capped (invoice is now split in place)');
 ok('source amountPaid set to the earned share', /srcSub\.amountPaid = aShare;/.test(src));
-ok('source totalClasses is NOT capped in the inline switch path', !/srcSub\.totalClasses = attendedA;/.test(src));
+ok('source totalClasses IS capped to attended (v6.520 reconciled split)', /srcSub\.totalClasses = attendedA;/.test(src));
 ok('dest sub amountPaid set to the transferred share', /destSub\.amountPaid = _destPrice;/.test(src));
 ok('dest sub totalClasses = the remaining classes', /destSub\.totalClasses = _remainingCls;/.test(src));
 
