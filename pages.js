@@ -2250,7 +2250,11 @@ function viewMember(id) {
           const editBtn = (isAdmin && sid)
             ? ` <button onclick="event.stopPropagation();editSubscription(${m.id}, '${sid}')" title="Edit classes / price / status" style="background:transparent;border:0;color:var(--blue);opacity:.85;cursor:pointer;padding:0 3px;font-size:12px">✎</button>`
             : '';
-          return `${badge}${editBtn}${delBtn}`;
+          // v6.521 — export an invoice for JUST this sport/period (vs "Get Invoice" for the whole membership).
+          const invBtn = (!isViewerRole() && sid)
+            ? ` <button onclick="event.stopPropagation();printMemberSubInvoicePDF(${m.id}, '${sid}')" title="${t('Export an invoice for this sport only', 'تصدير فاتورة لهذه الرياضة فقط')}" style="background:transparent;border:0;color:var(--green);opacity:.85;cursor:pointer;padding:0 3px;font-size:12px">📄</button>`
+            : '';
+          return `${badge}${invBtn}${editBtn}${delBtn}`;
         })()}</td>
       </tr>
     `;
@@ -15018,6 +15022,81 @@ window.printMemberInvoicePDF = function(memberId) {
     const i = state.invoices.findIndex(x => x.id === tempId);
     if (i >= 0) state.invoices.splice(i, 1);
   }
+};
+
+// v6.521 — SINGLE-SPORT / single-period invoice. "Get Invoice" prints the WHOLE membership; this
+// prints just ONE sport (one subscription period), so a member with several sports — or the same
+// sport renewed several times — can get a receipt for exactly the package they ask about. Called
+// from the 📄 button on each Subscription-History row. Builds a synthetic, never-persisted invoice.
+window.printMemberSubInvoicePDF = function(memberId, sid) {
+  const m = state.members.find(x => x.id === memberId);
+  if (!m) { toast('Member not found', 'error'); return; }
+  const sub = (m.subscriptions || []).find(s => (s._sid || s._rid || '') === sid);
+  if (!sub) { toast('Subscription not found', 'error'); return; }
+  const sport = sub.activity || '';
+  const coachId = sub.coachId;
+  const sameCoach = (a) => coachId == null || String(a) === String(coachId);
+  const _paidOf = (iv) => (typeof invoicePaid === 'function') ? invoicePaid(iv) : (iv.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+
+  const lineItems = [];
+  let amount = 0, paid = 0, issueDate = sub.start || m.startDate || TODAY;
+
+  // Prefer THIS period's own invoice (sub.invoiceNumber). Otherwise fall back to any membership
+  // invoice carrying this sport+coach, then to the enrollment. Only this sport's line(s) are kept.
+  const linked = sub.invoiceNumber
+    ? (state.invoices || []).filter(iv => !iv.deleted && !iv.switchCredit && (iv.ref === sub.invoiceNumber || iv.invoiceNumber === sub.invoiceNumber))
+    : [];
+  const pool = linked.length ? linked
+    : (state.invoices || []).filter(iv => !iv.deleted && !iv.switchCredit && iv.customerId === memberId && (iv.category || 'Membership') === 'Membership');
+
+  for (const iv of pool) {
+    const items = (iv.lineItems && iv.lineItems.length) ? iv.lineItems
+      : [{ sport: iv.sport, coach: iv.coach, coachId: iv.coachId, classes: iv.classes, price: iv.amount || 0 }];
+    const mine = items.filter(li => (li.sport || '') === sport && sameCoach(li.coachId));
+    if (!mine.length) continue;
+    const lineSum = mine.reduce((s, li) => s + (Number(li.price) || 0), 0);
+    for (const li of mine) {
+      let _period = null;
+      if (typeof findSubForLine === 'function') {
+        const _s = findSubForLine(m, iv, li) || sub;
+        if (_s) _period = { start: _s.start || null, end: (typeof subscriptionValidEnd === 'function' ? subscriptionValidEnd(_s) : (_s.end || null)) };
+      }
+      lineItems.push({ sport: li.sport, coach: li.coach || coachName(li.coachId) || '', coachId: li.coachId, classes: li.classes, price: Number(li.price) || 0, _period });
+    }
+    amount += lineSum;
+    const ivAmt = Number(iv.amount) || 0, ivPaid = _paidOf(iv);
+    paid += ivAmt > 0 ? Math.min(lineSum, ivPaid * (lineSum / ivAmt)) : (ivPaid > 0 ? lineSum : 0);
+    if (iv.date && iv.date < issueDate) issueDate = iv.date;
+  }
+
+  if (!lineItems.length) {
+    // No invoice line — fall back to the matching enrollment so the button still works.
+    const enr = (m.enrollments || []).filter(e => (e.sport || '') === sport && sameCoach(e.coachId));
+    if (!enr.length) { toast(`No invoice or enrollment for ${sport}`, 'error'); return; }
+    for (const e of enr) lineItems.push({ sport: e.sport, coach: coachName(e.coachId) || '', coachId: e.coachId, classes: e.classes, price: Number(e.price) || 0 });
+    amount = lineItems.reduce((s, li) => s + li.price, 0);
+    paid = Math.min(amount, Number(sub.amountPaid) || 0);
+  }
+  amount = Math.round(amount * 100) / 100;
+  paid = Math.round(Math.min(amount, paid) * 100) / 100;
+
+  const tempId = -(Date.now());
+  const first = lineItems[0];
+  const startD = (first && first._period && first._period.start) || sub.start || issueDate;
+  const temp = {
+    id: tempId,
+    ref: 'INV-' + String(m.id).padStart(4, '0') + '-' + (sport.replace(/[^A-Za-z0-9]/g, '').slice(0, 5).toUpperCase() || 'SPORT'),
+    date: startD, month: String(startD).slice(0, 7),
+    category: 'Membership', activityType: 'subscription',
+    customerId: memberId, customerName: m.name, customerPhone: m.phone,
+    sport, coach: first ? first.coach : (coachName(coachId) || ''), coachId: first ? first.coachId : coachId,
+    amount, amountPaid: paid,
+    payments: paid > 0 ? [{ amount: paid, date: startD }] : [],
+    lineItems, _synthetic: true, _singleSport: true,
+  };
+  state.invoices.push(temp);
+  try { printInvoicePDF(tempId); }
+  finally { const i = state.invoices.findIndex(x => x.id === tempId); if (i >= 0) state.invoices.splice(i, 1); }
 };
 
 // ── Club logo for printed documents ───────────────────────────────────────────
