@@ -2937,7 +2937,7 @@ function enrollRowHtml(row, idx) {
            ${CAMP_VALIDITY_PRESETS.some(v => v.days === campVal) ? '' : `<option value="${campVal}" selected>${campVal} days</option>`}
          </select>
        </div>`
-    : `<div class="field" style="margin:0"><label style="font-size:10px">Validity <span style="color:var(--accent)">*</span></label><select data-en="validity" data-i="${idx}">${VALIDITY_OPTIONS.map(v => `<option value="${v}" ${v === valSel ? 'selected' : ''}>${v} days</option>`).join('')}</select></div>`;
+    : `<div class="field" style="margin:0"><label style="font-size:10px">Validity <span style="color:var(--accent)">*</span></label><select data-en="validity" data-i="${idx}">${validityOptionsHtml(valSel)}</select></div>`;
   // This sport's own expiry = its start + its window. For camp the window is the
   // validity (calendar days); for other sports it's the validity too.
   const eDays = isCamp ? campVal : valSel;
@@ -23754,7 +23754,7 @@ window.addRenewalMulti = function(m, picks) {
       </div>
       <div class="form-row">
         <div class="field"><label>${t('Start / renewal date', 'تاريخ البداية / التجديد')}</label><input id="rnm-start" type="date" value="${TODAY}" /></div>
-        <div class="field"><label>${t('Validity', 'المدة')}</label><select id="rnm-validity">${VALIDITY_OPTIONS.map(v => `<option value="${v}" ${v === DEFAULT_VALIDITY ? 'selected' : ''}>${v} ${t('days', 'يوم')}</option>`).join('')}</select></div>
+        <div class="field"><label>${t('Validity', 'المدة')}</label><select id="rnm-validity">${validityOptionsHtml(DEFAULT_VALIDITY)}</select></div>
         <div class="field"><label>${t('Status', 'الحالة')}</label><select id="rnm-status"><option value="active">${t('Active', 'نشط')}</option><option value="expired">${t('Expired', 'منتهٍ')}</option></select></div>
       </div>
       <label style="display:flex;align-items:center;gap:6px;margin:6px 0;cursor:pointer;font-size:12px"><input type="checkbox" id="rnm-adjust" checked /> <span>${t('Apply carry-forward credit & deduct post-expiry classes per sport', 'تطبيق رصيد الحصص المُرحَّلة وخصم حصص ما بعد الانتهاء لكل رياضة')}</span></label>
@@ -23924,7 +23924,7 @@ window.addRenewal = function(memberId) {
       </div>
       <div class="form-row">
         <div class="field"><label>Classes</label><input id="rn-classes" type="number" min="0" step="1" value="${enrolledUnique[0]?.classes || ''}" /></div>
-        <div class="field"><label>Validity</label><select id="rn-validity">${VALIDITY_OPTIONS.map(v => `<option value="${v}" ${v===DEFAULT_VALIDITY?'selected':''}>${v} days</option>`).join('')}</select></div>
+        <div class="field"><label>Validity</label><select id="rn-validity">${validityOptionsHtml(DEFAULT_VALIDITY)}</select></div>
         <div class="field"><label>Amount / Fee (QAR)</label><input id="rn-amount" type="number" step="0.01" min="0" value="${enrolledUnique[0]?.price || ''}" /></div>
       </div>
       <div class="form-row">
@@ -27836,7 +27836,7 @@ window.convertTrialToMember = function(id) {
       </div>
       <div class="form-row">
         <div class="field"><label>Classes <span style="color:var(--accent)">*</span></label><input id="cv-classes" type="number" min="1" step="1" value="8" /></div>
-        <div class="field"><label>Validity</label><select id="cv-validity">${VALIDITY_OPTIONS.map(v => `<option value="${v}" ${v===DEFAULT_VALIDITY?'selected':''}>${v} days</option>`).join('')}</select></div>
+        <div class="field"><label>Validity</label><select id="cv-validity">${validityOptionsHtml(DEFAULT_VALIDITY)}</select></div>
         <div class="field"><label>Price (QAR) <span style="color:var(--accent)">*</span></label><input id="cv-price" type="number" min="0" step="0.01" value="" placeholder="350" /></div>
       </div>
       <div class="form-row">
