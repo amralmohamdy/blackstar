@@ -17539,10 +17539,10 @@ PAGES.salaries = (main) => {
     <div style="background:rgba(91,141,239,.06);border:1px solid rgba(91,141,239,.2);border-radius:8px;padding:12px;margin-bottom:14px;display:flex;gap:10px;align-items:flex-start">
       <div style="font-size:20px">💡</div>
       <div style="font-size:12px;color:var(--text-dim);line-height:1.5">
-        Salaries = <b>Fixed monthly</b> (set per person on the Team page) + <b>Commission</b>.
-        Commission is calculated <b>by attendance</b>: a coach earns <b>fee ÷ total classes × rate%</b> for <b>each class a student attends</b>, counted in the month it was attended.
-        The unattended remainder stays <span style="color:var(--accent-2)">⏳ Pending</span> while the membership is active, and is <b>paid in full ("trued-up") in the month the membership expires</b> — the coach is eligible for it even if those last classes weren't attended.
-        Frozen memberships don't true-up until they end. Summer Camp earns no commission.
+        Salaries = <b>Fixed monthly</b> (set per person on the Team page) + <b>Commission</b>, on one of two bases:
+        <br>• <b>By attendance</b> (current) — <b>fee ÷ total classes × rate%</b> for <b>each class a student attends</b>, counted in the month attended; the unattended remainder stays <span style="color:var(--accent-2)">⏳ Pending</span> and is <b>trued-up</b> in the month the membership expires.
+        <br>• <b>By payment</b> — <b>rate% × the amount actually PAID that month</b>, at full rate (attendance ignored), with <b>no carry-forward</b>: a coach earns their share of the cash collected each month, nothing deferred. (Used for private coaches paid a full monthly fee.)
+        <br>Frozen memberships don't true-up until they end. Summer Camp earns no commission.
       </div>
     </div>
     </div>
@@ -17552,7 +17552,7 @@ PAGES.salaries = (main) => {
         <span class="badge active" style="font-size:11px" title="Commission is calculated per class attended, with the remainder trued-up at expiry. This is locked to prevent accidental changes.">🔒 By attendance (per class attended)</span>
         <button id="sal-basis-change" class="btn ghost sm" style="font-size:10px;opacity:.6" title="Admin: switch how commission is calculated (not recommended)">change…</button>
         <select id="sal-basis" class="btn ghost" style="display:none">
-          <option value="payment" ${(state.settings?.commissionBasis || 'payment') === 'payment' ? 'selected' : ''}>By payment (full fee in payment month)</option>
+          <option value="payment" ${(state.settings?.commissionBasis || 'payment') === 'payment' ? 'selected' : ''}>By payment (full rate on amount paid that month)</option>
           <option value="attendance" ${state.settings?.commissionBasis === 'attendance' ? 'selected' : ''}>By attendance (per class attended)</option>
         </select>
         <span style="opacity:.35">|</span>
@@ -17602,7 +17602,7 @@ PAGES.salaries = (main) => {
     const next = e.target.value === 'attendance' ? 'attendance' : 'payment';
     // Switching away from attendance changes how every coach is paid — confirm.
     if (next === 'payment') {
-      if (!confirm('Switch to "By payment"? This pays each coach the FULL fee in the month a member paid, ignoring attendance and the expiry true-up. This is not the academy\'s usual rule.\n\nAre you sure?')) {
+      if (!confirm('Switch to "By payment"? This pays each coach rate% of the amount ACTUALLY PAID each month (full rate, attendance ignored, no carry-forward) — used for private coaches on a full monthly fee. It replaces the attendance basis + expiry true-up for everyone.\n\nAre you sure?')) {
         e.target.value = 'attendance';   // revert the select
         return;
       }

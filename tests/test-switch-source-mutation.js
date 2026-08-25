@@ -36,21 +36,22 @@ R.section('salary engine: old coach = attended share, new coach = remaining');
 const ctx = H.makeCtx({ today: '2026-08-20' });
 const run = (c) => H.vm.runInContext(c, ctx);
 run("state.coaches=[{id:1,name:'Old',rate:100,role:'coach',active:true},{id:2,name:'New',rate:100,role:'coach',active:true}];");
-run(`state.members=[{id:701,name:'Sw',startDate:'2026-08-01',
+// v6.520 model: the ONE membership invoice is SPLIT (Karate 3/300 for the old coach + Boxing 5/500 for
+// the new coach); no separate switch-credit. Member paid the full 800 in Aug; attended 3 Karate + 5 Boxing.
+run(`state.members=[{id:701,name:'Sw',startDate:'2026-08-01',expiryDate:'2026-09-01',
   enrollments:[{sport:'Boxing',coachId:2,classes:5,price:500,switchedInto:true}],
   subscriptions:[
-    {_sid:'a',activity:'Karate',coachId:1,totalClasses:8,amountPaid:300,start:'2026-08-01',end:'2026-09-01',status:'completed',switchedAwayTo:'Boxing',switchedAt:'2026-08-10'},
+    {_sid:'a',activity:'Karate',coachId:1,totalClasses:3,amountPaid:300,start:'2026-08-01',end:'2026-09-01',status:'completed',switchedAwayTo:'Boxing',switchedAt:'2026-08-10'},
     {_sid:'b',activity:'Boxing',coachId:2,totalClasses:5,amountPaid:500,start:'2026-08-10',end:'2026-09-01',status:'active',switchFunded:true}],
   sportSwitches:[{id:'s1',date:'2026-08-10',fromSport:'Karate',fromCoachId:1,toSport:'Boxing',toCoachId:2,
     snapshot:{attendedByOld:3,totalClasses:8,originalPrice:800,aShare:300,bShare:500,switchMonth:'2026-08'}}],
-  dailyAttendance:{'2026-08':{'Karate':{'02':'Y','04':'Y','06':'Y'}}}}];`);
+  dailyAttendance:{'2026-08':{'Karate':{'02':'Y','04':'Y','06':'Y'},'Boxing':{'12':'Y','14':'Y','16':'Y','19':'Y','21':'Y'}}}}];`);
 run(`state.invoices=[
-  {id:1,customerId:701,date:'2026-08-01',month:'2026-08',category:'Membership',activityType:'subscription',coachId:1,amount:800,amountPaid:800,payments:[{amount:800,date:'2026-08-01',method:'cash'}],lineItems:[{sport:'Karate',coachId:1,classes:8,price:800}]},
-  {id:2,customerId:701,date:'2026-08-10',month:'2026-08',category:'Membership',activityType:'switch-credit',switchCredit:true,amount:0,lineItems:[{sport:'Karate',coachId:1,classes:-5,price:-500},{sport:'Boxing',coachId:2,classes:5,price:500}]}];`);
+  {id:1,customerId:701,date:'2026-08-01',month:'2026-08',category:'Membership',activityType:'subscription',amount:800,payments:[{amount:800,date:'2026-08-01',month:'2026-08',method:'cash'}],lineItems:[{sport:'Karate',coachId:1,classes:3,price:300},{sport:'Boxing',coachId:2,classes:5,price:500}]}];`);
 function pay(basis){ run("state.settings={commissionBasis:'"+basis+"'};"); return [run("(computeMonthlyPay(1,'2026-08')||{}).net"), run("(computeMonthlyPay(2,'2026-08')||{}).net")]; }
 const [op,np] = pay('payment');
-ok('by-payment: old coach = 300 (attended 3/8×800)', op === 300);
-ok('by-payment: new coach = 500 (remaining)', np === 500);
+ok('by-payment: old coach = 300 (his 300 line share of the 800 paid)', op === 300, 'op=' + op);
+ok('by-payment: new coach = 500 (his 500 line share of the 800 paid)', np === 500, 'np=' + np);
 const [oa,na] = pay('attendance');
 ok('by-attendance: old coach = 300', oa === 300);
 ok('by-attendance: new coach = 500', na === 500);
