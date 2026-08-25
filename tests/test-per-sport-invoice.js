@@ -70,4 +70,36 @@ R.section('runtime — proportional paid attribution on a part-paid combined inv
   R.ok('only the Karate line is present', k && k.lineItems.length === 1 && k.lineItems[0].sport === 'Karate');
 }
 
+R.section('v6.523 — a package whose linked invoice was VOIDED exports from the sub, not other packages');
+{
+  const ctx = H.makeCtx({ today: '2026-08-25', role: 'admin' });
+  const run = s => H.vm.runInContext(s, ctx);
+  // Three 120 Kick Boxing sessions; the 3rd invoice (INV3) is deleted but its sub is still active+paid.
+  run(`
+    state.coaches=[{id:11,name:'Aziz',rate:30,role:'coach',active:true}];
+    state.members=[{id:7,name:'Kayed',sport:'Kick Boxing',coachId:11,expiryDate:'2026-09-21',status:'Active',
+      enrollments:[{sport:'Kick Boxing',coachId:11,classes:1,price:120}],
+      subscriptions:[
+        {activity:'Kick Boxing',coachId:11,totalClasses:1,start:'2026-08-04',end:'2026-09-03',status:'active',amountPaid:120,invoiceNumber:'INV1',_sid:'a'},
+        {activity:'Kick Boxing',coachId:11,totalClasses:1,start:'2026-08-11',end:'2026-09-10',status:'active',amountPaid:120,invoiceNumber:'INV2',_sid:'b'},
+        {activity:'Kick Boxing',coachId:11,totalClasses:1,start:'2026-08-22',end:'2026-09-21',status:'active',amountPaid:120,invoiceNumber:'INV3',_sid:'c'}
+      ]}];
+    state.invoices=[
+      {id:1,ref:'INV1',customerId:7,category:'Membership',date:'2026-08-04',month:'2026-08',amount:120,coachId:11,lineItems:[{sport:'Kick Boxing',coachId:11,classes:1,price:120}],payments:[{amount:120}]},
+      {id:2,ref:'INV2',customerId:7,category:'Membership',date:'2026-08-11',month:'2026-08',amount:120,coachId:11,lineItems:[{sport:'Kick Boxing',coachId:11,classes:1,price:120}],payments:[{amount:120}]},
+      {id:3,ref:'INV3',customerId:7,deleted:true,category:'Membership',date:'2026-08-22',month:'2026-08',amount:120,coachId:11,lineItems:[{sport:'Kick Boxing',coachId:11,classes:1,price:120}],payments:[{amount:120}]}
+    ];
+    window.__cap=null; window.printInvoicePDF=function(id){ window.__cap=state.invoices.find(x=>x.id===id); };
+  `);
+  run(`printMemberSubInvoicePDF(7,'c')`);
+  const c = run(`window.__cap`);
+  R.ok('the voided-invoice package exports 120 (its own), NOT 240 (the two live ones)', c && c.amount === 120, 'amt=' + (c && c.amount));
+  R.ok('it is a single 1-class line', c && c.lineItems.length === 1 && c.lineItems[0].classes === 1);
+  run(`printMemberSubInvoicePDF(7,'a')`);
+  R.ok('a package with a LIVE invoice still exports its own 120', run(`window.__cap`).amount === 120);
+}
+
+R.section('v6.523 — Get Invoice label counts packages, not "sports"');
+R.ok('the multi label says "packages" (not "sports")', /Get Invoice \(\$\{memberInvs\.length\} packages\)/.test(src) && !/Get Invoice \(\$\{memberInvs\.length\} sports\)/.test(src));
+
 R.done();

@@ -132,11 +132,13 @@ console.log('\n...while the v6.386 case the rule exists for still works:');
   ok('...so remaining is 9', fixed.left === 9, fixed);
 }
 
-console.log('\nsource wiring — the popup + its over-cap guard use the corrected window:');
+console.log('\nsource wiring — the popup uses the corrected window (v6.524: the blocking over-cap guard was removed):');
 {
   const _sldSeg = pagesSrc.slice(pagesSrc.indexOf('function _sessionsLeftFromDoc'), pagesSrc.indexOf('function _sessionsLeftFromDoc') + 1400);
   ok('_sessionsLeftFromDoc uses subAttendanceWindow', /subAttendanceWindow\(doc, sub\)/.test(_sldSeg) && /liveAttendanceCount\(doc, sport, win\.from, win\.to\)/.test(_sldSeg));
-  ok('the "already attended all classes" guard uses it too', /subAttendanceWindow\(m, sub\)[\s\S]{0,120}?liveAttendanceCount\(m, sport, _win\.from, _win\.to\)/.test(pagesSrc));
+  // v6.524 — the blocking "already attended all classes — mark anyway?" confirm was removed; attendance
+  // now always logs and an EXPIRED row badge surfaces the over-limit state instead.
+  ok('the blocking over-cap confirm no longer exists', !/Mark another present anyway/.test(pagesSrc));
   ok('no raw sub.start/end liveAttendanceCount remains in the mark handler',
     !/liveAttendanceCount\(m, sport, sub\.start \|\| null, sub\.end \|\| null\)/.test(pagesSrc.slice(pagesSrc.indexOf('function _sessionsLeftFromDoc') - 3000, pagesSrc.indexOf('function _sessionsLeftFromDoc'))));
 }

@@ -2476,8 +2476,12 @@ function viewMember(id) {
         // Show the button if there's an invoice OR any enrollment we can build one
         // from. Only hide it when there's genuinely nothing to bill.
         if (!memberInvs.length && !hasEnrollments) return [];
+        // v6.523: label by the number of live membership invoices being COMBINED, called "packages"
+        // (not "sports" — a member can have several same-sport packages, e.g. weekly private sessions,
+        // so "2 sports" was wrong when it was really 2 Kick Boxing packages). Deleted invoices are
+        // excluded, so a package whose invoice was voided won't be counted here (use the per-row 📄).
         const multi = memberInvs.length > 1;
-        return [{ label: multi ? `🧾 Get Invoice (${memberInvs.length} sports)` : '🧾 Get Invoice', class: 'btn ghost', onclick: () => { closeModal(); printMemberInvoicePDF(id); } }];
+        return [{ label: multi ? `🧾 Get Invoice (${memberInvs.length} packages)` : '🧾 Get Invoice', class: 'btn ghost', onclick: () => { closeModal(); printMemberInvoicePDF(id); } }];
       })(),
       ...(() => {
         // v6.488: "🔧 Rebuild invoice" — ONLY when the member has PAID subscriptions but NO membership
@@ -15046,8 +15050,15 @@ window.printMemberSubInvoicePDF = function(memberId, sid) {
   const linked = sub.invoiceNumber
     ? (state.invoices || []).filter(iv => !iv.deleted && !iv.switchCredit && (iv.ref === sub.invoiceNumber || iv.invoiceNumber === sub.invoiceNumber))
     : [];
+  // v6.523: if this period HAD its own invoice but it's now deleted/missing, do NOT pool the member's
+  // other same-sport packages (that would export the WRONG total — e.g. a member with three separate
+  // 120 Kick Boxing sessions, one invoice voided, must not show 240 for the voided one). Build from the
+  // subscription itself instead (the enrollment/sub fallback below). Only pool when there was never a
+  // linked invoice number to begin with.
+  const linkedGone = !!sub.invoiceNumber && !linked.length;
   const pool = linked.length ? linked
-    : (state.invoices || []).filter(iv => !iv.deleted && !iv.switchCredit && iv.customerId === memberId && (iv.category || 'Membership') === 'Membership');
+    : (linkedGone ? []
+      : (state.invoices || []).filter(iv => !iv.deleted && !iv.switchCredit && iv.customerId === memberId && (iv.category || 'Membership') === 'Membership'));
 
   for (const iv of pool) {
     const items = (iv.lineItems && iv.lineItems.length) ? iv.lineItems
@@ -15069,6 +15080,14 @@ window.printMemberSubInvoicePDF = function(memberId, sid) {
     if (iv.date && iv.date < issueDate) issueDate = iv.date;
   }
 
+  if (!lineItems.length && linkedGone) {
+    // v6.523: this period's own invoice was deleted — reconstruct THIS package from the subscription
+    // itself (its own class count + paid), never from the member's other same-sport packages.
+    lineItems.push({ sport, coach: coachName(coachId) || '', coachId, classes: sub.totalClasses, price: Number(sub.amountPaid) || 0,
+      _period: { start: sub.start || null, end: (typeof subscriptionValidEnd === 'function' ? subscriptionValidEnd(sub) : (sub.end || null)) } });
+    amount = Number(sub.amountPaid) || 0;
+    paid = amount;
+  }
   if (!lineItems.length) {
     // No invoice line — fall back to the matching enrollment so the button still works.
     const enr = (m.enrollments || []).filter(e => (e.sport || '') === sport && sameCoach(e.coachId));
@@ -21375,39 +21394,11 @@ PAGES.attendance = (main) => {
     if (!m.dailyAttendance) m.dailyAttendance = {};
     if (!m.dailyAttendance[mo]) m.dailyAttendance[mo] = {};
     if (!m.dailyAttendance[mo][sport]) m.dailyAttendance[mo][sport] = {};
-    // Cap "present" marks at the subscription's planned classes for the current
-    // period: if this new Y would push attended past the total, warn first so a
-    // member can't be marked present more times than classes they paid for.
-    if (next === 'Y') {
-      // Pick the subscription whose window CONTAINS the marked day (falls back to the
-      // latest) so a renewed member's present is counted against the NEW cycle, not
-      // an expired one.
-      const markISO = `${mo}-${String(day).padStart(2, '0')}`;
-      const sub = (typeof subForAttendanceDate === 'function')
-        ? subForAttendanceDate(m, sport, markISO)
-        : (m.subscriptions || []).filter(s => (s.activity || '') === sport).slice(-1)[0];
-      const planned = sub ? (parseInt(sub.totalClasses) || 0) : 0;
-      if (planned > 0) {
-        // Count present marks ONLY within that subscription's window. Use the CORRECTED window
-        // (subAttendanceWindow) so this over-cap warning agrees with the "Sessions remaining"
-        // popup and the member card — the raw start/end miss pre-start classes and mis-count the
-        // renewal-gap boundary, which could wrongly block (or wrongly allow) a present. (v6.399)
-        const _win = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, sub) : { from: sub.start || null, to: sub.end || null };
-        const live = (typeof liveAttendanceCount === 'function') ? liveAttendanceCount(m, sport, _win.from, _win.to) : { y: 0 };
-        const alreadyY = live.y || 0;
-        // Only block if this cell isn't already counted as Y (it's a NEW present).
-        const cellWasY = m.dailyAttendance[mo][sport][String(day)] === 'Y';
-        if (!cellWasY && alreadyY >= planned) {
-          const nm = m.name, nmAr = m.nameArabic || m.name;
-          if (!confirm(t(
-            `${nm} has already attended all ${planned} ${sport} classes for this subscription period.\n\nMark another present anyway? (They may need to renew.)`,
-            `${nmAr} حضر بالفعل جميع حصص ${sport} (${planned} حصة) لفترة هذا الاشتراك.\n\nهل تريد تسجيل حضور إضافي على أي حال؟ (قد يحتاج إلى التجديد.)`
-          ))) {
-            return;
-          }
-        }
-      }
-    }
+    // v6.524: attendance ALWAYS logs — no blocking "already attended all N classes, mark anyway?"
+    // prompt. The desk shouldn't be interrupted to confirm a renewal; a member who has used up their
+    // paid classes (or whose package window has ended) is instead flagged with an EXPIRED badge on
+    // their attendance row (see the row render below), so the over-limit state is visible without a
+    // popup and the class is still recorded.
     const _prevMark = m.dailyAttendance[mo][sport][String(day)] || null;
     if (next === null) delete m.dailyAttendance[mo][sport][String(day)];
     else m.dailyAttendance[mo][sport][String(day)] = next;
@@ -21723,6 +21714,22 @@ PAGES.attendance = (main) => {
           campOver = campMarked >= campLimit;
         }
       }
+      // v6.524: REGULAR-sport "package finished" flag — the sub's window has ended (while the member
+      // is still overall active) OR every paid class is attended. Attendance still logs; this just
+      // surfaces the over-limit / expired-package state on the row so the desk sees a renewal is due
+      // without any blocking prompt. (Camp uses its own campOver flag above.)
+      let sportOver = false, sportPlanned = 0, sportMarked = 0;
+      if (sport !== SUMMER_CAMP && !isExpired) {
+        const rsub = (m.subscriptions || []).filter(s => (s.activity || '') === sport && String(s.coachId) === String(coachId) && !s.switchedAwayTo).slice(-1)[0]
+          || (m.subscriptions || []).filter(s => (s.activity || '') === sport && !s.switchedAwayTo).slice(-1)[0];
+        if (rsub) {
+          sportPlanned = parseInt(rsub.totalClasses) || 0;
+          const _rw = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, rsub) : { from: rsub.start || null, to: rsub.end || null };
+          sportMarked = (typeof liveAttendanceCount === 'function') ? (liveAttendanceCount(m, sport, _rw.from, _rw.to).y || 0) : 0;
+          const _ended = !!(rsub.end && rsub.end < TODAY);
+          sportOver = _ended || (sportPlanned > 0 && sportMarked >= sportPlanned);
+        }
+      }
       const _due = (currentRole() === 'coach' || typeof memberOutstanding !== 'function') ? 0 : memberOutstanding(m.id);
       // Expired but fully paid → a renewal candidate: highlight in amber so reception
       // is prompted to extend the membership (distinct from the red UNPAID case).
@@ -21734,6 +21741,11 @@ PAGES.attendance = (main) => {
         : (isExpired ? 'background:rgba(120,120,140,.06)' : '');
       const campOverBadge = campOver
         ? `<span class="badge" style="font-size:9px;padding:1px 6px;background:rgba(242,96,96,.18);color:var(--red);margin-left:4px" title="Attended ${campMarked} of ${campLimit} enrolled days — limit reached. Any extra day is over the enrolled count.">🚩 ${t('OVER LIMIT', 'تجاوز الحد')} ${campMarked}/${campLimit}</span>`
+        : '';
+      // v6.524: regular-sport package finished (window ended or all classes used) — attendance still
+      // logs, but the row is flagged EXPIRED so the desk knows a renewal is due (no blocking prompt).
+      const sportOverBadge = sportOver
+        ? `<span class="badge" style="font-size:9px;padding:1px 6px;background:rgba(245,158,11,.18);color:var(--accent-2);margin-left:4px" title="${escapeHtml(sport)} package finished${sportPlanned ? ' — attended ' + sportMarked + ' of ' + sportPlanned + ' classes' : ''}. Attendance still logs; renew to add classes.">🔴 ${t('EXPIRED', 'منتهي')}${sportPlanned ? ' ' + sportMarked + '/' + sportPlanned : ''}</span>`
         : '';
       const unpaidBadge = _due > 0.5
         ? `<span class="badge" style="font-size:9px;padding:1px 6px;background:rgba(242,96,96,.15);color:var(--red);margin-left:4px" title="Not fully paid — ${fmt(_due)} QAR due">💳 ${t('UNPAID', 'غير مدفوع')}</span>`
@@ -21751,7 +21763,7 @@ PAGES.attendance = (main) => {
       return `
         <tr style="${rowStyle}">
           <td class="att-name-cell" title="${escapeHtml(m.name)} · ${escapeHtml(sport)}${sport !== SUMMER_CAMP ? ' · ' + escapeHtml(coachName(coachId)) : ''}${isExpired ? ' · expired ' + fmtDate(m.expiryDate) : ''}${_due > 0.5 ? ' · ' + fmt(_due) + ' QAR due' : ''}">
-            <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isExpired ? 'color:var(--text-mute)' : ''}">${escapeHtml(m.name)}${statusBadge}${campOverBadge}${renewBadge}${unpaidBadge}</div>
+            <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isExpired ? 'color:var(--text-mute)' : ''}">${escapeHtml(m.name)}${statusBadge}${campOverBadge}${sportOverBadge}${renewBadge}${unpaidBadge}</div>
             ${m.nameArabic ? `<div dir="rtl" style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isExpired ? 'color:var(--text-mute)' : ''}">${escapeHtml(m.nameArabic)}</div>` : ''}
             <div class="text-mute" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(sport)}${sport !== SUMMER_CAMP ? ' · ' + escapeHtml(coachName(coachId)) : ''}</div>
           </td>
