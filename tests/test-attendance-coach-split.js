@@ -35,7 +35,7 @@ R.section('the window split partitions attendance (Kordi: Iyad 2 + Abdel 5 = 7)'
 
 R.section('source — the Attendance grid is coach-window aware');
 R.ok('getRows emits one row PER coach when a sport had >1 coach', /const coachIds = \[\.\.\.new Set\(spSubs\.map\(s => String\(s\.coachId\)\)\)\];/.test(src) && /if \(sp !== SUMMER_CAMP && coachIds\.length > 1\)/.test(src));
-R.ok('each split row carries a coach window from subAttendanceWindow', /rows\.push\(\{ m, sport: sp, coachId: parseInt\(cid\), window: \{ from: openStart \? null : from, to: openEnd \? null : to \}, attKey: attKeyForSport\(m, sp, cid\) \}\)/.test(src));
+R.ok('each split row carries a coach window from subAttendanceWindow', /rows\.push\(\{ m, sport: sp, coachId: parseInt\(cid\), window: \{ from: w\.openStart \? null : w\.from, to: openEnd \? null : w\.to \}, attKey: attKeyForSport\(m, sp, cid\) \}\)/.test(src));
 R.ok('a single-coach sport still emits one whole row (window null)', /rows\.push\(\{ m, sport: sp, coachId: rowCoachId, window: null, attKey: sp \}\)/.test(src));
 R.ok('inWin helper gates a day by the coach window', /function inWin\(win, mo, dayKey\)/.test(src));
 R.ok('club total is windowed (no double-count across split rows)', /if \(!inWin\(window, mk, k\)\) continue;/.test(src));

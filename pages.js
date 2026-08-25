@@ -21234,21 +21234,34 @@ PAGES.attendance = (main) => {
         const spSubs = (m.subscriptions || []).filter(s => s.activity === sp && s.coachId != null);
         const coachIds = [...new Set(spSubs.map(s => String(s.coachId)))];
         if (sp !== SUMMER_CAMP && coachIds.length > 1) {
+          // v6.516: UNION each coach's windows. A null bound means "open" (no limit) — an ongoing
+          // sub (to=null) or one with no start makes the whole union open on that side.
+          const _cw = {};
           for (const cid of coachIds) {
-            if (filter.coaches.length && !filter.coaches.map(String).includes(cid)) continue;
-            if (myCoachId != null && String(myCoachId) !== cid) continue;   // a coach sees only their own window
-            // v6.516: UNION this coach's windows. A null bound means "open" (no limit) — an ongoing
-            // sub (to=null) or one with no start must make the whole union open on that side. The old
-            // code skipped null bounds (`w.to && …`), so a coach who had BOTH a short funded remainder
-            // (e.g. Aug 1–7) AND a live open-ended package (Aug 12→) got the union capped at Aug 7 —
-            // "outside <coach>'s period" for every later day, blocking attendance (Ali Salem Kick Boxing).
             let from = null, to = null, openStart = false, openEnd = false;
             spSubs.filter(s => String(s.coachId) === cid).forEach(s => {
               const w = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, s) : { from: s.start || null, to: s.end || null };
               if (w.from == null) openStart = true; else if (!from || w.from < from) from = w.from;
               if (w.to == null) openEnd = true; else if (!to || w.to > to) to = w.to;
             });
-            rows.push({ m, sport: sp, coachId: parseInt(cid), window: { from: openStart ? null : from, to: openEnd ? null : to }, attKey: attKeyForSport(m, sp, cid) });
+            _cw[cid] = { from, to, openStart, openEnd };
+          }
+          // v6.522: the coach with the LATEST window is the member's CURRENT coach for this sport
+          // (after a switch/transfer). If the MEMBER is still active, that coach's row must stay
+          // markable up to today — a switch-funded/transferred sub often carried a SHORT inherited
+          // end date (e.g. Aug 12), which otherwise mutes every later day as "outside <coach>'s
+          // period" and blocks logging an actively-attending member (Jabr, Ali Salem). Earlier
+          // coaches (whose period genuinely ended at the handover) stay bounded. GRID-ONLY — salary
+          // reads subAttendanceWindow directly and is untouched; over-cap marking still warns.
+          const _memberActive = !m.deleted && (memberStatus(m) === 'Active' || memberStatus(m) === 'Frozen' || (m.expiryDate && m.expiryDate >= TODAY));
+          let _latestCid = null, _latestKey = '';
+          for (const cid of coachIds) { const w = _cw[cid]; const k = w.openEnd ? '9999-99-99' : (w.to || ''); if (k > _latestKey) { _latestKey = k; _latestCid = cid; } }
+          for (const cid of coachIds) {
+            if (filter.coaches.length && !filter.coaches.map(String).includes(cid)) continue;
+            if (myCoachId != null && String(myCoachId) !== cid) continue;   // a coach sees only their own window
+            const w = _cw[cid];
+            const openEnd = w.openEnd || (_memberActive && cid === _latestCid);
+            rows.push({ m, sport: sp, coachId: parseInt(cid), window: { from: w.openStart ? null : w.from, to: openEnd ? null : w.to }, attKey: attKeyForSport(m, sp, cid) });
           }
           continue;
         }

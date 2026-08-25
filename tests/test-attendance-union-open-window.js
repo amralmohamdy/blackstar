@@ -10,7 +10,7 @@ const src = H.readSrc();
 R.section('source');
 R.ok('union tracks open bounds (openStart/openEnd)', /let from = null, to = null, openStart = false, openEnd = false;/.test(src));
 R.ok('a null to makes the coach window open-ended', /if \(w\.to == null\) openEnd = true;/.test(src));
-R.ok('the pushed window respects the open flags', /window: \{ from: openStart \? null : from, to: openEnd \? null : to \}/.test(src));
+R.ok('the pushed window respects the open flags', /window: \{ from: w\.openStart \? null : w\.from, to: openEnd \? null : w\.to \}/.test(src));
 
 R.section('runtime · Ali Salem (Iyad transferred + two Abdel subs incl. an open one)');
 {
