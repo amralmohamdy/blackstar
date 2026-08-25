@@ -4801,8 +4801,18 @@ window.editCoach = function(id, defaultRole) {
         <div class="field"><label>Fixed monthly salary (QAR)</label><input id="c-fixed" type="number" min="0" step="0.01" value="${c.fixedSalary || 0}" /></div>
         <div class="field"><label>Commission rate (%)</label><input id="c-rate" type="number" min="0" max="100" step="1" value="${c.rate || 0}" /></div>
       </div>
+      <div class="form-row">
+        <div class="field"><label>${t('Commission basis', 'أساس العمولة')}</label>
+          <select id="c-basis">
+            <option value="" ${!c.commissionBasis ? 'selected' : ''}>${t('Use club default', 'الافتراضي للنادي')}</option>
+            <option value="attendance" ${c.commissionBasis === 'attendance' ? 'selected' : ''}>${t('By attendance (per class attended)', 'بالحضور (لكل حصة)')}</option>
+            <option value="payment" ${c.commissionBasis === 'payment' ? 'selected' : ''}>${t('By payment (on amount paid that month)', 'بالدفع (على المبلغ المدفوع شهرياً)')}</option>
+          </select>
+        </div>
+      </div>
       <div class="text-mute" style="font-size:11px;margin-top:-6px;margin-bottom:10px">
         💡 Monthly pay = <b>Fixed</b> + (<b>Commission %</b> × eligible membership revenue). For a pure coach: Fixed=0, Commission=30%. For admin/cleaner: Fixed=3000, Commission=0%.
+        ${t('Commission basis sets how THIS coach is paid — pick a fixed one (e.g. a private coach = "By payment") and it overrides the club-wide toggle on the Salaries screen for them only.', 'أساس العمولة يحدد كيف يُحتسب راتب هذا المدرب — اختر أساساً ثابتاً (مثلاً مدرب خاص = «بالدفع») ليتجاوز الإعداد العام في شاشة الرواتب لهذا المدرب فقط.')}
       </div>
 
       <div style="margin:14px 0 6px;font-size:11px;color:var(--blue);text-transform:uppercase;letter-spacing:.6px;font-weight:600">⚙️ Other</div>
@@ -4853,6 +4863,7 @@ window.editCoach = function(id, defaultRole) {
 
         const rate = parseFloat($('#c-rate').value) || 0;
         const fixedSalary = parseFloat($('#c-fixed').value) || 0;
+        const commissionBasis = (($('#c-basis') || {}).value) || '';   // '' = use club default; else 'attendance' | 'payment'
         const roleVal = $('#c-role').value || 'coach';
         const sports = $$('.coach-sport').filter(x => x.checked).map(x => x.value);
         const activeVal = $('#c-active').value;
@@ -4867,14 +4878,14 @@ window.editCoach = function(id, defaultRole) {
         if (isNew) {
           const _nc = {
             id: nextId(state.coaches),
-            name, rate, fixedSalary, role: roleVal, sports, active: activeVal,
+            name, rate, fixedSalary, commissionBasis, role: roleVal, sports, active: activeVal,
             phone, email: email || null, qid, birthdate: birthdate || null, gender, joinedDate,
           };
           state.coaches.push(_nc);
           _savedCoachId = _nc.id;
         } else {
           Object.assign(c, {
-            name, rate, fixedSalary, role: roleVal, sports, active: activeVal,
+            name, rate, fixedSalary, commissionBasis, role: roleVal, sports, active: activeVal,
             phone, email: email || null, qid, birthdate: birthdate || null, gender, joinedDate,
           });
           _savedCoachId = c.id;
