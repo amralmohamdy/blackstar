@@ -11,8 +11,9 @@ const src = H.readSrc();
 R.section('source — the latest-coach-open logic');
 R.ok('per-coach windows are pre-computed into _cw', /const _cw = \{\};/.test(src));
 R.ok('member-active gate exists', /const _memberActive = !m\.deleted && \(memberStatus\(m\) === 'Active'/.test(src));
-R.ok('the latest-window coach is picked', /let _latestCid = null, _latestKey = '';/.test(src) && /_latestCid = cid;/.test(src));
-R.ok('the latest coach row opens its upper bound for an active member', /const openEnd = w\.openEnd \|\| \(_memberActive && cid === _latestCid\);/.test(src));
+R.ok('the latest window end is computed', /let _latestKey = '';/.test(src) && /if \(k > _latestKey\) _latestKey = k;/.test(src));
+R.ok('the latest coach row is extended to TODAY (not opened forever) for an active member', /if \(!w\.openEnd && _memberActive && _to && _to < TODAY && _latestKey !== '9999-99-99' && \(w\.to \|\| ''\) === _latestKey\) _to = TODAY;/.test(src));
+R.ok('Frozen members are NOT extended (paused)', /memberStatus\(m\) !== 'Frozen'/.test(src));
 
 R.section('runtime — Jabr Al-Marri: Kick Boxing transferred Iyad→Abdel Salam');
 {
@@ -39,12 +40,14 @@ R.section('runtime — Jabr Al-Marri: Kick Boxing transferred Iyad→Abdel Salam
   // Replicate the grid decision (latest coach + active member → open upper bound), then the real inWin rule.
   const memberActive = run(`(function(m){return !m.deleted && (memberStatus(m)==='Active' || memberStatus(m)==='Frozen' || (m.expiryDate && m.expiryDate>=TODAY));})(state.members[0])`);
   R.ok('member is active (expiry Aug 28 ≥ today)', memberActive === true);
-  const abdelToOpened = memberActive ? null : winAbdel.to;   // latest coach → opened
+  // v6.528: the extension is bounded to TODAY (2026-08-25), not opened forever.
+  const abdelToOpened = (memberActive && winAbdel.to && winAbdel.to < '2026-08-25') ? '2026-08-25' : winAbdel.to;
   const inWin = (win, mo, day) => { if (!win) return true; const iso = `${mo}-${String(day).padStart(2,'0')}`; if (win.from && iso < win.from) return false; if (win.to && iso > win.to) return false; return true; };
 
   R.ok('BEFORE the fix: Aug 23 was OUTSIDE Abdel Salam\'s capped window (blocked)', inWin({ from: winAbdel.from, to: winAbdel.to }, '2026-08', 23) === false, 'cappedTo=' + winAbdel.to);
-  R.ok('AFTER the fix: Aug 23 is markable (upper bound opened for the current coach)', inWin({ from: winAbdel.from, to: abdelToOpened }, '2026-08', 23) === true);
+  R.ok('AFTER the fix: Aug 23 is markable (extended to today)', inWin({ from: winAbdel.from, to: abdelToOpened }, '2026-08', 23) === true);
   R.ok('AFTER the fix: a still-earlier day (Aug 10) also stays markable', inWin({ from: winAbdel.from, to: abdelToOpened }, '2026-08', 10) === true);
+  R.ok('v6.528: a FUTURE day (Aug 30) is NOT markable (bounded to today, not forever)', inWin({ from: winAbdel.from, to: abdelToOpened }, '2026-08', 30) === false);
   R.ok('Iyad (earlier coach) stays bounded — his July window does NOT reach Aug 23', inWin({ from: winIyad.from, to: winIyad.to }, '2026-08', 23) === false);
 }
 

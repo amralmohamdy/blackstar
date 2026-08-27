@@ -7,7 +7,7 @@ const src = H.readSrc();
 
 R.section('custom class NAMES');
 {
-  R.ok('the tile shows a custom label when set, else the sport', /escapeHtml\(c\.label \|\| c\.sport\)/.test(src));
+  R.ok('the tile shows the language-appropriate custom label, else the sport (v6.530 bilingual)', /t\(c\.label \|\| c\.sport, c\.labelAr \|\| c\.label \|\| sportNameAR\(c\.sport\)\)/.test(src));
   R.ok('the Edit-Class modal has a class-name input', /id="sch-label"/.test(src) && /Class name \(optional\)/.test(src));
   R.ok('the placeholder is the sport name (blank = use sport)', /id="sch-label"[\s\S]{0,120}placeholder="\$\{escapeHtml\(sport\)\}"/.test(src));
   R.ok('saving stores the label on an EDITED class (or clears it when blank)',
@@ -21,7 +21,7 @@ R.section('daily poster (WhatsApp status)');
   R.ok('exportDayStatus is defined', /function exportDayStatus\(dayKey, lang\)/.test(src));
   R.ok('it is a PORTRAIT canvas (1080 wide, ≥1920 tall)', /const W = 1080/.test(src) && /const H = Math\.max\(1920,/.test(src));
   R.ok('it only lists slots that HAVE classes this day', /classesAt\(day\.key, slot\.hour\)\.filter\(isFiltered\)[\s\S]{0,60}filter\(s => s\.cls\.length\)/.test(src));
-  R.ok('each class chip uses the custom label when set', /const nm = c\.label \|\| \(ar \? sportNameAR\(c\.sport\) : c\.sport\)/.test(src));
+  R.ok('each class chip uses the language-appropriate custom label (v6.530 bilingual)', /const nm = ar \? \(c\.labelAr \|\| c\.label \|\| sportNameAR\(c\.sport\)\) : \(c\.label \|\| c\.sport\)/.test(src));
   R.ok('it shows the coach on each chip', /\(ar \? 'المدرب: ' : 'Coach: '\) \+ cn/.test(src));
   R.ok('it downloads a PNG named for the day', /a\.download = `BlackStars-\$\{ar \? 'AR-' : ''\}\$\{day\.label\}-status\.png`/.test(src));
 

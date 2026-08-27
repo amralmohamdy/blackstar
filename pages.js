@@ -4443,7 +4443,13 @@ window.viewCoach = function(id) {
     return { students: students.size, revenue, subValue: revenue, attended, total, rate: total ? attended / total * 100 : 0 };
   }
   const apr = statsFor('apr'), may = statsFor('may');
-  const aprComm = (apr.commissionBase ?? apr.revenue) * (c.rate / 100), mayComm = (may.commissionBase ?? may.revenue) * (c.rate / 100);
+  // v6.528: the "Pay" KPIs must match the Salaries screen — route through computeMonthlyPay (resolved
+  // per-coach basis; paid-amount on the payment basis) for the current + previous month. (Revenue/
+  // students above stay all-time as before.) Fall back to the old estimate if the engine is absent.
+  const _payCur = (typeof currentMonth === 'function') ? currentMonth() : String(TODAY).slice(0, 7);
+  const _payPrev = (function () { const p = _payCur.split('-'); const y = +p[0], mo = +p[1]; const d = new Date(y, mo - 1, 1); d.setMonth(d.getMonth() - 1); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); })();
+  const aprComm = (typeof computeMonthlyPay === 'function') ? ((computeMonthlyPay(id, _payPrev) || {}).commissionAmount || 0) : (apr.commissionBase ?? apr.revenue) * (c.rate / 100);
+  const mayComm = (typeof computeMonthlyPay === 'function') ? ((computeMonthlyPay(id, _payCur) || {}).commissionAmount || 0) : (may.commissionBase ?? may.revenue) * (c.rate / 100);
 
   // Current students under this coach (any subscription), deduped
   const studentRows = [];
@@ -10155,7 +10161,7 @@ PAGES.schedule = (main) => {
             ? `<span title="${escapeHtml(coach.name)} is now inactive — reassign or remove this class" style="flex-shrink:0">⚠️</span>` : '';
           return `<div class="sch-class" data-id="${c.id}" data-sport="${escapeHtml(c.sport)}" data-coachid="${c.coachId != null ? c.coachId : ''}" style="background:${sportColor(c.sport)};color:white;padding:6px 8px;border-radius:6px;font-size:11px;font-weight:600;margin:2px 0;display:flex;align-items:center;justify-content:space-between;gap:4px;cursor:pointer;opacity:${dimmed ? '0.18' : '1'};transition:opacity .15s;${coach && !isCoachActive(coach) ? 'outline:2px solid #facc15;outline-offset:-2px' : ''}">
             <div style="flex:1;min-width:0;overflow:hidden">
-              <div style="display:flex;align-items:center;gap:4px"><span>${sportEmoji(c.sport)}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(c.label || c.sport)}</span></div>
+              <div style="display:flex;align-items:center;gap:4px"><span>${sportEmoji(c.sport)}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(t(c.label || c.sport, c.labelAr || c.label || sportNameAR(c.sport)))}</span></div>
               <div style="font-size:9px;font-weight:500;opacity:.95;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(coach ? coach.name : 'No coach')}${coach && !isCoachActive(coach) ? ' · inactive' : ''}</div>
             </div>
             ${warn}
@@ -10297,9 +10303,13 @@ PAGES.schedule = (main) => {
           ${noneNote}
         </div>
         <div class="field" style="margin-top:12px">
-          <label>${t('Class name (optional)', 'اسم الحصة (اختياري)')}</label>
+          <label>${t('Class name — English (optional)', 'اسم الحصة — إنجليزي (اختياري)')}</label>
           <input id="sch-label" style="width:100%" maxlength="40" value="${escapeHtml((existing && existing.label) || '')}" placeholder="${escapeHtml(sport)}" />
-          <div class="text-mute" style="font-size:11px;margin-top:4px">${t('Custom label shown on the schedule — e.g. "Kids Kick-Boxing", "Adult Boxing". Leave blank to use the sport name.', 'اسم مخصص يظهر على الجدول — مثل «كيك بوكسينغ أطفال» أو «ملاكمة كبار». اتركه فارغاً لاستخدام اسم الرياضة.')}</div>
+        </div>
+        <div class="field" style="margin-top:8px">
+          <label>${t('Class name — Arabic (optional)', 'اسم الحصة — عربي (اختياري)')}</label>
+          <input id="sch-label-ar" dir="rtl" style="width:100%" maxlength="40" value="${escapeHtml((existing && existing.labelAr) || '')}" placeholder="${escapeHtml(sportNameAR(sport))}" />
+          <div class="text-mute" style="font-size:11px;margin-top:4px">${t('Custom labels shown on the schedule — e.g. "Kids Kick-Boxing" / «كيك بوكسينغ أطفال». Each language uses its own; leave a field blank to fall back to the sport name in that language.', 'أسماء مخصصة تظهر على الجدول — مثل «Kids Kick-Boxing» / «كيك بوكسينغ أطفال». كل لغة تستخدم اسمها؛ اترك الحقل فارغاً لاستخدام اسم الرياضة بتلك اللغة.')}</div>
         </div>
       `,
       actions: [
@@ -10320,16 +10330,21 @@ PAGES.schedule = (main) => {
             toast(`${coachName(coachId)} already has ${clash.sport} in this slot — one class per coach per time slot.`, 'error');
             return;
           }
-          // Custom class label (e.g. "Kids Kick-Boxing"). Blank — or the same as the sport name —
-          // stores no label so the tile just shows the sport.
+          // Custom class labels per language (e.g. "Kids Kick-Boxing" / «كيك بوكسينغ أطفال»). Blank — or
+          // the same as the sport name in that language — stores nothing, so the tile falls back to the
+          // sport name for that language.
           const _labelRaw = (($('#sch-label') || {}).value || '').trim();
           const _label = (_labelRaw && _labelRaw !== sport) ? _labelRaw : '';
+          const _labelArRaw = (($('#sch-label-ar') || {}).value || '').trim();
+          const _labelAr = (_labelArRaw && _labelArRaw !== sportNameAR(sport)) ? _labelArRaw : '';
           if (existing) {
             existing.coachId = coachId;
             if (_label) existing.label = _label; else delete existing.label;
+            if (_labelAr) existing.labelAr = _labelAr; else delete existing.labelAr;
           } else {
             const _rec = { id: nextId(state.schedule || []), day, slot, sport, coachId };
             if (_label) _rec.label = _label;
+            if (_labelAr) _rec.labelAr = _labelAr;
             state.schedule.push(_rec);
           }
           closeModal(); refresh();
@@ -10582,7 +10597,9 @@ PAGES.schedule = (main) => {
         ctx.restore();
         ctx.strokeStyle = 'rgba(0,0,0,0.10)'; ctx.lineWidth = 1.5; rr(PAD, y, W - 2 * PAD, cardH, 18); ctx.stroke();
         const coach = state.coaches.find(co => co.id === c.coachId);
-        const nm = c.label || (ar ? sportNameAR(c.sport) : c.sport);
+        // v6.530: bilingual custom class name — Arabic poster prefers the Arabic label, English poster
+        // the English label; each falls back to the other label, then the sport name in that language.
+        const nm = ar ? (c.labelAr || c.label || sportNameAR(c.sport)) : (c.label || c.sport);
         const TX = ar ? W - PAD - 28 : PAD + 28;
         // White text with a subtle dark shadow so it stays readable on ANY chip colour (even the light greens/cyans).
         ctx.save();
@@ -10963,8 +10980,12 @@ PAGES.coaches = (main) => {
     $('#coach-tbody').innerHTML = coaches.length ? coaches.map(c => {
       const apr = aprStats[c.id];
       const may = mayStats[c.id];
-      const aprComm = (apr.commissionBase ?? apr.revenue) * (c.rate / 100);
-      const mayComm = (may.commissionBase ?? may.revenue) * (c.rate / 100);
+      // v6.528: commission must match the Salaries screen — route it through computeMonthlyPay so it
+      // uses the coach's resolved basis (per-coach override → club default) and, on the payment basis,
+      // the amount actually PAID that month. Falls back to the old full-fee estimate only if the
+      // engine is unavailable.
+      const aprComm = (typeof computeMonthlyPay === 'function') ? ((computeMonthlyPay(c.id, prevM) || {}).commissionAmount || 0) : (apr.commissionBase ?? apr.revenue) * (c.rate / 100);
+      const mayComm = (typeof computeMonthlyPay === 'function') ? ((computeMonthlyPay(c.id, currentM) || {}).commissionAmount || 0) : (may.commissionBase ?? may.revenue) * (c.rate / 100);
       const trendStudents = may.students - apr.students;
       const trendRevenue = may.revenue - apr.revenue;
       const isActive = (c.active || 'Y') === 'Y';
@@ -17559,9 +17580,9 @@ PAGES.salaries = (main) => {
     </div>
     <div class="card">
       <div class="filter-bar" style="flex-wrap:wrap;align-items:center;gap:10px">
-        <span style="font-size:12px;color:var(--text-mute)">Commission basis:</span>
-        <span class="badge active" style="font-size:11px" title="Commission is calculated per class attended, with the remainder trued-up at expiry. This is locked to prevent accidental changes.">🔒 By attendance (per class attended)</span>
-        <button id="sal-basis-change" class="btn ghost sm" style="font-size:10px;opacity:.6" title="Admin: switch how commission is calculated (not recommended)">change…</button>
+        <span style="font-size:12px;color:var(--text-mute)">Commission basis <span class="text-mute" style="font-size:10px">(club default)</span>:</span>
+        <span class="badge active" style="font-size:11px" title="The club-wide default. Individual coaches can override it on the Team page (Commission basis). This badge is locked to prevent accidental changes — use ‘change…’.">🔒 ${(state.settings?.commissionBasis === 'payment') ? t('By payment (on amount paid that month)', 'بالدفع (على المبلغ المدفوع شهرياً)') : t('By attendance (per class attended)', 'بالحضور (لكل حصة)')}</span>
+        <button id="sal-basis-change" class="btn ghost sm" style="font-size:10px;opacity:.6" title="Admin: switch the club-wide default (each coach can still override it on the Team page)">change…</button>
         <select id="sal-basis" class="btn ghost" style="display:none">
           <option value="payment" ${(state.settings?.commissionBasis || 'payment') === 'payment' ? 'selected' : ''}>By payment (full rate on amount paid that month)</option>
           <option value="attendance" ${state.settings?.commissionBasis === 'attendance' ? 'selected' : ''}>By attendance (per class attended)</option>
@@ -18721,6 +18742,32 @@ window.showRevenueDetail = function(coachId, monthKey) {
       invoiceRef: '', invoiceDate: null,
     }));
     pendingLines = pay.attendanceLines.pendingLines || [];
+  } else if (pay && pay.basis === 'payment') {
+    // v6.528: mirror computeMonthlyPay's PAYMENT basis — each line is the coach's share of the amount
+    // actually PAID this month (line-fee proportion), so the report total equals the Salaries paid-amount
+    // gross, not the full charged fee. (Was: the full li.price rows built above.)
+    const rebuilt = [];
+    for (const inv of state.invoices) {
+      if (inv.deleted) continue;
+      if ((inv.category || 'Membership') !== 'Membership') continue;
+      const mem = inv.customerId ? state.members.find(x => x.id === inv.customerId) : null;
+      if (mem && mem.deleted) continue;
+      const lis = (Array.isArray(inv.lineItems) && inv.lineItems.length) ? inv.lineItems : [{ sport: inv.sport, coachId: inv.coachId, price: inv.amount || 0 }];
+      let coachFee = 0, totalFee = 0;
+      for (const li of lis) { const pr = parseFloat(li.price) || 0; totalFee += pr; if (li.sport === SUMMER_CAMP) continue; if (String(li.coachId) !== String(coachId)) continue; const elig = lineCommissionEligibility(mem, inv, li, null); if (!elig.excluded) coachFee += pr; }
+      if (coachFee <= 0 || totalFee <= 0) continue;
+      const ratio = coachFee / totalFee;
+      let paidThisMonth = 0;
+      for (const p of (inv.payments || [])) { const amt = Number(p.amount) || 0; if (amt <= 0) continue; const pk = p.month || String(p.date || '').slice(0, 7); if (pk === monthKey) paidThisMonth += amt; }
+      const share = Math.round(paidThisMonth * ratio * 100) / 100;
+      if (Math.abs(share) < 0.005) continue;
+      rebuilt.push({
+        memberName: mem ? mem.name : (inv.customerName || '— deleted member —'), memberId: mem ? mem.id : null,
+        sport: lis.filter(li => String(li.coachId) === String(coachId) && li.sport !== SUMMER_CAMP).map(li => li.sport).join(', ') || inv.sport,
+        price: share, isSwitch: !!inv.switchCredit, invoiceRef: inv.ref || `INV${inv.id}`, invoiceDate: inv.date,
+      });
+    }
+    lines = rebuilt;
   }
 
   showModal({
@@ -18849,6 +18896,32 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
       _dupIgnored: !!l._dupIgnored, _origAmount: l._origAmount,
     }));
     pendingLines = pay.attendanceLines.pendingLines || [];
+  } else if (pay && pay.basis === 'payment') {
+    // v6.528: PAYMENT basis — rows are the coach's share of the amount PAID this month, so the PDF
+    // subtotals + total match the Salaries paid-amount gross (was the full charged line fees).
+    const rebuilt = [];
+    for (const inv of state.invoices) {
+      if (inv.deleted) continue;
+      if ((inv.category || 'Membership') !== 'Membership') continue;
+      const mem = inv.customerId ? state.members.find(x => x.id === inv.customerId) : null;
+      if (mem && mem.deleted) continue;
+      const lis = (Array.isArray(inv.lineItems) && inv.lineItems.length) ? inv.lineItems : [{ sport: inv.sport, coachId: inv.coachId, price: inv.amount || 0 }];
+      let coachFee = 0, totalFee = 0;
+      for (const li of lis) { const pr = parseFloat(li.price) || 0; totalFee += pr; if (li.sport === SUMMER_CAMP) continue; if (String(li.coachId) !== String(coachId)) continue; const elig = lineCommissionEligibility(mem, inv, li, null); if (!elig.excluded) coachFee += pr; }
+      if (coachFee <= 0 || totalFee <= 0) continue;
+      const ratio = coachFee / totalFee;
+      let paidThisMonth = 0;
+      for (const p of (inv.payments || [])) { const amt = Number(p.amount) || 0; if (amt <= 0) continue; const pk = p.month || String(p.date || '').slice(0, 7); if (pk === monthKey) paidThisMonth += amt; }
+      const share = Math.round(paidThisMonth * ratio * 100) / 100;
+      if (Math.abs(share) < 0.005) continue;
+      rebuilt.push({
+        memberName: mem ? mem.name : (inv.customerName || '— deleted member —'),
+        sport: lis.filter(li => String(li.coachId) === String(coachId) && li.sport !== SUMMER_CAMP).map(li => li.sport).join(', ') || inv.sport,
+        price: share, fee: share, isSwitch: !!inv.switchCredit, invoiceRef: inv.ref || `INV${inv.id}`, invoiceDate: inv.date,
+        start: null, end: null, attended: null, total: null, status: 'paid',
+      });
+    }
+    lines = rebuilt;
   }
 
   // Group by sport for the summary
@@ -21283,15 +21356,22 @@ PAGES.attendance = (main) => {
           // period" and blocks logging an actively-attending member (Jabr, Ali Salem). Earlier
           // coaches (whose period genuinely ended at the handover) stay bounded. GRID-ONLY — salary
           // reads subAttendanceWindow directly and is untouched; over-cap marking still warns.
-          const _memberActive = !m.deleted && (memberStatus(m) === 'Active' || memberStatus(m) === 'Frozen' || (m.expiryDate && m.expiryDate >= TODAY));
-          let _latestCid = null, _latestKey = '';
-          for (const cid of coachIds) { const w = _cw[cid]; const k = w.openEnd ? '9999-99-99' : (w.to || ''); if (k > _latestKey) { _latestKey = k; _latestCid = cid; } }
+          // v6.528 (BUG 3/4 fix): only a non-FROZEN active member gets the extension (frozen = paused,
+          // must not be markable forward). And the extension is bounded to TODAY, not opened forever —
+          // so an active member's CURRENT sport stays markable through the gap up to today (with the
+          // EXPIRED badge) without exposing future dates.
+          const _memberActive = !m.deleted && (memberStatus(m) === 'Active' || (m.expiryDate && m.expiryDate >= TODAY && memberStatus(m) !== 'Frozen'));
+          let _latestKey = '';
+          for (const cid of coachIds) { const w = _cw[cid]; const k = w.openEnd ? '9999-99-99' : (w.to || ''); if (k > _latestKey) _latestKey = k; }
           for (const cid of coachIds) {
             if (filter.coaches.length && !filter.coaches.map(String).includes(cid)) continue;
             if (myCoachId != null && String(myCoachId) !== cid) continue;   // a coach sees only their own window
             const w = _cw[cid];
-            const openEnd = w.openEnd || (_memberActive && cid === _latestCid);
-            rows.push({ m, sport: sp, coachId: parseInt(cid), window: { from: w.openStart ? null : w.from, to: openEnd ? null : w.to }, attKey: attKeyForSport(m, sp, cid) });
+            let _to = w.openEnd ? null : w.to;
+            // Every coach sharing the LATEST window end (handles a tie — BUG 4) whose window closed
+            // before today gets its upper bound pushed to today for an active member.
+            if (!w.openEnd && _memberActive && _to && _to < TODAY && _latestKey !== '9999-99-99' && (w.to || '') === _latestKey) _to = TODAY;
+            rows.push({ m, sport: sp, coachId: parseInt(cid), window: { from: w.openStart ? null : w.from, to: _to }, attKey: attKeyForSport(m, sp, cid) });
           }
           continue;
         }
@@ -23444,7 +23524,17 @@ window.switchSport = function(memberId) {
         // sport (the amount shown in the revenue report), NOT the nominal
         // enrollment price — so a switch never claws back more than was paid.
         const creditedBase = coachBaseForSport(m, from.sport, from.coachId);
-        const price = creditedBase > 0 ? creditedBase : (parseFloat(from.price) || 0);
+        // v6.529 (BUG 1 fix): coachBaseForSport SUMS every same-sport+coach package. If the member holds
+        // MORE THAN ONE package of this sport under this coach (v6.504), that sum over-states the ONE
+        // package being switched → aShare/bShare too big + the other package's line left untouched at full
+        // price → overcharge. When multiple packages exist, base the split on THIS package's own price.
+        const _srcPkgCount = (state.invoices || []).filter(v => !v.deleted && !v.switchCredit && v.customerId === m.id && (v.category || 'Membership') === 'Membership')
+          .reduce((n, v) => n + ((Array.isArray(v.lineItems) && v.lineItems.length)
+            ? v.lineItems.filter(li => li.sport === from.sport && String(li.coachId) === String(from.coachId)).length
+            : ((v.sport === from.sport && String(v.coachId) === String(from.coachId)) ? 1 : 0)), 0);
+        const price = (_srcPkgCount > 1)
+          ? (parseFloat(from.price) || (creditedBase > 0 ? creditedBase / _srcPkgCount : 0))   // this package only
+          : (creditedBase > 0 ? creditedBase : (parseFloat(from.price) || 0));
         let aShare = 0, bShare = 0;
         if (skipReconciliation) {
           // No commission to split when Summer Camp is on either side
@@ -23474,11 +23564,26 @@ window.switchSport = function(memberId) {
         // for the moved classes at the RE-PRICED amount. The invoice total becomes aShare + bPrice —
         // so a dearer new sport creates a top-up due, a cheaper one an over-payment credit.
         if (!skipReconciliation) {
+          const _hasLine = v => Array.isArray(v.lineItems) && v.lineItems.some(li => li.sport === from.sport && String(li.coachId) === String(from.coachId));
+          // v6.528 (BUG 2 fix): also match a LEGACY membership invoice stored with top-level sport/coach
+          // and NO lineItems — otherwise it wasn't found and a NEW synthetic invoice was created while the
+          // paid original still stood, DOUBLE-charging the member. Convert it to lineItems, then split.
+          const _isLegacy = v => !(Array.isArray(v.lineItems) && v.lineItems.length)
+            && (v.sport === from.sport || String(v.sport || '').split(/\s*,\s*/).includes(from.sport))
+            && (v.coachId == null || String(v.coachId) === String(from.coachId));
           const _inv = (state.invoices || []).find(v => !v.deleted && !v.switchCredit && v.activityType !== 'switch-credit'
-            && v.customerId === m.id && Array.isArray(v.lineItems)
-            && v.lineItems.some(li => li.sport === from.sport && String(li.coachId) === String(from.coachId)));
+            && (v.category || 'Membership') === 'Membership' && v.customerId === m.id && (_hasLine(v) || _isLegacy(v)));
           if (_inv) {
-            const _fl = _inv.lineItems.find(li => li.sport === from.sport && String(li.coachId) === String(from.coachId));
+            if (!(Array.isArray(_inv.lineItems) && _inv.lineItems.length)) {
+              // Legacy top-level invoice → seed a lineItems array from its own fields so the split has a line.
+              _inv.lineItems = [{ sport: from.sport, coach: coachName(from.coachId), coachId: from.coachId, classes: totalClasses, price: (Number(_inv.amount) || price) }];
+            }
+            // v6.529 (BUG 1): with multiple same-sport+coach lines, cap the ONE matching THIS package
+            // (closest price to the switched package), leaving the member's other package(s) intact.
+            const _cands = _inv.lineItems.filter(li => li.sport === from.sport && String(li.coachId) === String(from.coachId));
+            const _fl = _cands.length > 1
+              ? _cands.slice().sort((a, b) => Math.abs((Number(a.price) || 0) - price) - Math.abs((Number(b.price) || 0) - price))[0]
+              : _cands[0];
             if (_fl) { _fl.price = aShare; _fl.classes = attendedA; }
             _inv.lineItems.push({ sport: toSport, coach: coachName(toCoachId), coachId: toCoachId, classes: moved, price: bPrice, issueDate: switchDate });
             _inv.amount = _inv.lineItems.reduce((s, li) => s + (Number(li.price) || 0), 0);
@@ -28754,10 +28859,16 @@ PAGES.coachperf = (main) => {
   function refresh() {
     const data = state.coaches.map((c, i) => {
       const st = statsFor(c.id, month);
+      // v6.529: for a specific month, take commission straight from computeMonthlyPay so Charts matches
+      // the Salaries screen exactly (resolved per-coach basis; paid-amount on the payment basis). For an
+      // all-time view (no single monthKey) fall back to the local attendance-prorated estimate.
+      const _isMonth = typeof month === 'string' && month.length === 7;
+      const _pay = (_isMonth && typeof computeMonthlyPay === 'function') ? computeMonthlyPay(c.id, month) : null;
+      const commission = _pay ? (_pay.commissionAmount || 0) : (st.commissionBase ?? st.paid) * (c.rate || 0) / 100;
       // Spread st AFTER c, then restore c.rate: statsFor's attendance figure used to land on
       // `rate` and overwrite the coach's COMMISSION rate, printing "66.66666666666666%" next
       // to a 30% coach. statsFor now returns `attendanceRate`, and this makes it explicit.
-      return { ...c, ...st, rate: c.rate, commission: (st.commissionBase ?? st.paid) * (c.rate || 0) / 100, color: PALETTE[i % PALETTE.length] };
+      return { ...c, ...st, rate: c.rate, commission, color: PALETTE[i % PALETTE.length] };
     }).filter(c => c.students > 0 || c.paid > 0);
 
     const byCommission = [...data].sort((a, b) => b.commission - a.commission);
