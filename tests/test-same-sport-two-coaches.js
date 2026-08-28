@@ -74,13 +74,16 @@ R.section('commission — each same-sport coach earns only their own line');
       subscriptions:[
         {activity:'Karate',coachId:3,coach:'Mostafa',totalClasses:4,attendedClasses:4,amountPaid:200,invoiceNumber:'INV1',status:'active',start:'2026-08-01',end:'2026-09-01'},
         {activity:'Karate',coachId:7,coach:'Zakaria',totalClasses:3,attendedClasses:3,amountPaid:150,invoiceNumber:'INV1',status:'active',start:'2026-08-01',end:'2026-09-01'} ],
-      dailyAttendance:{ '2026-08': { 'Karate': {'04':'Y','05':'Y','06':'Y','07':'Y','08':'Y','11':'Y','12':'Y'} } } }];
+      // v6.534: the second coach's marks live under the coach-qualified cell (Karate 7); the first
+      // (Mostafa) keeps the plain key. Each coach is now paid for the cell HIS row wrote. (Dates kept
+      // inside each sub's attendance window.)
+      dailyAttendance:{ '2026-08': { 'Karate': {'01':'Y','02':'Y','03':'Y','04':'Y'}, 'Karate 7': {'01':'Y','02':'Y','03':'Y'} } } }];
   `);
   const mos = run(ctx, `(function(){var p=computeAttendanceCommission(3,"2026-08");return {base:p.base,lines:(p.lines||[]).map(l=>l.sport+':'+l.amountBase)};})()`);
   const zak = run(ctx, `(function(){var p=computeAttendanceCommission(7,"2026-08");return {base:p.base,lines:(p.lines||[]).map(l=>l.sport+':'+l.amountBase)};})()`);
-  // Mostafa's line base is <=200, Zakaria's <=150; neither sees the other's coachId
-  R.ok('Mostafa earns from his Karate line only (base <= 200)', mos.base > 0 && mos.base <= 200.01, JSON.stringify(mos));
-  R.ok('Zakaria earns from his Karate line only (base <= 150)', zak.base > 0 && zak.base <= 150.01, JSON.stringify(zak));
+  // Each coach earns for his OWN cell only: Mostafa 4×50=200, Zakaria 3×50=150 — no double-count.
+  R.ok('Mostafa earns from his Karate cell only (base = 200)', Math.round(mos.base * 100) / 100 === 200, JSON.stringify(mos));
+  R.ok('Zakaria earns from HIS Karate cell only (base = 150, not the plain cell)', Math.round(zak.base * 100) / 100 === 150, JSON.stringify(zak));
   R.ok('no negative / cross lines', !JSON.stringify(mos).includes('-') && !JSON.stringify(zak).includes('-'));
 }
 

@@ -12,7 +12,7 @@ const src = H.readSrc();
 const ok = (n, c) => R.ok(n, c);
 
 R.section('rows are built from ALL membership invoices, not one-per-sport');
-ok('collects every non-deleted membership invoice for the member', /const memberInvs = \(state\.invoices \|\| \[\]\)\s*\n\s*\.filter\(i => !i\.deleted && i\.customerId === m\.id && \(i\.category \|\| 'Membership'\) === 'Membership'\)/.test(src));
+ok('collects every non-deleted membership invoice, EXCLUDING net-0 switch-credit (v6.532)', /\.filter\(i => !i\.deleted && i\.customerId === m\.id && \(i\.category \|\| 'Membership'\) === 'Membership' && !i\.switchCredit && i\.activityType !== 'switch-credit'\)\s*\n\s*\.sort\(\(a, b\) => \(b\.date/.test(src));
 ok('iterates each invoice and each of its line items', /for \(const inv of memberInvs\) \{[\s\S]{0,400}?for \(const li of lis\) \{/.test(src));
 ok('the old one-row-per-sport builder is gone', !/const rows = sports\.map\(\(sp, idx\) => \{/.test(src));
 ok('a line with no lineItems falls back to a synthetic line', /if \(!lis\) lis = \[\{ sport: inv\.sport, price: Number\(inv\.amount\) \|\| 0/.test(src));

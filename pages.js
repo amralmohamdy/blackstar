@@ -2300,9 +2300,14 @@ function viewMember(id) {
   const memberInvs = (state.invoices || []).filter(i => i.customerId === m.id && !i.deleted);
   // Charge/paid totals exclude switch-credit (negative) invoices so the displayed
   // "Total" reconciles with the balance-due figure, which also excludes them.
-  const chargeInvs = memberInvs.filter(i => !i.switchCredit && i.activityType !== 'switch-credit' && (Number(i.amount) || 0) >= 0);
+  // v6.532: MEMBERSHIP-only, to match memberMembershipPaid / memberOutstanding (which are membership-only)
+  // so Total = Paid + Due reconciles. Without the category filter, a rental/product invoice inflated Total
+  // while Paid/Due ignored it (Total ≠ Paid + Due for the 26 members who hold both).
+  const chargeInvs = memberInvs.filter(i => !i.switchCredit && i.activityType !== 'switch-credit' && (i.category || 'Membership') === 'Membership' && (Number(i.amount) || 0) >= 0);
   const totalCharged = chargeInvs.reduce((s, i) => s + invoiceTotal(i), 0);   // Σ line prices — reconciles with memberOutstanding (balance)
-  const totalPaid = chargeInvs.reduce((s, i) => s + invoicePaid(i), 0);
+  // v6.531: count EVERY membership payment (including any recorded on a switch-credit invoice) so
+  // Total = Paid + Due always reconciles with the member-level netted due.
+  const totalPaid = (typeof memberMembershipPaid === 'function') ? memberMembershipPaid(m.id) : chargeInvs.reduce((s, i) => s + invoicePaid(i), 0);
   const balanceDue = (typeof memberOutstanding === 'function') ? memberOutstanding(m.id) : Math.max(0, totalCharged - totalPaid);
   const anyLiveMarks = allSubs.some(x => { const _w = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, x) : { from: x.start || null, to: x.end || null }; return liveAttendanceCount(m, x.activity, _w.from, _w.to).total > 0; });   // v6.399: corrected window
   const liveCount = { total: anyLiveMarks ? 1 : 0 };   // flag for the "· live" label
@@ -4148,7 +4153,8 @@ function memberExportStats(m) {
   const invs = (state.invoices || []).filter(i => i.customerId === m.id && !i.deleted);
   const chargeInvs = invs.filter(i => !i.switchCredit && i.activityType !== 'switch-credit' && (Number(i.amount) || 0) >= 0);
   const totalCharged = chargeInvs.reduce((s, i) => s + (typeof invoiceTotal === 'function' ? invoiceTotal(i) : (Number(i.amount) || 0)), 0);
-  const totalPaid = chargeInvs.reduce((s, i) => s + (typeof invoicePaid === 'function' ? invoicePaid(i) : (Number(i.amountPaid) || 0)), 0);
+  // v6.531: include switch-credit payments so Paid reconciles with the member-level netted balance.
+  const totalPaid = (typeof memberMembershipPaid === 'function') ? memberMembershipPaid(m.id) : chargeInvs.reduce((s, i) => s + (typeof invoicePaid === 'function' ? invoicePaid(i) : (Number(i.amountPaid) || 0)), 0);
   const balanceDue = (typeof memberOutstanding === 'function') ? memberOutstanding(m.id) : Math.max(0, totalCharged - totalPaid);
   let attended = 0, totalClasses = 0;
   for (const s of (m.subscriptions || [])) {
@@ -6073,8 +6079,14 @@ window.editMemberPricing = function(memberId) {
   // / inv.amount is ALREADY net; invoiceTotal ignores inv.discount). Showing gross keeps the
   // discount lossless (v6.478 fix — otherwise it double-subtracts on every re-save).
   const memberInvs = (state.invoices || [])
-    .filter(i => !i.deleted && i.customerId === m.id && (i.category || 'Membership') === 'Membership')
+    // v6.532: EXCLUDE net-0 switch-credit invoices. They sort newest-first and were being picked as the
+    // "current invoice", HIDING the real membership invoice (a member's genuine due became invisible and
+    // uncollectable from this screen — reported: "can't see INV986589" for Layla Karim).
+    .filter(i => !i.deleted && i.customerId === m.id && (i.category || 'Membership') === 'Membership' && !i.switchCredit && i.activityType !== 'switch-credit')
     .sort((a, b) => (b.date || '').localeCompare(a.date || '') || ((b.id || 0) - (a.id || 0)));   // newest first
+  // v6.534: collapse merge-duplicate payment rows before the editor reads them, so the Paid total (and
+  // the amountPaid written on Save) can never double off a duplicate row.
+  if (typeof dedupeInvoicePayments === 'function') memberInvs.forEach(dedupeInvoicePayments);
   const rows = [];
   let _ri = 0;
   const linkedSport = new Set();   // a sport's enrollment/subscription is synced from its FIRST (newest) line only —
@@ -6636,6 +6648,7 @@ window.editInvoicePayments = function(invoiceId) {
   if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast('Admins or receptionists only', 'error'); return; }
   const inv = (state.invoices || []).find(i => i.id === invoiceId && !i.deleted);
   if (!inv) { toast('Invoice not found', 'error'); return; }
+  if (typeof dedupeInvoicePayments === 'function') dedupeInvoicePayments(inv);   // v6.534: clean merge-duplicate rows before editing (no doubling)
   const cust = (state.members || []).find(x => x.id === inv.customerId);
   const norm = (mRaw) => { const x = String(mRaw || '').toLowerCase(); if (x.indexOf('card') >= 0 || x.indexOf('visa') >= 0) return 'card'; if (x.indexOf('fawran') >= 0 || x.indexOf('\u0641\u0648\u0631\u0627\u0646') >= 0) return 'fawran'; if (x.indexOf('transfer') >= 0 || x.indexOf('bank') >= 0) return 'transfer'; return 'cash'; };
   const methodOpts = [['cash', t('Cash', '\u0646\u0642\u062f\u064a')], ['card', t('Card', '\u0628\u0637\u0627\u0642\u0629')], ['fawran', t('Fawran', '\u0641\u0648\u0631\u0627\u0646')], ['transfer', t('Bank transfer', '\u062a\u062d\u0648\u064a\u0644 \u0628\u0646\u0643\u064a')]];
@@ -7598,7 +7611,13 @@ PAGES.duepayment = (main) => {
     // by invoice month, same basis as the Transactions/Invoices screens. Empty = all months.
     if (f.months.length) invs = invs.filter(i => f.months.includes(i.month || String(i.date || '').slice(0, 7)));
     if (!invs.length) continue;
-    const total = invs.reduce((s, i) => s + invoiceBalance(i), 0);
+    // v6.532: with NO month filter, use the member-level netted membership due (memberOutstanding) so this
+    // screen agrees EXACTLY with the member card — it nets a stranded switch-credit payment and cross-invoice
+    // overpayments instead of flooring each invoice (was: Layla 375 here vs 140.63 on her card). Non-membership
+    // dues (product/rental) are added per-invoice. A month filter keeps the per-invoice filtered view.
+    const total = f.months.length
+      ? invs.reduce((s, i) => s + invoiceBalance(i), 0)
+      : Math.round((memberOutstanding(m.id) + invs.filter(i => (i.category || 'Membership') !== 'Membership').reduce((s, i) => s + invoiceBalance(i), 0)) * 100) / 100;
     if (total <= 0.001) continue;
     // Per-sport / per-category split (use the invoice's sport, else its line item's
     // sport, else the category label).
@@ -17034,9 +17053,9 @@ PAGES.expenses = (main) => {
       <tr ${e.autoBankCommission ? 'style="background:rgba(91,141,239,.05)"' : ''}>
         <td class="text-mute" style="text-align:center;font-size:12px">${i + 1}</td>
         <td class="text-dim" style="white-space:nowrap">${fmtDate(e.date)}</td>
-        <td>${escapeHtml(e.description)}${e.autoBankCommission ? ` <span class="badge blue" style="font-size:9px" title="Auto-calculated from card payments × ${BANK_COMMISSION_RATE}%. Edit to override.">${e.edited ? '✏️ overridden' : '⚙️ auto'}</span>${e.cardBase ? `<div class="text-mute" style="font-size:10px">${fmt(e.cardBase)} card × ${BANK_COMMISSION_RATE}%</div>` : ''}` : ''}</td>
+        <td>${escapeHtml(e.description)}${e.autoBankCommission ? ` <span class="badge blue" style="font-size:9px" title="Auto-calculated from card payments × ${BANK_COMMISSION_RATE}%. Edit to override.">${e.edited ? '✏️ overridden' : '⚙️ auto'}</span>${e.cardBase ? `<div class="text-mute" style="font-size:10px">${fmt(e.cardBase)} card × ${BANK_COMMISSION_RATE}%</div>` : ''}` : ''}${e.notes ? `<div class="text-mute" style="font-size:10px" title="${escapeHtml(e.notes)}">💬 ${escapeHtml(e.notes)}</div>` : ''}</td>
         <td><span class="badge">${escapeHtml(e.category || 'Others')}</span></td>
-        <td><span class="badge ${e.method === 'card' ? 'blue' : e.method === 'transfer' ? 'cyan' : ''}">${escapeHtml(e.method || '—')}</span></td>
+        <td><span class="badge ${e.method === 'card' ? 'blue' : e.method === 'transfer' ? 'cyan' : ''}">${escapeHtml(e.method === 'fawran' ? 'Fawran' : (e.method || '—'))}</span>${e.payMobile ? `<div class="text-mute" style="font-size:10px" dir="ltr">📱 ${escapeHtml(e.payMobile)}</div>` : ''}</td>
         <td class="text-right num font-bold">${fmt(e.amount)}</td>
         <td class="text-right" style="white-space:nowrap"><button class="btn ghost sm" onclick="editExpense(${e.id})" title="Edit">✏️</button> ${e.autoBankCommission ? `<button class="btn ghost sm" onclick="resetBankCommission(${e.id})" title="Reset to auto-calculated value">↻</button>` : `<button class="btn ghost sm" onclick="deleteExpense(${e.id})" title="Delete">🗑</button>`}</td>
       </tr>
@@ -17187,6 +17206,13 @@ window._expCatChanged = function() {
   if (!c || !row) return;
   row.style.display = (typeof isSalaryCategory === 'function' && isSalaryCategory(c.value)) ? '' : 'none';
 };
+// v6.533: reveal the Fawran mobile-number field only when the method is Fawran.
+window._expMethodChanged = function() {
+  const m = document.getElementById('f-method');
+  const row = document.getElementById('f-mobile-row');
+  if (!m || !row) return;
+  row.style.display = (m.value === 'fawran') ? '' : 'none';
+};
 // Keep "Affects month" in sync with the payment date UNTIL the user overrides it
 // manually (then data-touched='1' locks it).
 window._expDateChanged = function() {
@@ -17249,7 +17275,7 @@ function showExpenseForm(id) {
       <div class="form-row">
         <div class="field"><label>Date <span style="color:var(--accent)">*</span></label><input id="f-date" type="date" value="${cur.date || TODAY}" oninput="window._expDateChanged && window._expDateChanged()" /></div>
         <div class="field"><label>Payment method <span style="color:var(--accent)">*</span></label>
-          <select id="f-method">
+          <select id="f-method" onchange="window._expMethodChanged && window._expMethodChanged()">
             <option value="" ${!cur.method ? 'selected' : ''}>— pick a method —</option>
             <option value="cash" ${cur.method === 'cash' ? 'selected' : ''}>Cash</option>
             <option value="card" ${cur.method === 'card' ? 'selected' : ''}>Card</option><option value="fawran" ${cur.method === 'fawran' ? 'selected' : ''}>Fawran</option>
@@ -17257,10 +17283,18 @@ function showExpenseForm(id) {
           </select>
         </div>
       </div>
+      <div class="field" id="f-mobile-row" style="${cur.method === 'fawran' ? '' : 'display:none'}">
+        <label>${t('Fawran mobile number', 'رقم جوال فوران')} <span class="text-mute" style="font-size:10px">(${t('the number paid to/from', 'الرقم المُحوَّل إليه/منه')})</span></label>
+        <input id="f-mobile" type="tel" inputmode="tel" dir="ltr" value="${escapeHtml(cur.payMobile || '')}" placeholder="+974 …" />
+      </div>
       <div class="field">
         <label>${t('Affects month', 'يؤثر على شهر')} <span class="text-mute" style="font-size:10px">(${t('accounting month', 'شهر المحاسبة')})</span></label>
         <input id="f-month" type="month" value="${escapeHtml(cur.month || String(cur.date || TODAY).slice(0, 7))}" data-touched="${e && e.month && e.month !== String(cur.date || '').slice(0, 7) ? '1' : '0'}" onchange="this.dataset.touched='1'" />
         <div class="text-mute" style="font-size:10px;margin-top:3px">${t('Defaults to the payment date’s month. Override to book the expense in a different month — e.g. pay in July but count it as June.', 'يأخذ شهر تاريخ الدفع افتراضياً. عدّله لتسجيل المصروف في شهر مختلف — مثلاً تدفع في يوليو ويُحتسب على يونيو.')}</div>
+      </div>
+      <div class="field">
+        <label>${t('Comments', 'ملاحظات')} <span class="text-mute" style="font-size:10px">(${t('optional', 'اختياري')})</span></label>
+        <textarea id="f-notes" rows="2" style="width:100%;resize:vertical;font-family:inherit;font-size:14px;padding:8px 10px" placeholder="${t('Explain the details of this expense…', 'اشرح تفاصيل هذا المصروف…')}">${escapeHtml(cur.notes || '')}</textarea>
       </div>
     `,
     actions: [
@@ -17293,10 +17327,14 @@ function showExpenseForm(id) {
         // book the expense in a different month (e.g. pay in July, count as June).
         const monthEl = $('#f-month');
         const affectsMonth = (monthEl && /^\d{4}-\d{2}$/.test(monthEl.value)) ? monthEl.value : date.slice(0, 7);
+        // v6.533: Fawran mobile number (only kept when the method is Fawran) + free-text comments.
+        const payMobile = (method === 'fawran') ? (($('#f-mobile') || {}).value || '').trim() : '';
+        const notes = (($('#f-notes') || {}).value || '').trim();
         const data = {
           date, description: desc, amount: amt,
           category, method,
           month: affectsMonth,
+          payMobile, notes,
         };
         if (salaryCoachId != null) data.coachId = salaryCoachId;
         if (salaryCoachName) data.coachName = salaryCoachName;
@@ -18758,7 +18796,9 @@ window.showRevenueDetail = function(coachId, monthKey) {
       if (coachFee <= 0 || totalFee <= 0) continue;
       const ratio = coachFee / totalFee;
       let paidThisMonth = 0;
-      for (const p of (inv.payments || [])) { const amt = Number(p.amount) || 0; if (amt <= 0) continue; const pk = p.month || String(p.date || '').slice(0, 7); if (pk === monthKey) paidThisMonth += amt; }
+      let _rp = (Array.isArray(inv.payments) ? inv.payments : []).filter(p => (Number(p.amount) || 0) > 0);
+      if (!_rp.length && (Number(inv.amountPaid) || 0) > 0) _rp = [{ amount: Number(inv.amountPaid), month: inv.month || String(inv.date || "").slice(0, 7) }];
+      for (const p of _rp) { const amt = Number(p.amount) || 0; if (amt <= 0) continue; const pk = p.month || String(p.date || "").slice(0, 7); if (pk === monthKey) paidThisMonth += amt; }
       const share = Math.round(paidThisMonth * ratio * 100) / 100;
       if (Math.abs(share) < 0.005) continue;
       rebuilt.push({
@@ -18911,7 +18951,9 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
       if (coachFee <= 0 || totalFee <= 0) continue;
       const ratio = coachFee / totalFee;
       let paidThisMonth = 0;
-      for (const p of (inv.payments || [])) { const amt = Number(p.amount) || 0; if (amt <= 0) continue; const pk = p.month || String(p.date || '').slice(0, 7); if (pk === monthKey) paidThisMonth += amt; }
+      let _rp = (Array.isArray(inv.payments) ? inv.payments : []).filter(p => (Number(p.amount) || 0) > 0);
+      if (!_rp.length && (Number(inv.amountPaid) || 0) > 0) _rp = [{ amount: Number(inv.amountPaid), month: inv.month || String(inv.date || "").slice(0, 7) }];
+      for (const p of _rp) { const amt = Number(p.amount) || 0; if (amt <= 0) continue; const pk = p.month || String(p.date || "").slice(0, 7); if (pk === monthKey) paidThisMonth += amt; }
       const share = Math.round(paidThisMonth * ratio * 100) / 100;
       if (Math.abs(share) < 0.005) continue;
       rebuilt.push({
@@ -23556,7 +23598,7 @@ window.switchSport = function(memberId) {
         const moved = remaining + carried;
         const _enteredPrice = parseFloat(($('#sw-price') || {}).value);
         const bPrice = skipReconciliation ? (parseFloat(from.price) || 0)
-          : (Number.isFinite(_enteredPrice) && _enteredPrice >= 0 ? Math.round(_enteredPrice * 100) / 100 : Math.round((bShare + carried * aRate) * 100) / 100);
+          : (Number.isFinite(_enteredPrice) && _enteredPrice >= 0 ? Math.round(_enteredPrice * 100) / 100 : Math.round(bShare * 100) / 100);   // v6.532: carried classes are a FREE bonus — default charges only the remaining (bShare), so money stays conserved
 
         // ─── SPLIT THE ONE MEMBERSHIP INVOICE (v6.520) ─────────────
         // No separate net-zero switch-credit any more. The member's membership invoice is split in
@@ -23751,9 +23793,11 @@ window.switchSport = function(memberId) {
     const creditedBase = coachBaseForSport(m, from.sport, from.coachId);
     const price = creditedBase > 0 ? creditedBase : (parseFloat(from.price) || 0);
     const aRate = total > 0 ? price / total : 0;
-    const carried = (typeof carryForwardCredit === 'function') ? Math.max(0, Math.round(carryForwardCredit(m, from.sport) || 0)) : 0;
-    const moved = Math.max(0, total - attended) + carried;
-    return Math.round(moved * aRate * 100) / 100;
+    // v6.532: the default price charges ONLY the remaining classes (bShare). Carry-forward classes still
+    // MOVE to the new sport (moved = remaining + carried in the sub) but are a FREE bonus — pricing them
+    // re-charged the member (phantom due). Admin can still override the price in the dialog.
+    const remaining = Math.max(0, total - attended);
+    return Math.round(remaining * aRate * 100) / 100;
   }
   function rebuildRowCoaches(i) {
     const sportSel = $('#sw-sport-' + i), coachSel = $('#sw-coach-' + i);

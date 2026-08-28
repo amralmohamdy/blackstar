@@ -13,7 +13,7 @@ const src = H.readSrc();
 R.section('A — dialog: a New sport Price field + money-conserving default');
 R.ok('the single-target dialog has a #sw-price input', /id="sw-price"/.test(src));
 R.ok('there is a destPriceDefault() helper', /function destPriceDefault\(\)/.test(src));
-R.ok('the default values every MOVED class at the old per-class rate', /return Math\.round\(moved \* aRate \* 100\) \/ 100;/.test(src));
+R.ok('the default charges only the REMAINING classes (carried are a free bonus, v6.532)', /const remaining = Math\.max\(0, total - attended\);\s*\n\s*return Math\.round\(remaining \* aRate \* 100\) \/ 100;/.test(src));
 R.ok('the price field is bound to a live preview', /priceEl\.addEventListener\('input', \(\) => updatePreview\(\)\)/.test(src));
 
 R.section('B — the invoice is SPLIT in place (no net-zero switch-credit)');
