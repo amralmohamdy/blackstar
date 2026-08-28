@@ -6337,14 +6337,24 @@ window.editMemberPricing = function(memberId) {
                   <div style="font-size:10px;font-weight:700;color:${col};margin-bottom:3px">${ic} ${lbl}</div>
                   <input class="pri-pay-m" data-grp="${key}" data-method="${mk}" type="number" min="0" step="1" value="" placeholder="0" inputmode="numeric" style="width:100%;font-size:14px;font-weight:700;text-align:right;background:transparent;border:none;border-bottom:1px solid color-mix(in srgb, ${col} 30%, var(--border));color:var(--text);outline:none" />
                 </div>`).join('');
+    // When the recorded rows NET TO ZERO (a payment that was later fully reversed), nothing was actually
+    // collected — showing the raw +/- rows reads as confusing "installments". Fold them behind a history
+    // toggle and say plainly that nothing is paid yet, so an unpaid member shows just price + Collect.
+    // (Display only — the rows stay in the DOM and remain fully editable inside the fold. No data change.)
+    const _netZeroHistory = pays.length > 0 && Math.abs(paid) < 0.01;
+    const existBlock = pays.length === 0
+      ? `<div class="text-mute" style="font-size:11px;padding:2px 2px 4px">${t('No payments recorded yet.', 'لا توجد دفعات مسجلة بعد.')}</div>`
+      : (_netZeroHistory
+        ? `<div style="font-size:11px;color:var(--text-mute);padding:2px 2px 7px;display:flex;align-items:flex-start;gap:6px;line-height:1.4">💤 <span>${t('Nothing collected yet — the entries below cancel out (a payment that was reversed). Use <b>Collect</b> to record the first installment.', 'لم يُحصَّل أي مبلغ بعد — الأسطر أدناه يُلغي بعضها بعضاً (دفعة تم عكسها). استخدم <b>التحصيل</b> لتسجيل أول قسط.')}</span></div>
+           <details style="margin:0 0 4px"><summary style="font-size:10.5px;color:var(--text-mute);cursor:pointer;user-select:none">📜 ${t('Show reversed history', 'إظهار السجل الملغى')} · ${pays.length}</summary><div style="margin-top:7px">${existHeader}${existRowsHtml}</div></details>`
+        : `${existHeader}${existRowsHtml}`);
     const paymentsHtml = `
         <div style="margin:12px 0 2px;border-top:1px dashed var(--border);padding-top:10px">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;gap:8px">
             <div style="font-size:12px;font-weight:700">🧾 ${t('Payments', 'الدفعات')}${pays.length ? ` <span class="text-mute" style="font-weight:400;font-size:10px">· ${pays.length} ${t('installment(s)', 'قسط')}</span>` : ''}</div>
             ${corrupted && inv ? `<label style="font-size:10px;color:var(--red);display:flex;align-items:center;gap:4px;cursor:pointer;font-weight:700;white-space:nowrap"><input type="checkbox" class="pri-cleanup" data-inv="${inv.id}"> ⚠ ${t('Merge messy rows', 'دمج الأسطر الفوضوية')}</label>` : ''}
           </div>
-          ${existHeader}
-          ${existRowsHtml || `<div class="text-mute" style="font-size:11px;padding:2px 2px 4px">${t('No payments recorded yet.', 'لا توجد دفعات مسجلة بعد.')}</div>`}
+          ${existBlock}
           <div style="margin-top:10px;padding:10px;background:color-mix(in srgb, var(--green) 5%, var(--surface));border:1px solid color-mix(in srgb, var(--green) 22%, var(--border));border-radius:10px">
             <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
               <div style="font-size:12px;font-weight:700;color:var(--green)">➕ ${t('Collect a new payment', 'تحصيل دفعة جديدة')}</div>
