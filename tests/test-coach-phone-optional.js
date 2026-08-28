@@ -33,7 +33,7 @@ console.log('\na TYPED but invalid phone is still rejected:');
 
 console.log('\nthe coach save is cloud-confirmed (not an optimistic toast):');
 {
-  ok('editCoach goes through withCloudConfirm', /window\.editCoach[\s\S]{0,9000}?withCloudConfirm\(/.test(pagesSrc));
+  ok('editCoach goes through withCloudConfirm', /window\.editCoach[\s\S]{0,12000}?withCloudConfirm\(/.test(pagesSrc));
 }
 
 console.log('\nCOACH PHONE OPTIONAL:', pass, 'passed,', fail, 'failed');

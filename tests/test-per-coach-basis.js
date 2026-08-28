@@ -10,7 +10,7 @@ R.section('source — form field + save + resolution');
 R.ok('the coach form has a Commission basis selector', /<select id="c-basis">/.test(src));
 R.ok('it offers Use-club-default / attendance / payment', /Use club default/.test(src) && /value="attendance"/.test(src) && /value="payment"/.test(src));
 R.ok('the value is read on save', /const commissionBasis = \(\(\$\('#c-basis'\) \|\| \{\}\)\.value\) \|\| '';/.test(src));
-R.ok('commissionBasis is persisted on add + edit', (src.match(/name, rate, fixedSalary, commissionBasis, role: roleVal/g) || []).length >= 2);
+R.ok('commissionBasis is persisted on add + edit', (src.match(/name, rate, fixedSalary, commissionBasis, payAttendedOnly, role: roleVal/g) || []).length >= 2);
 R.ok('computeMonthlyPay resolves the coach basis first, else club setting', /const basis = coachBasis \|\| \(state\.settings && state\.settings\.commissionBasis\) \|\| 'payment';/.test(src));
 R.ok('only valid coach values are honoured', /c\.commissionBasis === 'attendance' \|\| c\.commissionBasis === 'payment'/.test(src));
 

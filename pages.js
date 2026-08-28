@@ -2337,9 +2337,9 @@ function viewMember(id) {
           <div class="mt-1"><span class="badge ${memberStatus(m).toLowerCase()}">${memberStatus(m)}</span> <span class="badge">${(m.months || []).join(' + ').toUpperCase()}</span>${(() => {
             const ob = memberOutstanding(m.id);
             const editable = currentRole() === 'admin' || currentRole() === 'receptionist';
-            return ob > 0.001 ? ` <span class="badge" ${editable ? `onclick="event.stopPropagation();editMemberPricing(${m.id})" style="background:rgba(242,163,60,.18);color:var(--accent-2);cursor:pointer" title="Click to record a payment / edit pricing"` : `style="background:rgba(242,163,60,.18);color:var(--accent-2)" title="Outstanding balance across this member's invoices"`}>💰 ${fmt(ob)} due</span>` : '';
+            return ob > 0.001 ? ` <span class="badge" ${editable ? `onclick="event.stopPropagation();moneyPanel(${m.id})" style="background:rgba(242,163,60,.18);color:var(--accent-2);cursor:pointer" title="Click to record a payment / edit pricing"` : `style="background:rgba(242,163,60,.18);color:var(--accent-2)" title="Outstanding balance across this member's invoices"`}>💰 ${fmt(ob)} due</span>` : '';
           })()}</div>
-          ${(currentRole() === 'admin' || currentRole() === 'receptionist') ? `<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary sm" onclick="editMemberPricing(${m.id})" title="${t('Log payment installments (method + date + amount). Prices are set per-sport in the profile above.', 'تسجيل أقساط الدفع (الطريقة + التاريخ + المبلغ). الأسعار تُحدَّد لكل رياضة في الملف أعلاه.')}" style="font-weight:700">💳 ${t('Installments', 'الأقساط')}</button>${currentRole() === 'admin' ? `<button class="btn ghost sm" onclick="rebuildMemberFromProfile(${m.id})" title="${t('Sync the subscription + invoice to the current enrollments (the profile) so salary + invoice agree', 'مزامنة الاشتراك والفاتورة مع التسجيلات الحالية ليتطابق الراتب والفاتورة')}">🔄 ${t('Rebuild from profile', 'إعادة البناء من الملف')}</button>` : ''}</div>` : ''}
+          ${(currentRole() === 'admin' || currentRole() === 'receptionist') ? `<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary sm" onclick="moneyPanel(${m.id})" title="${t('Log payment installments (method + date + amount). Prices are set per-sport in the profile above.', 'تسجيل أقساط الدفع (الطريقة + التاريخ + المبلغ). الأسعار تُحدَّد لكل رياضة في الملف أعلاه.')}" style="font-weight:700">💳 ${t('Installments', 'الأقساط')}</button>${currentRole() === 'admin' ? `<button class="btn ghost sm" onclick="rebuildMemberFromProfile(${m.id})" title="${t('Sync the subscription + invoice to the current enrollments (the profile) so salary + invoice agree', 'مزامنة الاشتراك والفاتورة مع التسجيلات الحالية ليتطابق الراتب والفاتورة')}">🔄 ${t('Rebuild from profile', 'إعادة البناء من الملف')}</button>` : ''}</div>` : ''}
         </div>
       </div>
       <div class="row row-2 mb-3">
@@ -4822,6 +4822,13 @@ window.editCoach = function(id, defaultRole) {
           </select>
         </div>
       </div>
+      <div class="field" style="margin-top:2px">
+        <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-weight:400">
+          <input type="checkbox" id="c-attended-only" ${c.payAttendedOnly ? 'checked' : ''} />
+          ${t('Pay attended only for expired memberships (no carry-forward true-up)', 'دفع المحضور فقط للعضويات المنتهية (بدون احتساب المُرحّل)')}
+        </label>
+        <div class="text-mute" style="font-size:10px;margin-top:3px">${t('On the attendance basis, an expired membership normally pays this coach the FULL package (attended + carried-forward). Tick this to pay only the classes actually attended. Overrides the club-wide Salaries toggle for this coach.', 'في أساس الحضور، تدفع العضوية المنتهية عادةً كامل الباقة (المحضور + المُرحّل) لهذا المدرب. فعّل هذا لدفع الحصص المحضورة فعلياً فقط. يتجاوز الإعداد العام في شاشة الرواتب لهذا المدرب.')}</div>
+      </div>
       <div class="text-mute" style="font-size:11px;margin-top:-6px;margin-bottom:10px">
         💡 Monthly pay = <b>Fixed</b> + (<b>Commission %</b> × eligible membership revenue). For a pure coach: Fixed=0, Commission=30%. For admin/cleaner: Fixed=3000, Commission=0%.
         ${t('Commission basis sets how THIS coach is paid — pick a fixed one (e.g. a private coach = "By payment") and it overrides the club-wide toggle on the Salaries screen for them only.', 'أساس العمولة يحدد كيف يُحتسب راتب هذا المدرب — اختر أساساً ثابتاً (مثلاً مدرب خاص = «بالدفع») ليتجاوز الإعداد العام في شاشة الرواتب لهذا المدرب فقط.')}
@@ -4876,6 +4883,7 @@ window.editCoach = function(id, defaultRole) {
         const rate = parseFloat($('#c-rate').value) || 0;
         const fixedSalary = parseFloat($('#c-fixed').value) || 0;
         const commissionBasis = (($('#c-basis') || {}).value) || '';   // '' = use club default; else 'attendance' | 'payment'
+        const payAttendedOnly = !!(($('#c-attended-only') || {}).checked);   // v6.535: skip expiry true-up for this coach
         const roleVal = $('#c-role').value || 'coach';
         const sports = $$('.coach-sport').filter(x => x.checked).map(x => x.value);
         const activeVal = $('#c-active').value;
@@ -4890,14 +4898,14 @@ window.editCoach = function(id, defaultRole) {
         if (isNew) {
           const _nc = {
             id: nextId(state.coaches),
-            name, rate, fixedSalary, commissionBasis, role: roleVal, sports, active: activeVal,
+            name, rate, fixedSalary, commissionBasis, payAttendedOnly, role: roleVal, sports, active: activeVal,
             phone, email: email || null, qid, birthdate: birthdate || null, gender, joinedDate,
           };
           state.coaches.push(_nc);
           _savedCoachId = _nc.id;
         } else {
           Object.assign(c, {
-            name, rate, fixedSalary, commissionBasis, role: roleVal, sports, active: activeVal,
+            name, rate, fixedSalary, commissionBasis, payAttendedOnly, role: roleVal, sports, active: activeVal,
             phone, email: email || null, qid, birthdate: birthdate || null, gender, joinedDate,
           });
           _savedCoachId = c.id;
@@ -6035,6 +6043,131 @@ window._reconcileInvoicesFromSubs = function (memberId) {
         closeModal(); render();
         if (typeof confirmSaved === 'function') confirmSaved(t('Invoices rebuilt from the subscription history', 'تمت إعادة بناء الفواتير من سجل الاشتراكات'), { onOk: () => viewMember(m.id) }); else toast(t('Rebuilt', 'تم'));
       } },
+    ],
+  });
+};
+
+// ── v6.536 · Member Money Panel (Phase 1) ────────────────────────────────────
+// A clean, single-screen view of a member's money: Charged / Paid / Due (authoritative, member-level
+// netted so they always reconcile) + a per-sport list + one "Collect" action that appends a payment via
+// the SAFE append-only recordPayment (no data restructuring, no migration). The full price editor lives
+// on as "Edit prices" (editMemberPricing). Reads existing data — nothing here deletes or rewrites it.
+function _memberMoneyRows(m) {
+  const memberId = m.id;
+  const realInvs = (state.invoices || []).filter(i => !i.deleted && i.customerId === memberId
+    && (i.category || 'Membership') === 'Membership' && !i.switchCredit && i.activityType !== 'switch-credit');
+  // Group real invoice lines by sport (+coach) → the CHARGE per sport, and remember which invoice carries it.
+  const groups = new Map();
+  for (const iv of realInvs) {
+    const lis = (Array.isArray(iv.lineItems) && iv.lineItems.length) ? iv.lineItems : [{ sport: iv.sport, coachId: iv.coachId, price: iv.amount || 0 }];
+    for (const li of lis) {
+      const sport = li.sport || '—';
+      const key = sport + '|' + String(li.coachId);
+      const g = groups.get(key) || { sport, coachId: li.coachId, coach: li.coach || (li.coachId != null ? coachName(li.coachId) : ''), price: 0, invId: iv.id, ref: iv.ref };
+      g.price = Math.round((g.price + (Number(li.price) || 0)) * 100) / 100;
+      groups.set(key, g);
+    }
+  }
+  const rows = [...groups.values()].filter(g => g.price > 0.001);
+  const charged = Math.round(rows.reduce((s, g) => s + g.price, 0) * 100) / 100;
+  const paidTotal = (typeof memberMembershipPaid === 'function') ? memberMembershipPaid(memberId) : 0;
+  const due = (typeof memberOutstanding === 'function') ? memberOutstanding(memberId) : Math.max(0, Math.round((charged - paidTotal) * 100) / 100);
+  // Allocate the AUTHORITATIVE total paid across sports: sport-tagged payments first, then fill by order.
+  const allMembInvs = (state.invoices || []).filter(i => !i.deleted && i.customerId === memberId && (i.category || 'Membership') === 'Membership');
+  const tagged = {};
+  for (const iv of allMembInvs) for (const p of (iv.payments || [])) { if (p && p.sport) tagged[p.sport] = (tagged[p.sport] || 0) + (Number(p.amount) || 0); }
+  // A sport the member SWITCHED AWAY FROM is the one most likely still owed (its remainder moved to the
+  // new sport) — so fill ACTIVE sports first and leave switched-away ones for last. This makes an untagged
+  // historical payment land on the sport it was really for (Layla: her 175 + 234.37 cover Kick Boxing +
+  // Taekwondo, leaving Gymnastic — the switched sport — correctly shown as due).
+  const _switchedSports = new Set((m.subscriptions || []).filter(s => s && s.switchedAwayTo).map(s => s.activity));
+  rows.forEach(g => { g.switched = _switchedSports.has(g.sport); });
+  let pool = paidTotal;
+  for (const g of rows) { const tp = Math.min(g.price, Math.max(0, tagged[g.sport] || 0)); g.paid = tp; pool = Math.round((pool - tp) * 100) / 100; }
+  const fillOrder = rows.slice().sort((a, b) => (a.switched ? 1 : 0) - (b.switched ? 1 : 0));   // active first, switched last
+  for (const g of fillOrder) { const need = Math.max(0, Math.round((g.price - g.paid) * 100) / 100); const add = Math.max(0, Math.min(need, pool)); g.paid = Math.round((g.paid + add) * 100) / 100; pool = Math.round((pool - add) * 100) / 100; }
+  for (const g of rows) g.remaining = Math.max(0, Math.round((g.price - g.paid) * 100) / 100);
+  return { rows, charged, paidTotal: Math.round(paidTotal * 100) / 100, due, realInvs };
+}
+window._moneyMethod = function(v, el) {
+  const box = el && el.parentNode; if (box) [...box.children].forEach(x => x.setAttribute('aria-pressed', String(x === el)));
+  const h = document.getElementById('mp-method'); if (h) h.value = v;
+};
+window._moneyCollect = function(memberId) {
+  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast('Admins or receptionists only', 'error'); return; }
+  const m = (state.members || []).find(x => x.id === memberId); if (!m) return;
+  const amt = Math.round((parseFloat((document.getElementById('mp-amt') || {}).value) || 0) * 100) / 100;
+  if (!(amt > 0)) { toast(t('Enter an amount', 'أدخل مبلغاً'), 'error'); return; }
+  const method = (document.getElementById('mp-method') || {}).value || 'cash';
+  const date = (document.getElementById('mp-date') || {}).value || TODAY;
+  const { rows } = _memberMoneyRows(m);
+  const target = rows.find(g => g.remaining > 0.001) || rows[0];
+  if (!target) { toast(t('No sport to collect for', 'لا توجد رياضة للتحصيل'), 'error'); return; }
+  const inv = (state.invoices || []).find(i => i.id === target.invId);
+  if (!inv) { toast('Invoice not found', 'error'); return; }
+  // SAFE append-only payment (recordPayment can never corrupt the ledger by re-derivation).
+  if (typeof recordPayment === 'function') recordPayment(inv, { amount: amt, method, date, sport: target.sport });
+  else { if (!Array.isArray(inv.payments)) inv.payments = []; inv.payments.push({ amount: amt, method, date, month: String(date).slice(0, 7), sport: target.sport }); inv.amountPaid = inv.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0); }
+  if (typeof audit === 'function') audit('member.payment', 'member:' + m.id, `collected ${fmt(amt)} · ${method} · ${target.sport}`, { recordName: m.name });
+  if (typeof saveConfirmed === 'function') saveConfirmed().then(r => { if (r && !r.ok) toast('⚠ ' + t('Saved on this device but not yet in the cloud', 'محفوظ على الجهاز لكن لم يصل السحابة'), 'error'); }); else save();
+  toast(t('Collected', 'تم التحصيل') + ' ' + fmt(amt) + ' · ' + method);
+  window.moneyPanel(memberId);   // reopen with fresh data
+};
+window.moneyPanel = function(memberId) {
+  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast('Admins or receptionists only', 'error'); return; }
+  const m = (state.members || []).find(x => x.id === memberId);
+  if (!m) { toast('Member not found', 'error'); return; }
+  const md = _memberMoneyRows(m);
+  if (!md.realInvs.length) { return editMemberPricing(memberId); }   // no invoice yet → the price editor can create one
+  const ar = (typeof getLang === 'function' && getLang() === 'ar');
+  const sportName = (g) => ar && typeof sportNameAR === 'function' ? sportNameAR(g.sport) : g.sport;
+  const target = md.rows.find(g => g.remaining > 0.001);
+  const reconciles = Math.abs(md.charged - (md.paidTotal + md.due)) < 0.02;
+  const emoji = { 'Kick Boxing': '🥊', 'Boxing': '🥊', 'Karate': '🥋', 'Taekwondo': '🥋', 'MMA': '👊', 'Gymnastic': '🤸', 'Swimming': '🏊', 'Football': '⚽', 'Zumba': '💃' };
+  const kpi = (l, v, cls) => `<div style="flex:1;text-align:center;padding:12px 8px"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-mute);font-weight:700">${l}</div><div class="num" style="font-family:ui-monospace,monospace;font-weight:700;font-size:22px;margin-top:4px${cls ? ';color:' + cls : ''}">${fmt(v)}</div></div>`;
+  const sportRow = (g) => {
+    const pct = g.price > 0 ? Math.min(100, g.paid / g.price * 100) : 0;
+    const done = g.remaining <= 0.001;
+    const tag = done
+      ? `<span class="badge" style="background:rgba(16,185,129,.14);color:var(--green);font-size:10px;font-weight:700">✓ ${t('Paid', 'مدفوع')}</span>`
+      : `<span class="badge" style="background:rgba(245,158,11,.16);color:var(--accent-2);font-size:10px;font-weight:700">${fmt(g.remaining)} ${t('due', 'مستحق')}</span>`;
+    return `<div style="display:flex;align-items:center;gap:11px;padding:10px 0;border-top:1px solid var(--border)">
+      <div style="width:32px;height:32px;border-radius:9px;flex:none;display:grid;place-items:center;font-size:15px;background:var(--surface-2)">${emoji[g.sport] || '•'}</div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+          <div style="font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(sportName(g))}${g.coach ? ` <span style="font-size:11px;color:var(--text-mute);font-weight:500">· ${escapeHtml(g.coach)}</span>` : ''}</div>${tag}
+        </div>
+        <div style="height:5px;border-radius:99px;background:var(--border);margin-top:6px;overflow:hidden"><i style="display:block;height:100%;border-radius:99px;background:var(--green);width:${pct}%"></i></div>
+        <div style="font-size:12px;color:var(--text-mute);margin-top:5px"><b style="color:var(--text)">${fmt(g.paid)}</b> / ${fmt(g.price)} QAR</div>
+      </div></div>`;
+  };
+  const methodChip = (v, ic, lab, on) => `<button type="button" class="btn ghost sm" onclick="window._moneyMethod('${v}',this)" aria-pressed="${on ? 'true' : 'false'}" style="flex:1;min-width:60px;display:flex;flex-direction:column;gap:2px;align-items:center;padding:7px 4px;font-size:11px${on ? ';border-color:var(--blue);background:rgba(91,141,239,.1)' : ''}"><span style="font-size:14px">${ic}</span>${lab}</button>`;
+  showModal({
+    title: `💰 ${escapeHtml(m.name)}`,
+    body: `
+      <div class="card" style="padding:0;overflow:hidden;margin-bottom:0">
+        <div style="display:flex;background:var(--surface-2)">${kpi(t('Charged', 'المُحتسب'), md.charged, '')}${kpi(t('Paid', 'المدفوع'), md.paidTotal, 'var(--green)')}${kpi(t('Due', 'المستحق'), md.due, md.due > 0.5 ? 'var(--accent-2)' : 'var(--green)')}</div>
+        <div style="display:flex;align-items:center;justify-content:center;gap:6px;font-size:11.5px;font-weight:600;padding:6px;color:${reconciles ? 'var(--green)' : 'var(--red)'};background:${reconciles ? 'rgba(16,185,129,.08)' : 'rgba(242,96,96,.08)'};border-top:1px solid var(--border)">${reconciles ? '✓' : '⚠'} ${t('Reconciles', 'متطابق')} <span style="color:var(--text-mute);font-weight:500">${t('Charged = Paid + Due', 'المُحتسب = المدفوع + المستحق')}</span></div>
+      </div>
+      <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-mute);margin:14px 2px 2px">${t('Sports', 'الرياضات')}</div>
+      <div>${md.rows.map(sportRow).join('')}</div>
+      <div class="card" style="background:var(--surface-2);padding:13px;margin-top:14px">
+        <div style="font-size:12.5px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:6px">➕ ${t('Collect a payment', 'تحصيل دفعة')}${target ? `<span style="margin-left:auto;font-weight:500;font-size:11px;color:var(--text-mute)">${t('applies to', 'للرياضة')} <b style="color:var(--accent-2)">${escapeHtml(sportName(target))}</b></span>` : ''}</div>
+        <input type="hidden" id="mp-method" value="cash" />
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:stretch">
+          <div style="flex:1 1 120px;position:relative"><input id="mp-amt" type="text" inputmode="decimal" value="${target ? fmt(target.remaining) : ''}" style="width:100%;font-family:ui-monospace,monospace;font-weight:700;font-size:17px;padding:9px 40px 9px 11px;border:1.5px solid var(--border);border-radius:9px;background:var(--surface);color:var(--text)" /><span style="position:absolute;right:11px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--text-mute)">QAR</span></div>
+          <div style="display:flex;gap:6px;flex:2 1 200px">${methodChip('cash', '💵', t('Cash', 'نقدي'), true)}${methodChip('card', '💳', t('Card', 'بطاقة'), false)}${methodChip('fawran', '📲', 'Fawran', false)}${methodChip('transfer', '🏦', t('Transfer', 'تحويل'), false)}</div>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;margin-top:10px">
+          <input type="date" id="mp-date" value="${TODAY}" style="font-size:12.5px;padding:7px 9px;border:1.5px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text)" />
+          <button class="btn primary" style="margin-left:auto;font-weight:700" onclick="window._moneyCollect(${m.id})">${t('Collect', 'تحصيل')}</button>
+        </div>
+      </div>
+    `,
+    actions: [
+      { label: '🧾 ' + t('Invoice', 'فاتورة'), class: 'btn ghost', onclick: () => { try { printMemberInvoicePDF(m.id); } catch (_) {} } },
+      { label: '✎ ' + t('Edit prices', 'تعديل الأسعار'), class: 'btn ghost', onclick: () => { closeModal(); editMemberPricing(m.id); } },
+      { label: t('Close', 'إغلاق'), class: 'btn primary', onclick: closeModal },
     ],
   });
 };
@@ -7779,7 +7912,7 @@ Black Stars Academy`;
       <td class="text-right num" style="color:var(--red);font-weight:800;font-size:14px">${fmt(r.total)} <span class="text-mute" style="font-size:10px;font-weight:400">QAR</span></td>
       <td style="font-size:11px">${r.remind.count ? `<span class="badge ${r.remind.count >= 3 ? '' : 'active'}" style="font-size:10px;${r.remind.count >= 3 ? 'background:rgba(120,120,140,.15);color:var(--text-mute)' : ''}">✓ ${r.remind.count}/3${r.remind.last === TODAY ? ' · ' + t('today', 'اليوم') : r.remind.last ? ' · ' + fmtDate(r.remind.last) : ''}</span>` : '<span class="text-mute">—</span>'}</td>
       <td class="text-right" style="white-space:nowrap">
-        ${editable ? `<button class="btn primary sm" onclick="editMemberPricing(${r.m.id})" title="${t('Record a payment / edit pricing', 'تسجيل دفعة / تعديل السعر')}">💰 ${t('Collect', 'تحصيل')}</button>` : ''}
+        ${editable ? `<button class="btn primary sm" onclick="moneyPanel(${r.m.id})" title="${t('Record a payment / edit pricing', 'تسجيل دفعة / تعديل السعر')}">💰 ${t('Collect', 'تحصيل')}</button>` : ''}
         ${(() => {
           if (!wa) return '';
           const sent = r.remind.count || 0;
@@ -17625,6 +17758,9 @@ PAGES.salaries = (main) => {
           <option value="payment" ${(state.settings?.commissionBasis || 'payment') === 'payment' ? 'selected' : ''}>By payment (full rate on amount paid that month)</option>
           <option value="attendance" ${state.settings?.commissionBasis === 'attendance' ? 'selected' : ''}>By attendance (per class attended)</option>
         </select>
+        <label id="sal-attended-only" style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-mute);cursor:pointer" title="${t('When ON, an EXPIRED membership pays the coach ONLY for classes actually attended — no true-up of carried-forward / unused sessions. Applies to every coach except those overridden on the Team page. (Attendance basis only.)', 'عند التفعيل، العضوية المنتهية تدفع للمدرب مقابل الحصص المحضورة فقط — دون احتساب الحصص المُرحّلة/غير المحضورة. تنطبق على كل المدربين إلا من له إعداد خاص في صفحة الفريق. (أساس الحضور فقط.)')}">
+          <input type="checkbox" id="sal-attended-only-cb" ${state.settings?.payAttendedOnly ? 'checked' : ''} /> ${t('Exclude carried-forward for expired (pay attended only)', 'استبعاد المُرحّل للمنتهية (دفع المحضور فقط)')}
+        </label>
         <span style="opacity:.35">|</span>
         <select id="sal-month" class="btn ghost" ${filter.settleDate ? 'disabled style="opacity:.5"' : ''}>
           ${months.map(m => `<option value="${m}" ${filter.month === m ? 'selected' : ''}>${fmtMonth(m)}</option>`).join('')}
@@ -17681,6 +17817,15 @@ PAGES.salaries = (main) => {
     
     refresh();
     confirmSaved('Commission basis: ' + (state.settings.commissionBasis === 'attendance' ? 'by attendance ✅' : 'by payment'));
+  });
+  const salAttendedOnly = $('#sal-attended-only-cb');
+  if (salAttendedOnly) salAttendedOnly.addEventListener('change', e => {
+    if (currentRole() !== 'admin') { toast('Only an admin can change this', 'error'); e.target.checked = !!(state.settings && state.settings.payAttendedOnly); return; }
+    if (!state.settings) state.settings = {};
+    state.settings.payAttendedOnly = !!e.target.checked;
+    save();
+    refresh();
+    confirmSaved(e.target.checked ? t('Expired memberships now pay attended only (no carry-forward)', 'المنتهية تدفع المحضور فقط') : t('Carry-forward true-up restored for expired memberships', 'أُعيد احتساب المُرحّل للمنتهية'));
   });
   const salCommStart = $('#sal-comm-start');
   if (salCommStart) salCommStart.addEventListener('change', e => {
@@ -25270,7 +25415,7 @@ PAGES.expiring = (main) => {
         <td class="text-right">${(() => {
           const due = memberOutstanding(m.id);
           const editable = currentRole() === 'admin' || currentRole() === 'receptionist';
-          if (due > 0.001) return `<button class="btn ghost sm" ${editable ? `onclick="event.stopPropagation();editMemberPricing(${m.id})"` : 'onclick="event.stopPropagation()"'} title="${editable ? 'Click to record a payment / edit pricing' : 'Outstanding balance'}" style="background:rgba(242,163,60,.15);border:1px solid var(--accent-2);color:var(--accent-2);font-weight:700;padding:4px 10px">⚠ ${fmt(due)}</button>`;
+          if (due > 0.001) return `<button class="btn ghost sm" ${editable ? `onclick="event.stopPropagation();moneyPanel(${m.id})"` : 'onclick="event.stopPropagation()"'} title="${editable ? 'Click to record a payment / edit pricing' : 'Outstanding balance'}" style="background:rgba(242,163,60,.15);border:1px solid var(--accent-2);color:var(--accent-2);font-weight:700;padding:4px 10px">⚠ ${fmt(due)}</button>`;
           return '<span style="color:var(--green);font-weight:600">✓</span>';
         })()}</td>
         <td class="text-right" style="white-space:nowrap">
