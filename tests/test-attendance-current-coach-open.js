@@ -10,7 +10,7 @@ const src = H.readSrc();
 
 R.section('source — the latest-coach-open logic');
 R.ok('per-coach windows are pre-computed into _cw', /const _cw = \{\};/.test(src));
-R.ok('member-active gate exists', /const _memberActive = !m\.deleted && \(memberStatus\(m\) === 'Active'/.test(src));
+R.ok('member-active gate exists (v6.542: expired allowed, only Frozen paused)', /const _memberActive = !m\.deleted && memberStatus\(m\) !== 'Frozen';/.test(src));
 R.ok('the latest window end is computed', /let _latestKey = '';/.test(src) && /if \(k > _latestKey\) _latestKey = k;/.test(src));
 R.ok('the latest coach row is extended to TODAY (not opened forever) for an active member', /if \(!w\.openEnd && _memberActive && _to && _to < TODAY && _latestKey !== '9999-99-99' && \(w\.to \|\| ''\) === _latestKey\) _to = TODAY;/.test(src));
 R.ok('Frozen members are NOT extended (paused)', /memberStatus\(m\) !== 'Frozen'/.test(src));

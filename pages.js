@@ -21681,7 +21681,11 @@ PAGES.attendance = (main) => {
           // must not be markable forward). And the extension is bounded to TODAY, not opened forever —
           // so an active member's CURRENT sport stays markable through the gap up to today (with the
           // EXPIRED badge) without exposing future dates.
-          const _memberActive = !m.deleted && (memberStatus(m) === 'Active' || (m.expiryDate && m.expiryDate >= TODAY && memberStatus(m) !== 'Frozen'));
+          // v6.542: attendance must be markable for ANY member — including EXPIRED and unpaid — so the
+          // desk can log a class and then prompt a renewal. Only a FROZEN membership stays paused (a
+          // deliberate hold). This still extends ONLY the CURRENT (latest-window) coach's row up to today
+          // (never future); earlier coaches in a switch stay bounded to their handover for correct pay.
+          const _memberActive = !m.deleted && memberStatus(m) !== 'Frozen';
           let _latestKey = '';
           for (const cid of coachIds) { const w = _cw[cid]; const k = w.openEnd ? '9999-99-99' : (w.to || ''); if (k > _latestKey) _latestKey = k; }
           for (const cid of coachIds) {
