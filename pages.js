@@ -13182,6 +13182,7 @@ PAGES.invoicechecker = (main) => {
       <div class="topbar-actions" style="display:flex;gap:8px;align-items:center">
         <button class="btn ${payLedgerN ? 'primary' : 'ghost'}" id="ic-payledger" title="${t('Review invoices whose payment rows do not reconcile — a duplicated installment, or a paid-total that does not match the rows', 'مراجعة الفواتير التي لا تتطابق دفعاتها — دفعة مكررة أو إجمالي مدفوع لا يطابق الصفوف')}">💳 ${t('Payment ledger', 'دفتر الدفعات')}${payLedgerN ? ` (${payLedgerN})` : ''}</button>
         <button class="btn ghost" id="ic-switchrepair" title="${t('Restore a switched member subscription + invoice line from the profile (only when already paid)', 'استرجاع الاشتراك وبند الفاتورة الناقص للعضو المحوّل من ملفه (فقط عند الدفع المسبق)')}">🔀 ${t('Repair switched', 'إصلاح المحوّلين')}</button>
+        <button class="btn ghost" id="ic-switchreview" title="${t('Review every coach change (switched members) + repair a sport that was paid but never invoiced', 'مراجعة كل تغييرات المدرب (الأعضاء المحوّلون) + إصلاح رياضة مدفوعة بلا فاتورة')}">👥 ${t('Switch review', 'مراجعة التحويلات')}</button>
         ${monthMultiHTML('ic-month', months, window._icMonths)}
       </div>
     </div>
@@ -13206,6 +13207,7 @@ PAGES.invoicechecker = (main) => {
   $('#ic-fixall')?.addEventListener('click', () => window._icFixAll());
   $('#ic-payledger')?.addEventListener('click', () => window.reviewPaymentLedger());
   $('#ic-switchrepair')?.addEventListener('click', () => window.showSwitchRepairTool());
+  $('#ic-switchreview')?.addEventListener('click', () => window.reviewSwitchedMembers());
 };
 
 // ── Repair switched members (admin, v6.506) ──────────────────────────────────────
@@ -13369,6 +13371,62 @@ window._payOverpayFix = function (invId) {
       afterOk: () => window.reviewPaymentLedger(),
     });
   } else { save(); window.reviewPaymentLedger(); }
+};
+
+// ── Switched-member review + paid-but-uninvoiced repair (admin, v6.541) ───────────
+// One place to REVIEW every coach change (a coach leaving → students move: Iyad→Abdel Salam, Mostafa→
+// Zakaria) — both tool-tagged switches AND manual ones the switch tools couldn't see — plus repair a
+// sport that was PAID but never invoiced (the money sits as an overpayment on another invoice).
+window.reviewSwitchedMembers = function () {
+  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast(t('Admins only', 'المشرفون فقط'), 'error'); return; }
+  const uninv = (typeof _paidUninvoicedSports === 'function') ? _paidUninvoicedSports() : [];
+  const changes = (typeof _coachChangeReview === 'function') ? _coachChangeReview() : [];
+  const manual = changes.filter(c => !c.tagged), tagged = changes.filter(c => c.tagged);
+  const uninvHtml = uninv.length ? uninv.map(x => `
+    <div class="card" style="padding:10px;margin-bottom:8px;border:1px solid var(--accent-2)">
+      <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center">
+        <div><b>${escapeHtml(x.member)}</b> · ${escapeHtml(x.sport)} <span class="text-mute">(${escapeHtml(coachName(x.coachId))})</span>
+          <div class="text-mute" style="font-size:11.5px">${t('Paid', 'مدفوع')} ${fmt(x.price)} — ${t('sitting as an overpayment on', 'مسجّلة كزيادة على')} ${escapeHtml(x.srcRef)}; ${t('no invoice for this sport', 'لا فاتورة لهذه الرياضة')}</div></div>
+        <button class="btn primary sm" onclick='window._repairUninvoicedUI(${JSON.stringify(x.memberId)}, ${JSON.stringify(x.sport)})'>🧾 ${t('Create invoice & move payment', 'إنشاء فاتورة ونقل الدفعة')}</button>
+      </div>
+    </div>`).join('') : `<div class="text-mute" style="padding:6px">✅ ${t('No paid-but-uninvoiced sports', 'لا رياضات مدفوعة بلا فاتورة')}</div>`;
+  const rowHtml = c => `<tr style="border-top:1px solid var(--border)">
+    <td style="padding:5px 6px"><a href="#" onclick='event.preventDefault();closeModal();viewMember(${JSON.stringify(c.memberId)})' style="font-weight:600;color:var(--blue)">${escapeHtml(c.member)}</a></td>
+    <td style="padding:5px 6px">${escapeHtml(c.sport)}</td>
+    <td style="padding:5px 6px">${c.coaches.map(escapeHtml).join(' → ')}</td>
+    <td style="padding:5px 6px">${c.tagged ? `<span class="pill" style="background:rgba(16,185,129,.14);color:var(--green);font-weight:700;font-size:10px">✓ ${t('switch-tagged', 'موسوم')}</span>` : `<span class="pill" style="background:rgba(245,158,11,.16);color:var(--accent-2);font-weight:700;font-size:10px">✎ ${t('manual', 'يدوي')}</span>`}</td>
+  </tr>`;
+  showModal({
+    title: '🔀 ' + t('Switched-member review', 'مراجعة الأعضاء المحوّلين'),
+    wide: true,
+    body: `
+      <div style="font-weight:700;color:var(--accent-2);margin:0 0 6px">💸 ${t('Paid but not invoiced', 'مدفوع بلا فاتورة')} (${uninv.length})</div>
+      <div style="font-size:12px;color:var(--text-mute);margin-bottom:8px">${t('A sport that was paid, but the money landed on another invoice. One tap creates the invoice + subscription and moves the payment — append-only, a backup is saved first, and the member\'s total is unchanged.', 'رياضة مدفوعة لكن المبلغ سُجّل على فاتورة أخرى. اضغط لإنشاء الفاتورة والاشتراك ونقل الدفعة — بدون حذف، مع نسخة احتياطية أولاً، ودون تغيير إجمالي العضو.')}</div>
+      ${uninvHtml}
+      <div style="height:16px"></div>
+      <div style="font-weight:700;margin:0 0 6px">🔀 ${t('Coach changes — review', 'تغييرات المدرب — مراجعة')} (${changes.length}) · <span style="color:var(--accent-2)">${manual.length} ${t('manual', 'يدوي')}</span> · <span style="color:var(--green)">${tagged.length} ${t('tagged', 'موسوم')}</span></div>
+      <div style="font-size:12px;color:var(--text-mute);margin-bottom:8px">${t('Every member whose sport changed coach. Tap a name to open the profile and verify invoices/attendance. “manual” = moved by hand (no switch marker, why the switch tools missed them); “switch-tagged” = done via the Switch tool.', 'كل عضو تغيّر مدرب رياضته. اضغط الاسم لفتح الملف والتحقق من الفواتير والحضور. «يدوي» = نُقل يدوياً (بدون علامة تحويل)، «موسوم» = عبر أداة التحويل.')}</div>
+      <div class="table-wrap"><table style="width:100%;font-size:12.5px"><thead><tr style="color:var(--text-mute)">
+        <th style="text-align:start;padding:5px 6px">${t('Member', 'العضو')}</th><th style="text-align:start;padding:5px 6px">${t('Sport', 'الرياضة')}</th><th style="text-align:start;padding:5px 6px">${t('Coaches (old → new)', 'المدربون (قديم ← جديد)')}</th><th style="text-align:start;padding:5px 6px">${t('Type', 'النوع')}</th>
+      </tr></thead><tbody>
+        ${manual.map(rowHtml).join('')}${tagged.map(rowHtml).join('')}
+        ${changes.length ? '' : `<tr><td colspan="4" class="text-mute" style="text-align:center;padding:14px">${t('No coach changes found', 'لا تغييرات مدرب')}</td></tr>`}
+      </tbody></table></div>`,
+    actions: [{ label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal }],
+  });
+};
+// Apply ONE paid-but-uninvoiced repair (backup first) then write-through + reopen the review.
+window._repairUninvoicedUI = function (memberId, sport) {
+  if (currentRole() !== 'admin') { toast(t('Only admins can run this', 'للمشرف فقط'), 'error'); return; }
+  if (typeof assertCloudWritable === 'function' && !assertCloudWritable('create the missing invoice', 'إنشاء الفاتورة الناقصة')) return;
+  try { if (typeof window.downloadBackup === 'function') window.downloadBackup(); } catch (_) {}
+  const res = (typeof _repairPaidUninvoiced === 'function') ? _repairPaidUninvoiced(memberId, sport) : null;
+  if (!res) { toast(t('Nothing to repair', 'لا شيء للإصلاح'), 'error'); return; }
+  if (typeof audit === 'function') audit('invoice.create', 'member:' + memberId, `created ${sport} invoice ${res.ref} + moved ${res.moved} from ${res.from}`, {});
+  closeModal(); render();
+  const done = () => { try { window.reviewSwitchedMembers(); } catch (_) {} };
+  if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'invoices', id: (state.invoices.find(i => i.ref === res.ref) || {}).id }], okMsg: t('Invoice created · payment moved · ', 'أُنشئت الفاتورة ونُقلت الدفعة · ') + res.ref, afterOk: done });
+  else { if (typeof save === 'function') save(); done(); }
 };
 
 // ── Member Commission report (admin): per member, per sport ───────────────────
