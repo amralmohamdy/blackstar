@@ -22074,8 +22074,17 @@ PAGES.attendance = (main) => {
       // without any blocking prompt. (Camp uses its own campOver flag above.)
       let sportOver = false, sportPlanned = 0, sportMarked = 0;
       if (sport !== SUMMER_CAMP && !isExpired) {
-        const rsub = (m.subscriptions || []).filter(s => (s.activity || '') === sport && String(s.coachId) === String(coachId) && !s.switchedAwayTo).slice(-1)[0]
-          || (m.subscriptions || []).filter(s => (s.activity || '') === sport && !s.switchedAwayTo).slice(-1)[0];
+        // v6.540: pick the CURRENT sub, not the last array element. A renewed member keeps several subs
+        // for the same sport+coach; the subscriptions array is NOT date-ordered (a renewal can sit before
+        // an older short period), so the old `.slice(-1)[0]` grabbed whichever happened to be last —
+        // often an already-ended period — and flagged the row EXPIRED even though the member renewed
+        // (Ali Salem: active KB Aug 12→Sep 11 sat before a completed Aug 1→7 4-class period → "EXPIRED 4/4").
+        // Prefer the sub whose window COVERS today (latest-starting among those); else the latest-ending.
+        const _rpool0 = (m.subscriptions || []).filter(s => (s.activity || '') === sport && String(s.coachId) === String(coachId) && !s.switchedAwayTo);
+        const _rpool = _rpool0.length ? _rpool0 : (m.subscriptions || []).filter(s => (s.activity || '') === sport && !s.switchedAwayTo);
+        const rsub = _rpool.filter(s => (s.start || '') <= TODAY && (!s.end || s.end >= TODAY))
+                          .sort((a, b) => String(b.start || '').localeCompare(String(a.start || '')))[0]
+          || _rpool.slice().sort((a, b) => String(b.end || b.start || '').localeCompare(String(a.end || a.start || '')))[0];
         if (rsub) {
           sportPlanned = parseInt(rsub.totalClasses) || 0;
           const _rw = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, rsub) : { from: rsub.start || null, to: rsub.end || null };
