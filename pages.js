@@ -6059,7 +6059,16 @@ function _memberMoneyRows(m) {
   // Group real invoice lines by sport (+coach) → the CHARGE per sport, and remember which invoice carries it.
   const groups = new Map();
   for (const iv of realInvs) {
-    const lis = (Array.isArray(iv.lineItems) && iv.lineItems.length) ? iv.lineItems : [{ sport: iv.sport, coachId: iv.coachId, price: iv.amount || 0 }];
+    let lis = (Array.isArray(iv.lineItems) && iv.lineItems.length) ? iv.lineItems : [{ sport: iv.sport, coachId: iv.coachId, price: iv.amount || 0 }];
+    // Drop a redundant sport-less SUMMARY line whose price equals the sum of the sported lines (same guard
+    // as invoiceTotal). Without this, Charged double-counts it — e.g. a "(none):1125" line sitting beside
+    // sported lines that already sum to 1125 made Charged read 2250 while the member was fully paid at 1125
+    // (Ali/Salem Almerri showed a false "doesn't reconcile"). Purely a display fix — no data is changed.
+    const _sported = lis.filter(l => l.sport);
+    if (_sported.length && _sported.length < lis.length) {
+      const _sportedSum = Math.round(_sported.reduce((s, l) => s + (Number(l.price) || 0), 0) * 100) / 100;
+      lis = lis.filter(l => l.sport || Math.abs((Number(l.price) || 0) - _sportedSum) > 0.01);
+    }
     for (const li of lis) {
       const sport = li.sport || '—';
       const key = sport + '|' + String(li.coachId);
@@ -6069,7 +6078,14 @@ function _memberMoneyRows(m) {
     }
   }
   const rows = [...groups.values()].filter(g => g.price > 0.001);
-  const charged = Math.round(rows.reduce((s, g) => s + g.price, 0) * 100) / 100;
+  // Charged = the member's NET charge across ALL membership invoices (incl. any switch-credit / credit-note),
+  // via invoiceTotal (drops redundant summary lines) with the SAME legacy-skip as memberOutstanding — so
+  // Charged, Paid and Due are over the same set and always reconcile when the books are clean, and a genuine
+  // overpayment (Paid > Charged) is SURFACED rather than hidden. (The per-sport rows above remain a display
+  // view of the sported lines; their sum can differ from Charged only when a credit-note is present.)
+  const _allMemb = (state.invoices || []).filter(i => !i.deleted && i.customerId === memberId && (i.category || 'Membership') === 'Membership');
+  const charged = Math.round(_allMemb.reduce((s, i) => (i.amountPaid == null && !(Array.isArray(i.payments) && i.payments.length))
+    ? s : s + ((typeof invoiceTotal === 'function') ? invoiceTotal(i) : (Number(i.amount) || 0)), 0) * 100) / 100;
   const paidTotal = (typeof memberMembershipPaid === 'function') ? memberMembershipPaid(memberId) : 0;
   const due = (typeof memberOutstanding === 'function') ? memberOutstanding(memberId) : Math.max(0, Math.round((charged - paidTotal) * 100) / 100);
   // Allocate the AUTHORITATIVE total paid across sports: sport-tagged payments first, then fill by order.
@@ -13057,6 +13073,8 @@ PAGES.invoicechecker = (main) => {
   // Payment-ledger integrity: invoices whose payment rows don't reconcile (a phantom "installment
   // shown twice" duplicate, and/or amountPaid ≠ the sum of rows). Scoped to the month filter. (v6.355)
   const payLedger = (typeof _paymentLedgerIssues === 'function' ? _paymentLedgerIssues() : []).filter(x => inScope(x.inv));
+  const payOverpay = (typeof _paymentOverpayIssues === 'function' ? _paymentOverpayIssues() : []).filter(x => inScope(x.inv));
+  const payLedgerN = payLedger.length + payOverpay.length;   // v6.538: ledger tool now also flags overpaid invoices
   const payPhantomN = payLedger.filter(x => x.phantomIdx.length).length;
   // Only a MEMBERSHIP invoice must have a member — a rental / product with no member
   // link is a legitimate WALK-IN, not a problem. Split the orphans on that line.
@@ -13162,7 +13180,7 @@ PAGES.invoicechecker = (main) => {
         <div class="subtitle">${t('One tool: find MISSING invoices (members active but not invoiced) and CORRUPTED invoices (name / phone / QID / amount drifted, or no member link)', 'أداة واحدة: العثور على الفواتير الناقصة (أعضاء نشطون بلا فاتورة) والفواتير المُحرّفة (اسم/هاتف/رقم/مبلغ غير مطابق، أو بلا ارتباط بعضو)')}</div>
       </div>
       <div class="topbar-actions" style="display:flex;gap:8px;align-items:center">
-        <button class="btn ${payLedger.length ? 'primary' : 'ghost'}" id="ic-payledger" title="${t('Review invoices whose payment rows do not reconcile — a duplicated installment, or a paid-total that does not match the rows', 'مراجعة الفواتير التي لا تتطابق دفعاتها — دفعة مكررة أو إجمالي مدفوع لا يطابق الصفوف')}">💳 ${t('Payment ledger', 'دفتر الدفعات')}${payLedger.length ? ` (${payLedger.length})` : ''}</button>
+        <button class="btn ${payLedgerN ? 'primary' : 'ghost'}" id="ic-payledger" title="${t('Review invoices whose payment rows do not reconcile — a duplicated installment, or a paid-total that does not match the rows', 'مراجعة الفواتير التي لا تتطابق دفعاتها — دفعة مكررة أو إجمالي مدفوع لا يطابق الصفوف')}">💳 ${t('Payment ledger', 'دفتر الدفعات')}${payLedgerN ? ` (${payLedgerN})` : ''}</button>
         <button class="btn ghost" id="ic-switchrepair" title="${t('Restore a switched member subscription + invoice line from the profile (only when already paid)', 'استرجاع الاشتراك وبند الفاتورة الناقص للعضو المحوّل من ملفه (فقط عند الدفع المسبق)')}">🔀 ${t('Repair switched', 'إصلاح المحوّلين')}</button>
         ${monthMultiHTML('ic-month', months, window._icMonths)}
       </div>
@@ -13246,6 +13264,29 @@ window.showSwitchRepairTool = function () {
 window.reviewPaymentLedger = function () {
   if (currentRole() !== 'admin') { toast(t('Admins only', 'المشرفون فقط'), 'error'); return; }
   const issues = (typeof _paymentLedgerIssues === 'function' ? _paymentLedgerIssues() : []);
+  const overpays = (typeof _paymentOverpayIssues === 'function' ? _paymentOverpayIssues() : []);
+  // One card per OVERPAID invoice (payments sum > invoice total). The correction is append-only.
+  const overpayRowHtml = (x) => {
+    const inv = x.inv;
+    const pays = (inv.payments || []).map(p => `<div style="display:flex;gap:8px;align-items:center;font-size:12px;padding:3px 8px;border-radius:6px;${(Number(p.amount) || 0) < 0 ? 'color:var(--red)' : ''}">
+        <span style="flex:0 0 74px" class="num">${fmt(p.amount)}</span>
+        <span style="flex:0 0 92px">${escapeHtml(p.date || '—')}</span>
+        <span style="flex:0 0 60px">${escapeHtml(String(p.method || ''))}</span>
+        <span style="flex:1 1 auto;color:var(--text-mute)">${p._correction ? '↩ ' + t('correction', 'تصحيح') : (p.byName ? escapeHtml(p.byName) : '')}</span>
+      </div>`).join('');
+    return `<div class="card" style="padding:12px;margin-bottom:10px;border:1px solid var(--accent-2)">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+        <div><b>${escapeHtml(inv.customerName || ('#' + inv.id))}</b> <span class="text-mute" style="font-size:12px">${inv.ref || '#' + inv.id}</span></div>
+        <div style="font-size:12px" class="text-mute">${t('Charge', 'الرسوم')} ${fmt(x.total)} · ${t('Paid rows', 'مجموع الدفعات')} <b>${fmt(x.sum)}</b> · ${t('Over by', 'زيادة')} <b style="color:var(--accent-2)">${fmt(x.excess)}</b></div>
+      </div>
+      ${pays}
+      <div style="margin-top:8px;display:flex;justify-content:flex-end;gap:8px;align-items:center">
+        <span class="text-mute" style="font-size:11px;align-self:center">${t('If the extra was really paid, leave it as a credit', 'إن كان المبلغ الزائد مدفوعاً فعلاً، اتركه كرصيد')}</span>
+        <button class="btn ghost sm" onclick="editInvoicePayments(${inv.id})">✏ ${t('Open payments', 'فتح الدفعات')}</button>
+        <button class="btn primary sm" onclick="window._payOverpayFix(${inv.id})" title="${t('Append a −correction so Paid equals the charge. Nothing is deleted; reversible.', 'إضافة صف تصحيح سالب ليساوي المدفوع الرسوم. لا حذف؛ قابل للتراجع.')}">🧮 ${t('Correct to charge', 'تصحيح للرسوم')} (−${fmt(x.excess)})</button>
+      </div>
+    </div>`;
+  };
   const rowHtml = (x) => {
     const inv = x.inv;
     const phantom = new Set(x.phantomIdx);
@@ -13277,9 +13318,13 @@ window.reviewPaymentLedger = function () {
   showModal({
     title: '💳 ' + t('Payment ledger review', 'مراجعة دفتر الدفعات'),
     wide: true,
-    body: issues.length
-      ? `<div style="font-size:13px;color:var(--text-mute);margin-bottom:10px">${t('These invoices have payment rows that do not add up. A red row is a phantom duplicate (the same installment recorded twice) — removing it keeps the real payment and fixes the paid total. Nothing is changed until you click.', 'هذه الفواتير بها صفوف دفعات غير متطابقة. الصف الأحمر دفعة مكررة — إزالته تُبقي الدفعة الحقيقية وتصحح الإجمالي. لا شيء يتغير حتى تضغط.')}</div>
-         ${issues.map(rowHtml).join('')}`
+    body: (issues.length || overpays.length)
+      ? `${overpays.length ? `<div style="font-weight:700;color:var(--accent-2);margin:2px 0 8px">🧮 ${t('Overpaid — Paid is more than the charge', 'زيادة — المدفوع أكبر من الرسوم')} (${overpays.length})</div>
+           <div style="font-size:12.5px;color:var(--text-mute);margin-bottom:10px">${t('These invoices have more money recorded than they cost. "Correct to charge" appends a negative correction so Paid equals the charge — no row is deleted and it is reversible. Leave it if the member genuinely overpaid (a credit).', 'هذه الفواتير سُجّل بها مبلغ أكبر من قيمتها. "تصحيح للرسوم" يضيف صف تصحيح سالب ليساوي المدفوع الرسوم — بدون حذف وقابل للتراجع. اتركها إن دفع العضو فعلاً زيادة (رصيد).')}</div>
+           ${overpays.map(overpayRowHtml).join('')}<div style="height:14px"></div>` : ''}
+         ${issues.length ? `<div style="font-weight:700;margin:2px 0 8px">💳 ${t('Duplicate / drift rows', 'صفوف مكررة/منحرفة')} (${issues.length})</div>
+           <div style="font-size:13px;color:var(--text-mute);margin-bottom:10px">${t('A red row is a phantom duplicate (the same installment recorded twice) — removing it keeps the real payment and fixes the paid total. Nothing is changed until you click.', 'الصف الأحمر دفعة مكررة — إزالته تُبقي الدفعة الحقيقية وتصحح الإجمالي. لا شيء يتغير حتى تضغط.')}</div>
+           ${issues.map(rowHtml).join('')}` : ''}`
       : `<div style="text-align:center;padding:30px;color:var(--green)"><div style="font-size:40px">✅</div><div style="font-weight:700;margin-top:8px">${t('Every invoice payment reconciles', 'كل دفعات الفواتير متطابقة')}</div></div>`,
     actions: [{ label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal }],
   });
@@ -13300,6 +13345,27 @@ window._payLedgerFix = function (invId) {
     withCloudConfirm({
       verify: [{ collection: 'invoices', id: inv.id }],
       okMsg: t('Phantom removed · paid total corrected to ', 'أُزيلت المكررة · صُحح الإجمالي إلى ') + fmt(inv.amountPaid),
+      afterOk: () => window.reviewPaymentLedger(),
+    });
+  } else { save(); window.reviewPaymentLedger(); }
+};
+
+// Correct ONE overpaid invoice by appending a negative correction row (Paid → invoice total). Append-only,
+// nothing deleted, reversible; a backup is downloaded first. Then write-through + reopen the review. (v6.538)
+window._payOverpayFix = function (invId) {
+  const inv = (state.invoices || []).find(i => i.id === invId);
+  if (!inv) { toast(t('Invoice not found', 'الفاتورة غير موجودة'), 'error'); return; }
+  if (typeof assertCloudWritable === 'function' && !assertCloudWritable('correct this overpayment', 'تصحيح هذه الزيادة')) return;
+  try { if (typeof window.downloadBackup === 'function') window.downloadBackup(); } catch (_) {}
+  const corrected = (typeof _correctInvoiceOverpay === 'function') ? _correctInvoiceOverpay(inv) : 0;
+  if (!corrected) { toast(t('Nothing to correct', 'لا شيء لتصحيحه'), 'error'); return; }
+  if (typeof audit === 'function') audit('invoice.payments', 'invoice:' + inv.id, `overpayment corrected −${corrected} (paid → invoice total ${fmt(invoiceTotal(inv))})`, { recordName: inv.customerName || '' });
+  closeModal();
+  render();
+  if (typeof withCloudConfirm === 'function') {
+    withCloudConfirm({
+      verify: [{ collection: 'invoices', id: inv.id }],
+      okMsg: t('Overpayment corrected · paid → ', 'صُححت الزيادة · المدفوع → ') + fmt(inv.amountPaid),
       afterOk: () => window.reviewPaymentLedger(),
     });
   } else { save(); window.reviewPaymentLedger(); }
