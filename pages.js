@@ -17588,6 +17588,15 @@ function showExpenseForm(id) {
           const cn = ($('#f-coach-name') && $('#f-coach-name').value.trim()) || '';
           if (cv) salaryCoachId = Number(cv) || cv;
           else if (cn) salaryCoachName = cn;
+          // v6.546: a salary/advance with NO coach picked (coach named only in the note) silently fails to
+          // attach — it won't show on any coach's salary report or reduce their net (Coach Mostafa's 260
+          // advance sat unattributed). Warn before saving an unlinked salary so an advance is never lost.
+          if (salaryCoachId == null && !salaryCoachName) {
+            if (!confirm(t('⚠ This salary/advance is NOT linked to any coach.\n\nIt will NOT appear on a coach\'s salary report or reduce their net pay. Pick the coach in the "Coach" field above.\n\nContinue anyway as a general (unattributed) salary expense?', '⚠ هذا الراتب/السلفة غير مرتبط بأي مدرب.\n\nلن يظهر في تقرير راتب المدرب ولن يُخصم من صافي راتبه. اختر المدرب في خانة «المدرب» أعلاه.\n\nهل تتابع كمصروف راتب عام (غير مخصص)؟'))) {
+              const cf = $('#f-coach') || $('#f-coach-name'); if (cf && cf.focus) cf.focus();
+              return;
+            }
+          }
         }
 
         // Accounting month: defaults to the payment date's month, but the admin can
