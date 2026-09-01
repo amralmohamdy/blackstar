@@ -23706,21 +23706,25 @@ window.switchSport = function(memberId) {
 
   // Helper: count attended Y marks for a sport up to (inclusive) a given date.
   // Reads m.dailyAttendance[YYYY-MM][sportName] = {day: 'Y'|'N'} structure.
-  function countAttendedUpTo(sport, untilDateStr) {
+  function countAttendedUpTo(sport, untilDateStr, coachId) {
     if (!m.dailyAttendance) return 0;
+    // v6.544: read the attendance CELL for THIS coach (attendanceKeyFor). For a member who ALREADY held
+    // two coaches on the sport, the extra coach's marks live under `sport <coachId>`, so reading only the
+    // plain `sport` key under-counted attended and skewed the split. Single active coach → same plain key.
+    const key = (coachId != null && typeof attendanceKeyFor === 'function') ? attendanceKeyFor(m, sport, coachId) : sport;
     // v6.520 (F3) — window the count to the CURRENT package. Without a lower bound, a renewed sport
     // sums every 'Y' since records began and over-counts attended (over-crediting the old coach on a
     // switch). Use the active source subscription's start as the floor when one exists; otherwise fall
     // back to unbounded (legacy behaviour for members with no subscription record).
     let sinceStr = '';
     if (Array.isArray(m.subscriptions)) {
-      const srcSub = m.subscriptions.find(s => (s.activity || '') === sport && s.status !== 'completed' && s.status !== 'withdrawn' && !s.switchedAwayTo);
+      const srcSub = m.subscriptions.find(s => (s.activity || '') === sport && (coachId == null || String(s.coachId) === String(coachId)) && s.status !== 'completed' && s.status !== 'withdrawn' && !s.switchedAwayTo);
       if (srcSub && srcSub.start) sinceStr = String(srcSub.start).slice(0, 10);
     }
     let total = 0;
     for (const monthKey of Object.keys(m.dailyAttendance)) {
       const mo = m.dailyAttendance[monthKey];
-      const sportMap = mo && typeof mo === 'object' ? mo[sport] : null;
+      const sportMap = mo && typeof mo === 'object' ? mo[key] : null;
       if (!sportMap) continue;
       for (const day of Object.keys(sportMap)) {
         if (sportMap[day] !== 'Y') continue;
@@ -23782,7 +23786,7 @@ window.switchSport = function(memberId) {
 
         // ════ MULTI-TARGET DISTRIBUTION (split remaining classes across sports) ════
         if (tgs.length > 1) {
-          const attendedA = countAttendedUpTo(from.sport, switchDate);
+          const attendedA = countAttendedUpTo(from.sport, switchDate, from.coachId);
           const planned = parseInt(from.classes) || 0;
           const remaining = Math.max(0, planned - attendedA);
           const creditedBase = coachBaseForSport(m, from.sport, from.coachId);
@@ -23852,7 +23856,7 @@ window.switchSport = function(memberId) {
         const toIsCamp = toSport === SUMMER_CAMP;
         const skipReconciliation = fromIsCamp || toIsCamp;
 
-        const attendedA = countAttendedUpTo(from.sport, switchDate);
+        const attendedA = countAttendedUpTo(from.sport, switchDate, from.coachId);
         const totalClasses = parseInt(from.classes) || 0;
         // Base the reconciliation on what coach A was ACTUALLY credited for this
         // sport (the amount shown in the revenue report), NOT the nominal
@@ -24051,7 +24055,9 @@ window.switchSport = function(memberId) {
           `Switched ${_fromSport} → ${toSport} for ${m.name || m.nameArabic}`,
           { memberId: m.id, name: m.name, fromSport: _fromSport, toSport, fromCoachId: _fromCoachId, toCoachId });
 
-        save();
+        // v6.544: CONFIRM the switch reached the cloud (was a bare save() — a money-critical op that could
+        // persist LOCAL-ONLY on a flaky/multi-device connection and then diverge on the next sync). Now it
+        // matches the multi-target path and every other money operation (save + cloud-confirm + toast).
         closeModal();
         render();
         let msg;
@@ -24062,7 +24068,7 @@ window.switchSport = function(memberId) {
           const _recon = Math.abs(_delta) < 0.01 ? '' : _delta > 0 ? ` · owes +${fmt(_delta)}` : ` · credit ${fmt(-_delta)}`;
           msg = `Switched · ${coachName(_fromCoachId)} ${attendedA}/${attendedA} keeps ${fmt(aShare)} · ${coachName(toCoachId)} ${moved} cls @ ${fmt(bPrice)}${_recon}`;
         }
-        toast(msg);
+        confirmSaved(msg);
       }},
     ],
   });
@@ -24070,7 +24076,7 @@ window.switchSport = function(memberId) {
   // ─── Target rows: render, add/remove, coach dropdowns, remaining tally ───
   function remainingClasses() {
     const from = enrolled[parseInt($('#sw-from')?.value || 0)] || defaultFrom;
-    const attended = countAttendedUpTo(from.sport, $('#sw-date')?.value || TODAY);
+    const attended = countAttendedUpTo(from.sport, $('#sw-date')?.value || TODAY, from.coachId);
     return Math.max(0, (parseInt(from.classes) || 0) - attended);
   }
   // v6.520 — the money-conserving DEFAULT price for the destination sport: every moved class
@@ -24080,7 +24086,7 @@ window.switchSport = function(memberId) {
   function destPriceDefault() {
     const from = enrolled[parseInt($('#sw-from')?.value || 0)] || defaultFrom;
     if (from.sport === SUMMER_CAMP) return parseFloat(from.price) || 0;
-    const attended = countAttendedUpTo(from.sport, $('#sw-date')?.value || TODAY);
+    const attended = countAttendedUpTo(from.sport, $('#sw-date')?.value || TODAY, from.coachId);
     const total = parseInt(from.classes) || 0;
     const creditedBase = coachBaseForSport(m, from.sport, from.coachId);
     const price = creditedBase > 0 ? creditedBase : (parseFloat(from.price) || 0);
@@ -24163,7 +24169,7 @@ window.switchSport = function(memberId) {
     const from = enrolled[parseInt($('#sw-from')?.value || 0)];
     if (!from) return;
     const switchDate = $('#sw-date')?.value || TODAY;
-    const attended = countAttendedUpTo(from.sport, switchDate);
+    const attended = countAttendedUpTo(from.sport, switchDate, from.coachId);
     const totalClasses = parseInt(from.classes) || 0;
     const remaining = Math.max(0, totalClasses - attended);
     const creditedBase = coachBaseForSport(m, from.sport, from.coachId);
