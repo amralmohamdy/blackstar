@@ -29496,8 +29496,10 @@ PAGES.charts = (main) => {
 // (KPIs, revenue by category, sport revenue, expenses, top expenses) for
 // whatever period the user picks.
 PAGES.reports = (main) => {
-  // period = { type: 'month'|'year'|'all', value: '2026-05' | '2026' | null }
-  let period = { type: 'month', value: latestDataMonth() };
+  // period = { type: 'month'|'year'|'all', value: '2026-05' | '2026' | null, months: [] }
+  // v6.547: Month mode is now MULTI-select — `months` holds the chosen YYYY-MM set (empty = all months),
+  // so the owner can see club performance across several past months at once.
+  let period = { type: 'month', value: latestDataMonth(), months: [latestDataMonth()] };
 
   // ── Discover all months/years that have data so the selector is dynamic ──
   function discoverPeriods() {
@@ -29515,7 +29517,10 @@ PAGES.reports = (main) => {
     if (!monthStr) return false;
     if (period.type === 'all') return true;
     if (period.type === 'year') return monthStr.startsWith(period.value);
-    return monthStr === period.value;
+    // Month mode: multi-select set (empty = all months). v6.547
+    const ms = period.months || [];
+    if (ms.length) return ms.includes(monthStr);
+    return period.value ? monthStr === period.value : true;
   }
   function inPeriodDate(d) { return d ? inPeriod(d.slice(0, 7)) : false; }
 
@@ -29538,8 +29543,8 @@ PAGES.reports = (main) => {
 
     // Previous period (for delta arrow), billed basis.
     let prevRev = 0;
-    if (period.type === 'month') {
-      const idx = allMonths.indexOf(period.value);
+    if (period.type === 'month' && (period.months || []).length === 1) {
+      const idx = allMonths.indexOf(period.months[0]);
       if (idx > 0) prevRev = billedInPeriod(m => m === allMonths[idx - 1]);
     } else if (period.type === 'year') {
       const yIdx = allYears.indexOf(period.value);
@@ -29571,7 +29576,10 @@ PAGES.reports = (main) => {
   function periodLabel() {
     if (period.type === 'all') return 'All time';
     if (period.type === 'year') return period.value;
-    return fmtMonth(period.value);
+    const ms = (period.months || []).slice().sort();
+    if (!ms.length) return 'All months';
+    if (ms.length === 1) return fmtMonth(ms[0]);
+    return `${ms.length} months (${fmtMonth(ms[0])} – ${fmtMonth(ms[ms.length - 1])})`;
   }
 
   const REVCAT_COLORS = { 'Membership':'#10b981','Court Rental':'#f2a33c','Boxing Room':'#5b8def','Product':'#8b5cf6','Other':'#888' };
@@ -29687,7 +29695,7 @@ PAGES.reports = (main) => {
           <button class="btn ghost sm rep-tab" data-type="year">Year</button>
           <button class="btn ghost sm rep-tab" data-type="all">All time</button>
         </div>
-        <select id="rep-month" class="btn ghost">${monthOptions}</select>
+        ${monthMultiHTML('rep-month', allMonths, period.months)}
         <select id="rep-year" class="btn ghost" style="display:none">${yearOptions}</select>
         <button class="btn primary" id="print-summary">🖨 Print summary</button>
       </div>
@@ -29703,19 +29711,20 @@ PAGES.reports = (main) => {
       // Active state
       document.querySelectorAll('.rep-tab').forEach(b => { b.style.background = ''; b.style.color = ''; });
       btn.style.background = 'var(--accent)'; btn.style.color = '#fff';
-      // Show/hide the relevant selector
-      $('#rep-month').style.display = type === 'month' ? '' : 'none';
+      // Show/hide the relevant selector (the month picker is the multi-select component)
+      const mm = $('#rep-month'); if (mm) mm.style.display = type === 'month' ? 'inline-flex' : 'none';
       $('#rep-year').style.display = type === 'year' ? '' : 'none';
-      // Set value
-      if (type === 'month') period.value = $('#rep-month').value;
-      else if (type === 'year') period.value = $('#rep-year').value;
-      else period.value = null;
+      // Set value (month keeps its multi-select `months`; year/all use `value`)
+      if (type === 'year') period.value = $('#rep-year').value;
+      else if (type === 'all') period.value = null;
       $('#rep-subtitle').textContent = `Showing: ${periodLabel()}`;
       renderBody();
     });
   });
-  $('#rep-month').addEventListener('change', e => {
-    period.value = e.target.value;
+  // v6.547: month picker is multi-select — pick several months to see combined performance.
+  bindMonthMulti('rep-month', (sel) => {
+    period.months = sel;
+    period.value = sel.length === 1 ? sel[0] : null;
     $('#rep-subtitle').textContent = `Showing: ${periodLabel()}`;
     renderBody();
   });
