@@ -3302,6 +3302,30 @@ function showMemberForm(m) {
         originalCoachId: e.coachId,  // v6.504: remember original coach → change-coach vs add-coach at save
       };
     });
+    // v6.548: also surface ACTIVE subscriptions that have NO matching enrollment (same sport+coach) — a
+    // same-sport two-coach enrolment or a manual coach-change can leave the second coach ONLY in
+    // subscriptions, so the Edit form was missing that sport/coach row even though the member card showed
+    // it (Ezz El-Din: card showed Kick Boxing·Aziz + Kick Boxing·Abdel Salam + MMA, but Edit showed 2).
+    // Only ACTIVE, non-switched-away subs are added, so old completed history never clutters the form.
+    const _covered = new Set(window._enrollRows.map(r => (r.sport || '') + '|' + String(r.coachId)));
+    for (const s of (m.subscriptions || [])) {
+      if (!s.activity || s.coachId == null) continue;
+      const _st = (s.status || '').toLowerCase();
+      if (_st === 'completed' || _st === 'withdrawn' || s.switchedAwayTo) continue;
+      const _key = s.activity + '|' + String(s.coachId);
+      if (_covered.has(_key)) continue;
+      _covered.add(_key);
+      window._enrollRows.push({
+        sport: s.activity, coachId: s.coachId,
+        classes: s.totalClasses ?? '', price: s.amountPaid ?? '',
+        durationLabel: s.durationLabel || null,
+        start: s.start || m.startDate || TODAY,
+        validity: (parseInt(s.validity)) || (s.start && s.end ? daysBetween(s.start, s.end) : 0) || parseInt(m.validity) || DEFAULT_VALIDITY,
+        paid: isEnrollmentPaid(m.id, s.activity),
+        attended: (typeof liveAttendanceCount === 'function' ? (liveAttendanceCount(m, s.activity).y || 0) : 0),
+        originalSport: s.activity, originalCoachId: s.coachId,
+      });
+    }
   } else if (m.subscriptions && m.subscriptions.length) {
     // Build from latest subscription per sport
     const bySport = new Map();
