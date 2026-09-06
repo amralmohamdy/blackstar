@@ -5908,6 +5908,29 @@ window.rebuildMemberFromProfile = function (memberId) {
   if (currentRole() !== 'admin') { toast(t('Admins only', 'للمشرفين فقط'), 'error'); return; }
   const m = state.members.find(x => x.id === memberId);
   if (!m) return;
+  // v6.549: Rebuild syncs the invoice/subscriptions to the ENROLLMENTS and matches lines by SPORT only.
+  // It therefore CANNOT represent a same-sport TWO-COACH enrolment (one sport under two coaches) — running
+  // it would collapse the two coaches into one and mis-bill the member (Ezz El-Din: Kick Boxing under Aziz
+  // AND Abdel Salam). Detect that and STOP, pointing to the safe tools, so Rebuild can't mangle the data.
+  const _activeSubs = (m.subscriptions || []).filter(s => s.activity && s.coachId != null
+    && !['completed', 'withdrawn'].includes((s.status || '').toLowerCase()) && !s.switchedAwayTo);
+  const _coachesPerSport = {};
+  for (const s of _activeSubs) { (_coachesPerSport[s.activity] = _coachesPerSport[s.activity] || new Set()).add(String(s.coachId)); }
+  const _twoCoach = Object.keys(_coachesPerSport).filter(sp => _coachesPerSport[sp].size > 1);
+  if (_twoCoach.length) {
+    showModal({
+      title: '🔄 ' + t('Rebuild not available here', 'إعادة البناء غير متاحة هنا'),
+      body: `<div style="font-size:13px;line-height:1.6">
+        <div style="color:var(--accent-2);font-weight:700;margin-bottom:8px">⚠ ${t('This member trains a sport under TWO coaches', 'هذا العضو يتدرب في رياضة مع مدرّبَين')}: <b>${_twoCoach.map(escapeHtml).join(', ')}</b>.</div>
+        <div class="text-mute">${t('“Rebuild from profile” matches by sport only, so it would merge the two coaches into one and mis-bill this member. To fix this member\'s invoice, use <b>Edit pricing</b> (adjust each line) or the <b>Switch review</b> tool — both keep the two coaches separate.', '«إعادة البناء من الملف» تطابق حسب الرياضة فقط، لذا ستدمج المدرّبَين في واحد وتُخطئ في الفوترة. لإصلاح فاتورة هذا العضو استخدم <b>تعديل التسعير</b> (اضبط كل سطر) أو أداة <b>مراجعة التحويلات</b> — كلاهما يُبقي المدرّبَين منفصلَين.')}</div>
+      </div>`,
+      actions: [
+        { label: '🔧 ' + t('Edit pricing', 'تعديل التسعير'), class: 'btn primary', onclick: () => { closeModal(); try { editMemberPricing(m.id); } catch (_) {} } },
+        { label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal },
+      ],
+    });
+    return;
+  }
   // v6.496: when the SUBSCRIPTION HISTORY (the real packages bought + paid) no longer matches the
   // member's membership INVOICES, the enrollment-sync below can't fix it — the classic case is a
   // Summer Camp member with SEVERAL renewals but only ONE enrollment, whose invoices went stale /
@@ -17783,7 +17806,7 @@ PAGES.salaries = (main) => {
           <td class="text-right num font-bold" style="color:${netColor}">${fmt(p.net)}</td>
           <td>
             ${p.paidStatus === 'paid'
-              ? `<span class="badge active">Paid ${fmtDate(p.paidDate)}</span>`
+              ? `<span class="badge active" title="${t('Actually paid', 'المدفوع فعلاً')} ${fmt(p.paidTotal)} QAR${p.paidDate ? (t(' on ', ' بتاريخ ') + fmtDate(p.paidDate)) : ''}${(p.net - p.paidTotal) > 0.5 ? ' — ' + t('net is now', 'الصافي الآن') + ' ' + fmt(p.net) + ' (' + t('more attendance added after payment', 'أُضيف حضور بعد الدفع') + ')' : ''}">${t('Paid', 'مدفوع')} ${fmt(p.paidTotal)}${p.paidDate ? ' · ' + fmtDate(p.paidDate) : ''}</span>${(p.net - p.paidTotal) > 0.5 ? `<div style="color:var(--accent-2);font-size:10px;margin-top:2px;font-weight:600" title="${t('More attendance was added after this coach was paid — net rose from', 'أُضيف حضور بعد دفع هذا المدرب — ارتفع الصافي من')} ${fmt(p.paidTotal)} ${t('to', 'إلى')} ${fmt(p.net)}">▲ ${fmt(p.net - p.paidTotal)} ${t('more owed since paid', 'مستحق إضافي بعد الدفع')}</div>` : ''}`
               : p.paidStatus === 'partial'
                 ? `<span class="badge" style="background:rgba(245,158,11,.16);color:#b45309;font-weight:700" title="Paid ${fmt(p.paidTotal)} of ${fmt(p.paidTarget)} — ${fmt(p.paidRemaining)} remaining">🟠 Partial · ${fmt(p.paidTotal)}/${fmt(p.paidTarget)}</span>`
                 : p.carriedOut > 0.005
