@@ -25546,20 +25546,25 @@ PAGES.expiring = (main) => {
     return true;
   }
 
-  // Attended Y-marks per enrolled sport within the member's current cycle window.
+  // Attended Y-marks per enrolled sport within the member's CURRENT cycle window.
   function attendedBySport(m) {
     const enrolls = (m.enrollments && m.enrollments.length) ? m.enrollments : (m.sport ? [{ sport: m.sport, classes: 0 }] : []);
     const out = [];
     for (const e of enrolls) {
       if (!e.sport) continue;
-      // Count ALL present marks for this sport (live, unwindowed) so it matches the
-      // Attendance grid and the class-limit logic — not just marks inside the
-      // member's date window (which under-counted, e.g. showing 6 when 9 attended).
+      // Use the CURRENT cycle's subscription (latest by start) and count attendance ONLY
+      // within ITS window (subAttendanceWindow honours the renewal-gap carry). Counting
+      // unwindowed accumulated marks across every past cycle, so a renewed member read e.g.
+      // "15/8" instead of the current "6/8". This now matches the member card. (v6.554)
+      const subsSp = (m.subscriptions || []).filter(s => (s.activity || '') === e.sport);
+      const sub = subsSp.slice().sort((a, b) => (a.start || '').localeCompare(b.start || '')).slice(-1)[0];
+      const win = (sub && typeof subAttendanceWindow === 'function')
+        ? subAttendanceWindow(m, sub)
+        : { from: (sub && sub.start) || null, to: (sub && sub.end) || null };
       const attended = (typeof liveAttendanceCount === 'function')
-        ? (liveAttendanceCount(m, e.sport, null, null).y || 0) : 0;
+        ? (liveAttendanceCount(m, e.sport, win.from, win.to).y || 0) : 0;
       // Planned = the enrolled class/day limit. Prefer the subscription's
       // totalClasses (the real cap) over the enrollment's classes.
-      const sub = (m.subscriptions || []).filter(s => (s.activity || '') === e.sport).slice(-1)[0];
       const planned = (sub && parseInt(sub.totalClasses)) || parseInt(e.classes) || 0;
       out.push({ sport: e.sport, attended, planned });
     }
