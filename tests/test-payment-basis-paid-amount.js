@@ -1,6 +1,8 @@
-// v6.525 — the Salaries "By payment" basis now pays rate% of the amount ACTUALLY PAID that month
-// (full rate, attendance ignored, no carry-forward), split across an invoice's coach lines by fee,
-// counted in the month of the payment date. (Was rate% of the full charged fee in the billing month.)
+// v6.525 — the Salaries "By payment" basis pays rate% of the amount ACTUALLY PAID (full rate,
+// attendance ignored, no carry-forward), split across an invoice's coach lines by fee.
+// v6.555 — OWNER RULE: that paid amount is credited in the invoice's BILLING (enrolment) month, NOT
+// the month each payment happened to land in. So a membership billed in Aug but paid on 1 Sep still
+// pays the coach entirely in Aug (no split/carry to Sept). Unpaid amounts still earn nothing.
 // "By attendance" is unchanged.
 const H = require('./qc-harness.js');
 const vm = H.vm;
@@ -10,7 +12,7 @@ const src = H.readSrc();
 R.section('source');
 R.ok('payment branch sums payments, not the full line fee', /commissionBase \+= pAmt \* shareRatio;/.test(src));
 R.ok('it attributes a payment by the coach fee / total fee ratio', /const shareRatio = coachFee \/ totalFee;/.test(src));
-R.ok('it counts payments in the payment month (not the billing month)', /else if \(monthKey && pKey !== monthKey\) continue;/.test(src));
+R.ok('it credits the paid amount in the invoice BILLING month (not the payment date month)', /if \(!uptoDate && monthKey && billMonth !== monthKey\) continue;/.test(src));
 R.ok('the old "full line fee in billing month" credit is gone', !/commissionBase \+= \(parseFloat\(li\.price\) \|\| 0\);/.test(src));
 
 function ctxWith(basis, setup) {
@@ -34,10 +36,11 @@ R.section('runtime — full payment vs partial vs paid-in-a-different-month');
   // (b) only 300 paid in Aug → 60% × 300 = 180
   ctx = ctxWith('payment', setup + `state.invoices[0].payments=[{amount:300,date:'2026-08-10',month:'2026-08'}];`);
   R.ok('partial 300 paid in Aug → 180', Math.round((vm.runInContext(`computeMonthlyPay(9,'2026-08')`, ctx).commissionAmount || 0) * 100) / 100 === 180);
-  // (c) paid in SEPT → nothing in Aug (no carry, month-scoped by payment date)
+  // (c) membership BILLED in Aug but paid in SEPT → the whole 540 credits in Aug (billing month),
+  //     nothing splits into Sept. This is the v6.555 owner rule.
   ctx = ctxWith('payment', setup + `state.invoices[0].payments=[{amount:900,date:'2026-09-03',month:'2026-09'}];`);
-  R.ok('paid in Sept → 0 for Aug (counted in the payment month)', (vm.runInContext(`computeMonthlyPay(9,'2026-08')`, ctx).commissionAmount || 0) === 0);
-  R.ok('paid in Sept → 540 for Sept', Math.round((vm.runInContext(`computeMonthlyPay(9,'2026-09')`, ctx).commissionAmount || 0) * 100) / 100 === 540);
+  R.ok('billed Aug, paid Sept → 540 in Aug (billing month)', Math.round((vm.runInContext(`computeMonthlyPay(9,'2026-08')`, ctx).commissionAmount || 0) * 100) / 100 === 540);
+  R.ok('billed Aug, paid Sept → 0 in Sept (no split/carry to the payment month)', (vm.runInContext(`computeMonthlyPay(9,'2026-09')`, ctx).commissionAmount || 0) === 0);
   // (d) NO carry-forward: nothing pends
   ctx = ctxWith('payment', setup + `state.invoices[0].payments=[{amount:300,date:'2026-08-10',month:'2026-08'}];`);
   R.ok('payment basis never pends (no carry-forward)', (vm.runInContext(`computeMonthlyPay(9,'2026-08')`, ctx).commissionPending || 0) === 0);

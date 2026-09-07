@@ -4842,7 +4842,7 @@ window.editCoach = function(id, defaultRole) {
           <select id="c-basis">
             <option value="" ${!c.commissionBasis ? 'selected' : ''}>${t('Use club default', 'الافتراضي للنادي')}</option>
             <option value="attendance" ${c.commissionBasis === 'attendance' ? 'selected' : ''}>${t('By attendance (per class attended)', 'بالحضور (لكل حصة)')}</option>
-            <option value="payment" ${c.commissionBasis === 'payment' ? 'selected' : ''}>${t('By payment (on amount paid that month)', 'بالدفع (على المبلغ المدفوع شهرياً)')}</option>
+            <option value="payment" ${c.commissionBasis === 'payment' ? 'selected' : ''}>${t('By payment (full amount, in the membership\'s month)', 'بالدفع (المبلغ الكامل، في شهر الاشتراك)')}</option>
           </select>
         </div>
       </div>
@@ -17934,7 +17934,7 @@ PAGES.salaries = (main) => {
       <div style="font-size:12px;color:var(--text-dim);line-height:1.5">
         Salaries = <b>Fixed monthly</b> (set per person on the Team page) + <b>Commission</b>, on one of two bases:
         <br>• <b>By attendance</b> (current) — <b>fee ÷ total classes × rate%</b> for <b>each class a student attends</b>, counted in the month attended; the unattended remainder stays <span style="color:var(--accent-2)">⏳ Pending</span> and is <b>trued-up</b> in the month the membership expires.
-        <br>• <b>By payment</b> — <b>rate% × the amount actually PAID that month</b>, at full rate (attendance ignored), with <b>no carry-forward</b>: a coach earns their share of the cash collected each month, nothing deferred. (Used for private coaches paid a full monthly fee.)
+        <br>• <b>By payment</b> — <b>rate% × the amount PAID</b>, at full rate (attendance ignored), with <b>no carry-forward</b>: the paid amount is credited in the membership's own (billing) month, so a membership paid across two months still pays the coach fully in its start month — nothing splits into the next month. Unpaid amounts earn nothing. (Used for private coaches paid a full monthly fee.)
         <br>Frozen memberships don't true-up until they end. Summer Camp earns no commission.
       </div>
     </div>
@@ -17942,10 +17942,10 @@ PAGES.salaries = (main) => {
     <div class="card">
       <div class="filter-bar" style="flex-wrap:wrap;align-items:center;gap:10px">
         <span style="font-size:12px;color:var(--text-mute)">Commission basis <span class="text-mute" style="font-size:10px">(club default)</span>:</span>
-        <span class="badge active" style="font-size:11px" title="The club-wide default. Individual coaches can override it on the Team page (Commission basis). This badge is locked to prevent accidental changes — use ‘change…’.">🔒 ${(state.settings?.commissionBasis === 'payment') ? t('By payment (on amount paid that month)', 'بالدفع (على المبلغ المدفوع شهرياً)') : t('By attendance (per class attended)', 'بالحضور (لكل حصة)')}</span>
+        <span class="badge active" style="font-size:11px" title="The club-wide default. Individual coaches can override it on the Team page (Commission basis). This badge is locked to prevent accidental changes — use ‘change…’.">🔒 ${(state.settings?.commissionBasis === 'payment') ? t('By payment (full amount, in the membership\'s month)', 'بالدفع (المبلغ الكامل، في شهر الاشتراك)') : t('By attendance (per class attended)', 'بالحضور (لكل حصة)')}</span>
         <button id="sal-basis-change" class="btn ghost sm" style="font-size:10px;opacity:.6" title="Admin: switch the club-wide default (each coach can still override it on the Team page)">change…</button>
         <select id="sal-basis" class="btn ghost" style="display:none">
-          <option value="payment" ${(state.settings?.commissionBasis || 'payment') === 'payment' ? 'selected' : ''}>By payment (full rate on amount paid that month)</option>
+          <option value="payment" ${(state.settings?.commissionBasis || 'payment') === 'payment' ? 'selected' : ''}>By payment (full rate on amount paid, in the membership's month)</option>
           <option value="attendance" ${state.settings?.commissionBasis === 'attendance' ? 'selected' : ''}>By attendance (per class attended)</option>
         </select>
         <label id="sal-attended-only" style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-mute);cursor:pointer" title="${t('When ON, an EXPIRED membership pays the coach ONLY for classes actually attended — no true-up of carried-forward / unused sessions. Applies to every coach except those overridden on the Team page. (Attendance basis only.)', 'عند التفعيل، العضوية المنتهية تدفع للمدرب مقابل الحصص المحضورة فقط — دون احتساب الحصص المُرحّلة/غير المحضورة. تنطبق على كل المدربين إلا من له إعداد خاص في صفحة الفريق. (أساس الحضور فقط.)')}">
@@ -17998,7 +17998,7 @@ PAGES.salaries = (main) => {
     const next = e.target.value === 'attendance' ? 'attendance' : 'payment';
     // Switching away from attendance changes how every coach is paid — confirm.
     if (next === 'payment') {
-      if (!confirm('Switch to "By payment"? This pays each coach rate% of the amount ACTUALLY PAID each month (full rate, attendance ignored, no carry-forward) — used for private coaches on a full monthly fee. It replaces the attendance basis + expiry true-up for everyone.\n\nAre you sure?')) {
+      if (!confirm('Switch to "By payment"? This pays each coach rate% of the amount ACTUALLY PAID, credited in the membership\'s own (billing) month — full rate, attendance ignored, no carry-forward across months — used for private coaches on a full monthly fee. It replaces the attendance basis + expiry true-up for everyone.\n\nAre you sure?')) {
         e.target.value = 'attendance';   // revert the select
         return;
       }
@@ -20903,7 +20903,7 @@ PAGES.settings = (main, section) => {
       <div style="background:var(--surface-2);border-radius:8px;padding:12px;margin-bottom:14px">
         <label style="font-weight:600;font-size:13px;display:block;margin-bottom:6px">Commission basis</label>
         <select id="pref-commbasis" style="min-width:300px">
-          <option value="payment" ${(cur.commissionBasis || 'payment') === 'payment' ? 'selected' : ''}>By payment — full fee counts in the month paid (current)</option>
+          <option value="payment" ${(cur.commissionBasis || 'payment') === 'payment' ? 'selected' : ''}>By payment — amount paid counts in the membership's month (current)</option>
           <option value="attendance" ${cur.commissionBasis === 'attendance' ? 'selected' : ''}>By attendance — per class attended; the rest shows as pending</option>
         </select>
         <div class="text-mute" style="font-size:11px;margin-top:6px;line-height:1.5">

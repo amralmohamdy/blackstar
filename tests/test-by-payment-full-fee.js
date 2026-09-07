@@ -55,12 +55,12 @@ R.section('a DELETED invoice earns nothing (no phantom duplicate)');
   R.ok('deleted-only → gross 0 (deleted invoice not counted even with a payment)', gross === 0, 'gross=' + gross);
 }
 
-R.section('a payment made in a LATER month is NOT counted in August (no carry, month-scoped by pay date)');
+R.section('v6.555: a payment made in a LATER month credits the BILLING month (Aug), not the pay month');
 {
   const ctx = H.makeCtx({ role: 'admin', today: '2026-08-31' }); seed(ctx);
   run(ctx, `state.invoices.find(i=>i.id===861804851).payments=[{amount:960,date:'2026-09-04',month:'2026-09'}];`);
-  R.ok('paid in Sept → Aug gross 0', run(ctx, `computeMonthlyPay(11, '2026-08').gross`) === 0);
-  R.ok('paid in Sept → Sept gross 576', Math.abs(run(ctx, `computeMonthlyPay(11, '2026-09').gross`) - 576) < 0.005);
+  R.ok('billed Aug, paid Sept → Aug gross 576 (full amount in the billing month)', Math.abs(run(ctx, `computeMonthlyPay(11, '2026-08').gross`) - 576) < 0.005);
+  R.ok('billed Aug, paid Sept → Sept gross 0 (no split/carry to the payment month)', run(ctx, `computeMonthlyPay(11, '2026-09').gross`) === 0);
 }
 
 R.section('Summer Camp still earns nothing under by-payment');
