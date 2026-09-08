@@ -23774,7 +23774,12 @@ window.switchSport = function(memberId) {
     // back to unbounded (legacy behaviour for members with no subscription record).
     let sinceStr = '';
     if (Array.isArray(m.subscriptions)) {
-      const srcSub = m.subscriptions.find(s => (s.activity || '') === sport && (coachId == null || String(s.coachId) === String(coachId)) && s.status !== 'completed' && s.status !== 'withdrawn' && !s.switchedAwayTo);
+      // v6.556: pick the CURRENT cycle — the sub whose window COVERS the switch date — not the FIRST
+      // active sub. For a renewed sport the first active sub is the OLDER (expired) cycle, whose start
+      // floored the count too early and summed attendance across BOTH cycles (over-crediting the old
+      // coach on the switch). Fall back to the latest-by-start sub, then unbounded (legacy) if none.
+      const _cuCands = m.subscriptions.filter(s => (s.activity || '') === sport && (coachId == null || String(s.coachId) === String(coachId)) && s.status !== 'completed' && s.status !== 'withdrawn' && !s.switchedAwayTo);
+      const srcSub = _cuCands.find(s => (s.start || '') <= untilDateStr && (!s.end || untilDateStr <= s.end)) || _cuCands.slice().sort((a, b) => (a.start || '').localeCompare(b.start || '')).slice(-1)[0];
       if (srcSub && srcSub.start) sinceStr = String(srcSub.start).slice(0, 10);
     }
     let total = 0;
@@ -23965,8 +23970,13 @@ window.switchSport = function(memberId) {
           const _isLegacy = v => !(Array.isArray(v.lineItems) && v.lineItems.length)
             && (v.sport === from.sport || String(v.sport || '').split(/\s*,\s*/).includes(from.sport))
             && (v.coachId == null || String(v.coachId) === String(from.coachId));
-          const _inv = (state.invoices || []).find(v => !v.deleted && !v.switchCredit && v.activityType !== 'switch-credit'
+          // v6.556: split the CURRENT cycle's invoice — the latest membership invoice dated on/before the
+          // switch — not the FIRST match. For a renewed sport the first match is the OLDER cycle's invoice,
+          // so the split capped the wrong (already-completed) invoice and left the current cycle intact.
+          const _invMatches = (state.invoices || []).filter(v => !v.deleted && !v.switchCredit && v.activityType !== 'switch-credit'
             && (v.category || 'Membership') === 'Membership' && v.customerId === m.id && (_hasLine(v) || _isLegacy(v)));
+          const _invByDate = _invMatches.slice().sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+          const _inv = _invByDate.filter(v => String(v.date || '') <= switchDate).slice(-1)[0] || _invByDate.slice(-1)[0] || null;
           if (_inv) {
             if (!(Array.isArray(_inv.lineItems) && _inv.lineItems.length)) {
               // Legacy top-level invoice → seed a lineItems array from its own fields so the split has a line.
@@ -24067,7 +24077,12 @@ window.switchSport = function(memberId) {
         // attended, completed) and size/repurpose the destination subscription to the remaining
         // classes + transferred value, so the card and payroll read one split package.
         if (!skipReconciliation && Array.isArray(m.subscriptions)) {
-          const srcSub = m.subscriptions.find(s => (s.activity || '') === _fromSport && _sameCoach(s.coachId, _fromCoachId) && s.status !== 'completed' && !s.switchedAwayTo);
+          // v6.556: cap/switch the CURRENT cycle (the sub covering the switch date), not the FIRST active
+          // sub. Otherwise a renewed sport switched the OLD (expired) cycle: the destination inherited its
+          // stale end date (a backwards window start>end → "outside period", 0 attendance) and the current
+          // cycle stayed under the old coach. Fall back to the latest-by-start sub when none covers the date.
+          const _srcCands = m.subscriptions.filter(s => (s.activity || '') === _fromSport && _sameCoach(s.coachId, _fromCoachId) && s.status !== 'completed' && !s.switchedAwayTo);
+          const srcSub = _srcCands.find(s => (s.start || '') <= switchDate && (!s.end || switchDate <= s.end)) || _srcCands.slice().sort((a, b) => (a.start || '').localeCompare(b.start || '')).slice(-1)[0];
           if (srcSub) {
             srcSub.status = 'completed';
             srcSub.switchedAwayTo = toSport;

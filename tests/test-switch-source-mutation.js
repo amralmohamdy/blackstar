@@ -17,7 +17,8 @@ const src = H.readSrc();
 R.section('capture the source sport/coach before the enrollment is mutated');
 ok('captures _fromSport / _fromCoachId', /const _fromSport = from\.sport, _fromCoachId = from\.coachId;/.test(src));
 ok('enrollment lookup uses the captured source', /m\.enrollments\.findIndex\(e => e\.sport === _fromSport && _sameCoach\(e\.coachId, _fromCoachId\)\)/.test(src));
-ok('source-sub lookup uses the captured source (not the mutated from.*)', /m\.subscriptions\.find\(s => \(s\.activity \|\| ''\) === _fromSport && _sameCoach\(s\.coachId, _fromCoachId\)/.test(src));
+ok('source-sub lookup uses the captured source (not the mutated from.*)', /m\.subscriptions\.filter\(s => \(s\.activity \|\| ''\) === _fromSport && _sameCoach\(s\.coachId, _fromCoachId\)/.test(src));
+ok('v6.556: source sub is the CURRENT cycle (covers the switch date), not the first active sub', /const srcSub = _srcCands\.find\(s => \(s\.start \|\| ''\) <= switchDate && \(!s\.end \|\| switchDate <= s\.end\)\)/.test(src));
 ok('legacy primary lookup uses the captured source', /if \(m\.sport === _fromSport && _sameCoach\(m\.coachId, _fromCoachId\)\)/.test(src));
 
 R.section('coachId comparisons are String-normalized');
