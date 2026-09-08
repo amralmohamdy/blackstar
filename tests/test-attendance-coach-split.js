@@ -41,7 +41,10 @@ R.ok('inWin helper gates a day by the coach window', /function inWin\(win, mo, d
 R.ok('club total is windowed (no double-count across split rows)', /if \(!inWin\(window, mk, k\)\) continue;/.test(src));
 R.ok('all-months summary count is windowed', /if \(dd\[k\] === 'Y' && inWin\(window, mo, k\)\) y\+\+;/.test(src));
 R.ok('single-month grid count is windowed', /if \(!inWin\(window, gMonth, d\)\) return;/.test(src));
-R.ok('out-of-window cells are muted + non-clickable', /outside \$\{escapeHtml\(coachName\(coachId\)\)\}'s period/.test(src));
+// v6.557: out-of-window cells are still WINDOWED for counting (totals stay per-coach), but they are no
+// longer DEAD — they render clickable with an amber warning so the desk can always log, without
+// double-counting (the mark writes this row's own key). Counting above stays windowed.
+R.ok('out-of-window cells are clickable WITH a warning (not dead)', /: cellRender\(m\.id, aKey, d, dayData\[String\(d\)\], `Outside \$\{coachName\(coachId\)\}/.test(src) && !/att-cell att-empty" style="opacity:\.2" title="outside /.test(src));
 R.ok('a coach login sees only their own window row', /if \(myCoachId != null && String\(myCoachId\) !== cid\) continue;/.test(src));
 
 R.done();

@@ -21805,6 +21805,11 @@ PAGES.attendance = (main) => {
   // v6.505: is a given day inside a split row's coach WINDOW? (window null = whole sport, no split)
   function inWin(win, mo, dayKey) {
     if (!win) return true;
+    // v6.557: a CORRUPT window (from > to) — e.g. a broken switch left the sub start AFTER its end —
+    // can never contain ANY day, which silently blocks ALL marking for that row ("outside period",
+    // nothing clickable). NEVER hard-block on bad data: treat an invalid window as OPEN so the desk
+    // can still log attendance (a ⚠ warning is shown on the row). The stored window is left untouched.
+    if (win.from && win.to && win.from > win.to) return true;
     const iso = `${mo}-${String(dayKey).padStart(2, '0')}`;
     if (win.from && iso < win.from) return false;
     if (win.to && iso > win.to) return false;
@@ -21816,6 +21821,7 @@ PAGES.attendance = (main) => {
   // null = single-coach whole-sport row → always kept, so ongoing/expired members still appear.)
   function winReachesMonth(win, mo) {
     if (!win) return true;
+    if (win.from && win.to && win.from > win.to) return true;   // v6.557: corrupt window → keep the row visible + markable
     if (win.to && win.to < `${mo}-01`) return false;    // coach's period ended before this month
     if (win.from && win.from > `${mo}-31`) return false; // coach's period starts after this month
     return true;
@@ -22054,11 +22060,17 @@ PAGES.attendance = (main) => {
   }
   window._attMark = markCell;
 
-  function cellRender(memberId, sport, day, mark) {
+  // v6.557: `warn` (a reason string) makes a cell CLICKABLE but flagged — an amber tint + a tooltip
+  // explaining why the day looks off (e.g. outside this coach's computed period). We NEVER render a
+  // dead, non-clickable cell: the desk must always be able to log a class and see the reason, not be
+  // silently blocked. Marking still writes THIS row's own cell key, so no double-count.
+  function cellRender(memberId, sport, day, mark, warn) {
     const cls = mark === 'Y' ? 'att-y' : mark === 'N' ? 'att-n' : 'att-empty';
     const txt = mark || '·';
     const sportEsc = sport.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
-    return `<td class="att-cell ${cls}" onclick="window._attMark(${memberId}, '${sportEsc}', ${day}, ${mark ? `'${mark}'` : 'null'})">${txt}</td>`;
+    const style = warn ? ' style="opacity:.55;background:rgba(245,158,11,.10)"' : '';
+    const title = warn ? ` title="${escapeHtml(warn)}"` : '';
+    return `<td class="att-cell ${cls}${warn ? ' att-outside' : ''}"${style}${title} onclick="window._attMark(${memberId}, '${sportEsc}', ${day}, ${mark ? `'${mark}'` : 'null'})">${txt}</td>`;
   }
 
   function refresh() {
@@ -22158,9 +22170,12 @@ PAGES.attendance = (main) => {
       baseDays.forEach(d => { if (!inWin(window, gMonth, d)) return; const mk = dayData[String(d)]; if (mk === 'Y') y++; if (mk === 'N') n++; });
       // v6.505: cells OUTSIDE this coach's window are muted + non-clickable (they belong to the
       // other coach's row), so a day can only be marked on the coach who taught it.
+      // v6.557: a day outside this coach's computed period is no longer a DEAD cell — it's clickable
+      // with an amber warning, so the desk can ALWAYS log a class (e.g. a switched member whose window
+      // dates are off) and sees the reason. Marking writes this row's own cell (aKey), so no double-count.
       const cells = dayList.map(d => inWin(window, gMonth, d)
         ? cellRender(m.id, aKey, d, dayData[String(d)])
-        : `<td class="att-cell att-empty" style="opacity:.2" title="outside ${escapeHtml(coachName(coachId))}'s period">·</td>`).join('');
+        : cellRender(m.id, aKey, d, dayData[String(d)], `Outside ${coachName(coachId)}'s period for this membership — logging is allowed; check the dates (Switch review / Edit) if this looks wrong.`)).join('');
       const total = y + n;
       const rate = total ? Math.round(y/total*100) : 0;
       const sportEsc = sport.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
