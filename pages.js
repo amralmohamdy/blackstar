@@ -21698,14 +21698,9 @@ PAGES.attendance = (main) => {
         if (!hit) continue;
       }
       for (const sp of wanted) {
-        // Attended / Not-attended filter — evaluated over the selected day(s),
-        // or the whole grid month when no specific day is picked.
-        // v6.398: multi-select — selecting BOTH is the same as no filter, which falls out of the
-        // "does the row's own state appear in the chosen set" test without a special case.
-        if (filter.atts.length) {
-          const want = rowAttended(m, sp) ? 'attended' : 'notattended';
-          if (!filter.atts.includes(want)) continue;
-        }
+        // v6.558: the Attended/Not-attended filter is applied PER ROW at the end (once each row's
+        // coach-scoped attKey + window are known), not here on the plain sport key — otherwise a
+        // two-coach/switched row was mis-classified and the KPI vs the "Attended" list disagreed.
         // v6.505: if this sport was taught by MORE THAN ONE coach (a switch/transfer split, or the
         // v6.504 two-coach enrolment), show ONE row PER coach, each scoped to that coach's attendance
         // WINDOW — so a switched student's classes credit the RIGHT coach (Iyad's window vs Abdel
@@ -21767,15 +21762,20 @@ PAGES.attendance = (main) => {
         rows.push({ m, sport: sp, coachId: rowCoachId, window: null, attKey: sp });
       }
     }
+    // v6.558: Attended/Not-attended filter, applied PER ROW on its own coach-scoped attKey + window
+    // (matches the ATTENDED KPI). Selecting BOTH = no filter (every row passes one of the two).
+    const shown = filter.atts.length
+      ? rows.filter(r => filter.atts.includes(rowAttended(r.m, r.attKey || r.sport, r.window) ? 'attended' : 'notattended'))
+      : rows;
     // Sort: active members first, then expired ones (so admin's attention
     // lands on the active ones, but expired stays accessible)
-    rows.sort((a, b) => {
+    shown.sort((a, b) => {
       const aExp = memberStatus(a.m) === 'Expired';
       const bExp = memberStatus(b.m) === 'Expired';
       if (aExp !== bExp) return aExp ? 1 : -1;
       return (a.m.name || '').localeCompare(b.m.name || '');
     });
-    return rows;
+    return shown;
   }
 
   // Resolve the month used for the day-grid + marking. "all" widens the row
@@ -21788,18 +21788,24 @@ PAGES.attendance = (main) => {
   // True if the member has at least one "present" (Y) mark for this sport within
   // the current scope: the selected day(s) if any, otherwise the whole month.
   // In "All months" mode, looks across every month.
-  function rowAttended(m, sport) {
+  // v6.558: read the row's OWN coach-scoped cell (attKey) and honour the coach WINDOW — the SAME
+  // basis the "ATTENDED" KPI (clubAttended) counts. Reading the plain `sport` key made a
+  // switched/two-coach member (whose Y lives under `sport <coachId>`) look NOT-attended, so the
+  // "Attended" filter dropped rows the KPI had counted (25 attended vs 23 shown). attKey falls back
+  // to the plain sport for ordinary single-coach rows.
+  function rowAttended(m, attKey, window) {
+    const key = attKey || '';
     if (filter.month === 'all') {
       const da = m.dailyAttendance || {};
-      return Object.keys(da).some(mo => Object.values(da[mo]?.[sport] || {}).some(v => v === 'Y'));
+      return Object.keys(da).some(mo => { const cell = da[mo]?.[key] || {}; return Object.keys(cell).some(k => cell[k] === 'Y' && inWin(window, mo, k)); });
     }
     const mo = gridMonth();
-    const data = m.dailyAttendance?.[mo]?.[sport] || {};
+    const data = m.dailyAttendance?.[mo]?.[key] || {};
     const total = daysInMonth(mo);
     const days = (filter.days && filter.days.length)
       ? filter.days.filter(d => d >= 1 && d <= total)
       : Array.from({ length: total }, (_, i) => i + 1);
-    return days.some(d => data[String(d)] === 'Y');
+    return days.some(d => data[String(d)] === 'Y' && inWin(window, mo, d));
   }
 
   // v6.505: is a given day inside a split row's coach WINDOW? (window null = whole sport, no split)
