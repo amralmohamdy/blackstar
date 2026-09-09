@@ -23801,7 +23801,14 @@ window.switchSport = function(memberId) {
       // coach on the switch). Fall back to the latest-by-start sub, then unbounded (legacy) if none.
       const _cuCands = m.subscriptions.filter(s => (s.activity || '') === sport && (coachId == null || String(s.coachId) === String(coachId)) && s.status !== 'completed' && s.status !== 'withdrawn' && !s.switchedAwayTo);
       const srcSub = _cuCands.find(s => (s.start || '') <= untilDateStr && (!s.end || untilDateStr <= s.end)) || _cuCands.slice().sort((a, b) => (a.start || '').localeCompare(b.start || '')).slice(-1)[0];
-      if (srcSub && srcSub.start) sinceStr = String(srcSub.start).slice(0, 10);
+      // v6.559 (QC Finding 4): floor the count at the sub's ATTENDANCE-WINDOW start, not its raw start.
+      // subAttendanceWindow pulls a renewal's window BACK to the day after the prior package ended
+      // (contiguous-attendance carry), and the member card credits gap classes to the current cycle. Using
+      // the raw start missed those, so the switch under-credited the old coach and over-moved classes.
+      if (srcSub) {
+        const _w = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, srcSub) : null;
+        sinceStr = (_w && _w.from) ? String(_w.from).slice(0, 10) : (srcSub.start ? String(srcSub.start).slice(0, 10) : '');
+      }
     }
     let total = 0;
     for (const monthKey of Object.keys(m.dailyAttendance)) {
@@ -23909,11 +23916,26 @@ window.switchSport = function(memberId) {
           });
           if (!Array.isArray(m.enrollments)) m.enrollments = [];
           if (m.enrollments.length === 0 && enrolled.length) m.enrollments = enrolled.map(e => ({ ...e }));
-          const srcIdx = m.enrollments.findIndex(e => e.sport === from.sport && e.coachId === from.coachId);
+          // v6.559 (QC Finding 3): String()-compare coachId (imported ids may be string vs number) — a
+          // strict === left srcIdx = -1, so the old-sport enrollment was never removed (phantom enrolment).
+          const srcIdx = m.enrollments.findIndex(e => e.sport === from.sport && String(e.coachId) === String(from.coachId));
           const srcEnroll = srcIdx >= 0 ? m.enrollments[srcIdx] : from;
           if (srcIdx >= 0) m.enrollments.splice(srcIdx, 1);
-          for (const tr of resolved) m.enrollments.push({ sport: tr.sport, coachId: tr.coachId, classes: tr.classes, price: tr.value, start: srcEnroll.start || switchDate, validity: srcEnroll.validity || DEFAULT_VALIDITY });
-          if (m.sport === from.sport && m.coachId === from.coachId) { m.sport = resolved[0].sport; m.coachId = resolved[0].coachId; }
+          for (const tr of resolved) m.enrollments.push({ sport: tr.sport, coachId: tr.coachId, classes: tr.classes, price: tr.value, switchedInto: true, start: srcEnroll.start || switchDate, validity: srcEnroll.validity || DEFAULT_VALIDITY });
+          if (m.sport === from.sport && String(m.coachId) === String(from.coachId)) { m.sport = resolved[0].sport; m.coachId = resolved[0].coachId; }
+          // v6.559 (QC Finding 2): sync SUBSCRIPTIONS too — the member card, attendance grid and salary all
+          // read subscriptions, not enrollments. Cap the source sub to what was attended + mark it
+          // switched-away, and add ONE switch-funded sub per target for its share of the remaining classes.
+          // Without this the distributed switch left the old sport "active" under the old coach and created
+          // no subscription for any new sport (enrollment/subscription divergence).
+          if (Array.isArray(m.subscriptions)) {
+            const _sc = (a, b) => String(a) === String(b);
+            const _dCands = m.subscriptions.filter(s => (s.activity || '') === from.sport && _sc(s.coachId, from.coachId) && s.status !== 'completed' && !s.switchedAwayTo);
+            const _dSrc = _dCands.find(s => (s.start || '') <= switchDate && (!s.end || switchDate <= s.end)) || _dCands.slice().sort((a, b) => (a.start || '').localeCompare(b.start || '')).slice(-1)[0] || null;
+            const _dEnd = _dSrc ? _dSrc.end : null;
+            if (_dSrc) { _dSrc.status = 'completed'; _dSrc.switchedAwayTo = tgs.map(t => t.sport).join(', '); _dSrc.switchedAt = switchDate; _dSrc.totalClasses = attendedA; _dSrc.amountPaid = aShare; }
+            resolved.forEach((tr, i) => m.subscriptions.push({ activity: tr.sport, coachId: tr.coachId, totalClasses: tr.classes, start: switchDate, end: _dEnd || null, status: 'active', switchFunded: true, amountPaid: tr.value, _sid: 's' + Date.now() + '_swd' + i }));
+          }
           audit('sport.switch', 'member:' + m.id, 'Distributed ' + from.sport + ' → ' + tgs.map(t => t.sport).join(', ') + ' for ' + (m.name || m.nameArabic), { memberId: m.id });
           closeModal(); render();
           // v6.388: confirm the switch (enrollments + credit invoice) reached the cloud before saying so.
@@ -23978,6 +24000,17 @@ window.switchSport = function(memberId) {
         const bPrice = skipReconciliation ? (parseFloat(from.price) || 0)
           : (Number.isFinite(_enteredPrice) && _enteredPrice >= 0 ? Math.round(_enteredPrice * 100) / 100 : Math.round(bShare * 100) / 100);   // v6.532: carried classes are a FREE bonus — default charges only the remaining (bShare), so money stays conserved
 
+        // v6.559 (QC Finding 1): resolve the CURRENT cycle's source subscription ONCE — the sub whose
+        // window COVERS the switch date — and reuse it for BOTH the invoice we split and the sub we cap.
+        // Previously the invoice was chosen by date (latest dated on/before the switch) while the sub was
+        // chosen by cycle; when the current cycle's invoice was dated AFTER the switch (a back-dated
+        // switch or a later-dated renewal) the two DIVERGED — the OLD cycle's paid invoice got split
+        // while the current sub was capped, so Charged ≠ Paid and the dest line/classes were wrong.
+        const _sameCoachId = (a, b) => String(a) === String(b);
+        const _srcCycleCands = (m.subscriptions || []).filter(s => (s.activity || '') === from.sport && _sameCoachId(s.coachId, from.coachId) && s.status !== 'completed' && !s.switchedAwayTo);
+        const _srcSubCycle = _srcCycleCands.find(s => (s.start || '') <= switchDate && (!s.end || switchDate <= s.end))
+          || _srcCycleCands.slice().sort((a, b) => (a.start || '').localeCompare(b.start || '')).slice(-1)[0] || null;
+
         // ─── SPLIT THE ONE MEMBERSHIP INVOICE (v6.520) ─────────────
         // No separate net-zero switch-credit any more. The member's membership invoice is split in
         // place: the source (Sport A) line is capped to attended/aShare, and a Sport B line is ADDED
@@ -23997,7 +24030,13 @@ window.switchSport = function(memberId) {
           const _invMatches = (state.invoices || []).filter(v => !v.deleted && !v.switchCredit && v.activityType !== 'switch-credit'
             && (v.category || 'Membership') === 'Membership' && v.customerId === m.id && (_hasLine(v) || _isLegacy(v)));
           const _invByDate = _invMatches.slice().sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
-          const _inv = _invByDate.filter(v => String(v.date || '') <= switchDate).slice(-1)[0] || _invByDate.slice(-1)[0] || null;
+          // v6.559 (QC Finding 1): prefer the invoice DATED WITHIN the current cycle's own window (so the
+          // invoice and the capped sub are the SAME cycle even when the invoice date is after the switch);
+          // fall back to the latest dated on/before the switch, then the latest overall.
+          const _cycleInv = _srcSubCycle ? _invByDate.filter(v => String(v.date || '') >= (_srcSubCycle.start || '') && (!_srcSubCycle.end || String(v.date || '') <= _srcSubCycle.end)) : [];
+          const _inv = _cycleInv.slice(-1)[0]
+            || _invByDate.filter(v => String(v.date || '') <= switchDate).slice(-1)[0]
+            || _invByDate.slice(-1)[0] || null;
           if (_inv) {
             if (!(Array.isArray(_inv.lineItems) && _inv.lineItems.length)) {
               // Legacy top-level invoice → seed a lineItems array from its own fields so the split has a line.
@@ -24098,12 +24137,11 @@ window.switchSport = function(memberId) {
         // attended, completed) and size/repurpose the destination subscription to the remaining
         // classes + transferred value, so the card and payroll read one split package.
         if (!skipReconciliation && Array.isArray(m.subscriptions)) {
-          // v6.556: cap/switch the CURRENT cycle (the sub covering the switch date), not the FIRST active
-          // sub. Otherwise a renewed sport switched the OLD (expired) cycle: the destination inherited its
-          // stale end date (a backwards window start>end → "outside period", 0 attendance) and the current
-          // cycle stayed under the old coach. Fall back to the latest-by-start sub when none covers the date.
-          const _srcCands = m.subscriptions.filter(s => (s.activity || '') === _fromSport && _sameCoach(s.coachId, _fromCoachId) && s.status !== 'completed' && !s.switchedAwayTo);
-          const srcSub = _srcCands.find(s => (s.start || '') <= switchDate && (!s.end || switchDate <= s.end)) || _srcCands.slice().sort((a, b) => (a.start || '').localeCompare(b.start || '')).slice(-1)[0];
+          // v6.556/6.559: cap/switch the CURRENT cycle — the SAME sub resolved above for the invoice
+          // split (covers the switch date), never the FIRST active sub. Otherwise a renewed sport switched
+          // the OLD cycle: the destination inherited a stale end (backwards window → "outside period") and
+          // the current cycle stayed under the old coach.
+          const srcSub = _srcSubCycle;
           if (srcSub) {
             srcSub.status = 'completed';
             srcSub.switchedAwayTo = toSport;
