@@ -18465,10 +18465,10 @@ window.markPaid = function(coachId, monthKey) {
   const rec = _salPaidRec(coachId, monthKey);
   const payments = salaryPayments(rec);
   const paidTotal = pay.paidTotal;
-  const target = rec ? salaryTarget(rec, pay.net) : pay.net;
-  // Match computeMonthlyPay: a sub-1-QAR gap (rounded payment vs fractional target) is settled.
-  const _remRaw = target - paidTotal;
-  const remaining = _remRaw > 0.5 ? _remRaw : 0;
+  // v6.560: use computeMonthlyPay's target/remaining (target now tracks the live net), so when the
+  // commission grew after payment the Pay dialog offers the NEW remaining, not 0.
+  const target = pay.paidTarget;
+  const remaining = pay.paidRemaining;
   const methodLabel = m => ({ cash: t('Cash', 'نقداً'), transfer: t('Bank transfer', 'تحويل بنكي'), card: t('Card', 'بطاقة') }[m] || m);
   const statusColor = pay.paidStatus === 'paid' ? 'var(--green,#12724a)' : pay.paidStatus === 'partial' ? '#f59e0b' : 'var(--text-mute,#64748b)';
   const statusLabel = pay.paidStatus === 'paid' ? t('Fully paid', 'مدفوع بالكامل') : pay.paidStatus === 'partial' ? t('Partially paid', 'مدفوع جزئياً') : t('Not paid yet', 'غير مدفوع بعد');
@@ -19125,15 +19125,23 @@ window.showRevenueDetail = function(coachId, monthKey) {
       if ((inv.category || 'Membership') !== 'Membership') continue;
       const mem = inv.customerId ? state.members.find(x => x.id === inv.customerId) : null;
       if (mem && mem.deleted) continue;
+      // v6.560: attribute to the invoice's BILLING month (matches computeMonthlyPay v6.555), so this
+      // report's rows and total equal the Salaries row. Was: filtered payments by their own DATE month,
+      // which listed an invoice under the month its cash arrived — diverging from the salary row (e.g. a
+      // membership billed in Aug but paid on 1 Sep appeared here in Sep while the row credited Aug).
+      const _billM = (typeof invoiceBillMonth === 'function') ? invoiceBillMonth(inv) : (inv.month || String(inv.date || '').slice(0, 7));
+      if (_billM !== monthKey) continue;
       const lis = (Array.isArray(inv.lineItems) && inv.lineItems.length) ? inv.lineItems : [{ sport: inv.sport, coachId: inv.coachId, price: inv.amount || 0 }];
       let coachFee = 0, totalFee = 0;
       for (const li of lis) { const pr = parseFloat(li.price) || 0; totalFee += pr; if (li.sport === SUMMER_CAMP) continue; if (String(li.coachId) !== String(coachId)) continue; const elig = lineCommissionEligibility(mem, inv, li, null); if (!elig.excluded) coachFee += pr; }
       if (coachFee <= 0 || totalFee <= 0) continue;
       const ratio = coachFee / totalFee;
+      // sum ALL positive payments on this (billing-month) invoice — the whole paid amount is credited in
+      // its billing month (never split by payment date).
       let paidThisMonth = 0;
       let _rp = (Array.isArray(inv.payments) ? inv.payments : []).filter(p => (Number(p.amount) || 0) > 0);
-      if (!_rp.length && (Number(inv.amountPaid) || 0) > 0) _rp = [{ amount: Number(inv.amountPaid), month: inv.month || String(inv.date || "").slice(0, 7) }];
-      for (const p of _rp) { const amt = Number(p.amount) || 0; if (amt <= 0) continue; const pk = p.month || String(p.date || "").slice(0, 7); if (pk === monthKey) paidThisMonth += amt; }
+      if (!_rp.length && (Number(inv.amountPaid) || 0) > 0) _rp = [{ amount: Number(inv.amountPaid) }];
+      for (const p of _rp) { const amt = Number(p.amount) || 0; if (amt > 0) paidThisMonth += amt; }
       const share = Math.round(paidThisMonth * ratio * 100) / 100;
       if (Math.abs(share) < 0.005) continue;
       rebuilt.push({
@@ -19280,15 +19288,23 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
       if ((inv.category || 'Membership') !== 'Membership') continue;
       const mem = inv.customerId ? state.members.find(x => x.id === inv.customerId) : null;
       if (mem && mem.deleted) continue;
+      // v6.560: attribute to the invoice's BILLING month (matches computeMonthlyPay v6.555), so this
+      // report's rows and total equal the Salaries row. Was: filtered payments by their own DATE month,
+      // which listed an invoice under the month its cash arrived — diverging from the salary row (e.g. a
+      // membership billed in Aug but paid on 1 Sep appeared here in Sep while the row credited Aug).
+      const _billM = (typeof invoiceBillMonth === 'function') ? invoiceBillMonth(inv) : (inv.month || String(inv.date || '').slice(0, 7));
+      if (_billM !== monthKey) continue;
       const lis = (Array.isArray(inv.lineItems) && inv.lineItems.length) ? inv.lineItems : [{ sport: inv.sport, coachId: inv.coachId, price: inv.amount || 0 }];
       let coachFee = 0, totalFee = 0;
       for (const li of lis) { const pr = parseFloat(li.price) || 0; totalFee += pr; if (li.sport === SUMMER_CAMP) continue; if (String(li.coachId) !== String(coachId)) continue; const elig = lineCommissionEligibility(mem, inv, li, null); if (!elig.excluded) coachFee += pr; }
       if (coachFee <= 0 || totalFee <= 0) continue;
       const ratio = coachFee / totalFee;
+      // sum ALL positive payments on this (billing-month) invoice — the whole paid amount is credited in
+      // its billing month (never split by payment date).
       let paidThisMonth = 0;
       let _rp = (Array.isArray(inv.payments) ? inv.payments : []).filter(p => (Number(p.amount) || 0) > 0);
-      if (!_rp.length && (Number(inv.amountPaid) || 0) > 0) _rp = [{ amount: Number(inv.amountPaid), month: inv.month || String(inv.date || "").slice(0, 7) }];
-      for (const p of _rp) { const amt = Number(p.amount) || 0; if (amt <= 0) continue; const pk = p.month || String(p.date || "").slice(0, 7); if (pk === monthKey) paidThisMonth += amt; }
+      if (!_rp.length && (Number(inv.amountPaid) || 0) > 0) _rp = [{ amount: Number(inv.amountPaid) }];
+      for (const p of _rp) { const amt = Number(p.amount) || 0; if (amt > 0) paidThisMonth += amt; }
       const share = Math.round(paidThisMonth * ratio * 100) / 100;
       if (Math.abs(share) < 0.005) continue;
       rebuilt.push({

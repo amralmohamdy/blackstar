@@ -31,7 +31,10 @@ R.section('fixture: an already-PAID coach who still has pending');
   const ctx = H.makeCtx({ role: 'admin' }); seed(ctx);
   const p = run(ctx, `computeMonthlyPay(4,'2026-06')`);
   R.ok('pending is real (8 classes × 75 × 60% = 360)', Math.round(p.commissionPending) === 360, p.commissionPending);
-  R.ok('the month is already marked paid', p.paidStatus === 'paid', p.paidStatus);
+  // v6.560: a 0-value settlement on a coach who actually earned a net (180) now correctly reads as
+  // NOT-fully-paid (he's owed his attended net), instead of the old zero-settlement "paid" quirk.
+  // The settle-pending flow below is independent of this status and still works.
+  R.ok('a paid record exists and the attended net is not fully paid', !!p.salaryRecord && p.paidStatus !== 'paid', p.paidStatus);
 }
 
 R.section('settling pays it as cash + closes it (no carry next month)');
