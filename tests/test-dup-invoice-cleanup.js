@@ -33,12 +33,13 @@ const ok = (n, c, got) => { if (c) { pass++; console.log('  ✓', n); } else { f
 const setup = () => vm.runInContext(`
   state.members = [{id:1,name:'Fares'},{id:2,name:'Sara'},{id:3,name:'Omar'},{id:4,name:'Ali'}];
   state.invoices = [
+    // v6.561: an EXACT (auto-removable) duplicate is a genuine SAME-DAY double-entry, so A/B/C are same-day pairs.
     {id:1,ref:'A1',customerId:1,category:'Membership',sport:'Karate',month:'2026-06',date:'2026-06-10',amount:71,payments:[{amount:71,date:'2026-06-10'}]},
-    {id:2,ref:'A2',customerId:1,category:'Membership',sport:'Karate',month:'2026-06',date:'2026-06-12',amount:71,payments:[]},
+    {id:2,ref:'A2',customerId:1,category:'Membership',sport:'Karate',month:'2026-06',date:'2026-06-10',amount:71,payments:[]},
     {id:3,ref:'B1',customerId:2,category:'Membership',sport:'Karate',month:'2026-06',date:'2026-06-05',amount:90,payments:[]},
-    {id:4,ref:'B2',customerId:2,category:'Membership',sport:'Karate',month:'2026-06',date:'2026-06-08',amount:90,payments:[]},
+    {id:4,ref:'B2',customerId:2,category:'Membership',sport:'Karate',month:'2026-06',date:'2026-06-05',amount:90,payments:[]},
     {id:5,ref:'C1',customerId:3,category:'Membership',sport:'Swimming',month:'2026-06',date:'2026-06-03',amount:150,payments:[{amount:150,date:'2026-06-03'}]},
-    {id:6,ref:'C2',customerId:3,category:'Membership',sport:'Swimming',month:'2026-06',date:'2026-06-04',amount:150,payments:[{amount:150,date:'2026-06-04'}]},
+    {id:6,ref:'C2',customerId:3,category:'Membership',sport:'Swimming',month:'2026-06',date:'2026-06-03',amount:150,payments:[{amount:150,date:'2026-06-03'}]},
     {id:7,ref:'D1',customerId:4,category:'Membership',sport:'Karate',month:'2026-06',date:'2026-06-28',amount:60,payments:[]},
     {id:8,ref:'D2',customerId:4,category:'Membership',sport:'Karate',month:'2026-07',date:'2026-07-02',amount:60,payments:[]}
   ];

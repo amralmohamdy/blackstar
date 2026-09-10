@@ -15188,7 +15188,7 @@ window.findDuplicateInvoices = function() {
   const body = `
     <p class="text-mute" style="font-size:12px;margin-bottom:10px">
       ${groups.length} group${groups.length === 1 ? '' : 's'} (${exactN} exact, ${possN} possible) — about <b>${extra}</b> extra invoice${extra === 1 ? '' : 's'} that may be double-counting revenue & commission.
-      <b style="color:var(--red)">Exact</b> = same customer, items, month and amount. <b style="color:var(--accent-2)">Possible</b> = same customer, items and amount within 7 days (review before deleting). The first in each group is kept.
+      <b style="color:var(--red)">Exact</b> = same customer, items, amount and the SAME DAY (a genuine double-entry). <b style="color:var(--accent-2)">Possible</b> = same customer, items and amount within 7 days (review before deleting). A renewal weeks later is NOT a duplicate. The first in each group is kept.
     </p>
     <div style="max-height:55vh;overflow:auto">
     ${groups.map(g => {
@@ -33154,7 +33154,7 @@ PAGES.dupinvoices = (main) => {
         <div><div class="text-mute" style="font-size:11px;text-transform:uppercase;color:var(--accent-2)">${t('Possible', 'محتمل')}</div><div style="font-size:22px;font-weight:800;color:var(--accent-2)">${possN}</div></div>
         <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">${t('Extra invoices', 'فواتير زائدة')}</div><div style="font-size:22px;font-weight:800">${extra}</div></div>
         <div class="text-mute" style="font-size:11px;max-width:380px;line-height:1.5">
-          <b style="color:var(--red)">${t('Exact', 'مطابق')}</b> = ${t('same customer, items, month AND amount.', 'نفس العميل والبنود والشهر والمبلغ.')}
+          <b style="color:var(--red)">${t('Exact', 'مطابق')}</b> = ${t('same customer, items, amount AND the SAME DAY (a genuine double-entry). A renewal weeks later is NOT a duplicate.', 'نفس العميل والبنود والمبلغ وفي نفس اليوم (إدخال مكرر فعلي). التجديد بعد أسابيع ليس تكراراً.')}
           <b style="color:var(--accent-2)">${t('Possible', 'محتمل')}</b> = ${t('same customer, items & amount within 7 days — review carefully.', 'نفس العميل والبنود والمبلغ خلال 7 أيام — راجع بعناية.')}
         </div>
       </div>
