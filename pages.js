@@ -7824,7 +7824,12 @@ PAGES.duepayment = (main) => {
     const total = f.months.length
       ? invs.reduce((s, i) => s + invoiceBalance(i), 0)
       : Math.round((memberOutstanding(m.id) + invs.filter(i => (i.category || 'Membership') !== 'Membership').reduce((s, i) => s + invoiceBalance(i), 0)) * 100) / 100;
-    if (total <= 0.001) continue;
+    // v6.563: ignore SUB-QAR residuals. Prorated/switch-split invoices can land on odd amounts (e.g.
+    // 325.01 paid 325 → 0.01 outstanding), which slipped past the old 0.001 floor and listed a member
+    // with a "0 QAR due" (a withdrawn member, no less). Payments are whole QAR, so anything under 0.5 is
+    // rounding noise, not a real debt — drop it. A genuine ≥ 0.5 balance (incl. a withdrawn member who
+    // truly still owes) still shows, so real money is never hidden.
+    if (total < 0.5) continue;
     // Per-sport / per-category split (use the invoice's sport, else its line item's
     // sport, else the category label).
     const bySport = {};
@@ -15175,7 +15180,7 @@ window.findDuplicateInvoices = function() {
   const groups = detectDuplicateInvoices();
   if (!groups.length) {
     showModal({ title: '🔍 Find duplicate invoices',
-      body: '<p>No duplicate invoices found. 🎉</p><p class="text-mute" style="font-size:12px">Checks every category for more than one invoice with the same customer, items and amount (exact = same month too; possible = within 7 days).</p>',
+      body: '<p>No duplicate invoices found. 🎉</p><p class="text-mute" style="font-size:12px">Checks every category for more than one invoice with the same customer, items and amount (exact = same day; possible = within 2 days). A renewal on a later date is not a duplicate.</p>',
       actions: [{ label: 'Close', class: 'btn ghost', onclick: closeModal }] });
     return;
   }
@@ -15188,7 +15193,7 @@ window.findDuplicateInvoices = function() {
   const body = `
     <p class="text-mute" style="font-size:12px;margin-bottom:10px">
       ${groups.length} group${groups.length === 1 ? '' : 's'} (${exactN} exact, ${possN} possible) — about <b>${extra}</b> extra invoice${extra === 1 ? '' : 's'} that may be double-counting revenue & commission.
-      <b style="color:var(--red)">Exact</b> = same customer, items, amount and the SAME DAY (a genuine double-entry). <b style="color:var(--accent-2)">Possible</b> = same customer, items and amount within 7 days (review before deleting). A renewal weeks later is NOT a duplicate. The first in each group is kept.
+      <b style="color:var(--red)">Exact</b> = same customer, items, amount and the SAME DAY (a genuine double-entry). <b style="color:var(--accent-2)">Possible</b> = same customer, items and amount within 2 days (review before deleting). A renewal days/weeks later is NOT a duplicate. The first in each group is kept.
     </p>
     <div style="max-height:55vh;overflow:auto">
     ${groups.map(g => {
@@ -33155,7 +33160,7 @@ PAGES.dupinvoices = (main) => {
         <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">${t('Extra invoices', 'فواتير زائدة')}</div><div style="font-size:22px;font-weight:800">${extra}</div></div>
         <div class="text-mute" style="font-size:11px;max-width:380px;line-height:1.5">
           <b style="color:var(--red)">${t('Exact', 'مطابق')}</b> = ${t('same customer, items, amount AND the SAME DAY (a genuine double-entry). A renewal weeks later is NOT a duplicate.', 'نفس العميل والبنود والمبلغ وفي نفس اليوم (إدخال مكرر فعلي). التجديد بعد أسابيع ليس تكراراً.')}
-          <b style="color:var(--accent-2)">${t('Possible', 'محتمل')}</b> = ${t('same customer, items & amount within 7 days — review carefully.', 'نفس العميل والبنود والمبلغ خلال 7 أيام — راجع بعناية.')}
+          <b style="color:var(--accent-2)">${t('Possible', 'محتمل')}</b> = ${t('same customer, items & amount within 2 days — review carefully. A renewal on a later date is not a duplicate.', 'نفس العميل والبنود والمبلغ خلال يومين — راجع بعناية. التجديد بتاريخ لاحق ليس تكراراً.')}
         </div>
       </div>
     </div>
@@ -33175,7 +33180,7 @@ PAGES.dupinvoices = (main) => {
     ` : `
     <div class="card"><div class="empty" style="padding:50px"><div class="empty-icon">✅</div>
       <div style="font-weight:600;margin-bottom:4px">${t('No duplicate invoices found', 'لا توجد فواتير مكررة')}</div>
-      <div class="text-mute" style="font-size:12px;max-width:420px;margin:0 auto">${t('Checks every category for more than one invoice with the same customer, items and amount (exact = same month; possible = within 7 days).', 'يفحص كل الفئات بحثاً عن أكثر من فاتورة بنفس العميل والبنود والمبلغ (مطابق = نفس الشهر؛ محتمل = خلال 7 أيام).')}</div>
+      <div class="text-mute" style="font-size:12px;max-width:420px;margin:0 auto">${t('Checks every category for more than one invoice with the same customer, items and amount (exact = same day; possible = within 2 days). A renewal on a later date is not a duplicate.', 'يفحص كل الفئات بحثاً عن أكثر من فاتورة بنفس العميل والبنود والمبلغ (مطابق = نفس اليوم؛ محتمل = خلال يومين). التجديد بتاريخ لاحق ليس تكراراً.')}</div>
     </div></div>
     `}
   `;

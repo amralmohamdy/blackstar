@@ -40,8 +40,9 @@ const setup = () => vm.runInContext(`
     {id:4,ref:'B2',customerId:2,category:'Membership',sport:'Karate',month:'2026-06',date:'2026-06-05',amount:90,payments:[]},
     {id:5,ref:'C1',customerId:3,category:'Membership',sport:'Swimming',month:'2026-06',date:'2026-06-03',amount:150,payments:[{amount:150,date:'2026-06-03'}]},
     {id:6,ref:'C2',customerId:3,category:'Membership',sport:'Swimming',month:'2026-06',date:'2026-06-03',amount:150,payments:[{amount:150,date:'2026-06-03'}]},
-    {id:7,ref:'D1',customerId:4,category:'Membership',sport:'Karate',month:'2026-06',date:'2026-06-28',amount:60,payments:[]},
-    {id:8,ref:'D2',customerId:4,category:'Membership',sport:'Karate',month:'2026-07',date:'2026-07-02',amount:60,payments:[]}
+    // v6.564: "possible" window is now ≤2 days — D is a 1-day cross-month pair (still possible, not exact).
+    {id:7,ref:'D1',customerId:4,category:'Membership',sport:'Karate',month:'2026-06',date:'2026-06-30',amount:60,payments:[]},
+    {id:8,ref:'D2',customerId:4,category:'Membership',sport:'Karate',month:'2026-07',date:'2026-07-01',amount:60,payments:[]}
   ];
   state.coaches=[]; if(!state.settings) state.settings={};
 `, ctx);
@@ -54,7 +55,7 @@ const deletedRefs = () => vm.runInContext('state.invoices.filter(i=>i.deleted).m
 const groups = vm.runInContext('detectDuplicateInvoices()', ctx);
 console.log('pre-conditions:');
 ok('detector finds the 3 exact groups (A,B,C)', groups.filter(g => g.tier === 'exact').length === 3, groups.map(g => g.tier));
-ok('D (cross-month, 7 days) is "possible", not exact', groups.some(g => g.tier === 'possible'));
+ok('D (cross-month, 1 day apart) is "possible", not exact', groups.some(g => g.tier === 'possible'));
 
 // run the one-click cleanup
 vm.runInContext('removeExactDuplicatesSafely()', ctx);
