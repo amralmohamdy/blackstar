@@ -11458,8 +11458,10 @@ function multiFilterHTML(id, options, selected, o) {
         <button type="button" class="mf-all" style="background:none;border:none;color:var(--accent);font-size:12px;cursor:pointer;font-weight:600">${t('All', 'الكل')}</button>
         <button type="button" class="mf-none" style="background:none;border:none;color:var(--text-mute);font-size:12px;cursor:pointer">${t('Clear', 'مسح')}</button>
       </div>
-      ${pairs.map(([v, lab]) => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px">
+      ${pairs.length >= 8 ? `<input type="text" class="mf-search" placeholder="🔍 ${t('Search…', 'بحث…')}" style="width:100%;box-sizing:border-box;margin:0 0 6px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px" />` : ''}
+      <div class="mf-list">${pairs.map(([v, lab]) => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px">
         <input type="checkbox" class="mf-cb" value="${escapeHtml(String(v))}" ${sel.has(String(v)) ? 'checked' : ''} /> ${escapeHtml(String(lab))}</label>`).join('')}
+      <div class="mf-empty text-mute" style="display:none;padding:8px 6px;font-size:12px">${t('No matches', 'لا نتائج')}</div></div>
     </div>
   </div>`;
 }
@@ -11485,7 +11487,28 @@ function bindMultiFilter(id, onChange, o) {
   };
   const fire = () => { relabel(); onChange(current()); };
   boxes().forEach(b => b.addEventListener('change', fire));
-  btn.addEventListener('click', e => { e.stopPropagation(); pop.style.display = pop.style.display === 'none' ? 'block' : 'none'; });
+  // v6.565: type-to-search inside a long filter (coaches / sports). Filters the visible rows by label,
+  // Arabic-folded so an Arabic query matches an Arabic name. Reset when the popup opens.
+  const search = wrap.querySelector('.mf-search');
+  const empty = wrap.querySelector('.mf-empty');
+  const norm = s => (typeof normalizeArabicForSearch === 'function') ? normalizeArabicForSearch(String(s || '')) : String(s || '').toLowerCase();
+  const applySearch = () => {
+    const q = norm((search && search.value || '').trim());
+    let shown = 0;
+    boxes().forEach(b => { const lab = b.parentElement; if (!lab) return; const hit = !q || norm(lab.textContent).includes(q); lab.style.display = hit ? '' : 'none'; if (hit) shown++; });
+    if (empty) empty.style.display = shown ? 'none' : '';
+  };
+  if (search) {
+    search.addEventListener('click', e => e.stopPropagation());
+    search.addEventListener('keydown', e => e.stopPropagation());
+    search.addEventListener('input', applySearch);
+  }
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    const open = pop.style.display === 'none';
+    pop.style.display = open ? 'block' : 'none';
+    if (open && search) { search.value = ''; applySearch(); setTimeout(() => { try { search.focus(); } catch (_) {} }, 0); }
+  });
   document.addEventListener('click', e => { if (!wrap.contains(e.target)) pop.style.display = 'none'; });
   wrap.querySelector('.mf-all')?.addEventListener('click', e => { e.stopPropagation(); boxes().forEach(b => b.checked = true); fire(); });
   wrap.querySelector('.mf-none')?.addEventListener('click', e => { e.stopPropagation(); boxes().forEach(b => b.checked = false); fire(); });
@@ -22453,7 +22476,7 @@ PAGES.attendance = (main) => {
           <option value="4">${t('Week', 'أسبوع')} 4 (22–28)</option>
           <option value="5">${t('Week', 'أسبوع')} 5 (29–${t('end', 'النهاية')})</option>
         </select>
-        <span ${myCoachId != null ? 'style="display:none"' : ''}>${multiFilterHTML('att-coach', state.coaches.filter(isCoachRole).map(c => [String(c.id), c.name]), filter.coaches, { allText: t('All coaches', 'كل المدربين'), noun: t('coaches', 'مدربين'), minWidth: 150 })}</span>
+        <span ${myCoachId != null ? 'style="display:none"' : ''}>${multiFilterHTML('att-coach', state.coaches.filter(c => isCoachRole(c) && (isCoachActive(c) || filter.coaches.map(String).includes(String(c.id)))).map(c => [String(c.id), c.name]), filter.coaches, { allText: t('All coaches', 'كل المدربين'), noun: t('coaches', 'مدربين'), minWidth: 150 })}</span>
         ${multiFilterHTML('att-mstatus', [['Active', '🟢 ' + t('Active', 'نشط')], ['Frozen', '🔵 ' + t('Frozen', 'مجمّد')], ['Expired', '⚪ ' + t('Expired', 'منتهي')], ['Completed', '🟣 ' + t('Completed', 'مكتمل')], ['Withdrawn', '🔴 ' + t('Withdrawn', 'منسحب')]], filter.statuses, { allText: t('All statuses', 'كل الحالات'), noun: t('statuses', 'حالات'), minWidth: 150 })}
         ${multiFilterHTML('att-status', [['attended', '✓ ' + t('Attended', 'حضر')], ['notattended', '✗ ' + t('Not attended', 'لم يحضر')]], filter.atts, { allText: t('All attendance', 'كل الحضور'), noun: t('selected', 'محدد'), minWidth: 150 })}
         <div style="position:relative">
@@ -23821,7 +23844,10 @@ window.switchSport = function(memberId) {
       // floored the count too early and summed attendance across BOTH cycles (over-crediting the old
       // coach on the switch). Fall back to the latest-by-start sub, then unbounded (legacy) if none.
       const _cuCands = m.subscriptions.filter(s => (s.activity || '') === sport && (coachId == null || String(s.coachId) === String(coachId)) && s.status !== 'completed' && s.status !== 'withdrawn' && !s.switchedAwayTo);
-      const srcSub = _cuCands.find(s => (s.start || '') <= untilDateStr && (!s.end || untilDateStr <= s.end)) || _cuCands.slice().sort((a, b) => (a.start || '').localeCompare(b.start || '')).slice(-1)[0];
+      // v6.566: among cycles covering the switch date, prefer the LATEST-starting (the renewal), not the
+      // first — matches the source-sub selection so the attended count is scoped to the same cycle.
+      const _cuCov = _cuCands.filter(s => (s.start || '') <= untilDateStr && (!s.end || untilDateStr <= s.end));
+      const srcSub = (_cuCov.length ? _cuCov : _cuCands).slice().sort((a, b) => (a.start || '').localeCompare(b.start || '')).slice(-1)[0];
       // v6.559 (QC Finding 4): floor the count at the sub's ATTENDANCE-WINDOW start, not its raw start.
       // subAttendanceWindow pulls a renewal's window BACK to the day after the prior package ended
       // (contiguous-attendance carry), and the member card credits gap classes to the current cycle. Using
@@ -24029,8 +24055,14 @@ window.switchSport = function(memberId) {
         // while the current sub was capped, so Charged ≠ Paid and the dest line/classes were wrong.
         const _sameCoachId = (a, b) => String(a) === String(b);
         const _srcCycleCands = (m.subscriptions || []).filter(s => (s.activity || '') === from.sport && _sameCoachId(s.coachId, from.coachId) && s.status !== 'completed' && !s.switchedAwayTo);
-        const _srcSubCycle = _srcCycleCands.find(s => (s.start || '') <= switchDate && (!s.end || switchDate <= s.end))
-          || _srcCycleCands.slice().sort((a, b) => (a.start || '').localeCompare(b.start || '')).slice(-1)[0] || null;
+        // v6.566: when MORE THAN ONE cycle covers the switch date — an old cycle ending that very day AND
+        // a renewal that already started — pick the LATEST-STARTING one (the renewal), not the first in
+        // array order (the old cycle). Otherwise the destination inherited the OLD cycle's end date (a
+        // zero-day / backwards window, e.g. Basil: Zakaria 12 Sep→12 Sep) and the RENEWAL stayed active
+        // under the old coach → two rows + "expired" on marking. Fall back to latest-by-start overall.
+        const _covering = _srcCycleCands.filter(s => (s.start || '') <= switchDate && (!s.end || switchDate <= s.end));
+        const _srcSubCycle = ((_covering.length ? _covering : _srcCycleCands)
+          .slice().sort((a, b) => (a.start || '').localeCompare(b.start || '')).slice(-1)[0]) || null;
 
         // ─── SPLIT THE ONE MEMBERSHIP INVOICE (v6.520) ─────────────
         // No separate net-zero switch-credit any more. The member's membership invoice is split in

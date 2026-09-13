@@ -31,7 +31,7 @@ R.ok('carry-forward classes are read via carryForwardCredit', /const carried = \
 R.ok('moved = remaining + carried', /const moved = remaining \+ carried;/.test(src));
 
 R.section('E — attendance count is WINDOWED to the current package (F3)');
-R.ok('countAttendedUpTo derives a since-floor from the CURRENT-cycle sub start (v6.556: covers switch date)', /const srcSub = _cuCands\.find\(s => \(s\.start \|\| ''\) <= untilDateStr && \(!s\.end \|\| untilDateStr <= s\.end\)\)/.test(src) && /const _cuCands = m\.subscriptions\.filter\(s => \(s\.activity \|\| ''\) === sport/.test(src));
+R.ok('countAttendedUpTo derives a since-floor from the CURRENT-cycle sub (v6.566: latest covering the switch date)', /const _cuCov = _cuCands\.filter\(s => \(s\.start \|\| ''\) <= untilDateStr/.test(src) && /const _cuCands = m\.subscriptions\.filter\(s => \(s\.activity \|\| ''\) === sport/.test(src));
 R.ok('the count honours the since-floor', /if \(dateStr <= untilDateStr && \(!sinceStr \|\| dateStr >= sinceStr\)\) total\+\+;/.test(src));
 
 R.section('F — F1: a genuine PAID destination package is not clobbered');
