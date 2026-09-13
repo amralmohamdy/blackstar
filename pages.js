@@ -23913,6 +23913,25 @@ window.switchSport = function(memberId) {
         const reason = $('#sw-reason').value.trim() || null;
         if (!from) { toast('Pick the sport to switch from', 'error'); return; }
 
+        // v6.567: SAFETY NET — snapshot the member + invoices BEFORE any mutation. If the switch ends up
+        // producing a structurally broken subscription (backwards / zero-day window), commitSwitch() below
+        // ROLLS BACK to this snapshot and saves nothing, so a bad switch can never corrupt the data.
+        const _snapMember = JSON.stringify(m);
+        const _snapInvoices = JSON.stringify(state.invoices || []);
+        const commitSwitch = (msg) => {
+          const prob = (typeof switchResultProblem === 'function') ? switchResultProblem(m) : null;
+          if (prob) {
+            const idx = state.members.findIndex(x => x.id === m.id);
+            if (idx >= 0) state.members[idx] = JSON.parse(_snapMember);
+            state.invoices.length = 0; for (const v of JSON.parse(_snapInvoices)) state.invoices.push(v);
+            closeModal(); render();
+            toast(t('Switch NOT saved — it would create a broken membership (' + prob + '). Please renew/fix this member\'s cycles first, then switch.', 'لم يُحفظ التبديل — سيُنشئ اشتراكاً معطوباً (' + prob + '). صحّح دورات هذا العضو أولاً ثم بدّل.'), 'error');
+            return false;
+          }
+          closeModal(); render(); confirmSaved(msg);
+          return true;
+        };
+
         // Read the target row(s) from the dynamic list.
         const tgs = targets.map((t, i) => ({
           sport: ($('#sw-sport-' + i) || {}).value || t.sport,
@@ -23984,9 +24003,8 @@ window.switchSport = function(memberId) {
             resolved.forEach((tr, i) => m.subscriptions.push({ activity: tr.sport, coachId: tr.coachId, totalClasses: tr.classes, start: switchDate, end: _dEnd || null, status: 'active', switchFunded: true, amountPaid: tr.value, _sid: 's' + Date.now() + '_swd' + i }));
           }
           audit('sport.switch', 'member:' + m.id, 'Distributed ' + from.sport + ' → ' + tgs.map(t => t.sport).join(', ') + ' for ' + (m.name || m.nameArabic), { memberId: m.id });
-          closeModal(); render();
-          // v6.388: confirm the switch (enrollments + credit invoice) reached the cloud before saying so.
-          confirmSaved('Switched · ' + from.sport + ' distributed into ' + tgs.length + ' sports · ' + coachName(from.coachId) + ' keeps ' + fmt(aShare));
+          // v6.567: validate the result; rolls back + saves nothing if it would be structurally broken.
+          commitSwitch('Switched · ' + from.sport + ' distributed into ' + tgs.length + ' sports · ' + coachName(from.coachId) + ' keeps ' + fmt(aShare));
           return;
         }
 
@@ -24241,8 +24259,7 @@ window.switchSport = function(memberId) {
         // v6.544: CONFIRM the switch reached the cloud (was a bare save() — a money-critical op that could
         // persist LOCAL-ONLY on a flaky/multi-device connection and then diverge on the next sync). Now it
         // matches the multi-target path and every other money operation (save + cloud-confirm + toast).
-        closeModal();
-        render();
+        // v6.567: commitSwitch validates the result first and ROLLS BACK (saves nothing) if it would be broken.
         let msg;
         if (skipReconciliation) {
           msg = `Switched · ${_fromSport} → ${toSport} · no commission (Summer Camp involved)`;
@@ -24251,7 +24268,7 @@ window.switchSport = function(memberId) {
           const _recon = Math.abs(_delta) < 0.01 ? '' : _delta > 0 ? ` · owes +${fmt(_delta)}` : ` · credit ${fmt(-_delta)}`;
           msg = `Switched · ${coachName(_fromCoachId)} ${attendedA}/${attendedA} keeps ${fmt(aShare)} · ${coachName(toCoachId)} ${moved} cls @ ${fmt(bPrice)}${_recon}`;
         }
-        confirmSaved(msg);
+        commitSwitch(msg);
       }},
     ],
   });

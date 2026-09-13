@@ -13,7 +13,7 @@ const src = H.readSrc();
 
 R.section('source — fix 1: single switch confirms the cloud write');
 R.ok('the single-target switch no longer uses a bare save()', !/\n        save\(\);\n        closeModal\(\);\n        render\(\);\n        let msg;/.test(src));
-R.ok('it now confirms the cloud write (confirmSaved)', /confirmSaved\(msg\);\n      \}\},/.test(src));
+R.ok('it now confirms the cloud write (v6.567: commitSwitch → validates + confirmSaved)', /commitSwitch\(msg\);\n      \}\},/.test(src) && /closeModal\(\); render\(\); confirmSaved\(msg\);/.test(src));
 
 R.section('source — fix 2: attended count is per-coach');
 R.ok('countAttendedUpTo takes a coachId', /function countAttendedUpTo\(sport, untilDateStr, coachId\)/.test(src));

@@ -19,8 +19,9 @@ const ok = (n, c, got) => { if (c) { pass++; console.log('  ✓', n); } else { f
 // statement also/previously called save(). We check the positive form: the toast text is passed to
 // confirmSaved. Each `needle` is a distinctive fragment of the converted success toast.
 function reachedViaConfirm(src, needle) {
-  // find every confirmSaved( ... needle ... ) occurrence
-  const re = new RegExp('confirmSaved\\([^\\n]*?' + needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), '');
+  // find every confirmSaved( ... needle ... ) occurrence. v6.567: commitSwitch() is a confirmed wrapper
+  // (it calls confirmSaved on success, and rolls back on a broken result), so it counts too.
+  const re = new RegExp('(?:confirmSaved|commitSwitch)\\([^\\n]*?' + needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), '');
   return re.test(src);
 }
 // The OLD leak: the same needle sitting in a plain `toast(...)` that is NOT the else-fallback under a
