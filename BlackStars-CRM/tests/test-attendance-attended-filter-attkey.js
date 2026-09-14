@@ -15,7 +15,7 @@ R.ok('rowAttended reads the coach-scoped cell (attKey), not the plain sport', /c
 R.ok('rowAttended honours the coach window (inWin)', /data\[String\(d\)\] === 'Y' && inWin\(window, mo, d\)/.test(src));
 R.ok('the Attended filter is applied PER ROW with the row attKey + window', /rows\.filter\(r => filter\.atts\.includes\(rowAttended\(r\.m, r\.attKey \|\| r\.sport, r\.window\)/.test(src));
 R.ok('the old sport-level plain-key filter is gone', !/const want = rowAttended\(m, sp\) \? 'attended' : 'notattended';/.test(src));
-R.ok('the KPI (clubAttended) also uses attKey + inWin (same basis)', /const dd = m\.dailyAttendance\?\.\[mk\]\?\.\[attKey \|\| sport\] \|\| \{\};/.test(src) && /if \(!inWin\(window, mk, k\)\) continue;/.test(src));
+R.ok('the KPI (clubAttended) also uses attKey + inWin (same basis)', /const dd = \(attKey === MIXED\) \? mixedDayMarks\(m, mk\) : \(m\.dailyAttendance\?\.\[mk\]\?\.\[attKey \|\| sport\] \|\| \{\}\);/.test(src) && /if \(!inWin\(window, mk, k\)\) continue;/.test(src));
 
 R.section('runtime · two-coach member, Y under the coach-scoped key on day 8');
 {

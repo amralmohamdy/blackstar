@@ -13,7 +13,7 @@ R.ok('a sportOver flag is computed for regular sports', /let sportOver = false, 
 R.ok('sportOver = window ended OR all classes attended', /sportOver = _ended \|\| \(sportPlanned > 0 && sportMarked >= sportPlanned\);/.test(src));
 R.ok('an EXPIRED badge is built from sportOver', /const sportOverBadge = sportOver/.test(src) && /EXPIRED/.test(src));
 R.ok('the badge is rendered in the row name line', /\$\{campOverBadge\}\$\{sportOverBadge\}\$\{renewBadge\}/.test(src));
-R.ok('the badge is skipped when the whole member is Expired (no duplicate)', /if \(sport !== SUMMER_CAMP && !isExpired(?: && !hist)?\)/.test(src));
+R.ok('the badge is skipped when the whole member is Expired (no duplicate)', /if \(sport !== SUMMER_CAMP && (?:sport !== MIXED && )?!isExpired(?: && !hist)?\)/.test(src));
 
 R.section('runtime — Jabr: Kick Boxing package finished (flagged), MMA still active (not flagged)');
 {

@@ -1584,7 +1584,7 @@ PAGES.members = (main) => {
           </button>
           <div id="filter-sport-menu" style="display:none;position:absolute;left:0;top:100%;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-top:4px;padding:8px;min-width:180px;max-height:300px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.4)">
             <div style="display:flex;justify-content:space-between;padding:2px 6px 6px;border-bottom:1px solid var(--border);margin-bottom:4px"><button type="button" class="mfilter-all" data-cb="filter-sport-cb" data-group="sports" style="background:none;border:none;color:var(--accent);font-size:12px;cursor:pointer;font-weight:600">All</button><button type="button" class="mfilter-none" data-cb="filter-sport-cb" data-group="sports" style="background:none;border:none;color:var(--text-mute);font-size:12px;cursor:pointer">Clear</button></div>
-            ${SPORTS.map(s => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px"><input type="checkbox" class="filter-sport-cb" value="${escapeHtml(s)}" ${(filter.sports||[]).includes(s) ? 'checked' : ''} /> ${escapeHtml(s)}</label>`).join('')}
+            ${SPORTS.slice().sort((a, b) => String(a).localeCompare(String(b), undefined, { sensitivity: 'base' })).map(s => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px;white-space:nowrap"><input type="checkbox" class="filter-sport-cb" value="${escapeHtml(s)}" ${(filter.sports||[]).includes(s) ? 'checked' : ''} /> ${escapeHtml(s)}</label>`).join('')}
           </div>
         </div>
         <div style="position:relative">
@@ -1607,8 +1607,9 @@ PAGES.members = (main) => {
             ${(() => {
               const cbHtml = (c, faded) => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px${faded ? ';opacity:.72' : ''}"><input type="checkbox" class="filter-coach-cb" value="${c.id}" ${(filter.coaches || []).map(String).includes(String(c.id)) ? 'checked' : ''} /> ${escapeHtml(c.name)}${faded ? ' <span class="text-mute" style="font-size:10px">(former)</span>' : ''}</label>`;
               const _teach = state.coaches.filter(isCoachRole);   // v6.507: exclude staff (Ester etc.) — they don't coach members
-              const act = _teach.filter(c => isCoachActive(c));
-              const inact = _teach.filter(c => !isCoachActive(c));
+              const _byName = (a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' });   // v6.570: A→Z
+              const act = _teach.filter(c => isCoachActive(c)).sort(_byName);
+              const inact = _teach.filter(c => !isCoachActive(c)).sort(_byName);
               let html = act.map(c => cbHtml(c, false)).join('');
               if (inact.length) html += `<div style="margin:6px 0 2px;padding:5px 6px 3px;font-size:10px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;border-top:1px solid var(--border)">Former / inactive</div>` + inact.map(c => cbHtml(c, true)).join('');
               return html;
@@ -2167,8 +2168,25 @@ function viewMember(id) {
     // period). Falls back to the static field.
     const win = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, s) : { from: s.start || null, to: s.end || null };
     const liveForSport = liveAttendanceCount(m, s.activity, win.from, win.to);
-    const attended = liveForSport.total > 0 ? liveForSport.y : s.attendedClasses;
-    const isLive = liveForSport.total > 0;
+    let attended = liveForSport.total > 0 ? liveForSport.y : s.attendedClasses;
+    let isLive = liveForSport.total > 0;
+    // v6.570 — a Mixed package's attendance lives in m.mixedAttendance (per-day sport+coach), not the
+    // sport-keyed dailyAttendance, so count it from there for the card.
+    if (s.activity === MIXED && typeof mixedAttendedByCoach === 'function') {
+      attended = mixedAttendedByCoach(m, null, win.from, win.to);
+      isLive = attended > 0;
+    }
+    // v6.570 — Mixed breakdown: "sport · coach ×count" for what was tried in this package's window.
+    const _mixBreak = (s.activity === MIXED) ? (() => {
+      const g = {}; const ma = m.mixedAttendance || {};
+      for (const mo in ma) for (const d in (ma[mo] || {})) {
+        const r = ma[mo][d]; if (!r || r.mark === 'N') continue;
+        const full = `${mo}-${String(parseInt(d, 10)).padStart(2, '0')}`;
+        if (win.from && full < win.from) continue; if (win.to && full > win.to) continue;
+        const key = (r.sport || '?') + ' · ' + (coachName(r.coachId) || '—'); g[key] = (g[key] || 0) + 1;
+      }
+      return Object.entries(g).map(([k, v]) => `${k} ×${v}`);
+    })() : null;
     // Duplicate = another row for the SAME sport / coach / start / end. Attendance
     // lives in dailyAttendance (keyed by sport+day), NOT per-row, so deleting a
     // duplicate never loses attendance — it stays on the surviving twin.
@@ -2198,8 +2216,8 @@ function viewMember(id) {
           }
           return (s.month || '').toUpperCase();
         })()}</span></td>
-        <td>${escapeHtml(s.activity || '—')}${s.activity === SUMMER_CAMP && s.durationLabel ? ` <span class="badge" style="background:rgba(245,158,11,.15);color:var(--accent-2);font-size:9px;padding:1px 6px">🌞 ${escapeHtml(s.durationLabel)}</span>` : ''}</td>
-        <td>${s.activity === SUMMER_CAMP ? '<span class="text-mute" style="font-size:11px;font-style:italic">no coach</span>' : escapeHtml(s.coach || '—')}</td>
+        <td>${escapeHtml(s.activity || '—')}${s.activity === SUMMER_CAMP && s.durationLabel ? ` <span class="badge" style="background:rgba(245,158,11,.15);color:var(--accent-2);font-size:9px;padding:1px 6px">🌞 ${escapeHtml(s.durationLabel)}</span>` : ''}${s.activity === MIXED ? ` <span class="badge" style="background:rgba(59,130,246,.15);color:var(--blue);font-size:9px;padding:1px 6px">🎯 ${t('Mixed', 'مختلط')}</span>${_mixBreak && _mixBreak.length ? `<div class="text-mute" style="font-size:10px;margin-top:3px">${_mixBreak.map(x => escapeHtml(x)).join(' · ')}</div>` : ''}` : ''}</td>
+        <td>${(s.activity === SUMMER_CAMP || s.activity === MIXED) ? `<span class="text-mute" style="font-size:11px;font-style:italic">${s.activity === MIXED ? escapeHtml(t('multi-coach', 'عدة مدربين')) : 'no coach'}</span>` : escapeHtml(s.coach || '—')}</td>
         <td>${s.start ? fmtDate(s.start) : '—'}</td>
         <td>${s.end ? fmtDate(s.end) : '—'}</td>
         <td>${attCell}</td>
@@ -2907,6 +2925,9 @@ function enrollRowHtml(row, idx) {
   // dropdown. The selected duration maps to a number of days (stored in
   // `classes`) AND a default price. Admin can still override the price.
   const isCamp = row.sport === SUMMER_CAMP;
+  // v6.570 — Mixed: a "try many sports" package. Class-based like a normal sport, but NO single coach
+  // (the coach is chosen per class at attendance time), so the coach field is a placeholder like camp.
+  const isMixed = row.sport === MIXED;
   const campPrices = (state.settings?.summerCampPrices) || DEFAULT_SUMMER_CAMP_PRICES;
   // For existing camp rows, infer the matching label from days OR durationLabel
   const matchedLabel = isCamp
@@ -2928,10 +2949,10 @@ function enrollRowHtml(row, idx) {
 
   // For Summer Camp: no coach assignment, no commission. Show a disabled
   // placeholder so the row layout stays aligned.
-  const coachField = isCamp
+  const coachField = (isCamp || isMixed)
     ? `<div class="field" style="margin:0">
          <label style="font-size:10px;color:var(--text-mute)">Coach</label>
-         <div style="padding:10px 14px;background:var(--surface);border:1px dashed var(--border);border-radius:8px;color:var(--text-mute);font-size:12px;font-style:italic">Not required</div>
+         <div style="padding:10px 14px;background:var(--surface);border:1px dashed var(--border);border-radius:8px;color:var(--text-mute);font-size:12px;font-style:italic">${isMixed ? t('Per class', 'لكل حصة') : 'Not required'}</div>
        </div>`
     : `<div class="field" style="margin:0"><label style="font-size:10px">Coach <span style="color:var(--accent)">*</span></label><select data-en="coachId" data-i="${idx}">${coachOpts}</select></div>`;
 
@@ -2976,7 +2997,7 @@ function enrollRowHtml(row, idx) {
         <div class="field" style="margin:0"><label style="font-size:10px">📅 Start date <span style="color:var(--accent)">*</span></label><input data-en="start" data-i="${idx}" type="date" value="${row.start || ''}" /></div>
         ${validityField}
       </div>
-      ${expiryHint ? `<div style="font-size:10px;color:var(--blue);margin-top:7px;padding-left:2px">${expiryHint}</div>` : ''}${isCamp ? `<div style="font-size:10px;color:var(--blue);margin-top:5px;padding-left:2px">🌞 Summer Camp · revenue goes to club, no coach commission</div>` : ''}${row.paid ? `<div style="font-size:10px;color:var(--text-mute);margin-top:5px;padding-left:2px">🔒 Paid — editing the <b>price</b> adjusts the linked invoice (revenue + commission update too); editing start/validity adjusts this sport's window. ${(row.attended || 0) > 0 ? `The sport is <b>locked</b> because the member already attended <b>${row.attended}</b> class${(row.attended) === 1 ? '' : 's'} — use <b style="color:var(--accent-2)">↩ Withdraw</b> or <b style="color:var(--blue)">Switch Sport</b> to change it.` : `No classes attended yet, so you can still <b>change the sport directly</b> here — the linked invoice and commission move with it.`} <b style="color:var(--red)">🗑</b> deletes a mistake (no refund).</div>` : ''}
+      ${expiryHint ? `<div style="font-size:10px;color:var(--blue);margin-top:7px;padding-left:2px">${expiryHint}</div>` : ''}${isCamp ? `<div style="font-size:10px;color:var(--blue);margin-top:5px;padding-left:2px">🌞 Summer Camp · revenue goes to club, no coach commission</div>` : ''}${isMixed ? `<div style="font-size:10px;color:var(--blue);margin-top:5px;padding-left:2px">🎯 ${t('Mixed · one package to try many sports · pick the sport + coach for each class in Attendance · commission splits to the coach who taught each class', 'مختلط · باقة واحدة لتجربة عدة رياضات · اختر الرياضة والمدرب لكل حصة في الحضور · تُقسَّم العمولة على المدرب الذي درّب كل حصة')}</div>` : ''}${row.paid ? `<div style="font-size:10px;color:var(--text-mute);margin-top:5px;padding-left:2px">🔒 Paid — editing the <b>price</b> adjusts the linked invoice (revenue + commission update too); editing start/validity adjusts this sport's window. ${(row.attended || 0) > 0 ? `The sport is <b>locked</b> because the member already attended <b>${row.attended}</b> class${(row.attended) === 1 ? '' : 's'} — use <b style="color:var(--accent-2)">↩ Withdraw</b> or <b style="color:var(--blue)">Switch Sport</b> to change it.` : `No classes attended yet, so you can still <b>change the sport directly</b> here — the linked invoice and commission move with it.`} <b style="color:var(--red)">🗑</b> deletes a mistake (no refund).</div>` : ''}
     </div>`;
 }
 
@@ -3589,7 +3610,7 @@ function showMemberForm(m) {
           if (!r.sport) return false;
           if ((parseInt(r.classes) || 0) <= 0) return false;
           if ((parseFloat(r.price) || 0) <= 0) return false;
-          if (r.sport !== SUMMER_CAMP && !state.coaches.some(c => String(c.id) === String(r.coachId))) return false;
+          if (r.sport !== SUMMER_CAMP && r.sport !== MIXED && !state.coaches.some(c => String(c.id) === String(r.coachId))) return false;   // v6.570: Mixed has no single coach
           return true;
         };
         const completeRows = allRows.filter(rowComplete);
@@ -3618,7 +3639,7 @@ function showMemberForm(m) {
             const isCamp = p.sport === SUMMER_CAMP;
             const missing = [];
             if (!p.sport) missing.push('sport');
-            if (!isCamp && !state.coaches.some(c => String(c.id) === String(p.coachId))) missing.push('coach');
+            if (!isCamp && p.sport !== MIXED && !state.coaches.some(c => String(c.id) === String(p.coachId))) missing.push('coach');
             if (!(parseInt(p.classes) > 0)) missing.push(isCamp ? 'duration' : 'classes (>0)');
             if (!(parseFloat(p.price) > 0)) missing.push('price (>0)');
             toast(`Sport enrollment is incomplete — missing: ${missing.join(', ')}`, 'error');
@@ -3633,8 +3654,8 @@ function showMemberForm(m) {
         // Collect enrollment rows (validated)
         const enrollments = completeRows.map(r => ({
           sport: r.sport,
-          // Summer Camp has no coach — store null. Other sports parse the int.
-          coachId: r.sport === SUMMER_CAMP ? null : parseInt(r.coachId),
+          // Summer Camp and Mixed have no single coach — store null. Other sports parse the int.
+          coachId: (r.sport === SUMMER_CAMP || r.sport === MIXED) ? null : parseInt(r.coachId),
           classes: parseInt(r.classes) || 0,
           price: parseFloat(r.price) || 0,
           // Summer Camp keeps its duration label for display in invoices + member detail
@@ -11443,6 +11464,12 @@ function multiFilterHTML(id, options, selected, o) {
   o = o || {};
   const pairs = (options || []).map(x => (Array.isArray(x) ? x : [x, x]))
     .filter(p => p[0] != null && String(p[0]) !== '');
+  // v6.570 — sort options A→Z by their label so the list is organised, not random insertion order
+  // (Arabic-folded so Arabic names sort naturally). Opt out with { sort:false } for an intentional order.
+  if (o.sort !== false) {
+    const _norm = s => (typeof normalizeArabicForSearch === 'function') ? normalizeArabicForSearch(String(s == null ? '' : s)) : String(s == null ? '' : s).toLowerCase();
+    pairs.sort((a, b) => _norm(a[1]).localeCompare(_norm(b[1]), undefined, { numeric: true, sensitivity: 'base' }));
+  }
   const sel = new Set((selected || []).map(String));
   const allText = o.allText || t('All', 'الكل');
   const noun = o.noun || t('selected', 'محدد');
@@ -11459,7 +11486,7 @@ function multiFilterHTML(id, options, selected, o) {
         <button type="button" class="mf-none" style="background:none;border:none;color:var(--text-mute);font-size:12px;cursor:pointer">${t('Clear', 'مسح')}</button>
       </div>
       ${pairs.length >= 8 ? `<input type="text" class="mf-search" placeholder="🔍 ${t('Search…', 'بحث…')}" style="width:100%;box-sizing:border-box;margin:0 0 6px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px" />` : ''}
-      <div class="mf-list">${pairs.map(([v, lab]) => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px">
+      <div class="mf-list" style="display:flex;flex-direction:column">${pairs.map(([v, lab]) => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px;white-space:nowrap">
         <input type="checkbox" class="mf-cb" value="${escapeHtml(String(v))}" ${sel.has(String(v)) ? 'checked' : ''} /> ${escapeHtml(String(lab))}</label>`).join('')}
       <div class="mf-empty text-mute" style="display:none;padding:8px 6px;font-size:12px">${t('No matches', 'لا نتائج')}</div></div>
     </div>
@@ -17445,8 +17472,16 @@ PAGES.expenses = (main) => {
           <button type="button" id="exp-cat-btn" class="btn ghost" style="min-width:150px;text-align:left;display:inline-flex;align-items:center;justify-content:space-between;gap:8px">
             <span id="exp-cat-label">All categories</span><span style="opacity:.6">▾</span>
           </button>
-          <div id="exp-cat-menu" style="display:none;position:absolute;left:0;top:100%;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-top:4px;padding:8px;min-width:190px;max-height:320px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.4)">
-            ${EXP_CATS.filter(c => c !== CASH_COLLECTION_CATEGORY && !(isViewerRole() && /^rent$/i.test(String(c).trim()))).map(c => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px"><input type="checkbox" class="exp-cat-cb" value="${escapeHtml(c)}" ${(filter.categories || []).includes(c) ? 'checked' : ''} /> ${escapeHtml(c)}</label>`).join('')}
+          <div id="exp-cat-menu" style="display:none;position:absolute;left:0;top:100%;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-top:4px;padding:6px;min-width:200px;max-height:340px;overflow:auto;box-shadow:0 8px 24px rgba(0,0,0,.4)">
+            <div style="display:flex;justify-content:space-between;padding:2px 6px 6px;border-bottom:1px solid var(--border);margin-bottom:4px">
+              <button type="button" class="expm-all" style="background:none;border:none;color:var(--accent);font-size:12px;cursor:pointer;font-weight:600">${t('All', 'الكل')}</button>
+              <button type="button" class="expm-none" style="background:none;border:none;color:var(--text-mute);font-size:12px;cursor:pointer">${t('Clear', 'مسح')}</button>
+            </div>
+            <input type="text" class="expm-search" placeholder="🔍 ${t('Search…', 'بحث…')}" style="width:100%;box-sizing:border-box;margin:0 0 6px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px" />
+            <div class="expm-list" style="display:flex;flex-direction:column">
+              ${EXP_CATS.filter(c => c !== CASH_COLLECTION_CATEGORY && !(isViewerRole() && /^rent$/i.test(String(c).trim()))).slice().sort((a, b) => String(a).localeCompare(String(b), undefined, { sensitivity: 'base' })).map(c => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px;white-space:nowrap"><input type="checkbox" class="exp-cat-cb" value="${escapeHtml(c)}" ${(filter.categories || []).includes(c) ? 'checked' : ''} /> ${escapeHtml(c)}</label>`).join('')}
+              <div class="expm-empty text-mute" style="display:none;padding:8px 6px;font-size:12px">${t('No matches', 'لا نتائج')}</div>
+            </div>
           </div>
         </div>
         <div style="position:relative;display:${_salarySelected() && coachOpts.length ? 'inline-block' : 'none'}" id="exp-coach-wrap">
@@ -17454,7 +17489,7 @@ PAGES.expenses = (main) => {
             <span id="exp-coach-label">${filter.coaches && filter.coaches.length ? (filter.coaches.length === 1 ? escapeHtml(filter.coaches[0]) : filter.coaches.length + ' ' + t('coaches', 'مدربين')) : t('All coaches', 'كل المدربين')}</span><span style="opacity:.6">▾</span>
           </button>
           <div id="exp-coach-menu" style="display:none;position:absolute;left:0;top:100%;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-top:4px;padding:8px;min-width:200px;max-height:320px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.4)">
-            ${coachOpts.length ? coachOpts.map(nm => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px"><input type="checkbox" class="exp-coach-cb" value="${escapeHtml(nm)}" ${(filter.coaches || []).includes(nm) ? 'checked' : ''} /> ${escapeHtml(nm)}</label>`).join('') : `<div class="text-mute" style="font-size:12px;padding:6px">${t('No coach salaries yet', 'لا رواتب مدربين بعد')}</div>`}
+            ${coachOpts.length ? coachOpts.slice().sort((a, b) => String(a).localeCompare(String(b), undefined, { sensitivity: 'base' })).map(nm => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px;white-space:nowrap"><input type="checkbox" class="exp-coach-cb" value="${escapeHtml(nm)}" ${(filter.coaches || []).includes(nm) ? 'checked' : ''} /> ${escapeHtml(nm)}</label>`).join('') : `<div class="text-mute" style="font-size:12px;padding:6px">${t('No coach salaries yet', 'لا رواتب مدربين بعد')}</div>`}
           </div>
         </div>
         <div style="position:relative">
@@ -17499,20 +17534,43 @@ PAGES.expenses = (main) => {
   });
   bindMonthMulti('exp-month', (months) => { filter.months = months; pg.page = 1; refresh(); });
   // Multi-select category + method dropdowns (checkbox menus).
-  function wireExpMulti(key, cbClass, btnId, menuId, labelId, allText, oneFmt) {
+  // v6.569: a checkbox menu now optionally carries an All / Clear header + a type-to-search box (present
+  // on the category menu; absent on method/coach — the wiring is a no-op when the elements aren't there).
+  function wireExpMulti(key, cbClass, btnId, menuId, labelId, allText, oneFmt, afterChange) {
     const btn = $('#' + btnId), menu = $('#' + menuId);
     if (!btn || !menu) return;
-    btn.addEventListener('click', e => { e.stopPropagation(); menu.style.display = menu.style.display === 'none' ? 'block' : 'none'; });
-    document.addEventListener('click', e => { if (!btn.contains(e.target) && !menu.contains(e.target)) menu.style.display = 'none'; });
-    $$('.' + cbClass).forEach(cb => cb.addEventListener('change', () => {
-      filter[key] = $$('.' + cbClass).filter(x => x.checked).map(x => x.value);
+    const boxes = () => $$('.' + cbClass);
+    const sync = () => {
+      filter[key] = boxes().filter(x => x.checked).map(x => x.value);
       const n = filter[key].length;
       const lab = $('#' + labelId);
       if (lab) lab.textContent = n === 0 ? allText : (n === 1 ? oneFmt(filter[key][0]) : n + ' selected');
+      if (typeof afterChange === 'function') afterChange();
       pg.page = 1; refresh();
-    }));
+    };
+    // type-to-search (Arabic-folded), matching the shared multiFilterHTML behaviour
+    const search = menu.querySelector('.expm-search');
+    const empty = menu.querySelector('.expm-empty');
+    const norm = s => (typeof normalizeArabicForSearch === 'function') ? normalizeArabicForSearch(String(s || '')) : String(s || '').toLowerCase();
+    const applySearch = () => {
+      const q = norm((search && search.value || '').trim());
+      let shown = 0;
+      boxes().forEach(b => { const l = b.parentElement; if (!l) return; const hit = !q || norm(l.textContent).includes(q); l.style.display = hit ? '' : 'none'; if (hit) shown++; });
+      if (empty) empty.style.display = shown ? 'none' : '';
+    };
+    if (search) { search.addEventListener('click', e => e.stopPropagation()); search.addEventListener('keydown', e => e.stopPropagation()); search.addEventListener('input', applySearch); }
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const open = menu.style.display === 'none';
+      menu.style.display = open ? 'block' : 'none';
+      if (open && search) { search.value = ''; applySearch(); setTimeout(() => { try { search.focus(); } catch (_) {} }, 0); }
+    });
+    document.addEventListener('click', e => { if (!btn.contains(e.target) && !menu.contains(e.target)) menu.style.display = 'none'; });
+    boxes().forEach(cb => cb.addEventListener('change', sync));
+    menu.querySelector('.expm-all')?.addEventListener('click', e => { e.stopPropagation(); boxes().forEach(b => b.checked = true); sync(); });
+    menu.querySelector('.expm-none')?.addEventListener('click', e => { e.stopPropagation(); boxes().forEach(b => b.checked = false); sync(); });
   }
-  wireExpMulti('categories', 'exp-cat-cb', 'exp-cat-btn', 'exp-cat-menu', 'exp-cat-label', 'All categories', v => v);
+  wireExpMulti('categories', 'exp-cat-cb', 'exp-cat-btn', 'exp-cat-menu', 'exp-cat-label', 'All categories', v => v, () => _syncExpCoachPicker());
   wireExpMulti('methods', 'exp-method-cb', 'exp-method-btn', 'exp-method-menu', 'exp-method-label', 'All methods', v => ({ cash: 'Cash', card: 'Card', transfer: 'Bank transfer' }[v] || v));
   wireExpMulti('coaches', 'exp-coach-cb', 'exp-coach-btn', 'exp-coach-menu', 'exp-coach-label', t('All coaches', 'كل المدربين'), v => v);
   // Show the coach picker only while "Salary" is among the selected categories; clear it otherwise.
@@ -17527,7 +17585,7 @@ PAGES.expenses = (main) => {
       pg.page = 1; refresh();
     }
   }
-  $$('.exp-cat-cb').forEach(cb => cb.addEventListener('change', _syncExpCoachPicker));
+  // (category-change → coach-picker sync now runs via wireExpMulti's afterChange, covering All/Clear too)
   // Clear every filter (search + month + category + method + coach) → show all expenses.
   $('#exp-clear')?.addEventListener('click', () => {
     filter = { search: '', months: [], categories: [], methods: [], coaches: [] };
@@ -19161,7 +19219,7 @@ window.showRevenueDetail = function(coachId, monthKey) {
       if (_billM !== monthKey) continue;
       const lis = (Array.isArray(inv.lineItems) && inv.lineItems.length) ? inv.lineItems : [{ sport: inv.sport, coachId: inv.coachId, price: inv.amount || 0 }];
       let coachFee = 0, totalFee = 0;
-      for (const li of lis) { const pr = parseFloat(li.price) || 0; totalFee += pr; if (li.sport === SUMMER_CAMP) continue; if (String(li.coachId) !== String(coachId)) continue; const elig = lineCommissionEligibility(mem, inv, li, null); if (!elig.excluded) coachFee += pr; }
+      for (const li of lis) { const pr = parseFloat(li.price) || 0; totalFee += pr; if (li.sport === SUMMER_CAMP) continue; if (li.sport === MIXED) { coachFee += mixedCoachFeeShare(mem, inv, li, coachId, null); continue; } if (String(li.coachId) !== String(coachId)) continue; const elig = lineCommissionEligibility(mem, inv, li, null); if (!elig.excluded) coachFee += pr; }
       if (coachFee <= 0 || totalFee <= 0) continue;
       const ratio = coachFee / totalFee;
       // sum ALL positive payments on this (billing-month) invoice — the whole paid amount is credited in
@@ -19324,7 +19382,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
       if (_billM !== monthKey) continue;
       const lis = (Array.isArray(inv.lineItems) && inv.lineItems.length) ? inv.lineItems : [{ sport: inv.sport, coachId: inv.coachId, price: inv.amount || 0 }];
       let coachFee = 0, totalFee = 0;
-      for (const li of lis) { const pr = parseFloat(li.price) || 0; totalFee += pr; if (li.sport === SUMMER_CAMP) continue; if (String(li.coachId) !== String(coachId)) continue; const elig = lineCommissionEligibility(mem, inv, li, null); if (!elig.excluded) coachFee += pr; }
+      for (const li of lis) { const pr = parseFloat(li.price) || 0; totalFee += pr; if (li.sport === SUMMER_CAMP) continue; if (li.sport === MIXED) { coachFee += mixedCoachFeeShare(mem, inv, li, coachId, null); continue; } if (String(li.coachId) !== String(coachId)) continue; const elig = lineCommissionEligibility(mem, inv, li, null); if (!elig.excluded) coachFee += pr; }
       if (coachFee <= 0 || totalFee <= 0) continue;
       const ratio = coachFee / totalFee;
       // sum ALL positive payments on this (billing-month) invoice — the whole paid amount is credited in
@@ -21742,6 +21800,18 @@ PAGES.attendance = (main) => {
         if (!hit) continue;
       }
       for (const sp of wanted) {
+        // v6.570 — MIXED: ONE row for the whole "try many sports" package. Its attendance lives in
+        // m.mixedAttendance (per-day sport+coach), NOT the sport-keyed dailyAttendance, so it renders
+        // via a dedicated path below (mixed:true). Window = the current Mixed sub's window so counting
+        // and expiry match the rest of the app.
+        if (sp === MIXED) {
+          const _msub = (m.subscriptions || []).filter(s => (s.activity || '') === MIXED)
+            .sort((a, b) => String(a.start || '').localeCompare(String(b.start || ''))).slice(-1)[0] || null;
+          const _mw = (_msub && typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, _msub)
+            : { from: (_msub && _msub.start) || null, to: (_msub && _msub.end) || null };
+          rows.push({ m, sport: MIXED, coachId: null, window: { from: _mw.from || null, to: _mw.to || null }, attKey: MIXED, mixed: true });
+          continue;
+        }
         // v6.558: the Attended/Not-attended filter is applied PER ROW at the end (once each row's
         // coach-scoped attKey + window are known), not here on the plain sport key — otherwise a
         // two-coach/switched row was mis-classified and the KPI vs the "Attended" list disagreed.
@@ -22137,6 +22207,64 @@ PAGES.attendance = (main) => {
   }
   window._attMark = markCell;
 
+  // ── MIXED attendance (v6.570) ──────────────────────────────────────────────
+  // A Mixed class is stored in m.mixedAttendance[month][day] = { coachId, sport, mark:'Y' }. Marking
+  // opens a chooser to pick the sport + coach that were tried; clearing removes the day. Commission then
+  // splits to that coach (see computeAttendanceCommission). Kept separate from applyMark so the normal
+  // sport path is byte-for-byte unchanged.
+  function applyMixedMark(memberId, day, coachId, sport, clear) {
+    const mo = gridMonth();
+    if (typeof currentRole === 'function' && currentRole() === 'coach') {
+      const markISO = `${mo}-${String(day).padStart(2, '0')}`;
+      if (markISO !== TODAY) { toast(t('Coaches can only mark attendance for today.', 'يمكن للمدرب تسجيل الحضور لليوم الحالي فقط.'), 'error'); return; }
+    }
+    const m = state.members.find(x => x.id === memberId);
+    if (!m) return;
+    if (!m.mixedAttendance) m.mixedAttendance = {};
+    if (!m.mixedAttendance[mo]) m.mixedAttendance[mo] = {};
+    const prev = m.mixedAttendance[mo][String(day)] || null;
+    if (clear) delete m.mixedAttendance[mo][String(day)];
+    else m.mixedAttendance[mo][String(day)] = { coachId: (coachId != null ? coachId : null), sport: sport || null, mark: 'Y' };
+    const iso = `${mo}-${String(day).padStart(2, '0')}`;
+    stampUpdate(m);
+    if (typeof audit === 'function') audit('attendance.mark', `member:${m.id}`,
+      `Mixed attendance ${clear ? 'cleared' : 'present'}: ${m.name}${clear ? '' : ' · ' + (sport || '') + ' · ' + (coachName(coachId) || '')} · ${iso}`,
+      { name: m.name, memberId: m.id, sport: MIXED, mixedSport: sport || null, coachId: coachId != null ? coachId : null, date: iso, old: prev ? 'Y' : 'cleared', new: clear ? 'cleared' : 'Y' });
+    if (typeof saveConfirmed === 'function') {
+      saveConfirmed().then(r => { if (r && !r.ok) { try { toast('⚠ ' + t('Attendance saved on this device but NOT yet in the cloud — check your connection', 'الحضور محفوظ على هذا الجهاز لكن لم يصل السحابة بعد — تحقق من الاتصال'), 'error'); } catch (_) {} } });
+    } else if (typeof save === 'function') { save(); }
+    refresh();
+  }
+  function markMixedCell(memberId, day) {
+    const m = state.members.find(x => x.id === memberId); if (!m) return;
+    const mo = gridMonth();
+    const rec = (m.mixedAttendance && m.mixedAttendance[mo] && m.mixedAttendance[mo][String(day)]) || null;
+    const sportChoices = ((typeof SPORTS !== 'undefined' && SPORTS) ? SPORTS : DEFAULT_SPORTS).filter(s => s !== MIXED && s !== SUMMER_CAMP);
+    const coaches = (state.coaches || []).filter(c => (typeof isCoachRole !== 'function' || isCoachRole(c)) && (typeof isCoachActive !== 'function' || isCoachActive(c) || (rec && String(rec.coachId) === String(c.id))));
+    const sportOpts = `<option value="">${t('— pick sport —', '— اختر الرياضة —')}</option>` + sportChoices.map(s => `<option value="${escapeHtml(s)}" ${rec && rec.sport === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('');
+    const coachOpts = `<option value="">${t('— pick coach —', '— اختر المدرب —')}</option>` + coaches.map(c => `<option value="${c.id}" ${rec && String(rec.coachId) === String(c.id) ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+    const actions = [{ label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal }];
+    if (rec) actions.push({ label: '🗑 ' + t('Clear', 'مسح'), class: 'btn ghost', onclick: () => { closeModal(); applyMixedMark(memberId, day, null, null, true); } });
+    actions.push({ label: '✓ ' + t('Save', 'حفظ'), class: 'btn primary', onclick: () => {
+      const sp = (document.getElementById('mix-sport') || {}).value || '';
+      const cid = parseInt((document.getElementById('mix-coach') || {}).value) || null;
+      if (!sp) { toast(t('Pick the sport', 'اختر الرياضة'), 'error'); return; }
+      if (!cid) { toast(t('Pick the coach', 'اختر المدرب'), 'error'); return; }
+      closeModal(); applyMixedMark(memberId, day, cid, sp, false);
+    } });
+    showModal({
+      title: '🎯 ' + t('Log a Mixed class', 'تسجيل حصة مختلط'),
+      body: `<div style="font-size:13px;line-height:1.7">
+          <p>${escapeHtml(m.name)} · <b>${t('day', 'يوم')} ${day}</b> ${t('of', 'من')} ${fmtMonth(mo)}</p>
+          <p style="margin-top:4px;color:var(--text-mute);font-size:12px">${t('Which sport did they try, and with which coach? The class is credited to that coach.', 'ما الرياضة التي جربها ومع أي مدرب؟ تُحتسب الحصة لذلك المدرب.')}</p>
+          <div class="field" style="margin-top:10px"><label>${t('Sport', 'الرياضة')}</label><select id="mix-sport">${sportOpts}</select></div>
+          <div class="field" style="margin-top:8px"><label>${t('Coach', 'المدرب')}</label><select id="mix-coach">${coachOpts}</select></div>
+        </div>`,
+      actions,
+    });
+  }
+  window._attMarkMixed = markMixedCell;
+
   // v6.557: `warn` (a reason string) makes a cell CLICKABLE but flagged — an amber tint + a tooltip
   // explaining why the day looks off (e.g. outside this coach's computed period). We NEVER render a
   // dead, non-clickable cell: the desk must always be able to log a class and see the reason, not be
@@ -22148,6 +22276,19 @@ PAGES.attendance = (main) => {
     const style = warn ? ' style="opacity:.55;background:rgba(245,158,11,.10)"' : '';
     const title = warn ? ` title="${escapeHtml(warn)}"` : '';
     return `<td class="att-cell ${cls}${warn ? ' att-outside' : ''}"${style}${title} onclick="window._attMark(${memberId}, '${sportEsc}', ${day}, ${mark ? `'${mark}'` : 'null'})">${txt}</td>`;
+  }
+  // v6.570 — a Mixed day cell: green Y when a class was logged (tooltip = the sport + coach tried that
+  // day), blank otherwise. Clicking opens the sport+coach chooser (never a plain toggle).
+  function cellRenderMixed(memberId, day, rec) {
+    const has = !!rec;
+    const tip = has ? `${rec.sport || ''}${rec.coachId != null ? ' · ' + (coachName(rec.coachId) || '') : ''}` : t('Log a class (pick sport + coach)', 'سجّل حصة (اختر رياضة ومدرب)');
+    return `<td class="att-cell ${has ? 'att-y' : 'att-empty'}" title="${escapeHtml(tip)}" onclick="window._attMarkMixed(${memberId}, ${day})">${has ? 'Y' : '·'}</td>`;
+  }
+  // Mixed marks for a month as a {day:'Y'} map (so the shared Y/N counters work for a Mixed row).
+  function mixedDayMarks(m, mo) {
+    const src = (m && m.mixedAttendance && m.mixedAttendance[mo]) || {};
+    const o = {}; for (const d in src) { const r = src[d]; if (r && r.mark !== 'N') o[d] = 'Y'; }
+    return o;
   }
 
   function refresh() {
@@ -22170,7 +22311,7 @@ PAGES.attendance = (main) => {
     let clubAttended = 0;
     for (const { m, attKey, sport, window } of rows) {
       for (const mk of totalMonths) {
-        const dd = m.dailyAttendance?.[mk]?.[attKey || sport] || {};
+        const dd = (attKey === MIXED) ? mixedDayMarks(m, mk) : (m.dailyAttendance?.[mk]?.[attKey || sport] || {});   // v6.570: Mixed reads mixedAttendance
         for (const k in dd) {
           if (dd[k] !== 'Y') continue;
           if (dayFilter.length && !dayFilter.includes(parseInt(k))) continue;
@@ -22190,8 +22331,9 @@ PAGES.attendance = (main) => {
       const monthHeaders = months.map(mo => `<th class="att-day-h" style="min-width:62px;width:62px">${fmtMonth(mo)}</th>`).join('');
       const body = rows.map(({ m, attKey, sport, coachId, window, hist, switchedAway, histTo }) => {
         let grandY = 0;
+        const _isMixedRow = attKey === MIXED;   // v6.570
         const cells = months.map(mo => {
-          const dd = m.dailyAttendance?.[mo]?.[attKey || sport] || {};
+          const dd = _isMixedRow ? mixedDayMarks(m, mo) : (m.dailyAttendance?.[mo]?.[attKey || sport] || {});
           let y = 0; for (const k in dd) if (dd[k] === 'Y' && inWin(window, mo, k)) y++;   // v6.505
           grandY += y;
           return `<td class="att-total" style="text-align:center">${y ? `<span style="color:var(--green);font-weight:600">${y}</span>` : '<span class="text-mute">·</span>'}</td>`;
@@ -22211,7 +22353,7 @@ PAGES.attendance = (main) => {
             <td class="att-name-cell" title="${escapeHtml(m.name)} · ${escapeHtml(sport)}${_due2 > 0.5 ? ' · ' + fmt(_due2) + ' QAR due' : ''}">
               <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isExpired || hist ? 'color:var(--text-mute)' : ''}">${escapeHtml(m.name)}${statusBadge}${histBadge}${renewBadge2}${unpaidBadge2}</div>
               ${m.nameArabic ? `<div dir="rtl" style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isExpired ? 'color:var(--text-mute)' : ''}">${escapeHtml(m.nameArabic)}</div>` : ''}
-              <div class="text-mute" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(sport)}${sport !== SUMMER_CAMP ? ' · ' + escapeHtml(coachName(coachId)) : ''}</div>
+              <div class="text-mute" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(sport)}${_isMixedRow ? ' · ' + escapeHtml(t('multi-coach', 'عدة مدربين')) : (sport !== SUMMER_CAMP ? ' · ' + escapeHtml(coachName(coachId)) : '')}</div>
             </td>
             ${cells}
             <td class="att-total"><span style="color:var(--green);font-weight:700">${grandY}</span></td>
@@ -22242,7 +22384,8 @@ PAGES.attendance = (main) => {
     // One row per (member, sport) — multi-sport members get multiple rows
     const body = rows.map(({ m, attKey, sport, coachId, window, hist, switchedAway, histTo }) => {
       const aKey = attKey || sport;   // v6.509: per-coach storage cell for same-sport two-coach rows
-      const dayData = m.dailyAttendance?.[gMonth]?.[aKey] || {};
+      const _isMixedRow = attKey === MIXED;   // v6.570
+      const dayData = _isMixedRow ? mixedDayMarks(m, gMonth) : (m.dailyAttendance?.[gMonth]?.[aKey] || {});
       let y = 0, n = 0;
       // Totals reflect the full selected scope (baseDays), not just shown columns.
       // v6.505: a split row only counts days inside its coach's window.
@@ -22252,10 +22395,15 @@ PAGES.attendance = (main) => {
       // v6.557: a day outside this coach's computed period is no longer a DEAD cell — it's clickable
       // with an amber warning, so the desk can ALWAYS log a class (e.g. a switched member whose window
       // dates are off) and sees the reason. Marking writes this row's own cell (aKey), so no double-count.
-      const cells = dayList.map(d => inWin(window, gMonth, d)
-        ? cellRender(m.id, aKey, d, dayData[String(d)])
-        : cellRender(m.id, aKey, d, dayData[String(d)], `Outside ${coachName(coachId)}'s period for this membership — logging is allowed; check the dates (Switch review / Edit) if this looks wrong.`)).join('');
-      const total = y + n;
+      // v6.570: a Mixed row renders its own cells (each day carries a chosen sport+coach chooser).
+      const cells = dayList.map(d => _isMixedRow
+        ? cellRenderMixed(m.id, d, (m.mixedAttendance && m.mixedAttendance[gMonth] && m.mixedAttendance[gMonth][String(d)]) || null)
+        : (inWin(window, gMonth, d)
+          ? cellRender(m.id, aKey, d, dayData[String(d)])
+          : cellRender(m.id, aKey, d, dayData[String(d)], `Outside ${coachName(coachId)}'s period for this membership — logging is allowed; check the dates (Switch review / Edit) if this looks wrong.`))).join('');
+      // v6.570: a Mixed row's Total shows attended / package classes (it has no 'N'); rate = attended/planned.
+      const _mixPlanned = _isMixedRow ? (((m.subscriptions || []).filter(s => (s.activity || '') === MIXED).slice(-1)[0] || {}).totalClasses || 0) : 0;
+      const total = _isMixedRow ? (parseInt(_mixPlanned) || y) : (y + n);
       const rate = total ? Math.round(y/total*100) : 0;
       const sportEsc = sport.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
       const status = memberStatus(m);
@@ -22285,7 +22433,7 @@ PAGES.attendance = (main) => {
       // surfaces the over-limit / expired-package state on the row so the desk sees a renewal is due
       // without any blocking prompt. (Camp uses its own campOver flag above.)
       let sportOver = false, sportPlanned = 0, sportMarked = 0;
-      if (sport !== SUMMER_CAMP && !isExpired && !hist) {   // v6.568: a history row is not a live package — no EXPIRED/renewal flags
+      if (sport !== SUMMER_CAMP && sport !== MIXED && !isExpired && !hist) {   // v6.568/6.570: history + Mixed rows aren't a single-coach package — no EXPIRED/renewal flag
         // v6.540: pick the CURRENT sub, not the last array element. A renewed member keeps several subs
         // for the same sport+coach; the subscriptions array is NOT date-ordered (a renewal can sit before
         // an older short period), so the old `.slice(-1)[0]` grabbed whichever happened to be last —
@@ -22346,10 +22494,10 @@ PAGES.attendance = (main) => {
           : '');
       return `
         <tr style="${rowStyle}">
-          <td class="att-name-cell" title="${escapeHtml(m.name)} · ${escapeHtml(sport)}${sport !== SUMMER_CAMP ? ' · ' + escapeHtml(coachName(coachId)) : ''}${isExpired ? ' · expired ' + fmtDate(m.expiryDate) : ''}${_due > 0.5 ? ' · ' + fmt(_due) + ' QAR due' : ''}">
-            <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isExpired || hist ? 'color:var(--text-mute)' : ''}">${escapeHtml(m.name)}${statusBadge}${histBadge}${campOverBadge}${sportOverBadge}${renewBadge}${unpaidBadge}</div>
+          <td class="att-name-cell" title="${escapeHtml(m.name)} · ${escapeHtml(sport)}${_isMixedRow ? ' · ' + escapeHtml(t('multi-coach', 'عدة مدربين')) : (sport !== SUMMER_CAMP ? ' · ' + escapeHtml(coachName(coachId)) : '')}${isExpired ? ' · expired ' + fmtDate(m.expiryDate) : ''}${_due > 0.5 ? ' · ' + fmt(_due) + ' QAR due' : ''}">
+            <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isExpired || hist ? 'color:var(--text-mute)' : ''}">${escapeHtml(m.name)}${_isMixedRow ? ' <span class="badge" style="font-size:9px;padding:1px 6px;background:rgba(59,130,246,.15);color:var(--blue)">🎯 ' + t('Mixed', 'مختلط') + '</span>' : ''}${statusBadge}${histBadge}${campOverBadge}${sportOverBadge}${renewBadge}${unpaidBadge}</div>
             ${m.nameArabic ? `<div dir="rtl" style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isExpired ? 'color:var(--text-mute)' : ''}">${escapeHtml(m.nameArabic)}</div>` : ''}
-            <div class="text-mute" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(sport)}${sport !== SUMMER_CAMP ? ' · ' + escapeHtml(coachName(coachId)) : ''}</div>
+            <div class="text-mute" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(sport)}${_isMixedRow ? ' · ' + escapeHtml(t('pick sport + coach per class', 'اختر الرياضة والمدرب لكل حصة')) : (sport !== SUMMER_CAMP ? ' · ' + escapeHtml(coachName(coachId)) : '')}</div>
           </td>
           ${cells}
           <td class="att-total"><span style="color:var(--green);font-weight:600">${y}</span><span class="text-mute"> / ${total || '—'}</span></td>

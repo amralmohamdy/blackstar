@@ -24,7 +24,7 @@ R.ok('a greyed history row style is applied', (src.match(/background:rgba\(120,1
 R.ok('the ↪ switched-to / history badge is rendered', (src.match(/↪ \$\{switchedAway \? \(histTo \? t\('switched to '/g) || []).length >= 2);
 
 R.section('source — a history row is not a live package (noisy badges suppressed)');
-R.ok('EXPIRED / package-finished flag skips history rows', /if \(sport !== SUMMER_CAMP && !isExpired && !hist\)/.test(src));
+R.ok('EXPIRED / package-finished flag skips history rows', /if \(sport !== SUMMER_CAMP && sport !== MIXED && !isExpired && !hist\)/.test(src));
 R.ok('outstanding/renewal are zeroed for history rows', /typeof memberOutstanding !== 'function' \|\| hist\)/.test(src) && /const needsRenewal = !hist && isExpired/.test(src));
 R.ok('member-status badge is empty on a history row', /const statusBadge = hist\s*\n?\s*\? ''/.test(src));
 
