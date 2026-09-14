@@ -21,6 +21,13 @@ R.section('runtime — HTML shows the search box only for long lists');
   const few = run(`multiFilterHTML('t2', [['a','A'],['b','B'],['c','C']], [], { allText:'All' })`);
   R.ok('a 10-option filter includes the search input', /class="mf-search"/.test(many), 'many');
   R.ok('a 3-option filter does NOT include a search input', !/class="mf-search"/.test(few), 'few');
+
+  R.section('v6.570 — options are sorted A→Z and stack in one tidy column');
+  const unsorted = run(`multiFilterHTML('t3', [['x','Zumba'],['y','Boxing'],['z','MMA']], [], { allText:'All sports' })`);
+  const order = ['Boxing', 'MMA', 'Zumba'].map(w => unsorted.indexOf(w));
+  R.ok('labels render alphabetically (Boxing < MMA < Zumba)', order[0] < order[1] && order[1] < order[2], JSON.stringify(order));
+  R.ok('the list is a single-column flex (no 2-up wrap)', /class="mf-list" style="display:flex;flex-direction:column"/.test(unsorted));
+  R.ok('{ sort:false } preserves the given order', (() => { const s = run(`multiFilterHTML('t4', [['x','Zumba'],['y','Boxing']], [], { sort:false })`); return s.indexOf('Zumba') < s.indexOf('Boxing'); })());
 }
 
 R.done();
