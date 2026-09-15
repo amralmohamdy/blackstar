@@ -93,7 +93,7 @@ R.section('F2/F3 — distributed branch syncs subscriptions + String()-compares 
   R.ok('distributed enrollment lookup String()-compares coachId', /const srcIdx = m\.enrollments\.findIndex\(e => e\.sport === from\.sport && String\(e\.coachId\) === String\(from\.coachId\)\)/.test(src));
   R.ok('distributed primary-sport check String()-compares coachId', /if \(m\.sport === from\.sport && String\(m\.coachId\) === String\(from\.coachId\)\)/.test(src));
   R.ok('distributed branch caps the source SUBSCRIPTION + marks it switched-away', /_dSrc\.status = 'completed'; _dSrc\.switchedAwayTo = tgs\.map\(t => t\.sport\)\.join\(', '\)/.test(src));
-  R.ok('distributed branch pushes one switch-funded sub per target', /resolved\.forEach\(\(tr, i\) => m\.subscriptions\.push\(\{ activity: tr\.sport, coachId: tr\.coachId, totalClasses: tr\.classes, start: switchDate, end: _dEnd \|\| null, status: 'active', switchFunded: true/.test(src));
+  R.ok('distributed branch pushes one switch-funded sub per target', /resolved\.forEach\(\(tr, i\) => m\.subscriptions\.push\(\{ activity: tr\.sport, coachId: tr\.coachId, totalClasses: tr\.classes, start: switchDate, end: _dEndSafe, status: 'active', switchFunded: true/.test(src));
 }
 
 R.done();

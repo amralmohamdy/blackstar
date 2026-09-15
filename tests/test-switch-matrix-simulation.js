@@ -366,19 +366,19 @@ R.section('S18 — switch on the MEMBERSHIP START DAY (0 attended, whole package
     { attended: 0, moved: 8, aShare: 0, bPrice: 800, oldComm: 0, month: '2026-09' });
 }
 
-// ═══════════════════════════════ GUARD (safety net must ROLL BACK) ═══════════════════════════════
-R.section('S19 — GUARD: switch DATE AFTER the cycle ended → would be backwards → ROLLED BACK, saves nothing');
+// ═══════════════════════ EXPIRED SOURCE (v6.571 fix #5 — now SUCCEEDS, was rolled back) ═══════════════════
+R.section('S19 — switch DATE AFTER the source cycle ended → PERSISTS with an open dest window (v6.571)');
 {
   const ctx = freshCtx('2026-11-01');
   seedMember(ctx, { id: 19, sport: 'Swimming', coachId: 1, classes: 8, price: 800, coaches: COACHES,
     attMonth: '2026-09', attDays: { Swimming: { '02': 'Y' } },
     subs: [{ activity: 'Swimming', coachId: 1, totalClasses: 8, start: '2026-09-01', end: '2026-09-30', status: 'active', amountPaid: 800 }] });
-  const before = JSON.stringify(member(ctx, 19));
-  doSwitch(ctx, { memberId: 19, toSport: 'Karate', toCoachId: 2, date: '2026-10-15' });   // after end → dest start>end
+  doSwitch(ctx, { memberId: 19, toSport: 'Karate', toCoachId: 2, date: '2026-10-15' });   // after the source ended 09-30
   const after = member(ctx, 19);
-  R.ok('[S19] member is UNCHANGED (rolled back — no switch persisted)', JSON.stringify(after) === before, 'sportSwitches=' + (after.sportSwitches || []).length);
-  R.ok('[S19] no dangling active backwards window remains', !(after.subscriptions || []).some(s => !isFinished(s) && s.start && s.end && String(s.start) > String(s.end)));
-  R.ok('[S19] the user was warned the switch was NOT saved', /NOT saved/i.test((ctx.__lastToast || {}).msg || ''), (ctx.__lastToast || {}).msg);
+  const dst = (after.subscriptions || []).find(s => s.activity === 'Karate' && s.switchFunded);
+  R.ok('[S19] the switch PERSISTED (a sportSwitch was recorded)', (after.sportSwitches || []).length === 1, 'switches=' + (after.sportSwitches || []).length);
+  R.ok('[S19] destination is active with an OPEN end (stale source end dropped, not backwards)', !!dst && (dst.status || '').toLowerCase() === 'active' && dst.end == null, JSON.stringify(dst && { start: dst.start, end: dst.end }));
+  R.ok('[S19] safety net still passes — no active backwards/zero-day window', problem(ctx, 19) === null && !(after.subscriptions || []).some(s => !isFinished(s) && s.start && s.end && String(s.start) > String(s.end)));
 }
 
 // ═══════════════════════════════ DISTRIBUTED (one → many) ═══════════════════════════════

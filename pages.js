@@ -7619,6 +7619,35 @@ function citadelCompute(selMonths) {
     const invAmount = Number(inv.amount) || 0;
     const factor = liSum > 0 ? invAmount / liSum : (items.length ? invAmount / items.length : 0);
     for (const li of items) {
+      // v6.572 — MIXED: the line's sport is "Mixed", but the member may have spent those classes on
+      // Football/Swimming (which DO carry the facility share). Split the Mixed line's revenue across the
+      // citadel sports by the classes actually attended in each (capped at the paid classes), so the
+      // facility partner is billed for real pool/court use done under a Mixed package.
+      if (li.sport === MIXED) {
+        const _mem = inv.customerId ? (state.members || []).find(x => x.id === inv.customerId) : null;
+        const _tot = (_mem && typeof mixedTotalClasses === 'function') ? mixedTotalClasses(_mem, inv, li) : 0;
+        if (!_mem || _tot <= 0 || !_mem.mixedAttendance) continue;
+        const _w = (typeof mixedWindow === 'function') ? mixedWindow(_mem, inv, li) : { from: null, to: null };
+        const _lineAmt = liSum > 0 ? (Number(li.price) || 0) * factor : factor;
+        const _perClass = _tot > 0 ? _lineAmt / _tot : 0;
+        const _rows = [];
+        for (const _mo of Object.keys(_mem.mixedAttendance)) { const _days = _mem.mixedAttendance[_mo] || {};
+          for (const _d in _days) { const _rec = _days[_d]; if (!_rec || _rec.mark === 'N') continue;
+            const _iso = `${_mo}-${String(parseInt(_d, 10)).padStart(2, '0')}`;
+            if (_w.from && _iso < _w.from) continue; if (_w.to && _iso > _w.to) continue;
+            _rows.push({ iso: _iso, sport: _rec.sport }); } }
+        _rows.sort((a, b) => a.iso.localeCompare(b.iso));
+        const _perSport = {}; for (const e of _rows.slice(0, _tot)) { if (e.sport) _perSport[e.sport] = (_perSport[e.sport] || 0) + 1; }
+        for (const _sp of Object.keys(_perSport)) {
+          const _hit = groupFor(_sp); if (!_hit) continue;
+          const _amt = _perClass * _perSport[_sp]; if (_amt <= 0) continue;
+          agg[_hit.g.key][_hit.type] += _amt;
+          const _ci = (typeof customerInfo === 'function') ? customerInfo(inv) : null;
+          const _cust = (_ci && _ci.name) || inv.customerName || (_mem ? (_mem.name || _mem.nameArabic || '') : '') || '—';
+          details.push({ month: mkey, ref: inv.ref || ('#' + inv.id), date: (inv.date || '').slice(0, 10), customer: _cust, group: _hit.g, type: _hit.type, sport: _sp + ' · Mixed', amount: _amt });
+        }
+        continue;
+      }
       const hit = groupFor(li.sport);
       if (!hit) continue;
       const amt = liSum > 0 ? (Number(li.price) || 0) * factor : factor;
@@ -19219,7 +19248,7 @@ window.showRevenueDetail = function(coachId, monthKey) {
       if (_billM !== monthKey) continue;
       const lis = (Array.isArray(inv.lineItems) && inv.lineItems.length) ? inv.lineItems : [{ sport: inv.sport, coachId: inv.coachId, price: inv.amount || 0 }];
       let coachFee = 0, totalFee = 0;
-      for (const li of lis) { const pr = parseFloat(li.price) || 0; totalFee += pr; if (li.sport === SUMMER_CAMP) continue; if (li.sport === MIXED) { coachFee += mixedCoachFeeShare(mem, inv, li, coachId, null); continue; } if (String(li.coachId) !== String(coachId)) continue; const elig = lineCommissionEligibility(mem, inv, li, null); if (!elig.excluded) coachFee += pr; }
+      for (const li of lis) { const pr = parseFloat(li.price) || 0; totalFee += pr; if (li.sport === SUMMER_CAMP) continue; if (typeof isExcludedFromCoachSalary === 'function' && isExcludedFromCoachSalary(coachId, inv.customerId)) continue; /* v6.572: match computeMonthlyPay — an excluded member earns this coach nothing */ if (li.sport === MIXED) { coachFee += mixedCoachFeeShare(mem, inv, li, coachId, null); continue; } if (String(li.coachId) !== String(coachId)) continue; const elig = lineCommissionEligibility(mem, inv, li, null); if (!elig.excluded) coachFee += pr; }
       if (coachFee <= 0 || totalFee <= 0) continue;
       const ratio = coachFee / totalFee;
       // sum ALL positive payments on this (billing-month) invoice — the whole paid amount is credited in
@@ -19227,7 +19256,8 @@ window.showRevenueDetail = function(coachId, monthKey) {
       let paidThisMonth = 0;
       let _rp = (Array.isArray(inv.payments) ? inv.payments : []).filter(p => (Number(p.amount) || 0) > 0);
       if (!_rp.length && (Number(inv.amountPaid) || 0) > 0) _rp = [{ amount: Number(inv.amountPaid) }];
-      for (const p of _rp) { const amt = Number(p.amount) || 0; if (amt > 0) paidThisMonth += amt; }
+      const _commStartP = (state.settings && state.settings.commissionStartDate) || '';   // v6.572: match computeMonthlyPay — payments before the commission start date don't count
+      for (const p of _rp) { const amt = Number(p.amount) || 0; if (amt <= 0) continue; const _pDate = p.date || (p.month ? p.month + '-01' : (inv.date || '')); if (_commStartP && _pDate && String(_pDate).slice(0, 10) < _commStartP) continue; paidThisMonth += amt; }
       const share = Math.round(paidThisMonth * ratio * 100) / 100;
       if (Math.abs(share) < 0.005) continue;
       rebuilt.push({
@@ -19382,7 +19412,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
       if (_billM !== monthKey) continue;
       const lis = (Array.isArray(inv.lineItems) && inv.lineItems.length) ? inv.lineItems : [{ sport: inv.sport, coachId: inv.coachId, price: inv.amount || 0 }];
       let coachFee = 0, totalFee = 0;
-      for (const li of lis) { const pr = parseFloat(li.price) || 0; totalFee += pr; if (li.sport === SUMMER_CAMP) continue; if (li.sport === MIXED) { coachFee += mixedCoachFeeShare(mem, inv, li, coachId, null); continue; } if (String(li.coachId) !== String(coachId)) continue; const elig = lineCommissionEligibility(mem, inv, li, null); if (!elig.excluded) coachFee += pr; }
+      for (const li of lis) { const pr = parseFloat(li.price) || 0; totalFee += pr; if (li.sport === SUMMER_CAMP) continue; if (typeof isExcludedFromCoachSalary === 'function' && isExcludedFromCoachSalary(coachId, inv.customerId)) continue; /* v6.572: match computeMonthlyPay — an excluded member earns this coach nothing */ if (li.sport === MIXED) { coachFee += mixedCoachFeeShare(mem, inv, li, coachId, null); continue; } if (String(li.coachId) !== String(coachId)) continue; const elig = lineCommissionEligibility(mem, inv, li, null); if (!elig.excluded) coachFee += pr; }
       if (coachFee <= 0 || totalFee <= 0) continue;
       const ratio = coachFee / totalFee;
       // sum ALL positive payments on this (billing-month) invoice — the whole paid amount is credited in
@@ -19390,7 +19420,8 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
       let paidThisMonth = 0;
       let _rp = (Array.isArray(inv.payments) ? inv.payments : []).filter(p => (Number(p.amount) || 0) > 0);
       if (!_rp.length && (Number(inv.amountPaid) || 0) > 0) _rp = [{ amount: Number(inv.amountPaid) }];
-      for (const p of _rp) { const amt = Number(p.amount) || 0; if (amt > 0) paidThisMonth += amt; }
+      const _commStartP = (state.settings && state.settings.commissionStartDate) || '';   // v6.572: match computeMonthlyPay — payments before the commission start date don't count
+      for (const p of _rp) { const amt = Number(p.amount) || 0; if (amt <= 0) continue; const _pDate = p.date || (p.month ? p.month + '-01' : (inv.date || '')); if (_commStartP && _pDate && String(_pDate).slice(0, 10) < _commStartP) continue; paidThisMonth += amt; }
       const share = Math.round(paidThisMonth * ratio * 100) / 100;
       if (Math.abs(share) < 0.005) continue;
       rebuilt.push({
@@ -25462,10 +25493,10 @@ window.deleteSubscription = function(memberId, sid) {
 // member's dailyAttendance (keyed YYYY-MM → sport → day). Returns the number of
 // ATTENDED ('Y') classes removed. Prunes empty sport / month maps.
 function _clearSportAttendanceWindow(m, sport, start, end) {
-  if (!m || !m.dailyAttendance || !sport) return 0;
+  if (!m || !sport) return 0;
   const from = start || '0000-00-00', to = end || '9999-99-99';
   let removed = 0;
-  for (const ym of Object.keys(m.dailyAttendance)) {
+  if (m.dailyAttendance) for (const ym of Object.keys(m.dailyAttendance)) {
     const monthMap = m.dailyAttendance[ym];
     const sportMap = monthMap && monthMap[sport];
     if (!sportMap) continue;
@@ -25478,6 +25509,19 @@ function _clearSportAttendanceWindow(m, sport, start, end) {
     }
     if (!Object.keys(sportMap).length) delete monthMap[sport];
     if (monthMap && !Object.keys(monthMap).length) delete m.dailyAttendance[ym];
+  }
+  // v6.572 — a Mixed package's marks live in m.mixedAttendance (per-day sport+coach), not dailyAttendance.
+  // Clear those in the window too, so deleting a Mixed sport doesn't leave orphaned attendance/commission
+  // data (and the removed count is accurate, not "0").
+  if (sport === MIXED && m.mixedAttendance) {
+    for (const ym of Object.keys(m.mixedAttendance)) {
+      const dayMap = m.mixedAttendance[ym]; if (!dayMap) continue;
+      for (const day of Object.keys(dayMap)) {
+        const full = ym + '-' + String(day).padStart(2, '0');
+        if (full >= from && full <= to) { const rec = dayMap[day]; if (rec && rec.mark !== 'N') removed++; delete dayMap[day]; }
+      }
+      if (!Object.keys(dayMap).length) delete m.mixedAttendance[ym];
+    }
   }
   return removed;
 }
