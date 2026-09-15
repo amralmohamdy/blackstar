@@ -1,0 +1,95 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Same rules you'll deploy to production (see tools/firestore-rules-recommended.txt).
+    // The seed script creates a staff login (admin@blackstars.qa / admin123) in the
+    // Auth emulator so the app can sign in and write.
+    // A MEMBER portal login is `<mobile>@blackstars.com` — the local part is all
+    // DIGITS. STAFF (receptionist/admin) use the SAME domain with a NAMED local part
+    // (receptionist@…, test@…), so match ONLY a digit local part — otherwise staff
+    // would be denied the club's data (0 invoices, etc.).
+    // The Users & Roles map lives on the parent meta doc (settings.userRoles), keyed by
+    // LOWER-CASED email. A digit-only email that the admin mapped to a STAFF role
+    // (coach / admin / receptionist) is NOT a member — e.g. a coach onboarded as
+    // <mobile>@blackstars.com. `.get(k, default)` guards a missing settings/map/entry.
+    function _userRoles() {
+      return get(/databases/$(database)/documents/clubs/blackstars).data
+        .get('settings', {}).get('userRoles', {});
+    }
+    function _mappedRole() {
+      return (request.auth != null && request.auth.token.email != null
+              && (request.auth.token.email.lower() in _userRoles()))
+        ? _userRoles()[request.auth.token.email.lower()].get('role', '') : '';
+    }
+    function isMappedStaff() {
+      return _mappedRole() in ['coach', 'admin', 'receptionist'];
+    }
+    function isMember() {
+      return request.auth != null
+        && request.auth.token.email != null
+        && request.auth.token.email.matches('^[0-9]+@(blackstars[.]com|members[.]blackstars[.]qa)$')
+        && !isMappedStaff();
+    }
+    function isStaff() {
+      return request.auth != null && !isMember();
+    }
+    function isAdmin() {
+      return _mappedRole() == 'admin';
+    }
+    // The ROLE MAP (settings.userRoles) decides who is admin/receptionist/coach. If ANY staff
+    // could rewrite it, a receptionist could promote themselves to admin or lock everyone out —
+    // a privilege-escalation hole. This returns true when a write leaves the role map untouched,
+    // so only a change TO the role map is gated on isAdmin() below. resource == null on the very
+    // first create of the club doc; a create that already carries a role map must be an admin.
+    function _rolesUnchanged() {
+      return (resource != null
+              ? resource.data.get('settings', {}).get('userRoles', {})
+              : {})
+        == request.resource.data.get('settings', {}).get('userRoles', {});
+    }
+    // BOOTSTRAP: on a brand-new club the role map is empty and NOBODY is admin yet (the app treats
+    // the first login as admin — see roleForEmail). So the first-ever role map may be set by any
+    // staff; once ANY mapping exists this is false and only an admin can change it. Matches the app,
+    // and does not weaken a live club (whose map is already populated).
+    function _rolesEmptyBefore() {
+      return (resource == null)
+        || resource.data.get('settings', {}).get('userRoles', {}).size() == 0;
+    }
+    // Collections a MEMBER portal login may read. Everything else — invoices/
+    // revenue, expenses, salaries, cashCounts, sales, coaches (pay), families,
+    // membershipTransfers, notes, rentals, trials, drivers, products, auditLog — is
+    // denied to members. Staff read/write everything.
+    function memberReadable(collection) {
+      return collection in ['members', 'schedule', 'advices', 'posts', 'swimGroups'];
+    }
+
+    match /clubs/{clubId} {
+      allow read:  if request.auth != null;   // parent meta doc (settings / camp schedule)
+      // Staff may write the club meta doc (settings, camp schedule, sport list, prices…), BUT
+      // changing the ROLE MAP is admin-only — otherwise any staff login could escalate itself.
+      allow write: if isStaff() && (_rolesUnchanged() || isAdmin() || _rolesEmptyBefore());
+
+      // AUDIT TRAIL is IMMUTABLE (req #8): STAFF may CREATE + READ audit entries, but
+      // NOBODY may update or delete, and MEMBERS may not read it at all. Declared
+      // BEFORE the generic rule (Firestore grants if ANY rule matches).
+      match /auditLog/{docId} {
+        allow read:   if isStaff();
+        allow create: if isStaff();
+        allow update, delete: if false;
+      }
+
+      // Every OTHER per-record subcollection: staff read/write; members read ONLY
+      // the portal collections (memberReadable) — the club's financial/operational
+      // data is never exposed to a member login.
+      match /{collection}/{docId} {
+        allow read:  if isStaff() || (isMember() && memberReadable(collection));
+        allow write: if isStaff() && collection != 'auditLog';
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
