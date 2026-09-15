@@ -21721,7 +21721,21 @@ PAGES.attendance = (main) => {
     if (m.coachId === cid && m.sport) set.add(m.sport);
     (m.enrollments || []).forEach(e => { if (e.coachId === cid && e.sport) set.add(e.sport); });
     (m.subscriptions || []).forEach(s => { if (s.coachId === cid && s.activity) set.add(s.activity); });
+    // v6.571 — a Mixed package has NO fixed coach (coachId null); the real coach of each class lives in
+    // m.mixedAttendance. Attribute Mixed to any coach who has actually TAUGHT a Mixed class for this
+    // member, so the admin "filter by coach" lists their Mixed students (and a coach sees ones they taught).
+    const ma = m.mixedAttendance;
+    if (ma) {
+      outer: for (const mo of Object.keys(ma)) { const days = ma[mo] || {};
+        for (const dk of Object.keys(days)) { const rec = days[dk]; if (rec && rec.mark !== 'N' && String(rec.coachId) === String(cid)) { set.add(MIXED); break outer; } } }
+    }
     return set;
+  }
+  // Does the member hold a LIVE (not completed/withdrawn/switched) Mixed package? Any coach may mark it.
+  function memberHasLiveMixed(m) {
+    return (m.subscriptions || []).some(s => (s.activity || '') === MIXED
+      && (s.status || '').toLowerCase() !== 'completed' && (s.status || '').toLowerCase() !== 'withdrawn' && !s.switchedAwayTo)
+      || (m.enrollments || []).some(e => (e.sport || '') === MIXED);
   }
 
   // Collect all sports a member is enrolled in (primary + enrollments + subs)
@@ -21788,7 +21802,10 @@ PAGES.attendance = (main) => {
       if (_coachSports) wanted = wanted.filter(s => _coachSports.has(s));
       if (myCoachId != null) {
         const mine = coachSportsFor(m, myCoachId);
-        wanted = wanted.filter(s => mine.has(s));
+        // v6.571 — a coach also sees a member's LIVE Mixed row (even one they haven't taught yet) so they
+        // can log a class when the member shows up to try their sport; commission still follows who taught.
+        const _liveMix = memberHasLiveMixed(m);
+        wanted = wanted.filter(s => mine.has(s) || (s === MIXED && _liveMix));
       }
       if (!wanted.length) continue;
       if (filter.search) {
@@ -22309,13 +22326,22 @@ PAGES.attendance = (main) => {
     const totalMonths = (filter.month === 'all') ? _summaryMonths : [gMonth];
     const dayFilter = (filter.month === 'all') ? [] : (filter.days || []).filter(d => d >= 1 && d <= 31);
     let clubAttended = 0;
+    // v6.571 — count each physical class ONCE. A history row and a live row for the same member+sport
+    // both carry the plain attKey and overlapping windows, so without a seen-set the same day was counted
+    // twice in the headline "ATTENDED" number. Key on member+attKey+month+day: two genuinely-separate
+    // coach cells ('sport' vs 'sport <id>') still count independently; the shared-cell duplicate collapses.
+    const _seenAtt = new Set();
     for (const { m, attKey, sport, window } of rows) {
+      const _k = attKey || sport;
       for (const mk of totalMonths) {
-        const dd = (attKey === MIXED) ? mixedDayMarks(m, mk) : (m.dailyAttendance?.[mk]?.[attKey || sport] || {});   // v6.570: Mixed reads mixedAttendance
+        const dd = (attKey === MIXED) ? mixedDayMarks(m, mk) : (m.dailyAttendance?.[mk]?.[_k] || {});   // v6.570: Mixed reads mixedAttendance
         for (const k in dd) {
           if (dd[k] !== 'Y') continue;
           if (dayFilter.length && !dayFilter.includes(parseInt(k))) continue;
           if (!inWin(window, mk, k)) continue;   // v6.505: split rows count only their coach's window (no double-count)
+          const _sig = m.id + '|' + _k + '|' + mk + '|' + k;
+          if (_seenAtt.has(_sig)) continue;      // v6.571: same physical class already counted (history+live overlap)
+          _seenAtt.add(_sig);
           clubAttended++;
         }
       }
@@ -23127,15 +23153,19 @@ window._attPdf = function(memberId, month, sport) {
   const mo = month || (window._attCurrentMonth) || latestDataMonth();
   const days = daysInMonth(mo);
   const sportsMap = m.dailyAttendance?.[mo] || {};
+  // v6.571 — a Mixed package's day marks live in m.mixedAttendance, not dailyAttendance.
+  const _mixMonth = (m.mixedAttendance && m.mixedAttendance[mo]) || {};
+  const _mixDD = () => { const o = {}; for (const d in _mixMonth) { const r = _mixMonth[d]; if (r && r.mark !== 'N') o[d] = 'Y'; } return o; };
   // If a sport was passed, show just that sport. Otherwise show all sports the
-  // member has attendance for, in this month.
+  // member has attendance for, in this month (including Mixed).
   const sportsShown = sport ? [sport] : Object.keys(sportsMap);
+  if (!sport && Object.keys(_mixMonth).length && !sportsShown.includes(MIXED)) sportsShown.push(MIXED);
   if (!sportsShown.length && sport) sportsShown.push(sport);
   if (!sportsShown.length) sportsShown.push(m.sport || '—');
 
   let totalY = 0, totalN = 0;
   const sportSections = sportsShown.map(sp => {
-    const dd = sportsMap[sp] || {};
+    const dd = sp === MIXED ? _mixDD() : (sportsMap[sp] || {});
     let y = 0, n = 0;
     const marked = [];
     for (let d = 1; d <= days; d++) {
@@ -23152,14 +23182,17 @@ window._attPdf = function(memberId, month, sport) {
     const dayRows = marked.length ? marked.map(c => {
       const dateStr = fmtDate(`${mo}-${String(c.d).padStart(2, '0')}`);
       const present = c.v === 'Y';
+      // v6.571 — for a Mixed day, show which sport + coach was tried alongside the date.
+      const _mrec = sp === MIXED ? _mixMonth[String(c.d)] : null;
+      const _mnote = _mrec ? ` <span style="color:#888;font-size:11px">· ${escapeHtml(_mrec.sport || '')}${_mrec.coachId != null ? ' · ' + escapeHtml(coachName(_mrec.coachId) || '') : ''}</span>` : '';
       return `<tr>
-        <td style="border:1px solid #e5e5ea;padding:7px 10px;font-size:12px">${dateStr}</td>
+        <td style="border:1px solid #e5e5ea;padding:7px 10px;font-size:12px">${dateStr}${_mnote}</td>
         <td style="border:1px solid #e5e5ea;padding:7px 10px;text-align:center;font-weight:700;font-size:12px;background:${present ? '#d1fae5' : '#fee2e2'};color:${present ? '#065f46' : '#991b1b'}">${present ? 'Present' : 'Absent'}</td>
       </tr>`;
     }).join('') : `<tr><td colspan="2" style="border:1px solid #e5e5ea;padding:10px;text-align:center;color:#999;font-size:12px">No days marked this month</td></tr>`;
     return `
       <div style="margin-bottom:20px">
-        <div style="font-size:14px;font-weight:700;color:#f26060;margin-bottom:8px">${escapeHtml(sp)}${sp === SUMMER_CAMP ? '' : ' · Coach ' + escapeHtml(coachName(cid))} · <span style="color:#666;font-weight:500">${y}/${sTot} · ${sTot ? sRate + '%' : '—'}</span></div>
+        <div style="font-size:14px;font-weight:700;color:#f26060;margin-bottom:8px">${escapeHtml(sp)}${(sp === SUMMER_CAMP || sp === MIXED) ? (sp === MIXED ? ' · multi-coach' : '') : ' · Coach ' + escapeHtml(coachName(cid))} · <span style="color:#666;font-weight:500">${y}/${sTot} · ${sTot ? sRate + '%' : '—'}</span></div>
         <table style="width:100%;border-collapse:collapse"><thead><tr>
           <th style="border:1px solid #e5e5ea;padding:6px 10px;font-size:10px;color:#777;background:#fafafa;text-align:left;text-transform:uppercase;letter-spacing:.5px">Date</th>
           <th style="border:1px solid #e5e5ea;padding:6px 10px;font-size:10px;color:#777;background:#fafafa;text-align:center;text-transform:uppercase;letter-spacing:.5px">Attendance</th>
@@ -23249,8 +23282,9 @@ window._attPdfSubscription = function(memberId) {
   const monthSections = months.map(mo => {
     const days = daysInMonth(mo);
     const sportsMap = m.dailyAttendance?.[mo] || {};
+    const _mixMo = (m.mixedAttendance && m.mixedAttendance[mo]) || {};   // v6.571: Mixed day marks for this month
     const perSport = sportsShown.map(sp => {
-      const dd = sportsMap[sp] || {};
+      const dd = sp === MIXED ? (function(){ const o = {}; for (const d in _mixMo) { const r = _mixMo[d]; if (r && r.mark !== 'N') o[d] = 'Y'; } return o; })() : (sportsMap[sp] || {});
       let y = 0, n = 0; const marked = [];
       for (let d = 1; d <= days; d++) {
         const v = dd[String(d)];
@@ -23266,14 +23300,16 @@ window._attPdfSubscription = function(memberId) {
       const dayRows = marked.map(c => {
         const dateStr = fmtDate(`${mo}-${String(c.d).padStart(2, '0')}`);
         const present = c.v === 'Y';
+        const _mrec = sp === MIXED ? _mixMo[String(c.d)] : null;   // v6.571: show the tried sport+coach
+        const _mnote = _mrec ? ` <span style="color:#888;font-size:11px">· ${escapeHtml(_mrec.sport || '')}${_mrec.coachId != null ? ' · ' + escapeHtml(coachName(_mrec.coachId) || '') : ''}</span>` : '';
         return `<tr>
-          <td style="border:1px solid #e5e5ea;padding:7px 10px;font-size:12px">${dateStr}</td>
+          <td style="border:1px solid #e5e5ea;padding:7px 10px;font-size:12px">${dateStr}${_mnote}</td>
           <td style="border:1px solid #e5e5ea;padding:7px 10px;text-align:center;font-weight:700;font-size:12px;background:${present ? '#d1fae5' : '#fee2e2'};color:${present ? '#065f46' : '#991b1b'}">${present ? 'Present' : 'Absent'}</td>
         </tr>`;
       }).join('');
       return `
         <div style="margin-bottom:14px">
-          <div style="font-size:13px;font-weight:700;color:#f26060;margin-bottom:6px">${escapeHtml(sp)}${sp === SUMMER_CAMP ? '' : ' · Coach ' + escapeHtml(coachName(cid))} · <span style="color:#666;font-weight:500">${y}/${sTot} · ${sTot ? sRate + '%' : '—'}</span></div>
+          <div style="font-size:13px;font-weight:700;color:#f26060;margin-bottom:6px">${escapeHtml(sp)}${(sp === SUMMER_CAMP || sp === MIXED) ? (sp === MIXED ? ' · multi-coach' : '') : ' · Coach ' + escapeHtml(coachName(cid))} · <span style="color:#666;font-weight:500">${y}/${sTot} · ${sTot ? sRate + '%' : '—'}</span></div>
           <table style="width:100%;border-collapse:collapse"><thead><tr>
             <th style="border:1px solid #e5e5ea;padding:6px 10px;font-size:10px;color:#777;background:#fafafa;text-align:left;text-transform:uppercase;letter-spacing:.5px">Date</th>
             <th style="border:1px solid #e5e5ea;padding:6px 10px;font-size:10px;color:#777;background:#fafafa;text-align:center;text-transform:uppercase;letter-spacing:.5px">Attendance</th>
@@ -24186,7 +24222,8 @@ window.switchSport = function(memberId) {
             const _dSrc = _dCands.find(s => (s.start || '') <= switchDate && (!s.end || switchDate <= s.end)) || _dCands.slice().sort((a, b) => (a.start || '').localeCompare(b.start || '')).slice(-1)[0] || null;
             const _dEnd = _dSrc ? _dSrc.end : null;
             if (_dSrc) { _dSrc.status = 'completed'; _dSrc.switchedAwayTo = tgs.map(t => t.sport).join(', '); _dSrc.switchedAt = switchDate; _dSrc.totalClasses = attendedA; _dSrc.amountPaid = aShare; }
-            resolved.forEach((tr, i) => m.subscriptions.push({ activity: tr.sport, coachId: tr.coachId, totalClasses: tr.classes, start: switchDate, end: _dEnd || null, status: 'active', switchFunded: true, amountPaid: tr.value, _sid: 's' + Date.now() + '_swd' + i }));
+            const _dEndSafe = (_dEnd && String(_dEnd) > String(switchDate)) ? _dEnd : null;   // v6.571: don't inherit an expired/last-day end (backwards window → rollback)
+            resolved.forEach((tr, i) => m.subscriptions.push({ activity: tr.sport, coachId: tr.coachId, totalClasses: tr.classes, start: switchDate, end: _dEndSafe, status: 'active', switchFunded: true, amountPaid: tr.value, _sid: 's' + Date.now() + '_swd' + i }));
           }
           audit('sport.switch', 'member:' + m.id, 'Distributed ' + from.sport + ' → ' + tgs.map(t => t.sport).join(', ') + ' for ' + (m.name || m.nameArabic), { memberId: m.id });
           // v6.567: validate the result; rolls back + saves nothing if it would be structurally broken.
@@ -24423,8 +24460,13 @@ window.switchSport = function(memberId) {
             destSub.status = 'active';
             destSub.switchFunded = true;
           } else if (srcSub) {
+            // v6.571 — don't inherit an EXPIRED/last-day source end: if srcSub.end is on/before the switch
+            // date the destination window would be backwards (start>end) or zero-day, which the v6.567
+            // safety net rejects → the whole switch silently rolls back (an expired member could never be
+            // switched). Leave the end OPEN (null) in that case; a later renewal sets a real end.
+            const _destEnd = (srcSub.end && String(srcSub.end) > String(switchDate)) ? srcSub.end : null;
             m.subscriptions.push({ activity: toSport, coachId: finalToCoachId, totalClasses: _remainingCls,
-              start: switchDate, end: srcSub.end || null, status: 'active', switchFunded: true, amountPaid: _destPrice,
+              start: switchDate, end: _destEnd, status: 'active', switchFunded: true, amountPaid: _destPrice,
               _sid: 's' + Date.now() + '_sw' });
           }
         }
