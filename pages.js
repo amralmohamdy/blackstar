@@ -6,101 +6,99 @@
 // Returns figures for the CURRENT month and the PREVIOUS month. The keys are
 // `curr*` / `prev*`. Legacy code may still reference `may*` / `apr*` — those
 // are kept as aliases below so we don't break things during the transition.
-function computeStats(monthKey) {
-  const curr = monthKey || (typeof window !== 'undefined' && window._dashMonth) || currentMonth();
-  // Previous month: take 1st of current, subtract a day, format YYYY-MM
-  const d = new Date(curr + '-01T00:00:00');
-  d.setDate(0);
-  const prev = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-
-  // Revenue = BILLED in each sport's START month (accrual, club policy): a sport's
-  // fee is recognized in the month that sport begins — so a member with a June sport
-  // and a July sport (or a July Summer Camp) has that revenue split across the two
-  // months. Payment DATES are stored on the ledger but do not move revenue.
-  const _billed = (ym, pred) => billedInMonth(ym, pred);
-  const currRevenue = _billed(curr);
-  const prevRevenue = _billed(prev);
-
-  // Split revenue: coaching/membership vs court rental vs equipment sales
-  const currRentalRevenue = _billed(curr, i => i.activityType === 'rental');
-  const prevRentalRevenue = _billed(prev, i => i.activityType === 'rental');
-
-  const currRentalCount = monthInvoices(curr).filter(i => i.activityType === 'rental').length;
-  const prevRentalCount = monthInvoices(prev).filter(i => i.activityType === 'rental').length;
-
-  // Product sales revenue (sales auto-create invoices with category='Product')
-  const currSalesRevenue = _billed(curr, i => i.activityType === 'sale');
-  const prevSalesRevenue = _billed(prev, i => i.activityType === 'sale');
-
-  const currCoachingRevenue = currRevenue - currRentalRevenue - currSalesRevenue;
-  const prevCoachingRevenue = prevRevenue - prevRentalRevenue - prevSalesRevenue;
-
-  // CASH actually collected this month (by payment date) — the drawer figure, distinct
-  // from billed revenue (which is recognized in each sport's start month).
-  const currCashCollected = (typeof cashCollectedInMonth === 'function') ? cashCollectedInMonth(curr) : 0;
-  const prevCashCollected = (typeof cashCollectedInMonth === 'function') ? cashCollectedInMonth(prev) : 0;
-
-  // P&L expenses exclude "Salary"-category entries: those are salary PAYMENTS
-  // (settlements), and the salary COST is already counted via salariesEarnedInMonth.
-  // !e.deleted: moneyflow / cashinhand / payanalysis all honour the soft-delete, so a voided
-  // expense left the Dashboard as the only screen overstating cost and understating profit.
-  const currExpenses = state.expenses.filter(e => !e.deleted && e.month === curr && !isSalaryCategory(e.category)).reduce((s,e) => s+e.amount, 0);
-  const prevExpenses = state.expenses.filter(e => !e.deleted && e.month === prev && !isSalaryCategory(e.category)).reduce((s,e) => s+e.amount, 0);
-  // Cash actually PAID OUT this month = EVERY recorded expense, incl. the salary payments already
-  // entered. This equals the Expenses screen's monthly total, and is shown on the dashboard NEXT TO
-  // the accrual figure so the two screens are never confused (v6.495).
-  const currCashExpenses = state.expenses.filter(e => !e.deleted && e.month === curr).reduce((s,e) => s + (Number(e.amount) || 0), 0);
-
-  // Total payroll cost = sum of gross pay for every active coach/staff this month.
-  // Previously this read `state.salaries[].salary` which doesn't exist in the
-  // current lightweight schema (salaries[] now stores advances + paid records),
-  // so the KPI showed 0 always. Use the canonical computeMonthlyPay() instead.
-  // Salaries = the auto-calculated salary cost (single source of truth). Same
-  // helper the Monthly Report + Financial Overview use, so all screens agree.
-  const currSalaries = salariesEarnedInMonth(curr);
-  const prevSalaries = salariesEarnedInMonth(prev);
-
-  const currSales = state.sales.filter(s => s.month === curr).reduce((s,x) => s+(x.paid||0), 0);
-  const prevSales = state.sales.filter(s => s.month === prev).reduce((s,x) => s+(x.paid||0), 0);
-
-  // Member counts exclude archived (soft-deleted) members — one source of truth.
+// v6.574 — ONE month-resolver for an expense, used everywhere (Dashboard/Report). An expense with only a
+// `date` (no `month`) was INVISIBLE on the old Dashboard (it filtered on e.month) → wrong Net Profit.
+function expenseMonth(e) { return (e && (e.month || (e.date ? String(e.date).slice(0, 10).slice(0, 7) : ''))) || ''; }
+// v6.574 — the Dashboard/Report period model: a single month, a whole year, or all-time.
+function _dashDefaultPeriod() { return { type: 'month', value: (typeof currentMonth === 'function' ? currentMonth() : '') }; }
+function normalizeDashPeriod(arg) {
+  if (typeof arg === 'string' && arg) return { type: 'month', value: arg };
+  if (arg && typeof arg === 'object' && arg.type) return arg;
+  return (typeof window !== 'undefined' && window._dashPeriod) || _dashDefaultPeriod();
+}
+function dashPeriodMonths(period) {
+  const all = (typeof allDataMonths === 'function' ? allDataMonths() : []).slice().filter(Boolean).sort();
+  if (!period || period.type === 'all') return all.length ? all : [(typeof currentMonth === 'function' ? currentMonth() : '')];
+  if (period.type === 'year') return all.filter(m => m.slice(0, 4) === String(period.value));
+  return [period.value];   // single month
+}
+function dashPrevPeriod(period) {
+  if (!period) return null;
+  if (period.type === 'month') { const d = new Date(period.value + '-01T00:00:00'); d.setDate(0); return { type: 'month', value: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` }; }
+  if (period.type === 'year') return { type: 'year', value: String(Number(period.value) - 1) };
+  return null;   // all-time has no "previous"
+}
+function dashPeriodLabel(period) {
+  if (!period || period.type === 'all') return t('All time', 'كل الوقت');
+  if (period.type === 'year') return String(period.value);
+  return (typeof fmtMonth === 'function') ? fmtMonth(period.value) : period.value;
+}
+// The SINGLE canonical money aggregate for a set of months — every Dashboard/Report figure derives from
+// this so the two screens can never disagree. Revenue = BILLED in each sport's START month (accrual);
+// expenses via expenseMonth() excluding salary-settlement rows; salaries via the payroll single-source;
+// collected/due via the per-month billed-attribution (billed = collected + due).
+function financeAgg(months) {
+  const mset = new Set(months);
+  const sum = (invPred) => months.reduce((tt, m) => tt + billedInMonth(m, invPred), 0);
+  const revenue = sum();
+  const rentalRevenue = sum(i => i.activityType === 'rental');
+  const salesRevenue = sum(i => i.activityType === 'sale');
+  const rentalCount = months.reduce((tt, m) => tt + monthInvoices(m).filter(i => i.activityType === 'rental').length, 0);
+  const cashCollected = months.reduce((tt, m) => tt + ((typeof cashCollectedInMonth === 'function') ? cashCollectedInMonth(m) : 0), 0);
+  const collected = months.reduce((tt, m) => tt + ((typeof collectedInMonth === 'function') ? collectedInMonth(m) : 0), 0);
+  const due = months.reduce((tt, m) => tt + ((typeof dueInMonth === 'function') ? dueInMonth(m) : 0), 0);
+  const salaries = months.reduce((tt, m) => tt + ((typeof salariesEarnedInMonth === 'function') ? salariesEarnedInMonth(m) : 0), 0);
+  let expenses = 0, cashExpenses = 0;
+  for (const e of (state.expenses || [])) {
+    if (e.deleted) continue;
+    const mo = expenseMonth(e); if (!mset.has(mo)) continue;
+    const amt = Number(e.amount) || 0; cashExpenses += amt;
+    if (!isSalaryCategory(e.category)) expenses += amt;   // P&L expenses exclude salary-settlement rows (cost via salariesEarned)
+  }
+  const sales = (state.sales || []).reduce((tt, x) => tt + (mset.has(x.month) ? (x.paid || 0) : 0), 0);
+  return { revenue, rentalRevenue, salesRevenue, rentalCount, coachingRevenue: revenue - rentalRevenue - salesRevenue, cashCollected, collected, due, salaries, expenses, cashExpenses, sales, profit: revenue - expenses - salaries };
+}
+function computeStats(arg) {
+  const period = normalizeDashPeriod(arg);
+  const months = dashPeriodMonths(period);
+  const cur = financeAgg(months);
+  const pp = dashPrevPeriod(period);
+  const prev = pp ? financeAgg(dashPeriodMonths(pp)) : { revenue: 0, rentalRevenue: 0, salesRevenue: 0, rentalCount: 0, coachingRevenue: 0, cashCollected: 0, collected: 0, due: 0, salaries: 0, expenses: 0, cashExpenses: 0, sales: 0, profit: 0 };
   const activeMembersList = activeMembers();
   const _mc = memberCounts();
-  const activeMembers_ = _mc.active;
-  const expiredMembers = _mc.expired;
-  const completedMembers = _mc.completed;
-  const frozenMembers = _mc.frozen;
-  const withdrawnMembers = _mc.withdrawn;
-
-  const currProfit = currRevenue - currExpenses - currSalaries;
-  const prevProfit = prevRevenue - prevExpenses - prevSalaries;
-
   return {
-    currMonth: curr, prevMonth: prev,
-    currRevenue, prevRevenue,
-    currCoachingRevenue, prevCoachingRevenue,
-    currCashCollected, prevCashCollected,
-    currRentalRevenue, prevRentalRevenue,
-    currRentalCount, prevRentalCount,
-    currSalesRevenue, prevSalesRevenue,
-    currExpenses, prevExpenses, currCashExpenses,
-    currSalaries, prevSalaries,
-    currSales, prevSales,
-    currProfit, prevProfit,
-    activeMembers: activeMembers_, expiredMembers, completedMembers, frozenMembers, withdrawnMembers,
+    period, months,
+    currMonth: period.type === 'month' ? period.value : (period.type === 'year' ? period.value : 'all'),
+    prevMonth: pp ? pp.value : '',
+    periodLabel: dashPeriodLabel(period), prevLabel: pp ? dashPeriodLabel(pp) : '',
+    periodShort: period.type === 'month' ? ((typeof fmtMonth === 'function' ? fmtMonth(period.value) : period.value).split(' ')[0]) : (period.type === 'year' ? String(period.value) : t('All', 'الكل')),
+    prevShort: pp ? (pp.type === 'month' ? ((typeof fmtMonth === 'function' ? fmtMonth(pp.value) : pp.value).split(' ')[0]) : String(pp.value)) : '—',
+    currRevenue: cur.revenue, prevRevenue: prev.revenue,
+    currCoachingRevenue: cur.coachingRevenue, prevCoachingRevenue: prev.coachingRevenue,
+    currCashCollected: cur.cashCollected, prevCashCollected: prev.cashCollected,
+    currCollected: cur.collected, prevCollected: prev.collected,
+    currDue: cur.due, prevDue: prev.due,
+    currRentalRevenue: cur.rentalRevenue, prevRentalRevenue: prev.rentalRevenue,
+    currRentalCount: cur.rentalCount, prevRentalCount: prev.rentalCount,
+    currSalesRevenue: cur.salesRevenue, prevSalesRevenue: prev.salesRevenue,
+    currExpenses: cur.expenses, prevExpenses: prev.expenses, currCashExpenses: cur.cashExpenses,
+    currSalaries: cur.salaries, prevSalaries: prev.salaries,
+    currSales: cur.sales, prevSales: prev.sales,
+    currProfit: cur.profit, prevProfit: prev.profit,
+    activeMembers: _mc.active, expiredMembers: _mc.expired, completedMembers: _mc.completed, frozenMembers: _mc.frozen, withdrawnMembers: _mc.withdrawn,
     totalMembers: activeMembersList.length,
     archivedMembers: state.members.length - activeMembersList.length,
-    deltaRevenue: currRevenue - prevRevenue,
-    deltaExpenses: currExpenses - prevExpenses,
-    // Legacy aliases — to be removed once all references are updated.
-    aprRevenue: prevRevenue, mayRevenue: currRevenue,
-    aprCoachingRevenue: prevCoachingRevenue, mayCoachingRevenue: currCoachingRevenue,
-    aprRentalRevenue: prevRentalRevenue, mayRentalRevenue: currRentalRevenue,
-    aprRentalCount: prevRentalCount, mayRentalCount: currRentalCount,
-    aprExpenses: prevExpenses, mayExpenses: currExpenses,
-    aprSalaries: prevSalaries, maySalaries: currSalaries,
-    aprSales: prevSales, maySales: currSales,
-    aprProfit: prevProfit, mayProfit: currProfit,
+    deltaRevenue: cur.revenue - prev.revenue,
+    deltaExpenses: cur.expenses - prev.expenses,
+    // Legacy aliases (prev = "apr", curr = "may") kept so existing render code + charts read unchanged.
+    aprRevenue: prev.revenue, mayRevenue: cur.revenue,
+    aprCoachingRevenue: prev.coachingRevenue, mayCoachingRevenue: cur.coachingRevenue,
+    aprRentalRevenue: prev.rentalRevenue, mayRentalRevenue: cur.rentalRevenue,
+    aprRentalCount: prev.rentalCount, mayRentalCount: cur.rentalCount,
+    aprExpenses: prev.expenses, mayExpenses: cur.expenses,
+    aprSalaries: prev.salaries, maySalaries: cur.salaries,
+    aprSales: prev.sales, maySales: cur.sales,
+    aprProfit: prev.profit, mayProfit: cur.profit,
   };
 }
 
@@ -225,14 +223,19 @@ PAGES.dashboard = (main) => {
         <div class="subtitle">Black Stars Sports Club · ${(() => { const a = availableMonths(); return a.length ? (a.length === 1 ? fmtMonth(a[0]) : `${fmtMonth(a[0])} – ${fmtMonth(a[a.length-1])}`) : 'No data yet'; })()}</div>
       </div>
       <div class="topbar-actions">
-        <select id="dash-month" title="${t('Show figures for this month', 'عرض الأرقام لهذا الشهر')}" style="padding:8px 12px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
+        <select id="dash-period" title="${t('Show figures for this period', 'عرض الأرقام لهذه الفترة')}" style="padding:8px 12px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
           ${(() => {
-            const sel = window._dashMonth || currentMonth();
-            const set = new Set([currentMonth(), sel]);
+            const per = normalizeDashPeriod();
+            const selVal = per.type === 'all' ? 'all' : (per.type === 'year' ? 'Y:' + per.value : per.value);
+            const set = new Set([currentMonth()]);
             for (const i of state.invoices) if (i.month) set.add(i.month);
-            for (const e of (state.expenses || [])) if (e.month) set.add(e.month);
+            for (const e of (state.expenses || [])) { const mo = expenseMonth(e); if (mo) set.add(mo); }
             const months = [...set].filter(Boolean).sort().reverse();
-            return months.map(mk => `<option value="${mk}" ${mk === sel ? 'selected' : ''}>${fmtMonth(mk)}</option>`).join('');
+            const years = [...new Set(months.map(m => m.slice(0, 4)))].sort().reverse();
+            const opt = (v, lab) => `<option value="${v}" ${v === selVal ? 'selected' : ''}>${lab}</option>`;
+            return opt('all', t('All time', 'كل الوقت'))
+              + `<optgroup label="${t('Year', 'سنة')}">` + years.map(y => opt('Y:' + y, y)).join('') + `</optgroup>`
+              + `<optgroup label="${t('Month', 'شهر')}">` + months.map(mk => opt(mk, fmtMonth(mk))).join('') + `</optgroup>`;
           })()}
         </select>
         <button class="btn ghost" id="export-btn">📥 ${t('Export','تصدير')}</button>
@@ -349,7 +352,7 @@ PAGES.dashboard = (main) => {
     <div class="kpi-grid">
       <div class="kpi">
         <div class="kpi-icon">💰</div>
-        <div class="kpi-label" title="${t('Revenue billed this month — each sport’s fee counts in the month that sport STARTS (accrual). This is not the cash received; see “Cash collected” for money actually taken in this month.', 'الإيراد المُحتسب هذا الشهر — رسوم كل رياضة تُحتسب في شهر بدايتها. هذا ليس النقد المُحصّل؛ انظر “النقد المُحصّل” للمبلغ المستلم فعلياً.')}">${t('Total Revenue','إجمالي الإيرادات')} (${fmtMonth(s.currMonth).split(' ')[0]})</div>
+        <div class="kpi-label" title="${t('Revenue billed this month — each sport’s fee counts in the month that sport STARTS (accrual). This is not the cash received; see “Cash collected” for money actually taken in this month.', 'الإيراد المُحتسب هذا الشهر — رسوم كل رياضة تُحتسب في شهر بدايتها. هذا ليس النقد المُحصّل؛ انظر “النقد المُحصّل” للمبلغ المستلم فعلياً.')}">${t('Total Revenue','إجمالي الإيرادات')} (${s.periodShort})</div>
         <div class="kpi-value num">${fmt(s.currRevenue)} <span style="font-size:13px;color:var(--text-dim);font-weight:500">QAR</span></div>
         ${kpiDelta(s.currRevenue, s.prevRevenue)}
         ${sparkline([s.prevRevenue, s.currRevenue])}
@@ -362,13 +365,13 @@ PAGES.dashboard = (main) => {
       </div>
       <div class="kpi orange">
         <div class="kpi-icon">💸</div>
-        <div class="kpi-label" title="${t('Accrual view — operating expenses PLUS all coach pay EARNED this month (fixed salaries + commission), whether paid yet or not. This differs from the Expenses screen, which shows cash actually PAID OUT; coach commission earned but not yet paid is the main gap.', 'عرض الاستحقاق — مصروفات التشغيل + كامل أجور المدربين المستحقة هذا الشهر (رواتب ثابتة + عمولة)، سواء دُفعت أم لا. يختلف عن شاشة المصروفات التي تعرض النقد المدفوع فعلياً؛ الفرق الأساسي هو عمولة المدربين المستحقة غير المدفوعة.')}">${t('Total Expenses','إجمالي المصروفات')} (${fmtMonth(s.currMonth).split(' ')[0]})</div>
+        <div class="kpi-label" title="${t('Accrual view — operating expenses PLUS all coach pay EARNED this month (fixed salaries + commission), whether paid yet or not. This differs from the Expenses screen, which shows cash actually PAID OUT; coach commission earned but not yet paid is the main gap.', 'عرض الاستحقاق — مصروفات التشغيل + كامل أجور المدربين المستحقة هذا الشهر (رواتب ثابتة + عمولة)، سواء دُفعت أم لا. يختلف عن شاشة المصروفات التي تعرض النقد المدفوع فعلياً؛ الفرق الأساسي هو عمولة المدربين المستحقة غير المدفوعة.')}">${t('Total Expenses','إجمالي المصروفات')} (${s.periodShort})</div>
         <div class="kpi-value num">${fmt(s.currExpenses + s.currSalaries)} <span style="font-size:13px;color:var(--text-dim);font-weight:500">QAR · ${t('accrual', 'استحقاق')}</span></div>
         <div class="kpi-delta flat" title="${t('Cash paid out = what the Expenses screen shows (all recorded expenses this month, incl. salary payments entered). Payroll earned = all coach pay earned this month whether paid yet or not — the accrual headline above = Ops + payroll earned.', 'النقد المدفوع = ما تعرضه شاشة المصروفات (كل المصروفات المسجّلة هذا الشهر شاملة رواتب مدفوعة). الرواتب المستحقة = كامل أجور المدربين هذا الشهر سواء دُفعت أم لا — رقم الاستحقاق بالأعلى = التشغيل + الرواتب المستحقة.')}">💵 ${fmt(s.currCashExpenses)} ${t('cash paid', 'مدفوع نقداً')} · 🧮 ${fmt(s.currSalaries)} ${t('payroll earned', 'رواتب مستحقة')}</div>
       </div>
       <div class="kpi ${s.currProfit >= 0 ? 'green' : 'red'}">
         <div class="kpi-icon">${s.currProfit >= 0 ? '📈' : '📉'}</div>
-        <div class="kpi-label">${fmtMonth(s.currMonth).split(' ')[0]} ${t('Net Profit','صافي الربح')}</div>
+        <div class="kpi-label">${s.periodShort} ${t('Net Profit','صافي الربح')}</div>
         <div class="kpi-value num">${fmt(s.currProfit)} <span style="font-size:13px;color:var(--text-dim);font-weight:500">QAR</span></div>
         ${kpiDelta(s.currProfit, s.prevProfit)}
         ${sparkline([s.prevProfit, s.currProfit])}
@@ -442,31 +445,31 @@ PAGES.dashboard = (main) => {
     <div class="kpi-grid mb-3">
       <div class="kpi green">
         <div class="kpi-icon">🥋</div>
-        <div class="kpi-label">${t('Coaching Revenue','إيرادات التدريب')} (${fmtMonth(s.currMonth).split(' ')[0]})</div>
+        <div class="kpi-label">${t('Coaching Revenue','إيرادات التدريب')} (${s.periodShort})</div>
         <div class="kpi-value num">${fmt(s.currCoachingRevenue)} <span style="font-size:13px;color:var(--text-dim);font-weight:500">QAR</span></div>
         <div class="kpi-delta flat">${t('Memberships + classes','اشتراكات + حصص')}</div>
       </div>
       <div class="kpi cyan">
         <div class="kpi-icon">🏟</div>
-        <div class="kpi-label">${t('Court Rental Revenue','إيرادات تأجير الملاعب')} (${fmtMonth(s.currMonth).split(' ')[0]})</div>
+        <div class="kpi-label">${t('Court Rental Revenue','إيرادات تأجير الملاعب')} (${s.periodShort})</div>
         <div class="kpi-value num">${fmt(s.currRentalRevenue)} <span style="font-size:13px;color:var(--text-dim);font-weight:500">QAR</span></div>
         <div class="kpi-delta flat">${s.currRentalCount} ${t('bookings','حجوزات')}</div>
       </div>
       <div class="kpi purple">
         <div class="kpi-icon">🛒</div>
-        <div class="kpi-label">${t('Equipment Sales','مبيعات المعدات')} (${fmtMonth(s.currMonth).split(' ')[0]})</div>
+        <div class="kpi-label">${t('Equipment Sales','مبيعات المعدات')} (${s.periodShort})</div>
         <div class="kpi-value num">${fmt(s.maySales)} <span style="font-size:13px;color:var(--text-dim);font-weight:500">QAR</span></div>
         <div class="kpi-delta flat">${t('Uniforms & gear','الأزياء والمعدات')}</div>
       </div>
       <div class="kpi">
         <div class="kpi-icon">📊</div>
-        <div class="kpi-label">${t('Revenue Mix','توزيع الإيرادات')} (${fmtMonth(s.currMonth).split(' ')[0]})</div>
+        <div class="kpi-label">${t('Revenue Mix','توزيع الإيرادات')} (${s.periodShort})</div>
         <div class="kpi-value num">${s.mayRevenue > 0 ? Math.round(s.mayCoachingRevenue / s.mayRevenue * 100) : 0}<span style="font-size:14px">%</span> <span style="font-size:12px;color:var(--text-dim);font-weight:500">${t('coaching','تدريب')}</span></div>
         <div class="kpi-delta flat">${s.mayRevenue > 0 ? Math.round(s.mayRentalRevenue / s.mayRevenue * 100) : 0}% ${t('rental','تأجير')}</div>
       </div>
       <div class="kpi">
         <div class="kpi-icon">🧾</div>
-        <div class="kpi-label" title="${t('Money physically received this month, by each payment’s date (the drawer). May differ from Revenue: a camp prepaid this month counts as cash now but as revenue in the month it starts, and unpaid billed sports are revenue but not yet cash.', 'المال المستلم فعلياً هذا الشهر حسب تاريخ كل دفعة. قد يختلف عن الإيراد: معسكر مدفوع مقدماً يُحتسب نقداً الآن لكنه إيراد في شهر بدايته.')}">${t('Cash Collected','النقد المُحصّل')} (${fmtMonth(s.currMonth).split(' ')[0]})</div>
+        <div class="kpi-label" title="${t('Money physically received this month, by each payment’s date (the drawer). May differ from Revenue: a camp prepaid this month counts as cash now but as revenue in the month it starts, and unpaid billed sports are revenue but not yet cash.', 'المال المستلم فعلياً هذا الشهر حسب تاريخ كل دفعة. قد يختلف عن الإيراد: معسكر مدفوع مقدماً يُحتسب نقداً الآن لكنه إيراد في شهر بدايته.')}">${t('Cash Collected','النقد المُحصّل')} (${s.periodShort})</div>
         <div class="kpi-value num">${fmt(s.currCashCollected)} <span style="font-size:13px;color:var(--text-dim);font-weight:500">QAR</span></div>
         ${kpiDelta(s.currCashCollected, s.prevCashCollected)}
       </div>
@@ -539,7 +542,7 @@ PAGES.dashboard = (main) => {
       <div class="card-header">
         <div>
           <div class="card-title">${t('Monthly Summary', 'الملخص الشهري')}</div>
-          <div class="card-subtitle">${fmtMonth(s.prevMonth).split(' ')[0]} vs ${fmtMonth(s.currMonth).split(' ')[0]} comparison</div>
+          <div class="card-subtitle">${s.prevShort} vs ${s.periodShort} comparison</div>
         </div>
       </div>
       <div class="table-wrap">
@@ -547,8 +550,8 @@ PAGES.dashboard = (main) => {
           <thead>
             <tr>
               <th>Metric</th>
-              <th class="text-right">${fmtMonth(s.prevMonth).split(' ')[0]}</th>
-              <th class="text-right">${fmtMonth(s.currMonth).split(' ')[0]}</th>
+              <th class="text-right">${s.prevShort}</th>
+              <th class="text-right">${s.periodShort}</th>
               <th class="text-right">Change</th>
               <th class="text-right">% Δ</th>
             </tr>
@@ -584,8 +587,12 @@ PAGES.dashboard = (main) => {
   $('#export-btn').addEventListener('click', exportDashboardCSV);
   const dashBackupTop = $('#dash-backup-top');
   if (dashBackupTop) dashBackupTop.addEventListener('click', () => window.downloadBackup());
-  const dashMonthSel = $('#dash-month');
-  if (dashMonthSel) dashMonthSel.addEventListener('change', () => { window._dashMonth = dashMonthSel.value; render(); });
+  const dashPeriodSel = $('#dash-period');
+  if (dashPeriodSel) dashPeriodSel.addEventListener('change', () => {
+    const v = dashPeriodSel.value;
+    window._dashPeriod = v === 'all' ? { type: 'all' } : (v.startsWith('Y:') ? { type: 'year', value: v.slice(2) } : { type: 'month', value: v });
+    render();
+  });
 
   drawRevenueChart();
   drawSportDonut();
@@ -600,8 +607,8 @@ function drawRevenueChart() {
   const maxVal = Math.max(s.aprRevenue, s.mayRevenue, s.aprExpenses + s.aprSalaries, s.mayExpenses + s.maySalaries, 1);
 
   const months = [
-    { label: fmtMonth(s.prevMonth), rev: s.prevRevenue, exp: s.prevExpenses + s.prevSalaries, profit: s.prevProfit },
-    { label: fmtMonth(s.currMonth), rev: s.currRevenue, exp: s.currExpenses + s.currSalaries, profit: s.currProfit },
+    { label: s.prevShort, rev: s.prevRevenue, exp: s.prevExpenses + s.prevSalaries, profit: s.prevProfit },
+    { label: s.periodShort, rev: s.currRevenue, exp: s.currExpenses + s.currSalaries, profit: s.currProfit },
   ];
 
   container.innerHTML = `
@@ -755,7 +762,7 @@ function drawRecentInvoices() {
 function exportDashboardCSV() {
   const s = computeStats();
   const rows = [
-    ['Metric', fmtMonth(s.prevMonth), fmtMonth(s.currMonth), 'Change'],
+    ['Metric', s.prevShort, s.periodShort, 'Change'],
     ['Revenue (QAR)', s.prevRevenue, s.currRevenue, s.currRevenue - s.prevRevenue],
     ['Operating Expenses (QAR)', s.prevExpenses, s.currExpenses, s.currExpenses - s.prevExpenses],
     ['Salaries & Commissions (QAR)', s.prevSalaries, s.currSalaries, s.currSalaries - s.prevSalaries],
@@ -29997,7 +30004,9 @@ PAGES.reports = (main) => {
     // Revenue is on the BILLED basis (invoice value by billing month), exactly like
     // the Monthly Report / Dashboard, so every screen shows the same number.
     const invs = state.invoices.filter(i => !i.deleted && invoiceMonths(i).some(inPeriod));
-    const exps = state.expenses.filter(e => inPeriodDate(e.date) || inPeriod(e.month));
+    // v6.574 — ONE expense month-resolver (expenseMonth) + honour the soft-delete, so Reports, Dashboard
+    // and the Expenses screen all total the same expenses (was: date‖month union, and counted deleted rows).
+    const exps = state.expenses.filter(e => !e.deleted && inPeriod(expenseMonth(e)));
 
     const revenue = billedInPeriod(inPeriod);
     // P&L expenses EXCLUDE salary-category entries (those are settlements; the cost
@@ -30059,6 +30068,34 @@ PAGES.reports = (main) => {
     const sortedSports = Object.entries(d.sportRev).sort((a, b) => b[1] - a[1]);
     const sortedExpCats = Object.entries(d.expByCat).sort((a, b) => b[1] - a[1]);
     const deltaPct = d.prevRev ? ((d.revenue - d.prevRev) / d.prevRev * 100) : null;
+
+    // ── v6.574: visual insights (folded in from the old Charts screen) — same period, same canonical
+    // numbers as the tables above, so the charts and the figures can never disagree.
+    const _scoped = (typeof allDataMonths === 'function' ? allDataMonths() : []).filter(inPeriod).sort();
+    const _monthly = _scoped.map(mk => { const fa = financeAgg([mk]); return {
+      short: (typeof _chMonthShort === 'function' ? _chMonthShort(mk) : fmtMonth(mk)),
+      revenue: fa.revenue, cost: fa.expenses + fa.salaries, profit: fa.profit, expenses: fa.expenses,
+      newMembers: state.members.filter(m => String(m.firstRegistration || '').slice(0, 7) === mk).length };
+    });
+    const _coachPerf = state.coaches.map(c => ({ label: c.name, value: _scoped.reduce((s, mk) => s + ((typeof computeMonthlyPay === 'function') ? (computeMonthlyPay(c.id, mk).gross || 0) : 0), 0) }))
+      .filter(r => r.value > 0).sort((a, b) => b.value - a.value).slice(0, 10);
+    const _chartsHTML = `
+      <div class="card" style="padding:16px 18px">
+        <div style="font-weight:700;font-size:14px;margin-bottom:2px">💰 ${t('Revenue vs Cost', 'الإيراد مقابل التكلفة')}</div>
+        <div class="text-mute" style="font-size:11px;margin-bottom:12px">${t('Per month · billed revenue vs (expenses + payroll)', 'شهرياً · الإيراد المُحتسب مقابل (المصروفات + الرواتب)')} · ${escapeHtml(periodLabel())}</div>
+        ${_monthly.length ? _chBars(_monthly.map(m => ({ label: m.short, values: [m.revenue, m.cost] })), [{ name: t('Revenue', 'الإيراد'), color: '#10b981' }, { name: t('Cost', 'التكلفة'), color: '#f59e0b' }]) : `<div class="text-mute" style="font-size:12px;padding:10px">${t('No data', 'لا توجد بيانات')}</div>`}
+      </div>
+      ${_CH_CARD('📈 ' + t('Net Profit trend', 'اتجاه صافي الربح'), escapeHtml(periodLabel()), _monthly.length ? _chLine(_monthly.map(m => m.profit), _monthly.map(m => m.short), '#5b8def') : `<div class="text-mute" style="font-size:12px;padding:10px">${t('No data', 'لا توجد بيانات')}</div>`)}
+      <div class="row row-2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        ${_CH_CARD('🍩 ' + t('Revenue by Category', 'الإيراد حسب الفئة'), escapeHtml(periodLabel()), _chDonut(allRevCats.map(([k, v]) => ({ label: k, value: v }))))}
+        ${_CH_CARD('🥋 ' + t('Coach Performance', 'أداء المدربين'), t('Gross payroll', 'إجمالي الرواتب') + ' · ' + escapeHtml(periodLabel()), _chHBars(_coachPerf))}
+      </div>
+      <div class="row row-2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        ${_CH_CARD('🧾 ' + t('Expenses by Category', 'المصروفات حسب الفئة'), escapeHtml(periodLabel()), _chDonut(sortedExpCats.map(([k, v]) => ({ label: k, value: v }))))}
+        ${_CH_CARD('📉 ' + t('Expenses by month', 'المصروفات شهرياً'), escapeHtml(periodLabel()), _monthly.length ? _chBars(_monthly.map(m => ({ label: m.short, values: [m.expenses] })), [{ name: t('Expenses', 'المصروفات'), color: '#ef4444' }]) : `<div class="text-mute" style="font-size:12px;padding:10px">${t('No data', 'لا توجد بيانات')}</div>`)}
+      </div>
+      ${_CH_CARD('👥 ' + t('New Members', 'أعضاء جدد'), escapeHtml(periodLabel()), _monthly.length ? _chLine(_monthly.map(m => m.newMembers), _monthly.map(m => m.short), '#10b981') : `<div class="text-mute" style="font-size:12px;padding:10px">${t('No data', 'لا توجد بيانات')}</div>`)}
+    `;
 
     $('#rep-body').innerHTML = `
       <div class="kpi-grid">
@@ -30144,6 +30181,9 @@ PAGES.reports = (main) => {
           </table>
         </div>
       </div>
+
+      <div style="margin:18px 0 8px;font-weight:700;font-size:15px;color:var(--text)">📊 ${t('Visual insights', 'رؤى بصرية')}</div>
+      ${_chartsHTML}
     `;
   }
 
@@ -30206,13 +30246,18 @@ PAGES.reports = (main) => {
   $('#print-summary').addEventListener('click', () => {
     const d = compute();
     const allRevCats = Object.entries(d.revByCat).sort((a, b) => b[1] - a[1]);
+    // v6.574 — commission = the REAL payroll number (computeMonthlyPay, summed over the scoped months) —
+    // honours the commission basis, start-date, camp/Mixed rules and exclusions — NOT the old hand-rolled
+    // "line revenue × rate", which ignored all of that and disagreed with the Salaries screen.
+    const _scopedMonths = (typeof allDataMonths === 'function' ? allDataMonths() : []).filter(inPeriod);
     const coachRows = state.coaches.map(c => {
       const rev = d.invs.reduce((a, i) => {
         const lis = (Array.isArray(i.lineItems) && i.lineItems.length) ? i.lineItems : [{ coachId: i.coachId, price: i.amount || 0 }];
-        return a + lis.filter(li => li.coachId === c.id).reduce((s, li) => s + (li.price || 0), 0);
+        return a + lis.filter(li => String(li.coachId) === String(c.id)).reduce((s, li) => s + (li.price || 0), 0);
       }, 0);
-      return { name: c.name, rev, comm: rev * (c.rate || 0) / 100, rate: c.rate || 0 };
-    }).filter(c => c.rev > 0).sort((a, b) => b.rev - a.rev);
+      const comm = _scopedMonths.reduce((s, mk) => s + ((typeof computeMonthlyPay === 'function') ? (computeMonthlyPay(c.id, mk).commissionAmount || 0) : 0), 0);
+      return { name: c.name, rev, comm, rate: c.rate || 0 };
+    }).filter(c => c.rev > 0 || c.comm > 0).sort((a, b) => b.comm - a.comm);
 
     const catRows = allRevCats.map(([c, v]) =>
       `<tr><td>${escapeHtml(c)}</td><td style="text-align:right">${fmt(v)} QAR</td><td style="text-align:right;color:#777">${Math.round(v/(d.revenue||1)*100)}%</td></tr>`).join('');
