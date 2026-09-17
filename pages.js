@@ -1591,7 +1591,9 @@ PAGES.members = (main) => {
           </button>
           <div id="filter-sport-menu" style="display:none;position:absolute;left:0;top:100%;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-top:4px;padding:8px;min-width:180px;max-height:300px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.4)">
             <div style="display:flex;justify-content:space-between;padding:2px 6px 6px;border-bottom:1px solid var(--border);margin-bottom:4px"><button type="button" class="mfilter-all" data-cb="filter-sport-cb" data-group="sports" style="background:none;border:none;color:var(--accent);font-size:12px;cursor:pointer;font-weight:600">All</button><button type="button" class="mfilter-none" data-cb="filter-sport-cb" data-group="sports" style="background:none;border:none;color:var(--text-mute);font-size:12px;cursor:pointer">Clear</button></div>
+            <input type="text" class="mf2-search" placeholder="🔍 ${t('Search…', 'بحث…')}" style="width:100%;box-sizing:border-box;margin:0 0 6px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px" />
             ${SPORTS.slice().sort((a, b) => String(a).localeCompare(String(b), undefined, { sensitivity: 'base' })).map(s => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px;white-space:nowrap"><input type="checkbox" class="filter-sport-cb" value="${escapeHtml(s)}" ${(filter.sports||[]).includes(s) ? 'checked' : ''} /> ${escapeHtml(s)}</label>`).join('')}
+            <div class="mf2-empty text-mute" style="display:none;padding:8px 6px;font-size:12px">${t('No matches', 'لا نتائج')}</div>
           </div>
         </div>
         <div style="position:relative">
@@ -1611,8 +1613,9 @@ PAGES.members = (main) => {
           </button>
           <div id="filter-coach-menu" style="display:none;position:absolute;left:0;top:100%;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-top:4px;padding:8px;min-width:180px;max-height:300px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.4)">
             <div style="display:flex;justify-content:space-between;padding:2px 6px 6px;border-bottom:1px solid var(--border);margin-bottom:4px"><button type="button" class="mfilter-all" data-cb="filter-coach-cb" data-group="coaches" style="background:none;border:none;color:var(--accent);font-size:12px;cursor:pointer;font-weight:600">All</button><button type="button" class="mfilter-none" data-cb="filter-coach-cb" data-group="coaches" style="background:none;border:none;color:var(--text-mute);font-size:12px;cursor:pointer">Clear</button></div>
+            <input type="text" class="mf2-search" placeholder="🔍 ${t('Search…', 'بحث…')}" style="width:100%;box-sizing:border-box;margin:0 0 6px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px" />
             ${(() => {
-              const cbHtml = (c, faded) => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px${faded ? ';opacity:.72' : ''}"><input type="checkbox" class="filter-coach-cb" value="${c.id}" ${(filter.coaches || []).map(String).includes(String(c.id)) ? 'checked' : ''} /> ${escapeHtml(c.name)}${faded ? ' <span class="text-mute" style="font-size:10px">(former)</span>' : ''}</label>`;
+              const cbHtml = (c, faded) => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px${faded ? ';opacity:.72' : ''}"><input type="checkbox" class="filter-coach-cb" value="${c.id}" ${(filter.coaches || []).map(String).includes(String(c.id)) ? 'checked' : ''} /> ${escapeHtml(c.name)}${c.nameArabic ? ' <span style="font-size:11px;color:var(--text-mute)" dir="rtl">' + escapeHtml(c.nameArabic) + '</span>' : ''}${faded ? ' <span class="text-mute" style="font-size:10px">(former)</span>' : ''}</label>`;
               const _teach = state.coaches.filter(isCoachRole);   // v6.507: exclude staff (Ester etc.) — they don't coach members
               const _byName = (a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' });   // v6.570: A→Z
               const act = _teach.filter(c => isCoachActive(c)).sort(_byName);
@@ -1621,6 +1624,7 @@ PAGES.members = (main) => {
               if (inact.length) html += `<div style="margin:6px 0 2px;padding:5px 6px 3px;font-size:10px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;border-top:1px solid var(--border)">Former / inactive</div>` + inact.map(c => cbHtml(c, true)).join('');
               return html;
             })()}
+            <div class="mf2-empty text-mute" style="display:none;padding:8px 6px;font-size:12px">${t('No matches', 'لا نتائج')}</div>
           </div>
         </div>
         <div style="position:relative">
@@ -1693,7 +1697,24 @@ PAGES.members = (main) => {
   function wireMultiFilter(key, cbClass, btnId, menuId, labelId, allText, oneFmt) {
     const btn = $('#' + btnId), menu = $('#' + menuId);
     if (!btn || !menu) return;
-    btn.addEventListener('click', e => { e.stopPropagation(); menu.style.display = menu.style.display === 'none' ? 'block' : 'none'; });
+    // v6.575 — optional type-to-search inside the menu (present on the coach menu). Filters the checkbox
+    // rows by label, Arabic-folded so an Arabic query matches an Arabic name; reset + focused on open.
+    const _search = menu.querySelector('.mf2-search');
+    const _empty = menu.querySelector('.mf2-empty');
+    const _norm = s => (typeof normalizeArabicForSearch === 'function') ? normalizeArabicForSearch(String(s || '')) : String(s || '').toLowerCase();
+    const _applySearch = () => {
+      const q = _norm((_search && _search.value || '').trim());
+      let shown = 0;
+      $$('.' + cbClass).forEach(cb => { const lab = cb.parentElement; if (!lab) return; const hit = !q || _norm(lab.textContent).includes(q); lab.style.display = hit ? '' : 'none'; if (hit) shown++; });
+      if (_empty) _empty.style.display = shown ? 'none' : '';
+    };
+    if (_search) { _search.addEventListener('click', e => e.stopPropagation()); _search.addEventListener('keydown', e => e.stopPropagation()); _search.addEventListener('input', _applySearch); }
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const open = menu.style.display === 'none';
+      menu.style.display = open ? 'block' : 'none';
+      if (open && _search) { _search.value = ''; _applySearch(); setTimeout(() => { try { _search.focus(); } catch (_) {} }, 0); }
+    });
     document.addEventListener('click', e => { if (!btn.contains(e.target) && !menu.contains(e.target)) menu.style.display = 'none'; });
     const apply = () => {
       filter[key] = $$('.' + cbClass).filter(x => x.checked).map(x => x.value);
@@ -6181,7 +6202,16 @@ function _memberMoneyRows(m) {
   return { rows, charged, paidTotal: Math.round(paidTotal * 100) / 100, due, realInvs };
 }
 window._moneyMethod = function(v, el) {
-  const box = el && el.parentNode; if (box) [...box.children].forEach(x => x.setAttribute('aria-pressed', String(x === el)));
+  // v6.579 — the highlight was applied as an INLINE style only at render time (on the default 'cash'
+  // chip), and there was no CSS keyed to aria-pressed, so clicking another method flipped the flag but
+  // never moved the highlight — it looked like the selection wasn't switching. Move the highlight here.
+  const box = el && el.parentNode;
+  if (box) [...box.children].forEach(x => {
+    const on = (x === el);
+    x.setAttribute('aria-pressed', String(on));
+    x.style.borderColor = on ? 'var(--blue)' : '';
+    x.style.background = on ? 'rgba(91,141,239,.1)' : '';
+  });
   const h = document.getElementById('mp-method'); if (h) h.value = v;
 };
 window._moneyCollect = function(memberId) {
@@ -6202,6 +6232,10 @@ window._moneyCollect = function(memberId) {
   if (typeof audit === 'function') audit('member.payment', 'member:' + m.id, `collected ${fmt(amt)} · ${method} · ${target.sport}`, { recordName: m.name });
   if (typeof saveConfirmed === 'function') saveConfirmed().then(r => { if (r && !r.ok) toast('⚠ ' + t('Saved on this device but not yet in the cloud', 'محفوظ على الجهاز لكن لم يصل السحابة'), 'error'); }); else save();
   toast(t('Collected', 'تم التحصيل') + ' ' + fmt(amt) + ' · ' + method);
+  // v6.579 — refresh the page BEHIND the panel (the Due Payment / Members list) so a now-settled member
+  // drops off immediately. The modal backdrop lives on document.body, not inside #app, so render() does
+  // not disturb it; moneyPanel() then reopens cleanly on top with fresh data.
+  if (typeof render === 'function') render();
   window.moneyPanel(memberId);   // reopen with fresh data
 };
 window.moneyPanel = function(memberId) {
@@ -7617,6 +7651,9 @@ function citadelCompute(selMonths) {
   const selSet = new Set(selMonths || []);
   const agg = {}; GROUPS.forEach(g => { agg[g.key] = { membership: 0, rent: 0 }; });
   const details = [];
+  // Track each invoice's citadel-eligible portion (in inv.amount units) so we can prorate what the
+  // member actually PAID onto that portion — the "collected from members" figure. (v6.577)
+  const eligByInv = new Map();
   for (const inv of (state.invoices || [])) {
     if (inv.deleted) continue;
     const mkey = inv.month || String(inv.date || '').slice(0, 7);
@@ -7649,6 +7686,7 @@ function citadelCompute(selMonths) {
           const _hit = groupFor(_sp); if (!_hit) continue;
           const _amt = _perClass * _perSport[_sp]; if (_amt <= 0) continue;
           agg[_hit.g.key][_hit.type] += _amt;
+          eligByInv.set(inv, (eligByInv.get(inv) || 0) + _amt);
           const _ci = (typeof customerInfo === 'function') ? customerInfo(inv) : null;
           const _cust = (_ci && _ci.name) || inv.customerName || (_mem ? (_mem.name || _mem.nameArabic || '') : '') || '—';
           details.push({ month: mkey, ref: inv.ref || ('#' + inv.id), date: (inv.date || '').slice(0, 10), customer: _cust, group: _hit.g, type: _hit.type, sport: _sp + ' · Mixed', amount: _amt });
@@ -7660,6 +7698,7 @@ function citadelCompute(selMonths) {
       const amt = liSum > 0 ? (Number(li.price) || 0) * factor : factor;
       if (amt <= 0) continue;
       agg[hit.g.key][hit.type] += amt;
+      eligByInv.set(inv, (eligByInv.get(inv) || 0) + amt);
       // Resolve the customer via customerInfo() — it recovers a COURT-RENTAL renter's name from the
       // linked rental record (rentalId), which is why blank "—" rows were showing for rentals whose
       // name lives on the rental, not the invoice. Falls back to the invoice/member, then "—". (v6.378)
@@ -7670,11 +7709,40 @@ function citadelCompute(selMonths) {
   }
   details.sort((a, b) => String(b.month).localeCompare(String(a.month)) || String(b.date).localeCompare(String(a.date)));
   const grand = GROUPS.reduce((s, g) => s + agg[g.key].membership + agg[g.key].rent, 0);
-  return { GROUPS, agg, details, grand };
+  // "Collected from members" = the paid portion of the citadel-eligible revenue. Prorate each
+  // invoice's actual paid amount by the fraction of that invoice which is Football/Swimming. (v6.577)
+  let paid = 0;
+  for (const [inv, elig] of eligByInv) {
+    const invAmount = Number(inv.amount) || 0;
+    if (invAmount <= 0) continue;
+    const invPaid = (typeof invoicePaid === 'function') ? invoicePaid(inv) : (Number(inv.amountPaid) || 0);
+    paid += invPaid * (Math.min(elig, invAmount) / invAmount);
+  }
+  paid = Math.round(paid * 100) / 100;
+  return { GROUPS, agg, details, grand, paid };
+}
+
+// Sum of Citadel Company Share expenses actually posted (paid to the facility company) within the
+// selected month scope ([] = all months). Includes the auto rows and any manual ones. (v6.577)
+function citadelPaidToCompany(selMonths) {
+  const selSet = new Set(selMonths || []);
+  let total = 0;
+  for (const e of (state.expenses || [])) {
+    if (e.deleted) continue;
+    if ((e.category || '') !== CITADEL_SHARE_CATEGORY) continue;
+    const mk = e.month || String(e.date || '').slice(0, 7);
+    if (selSet.size && !selSet.has(mk)) continue;
+    total += Number(e.amount) || 0;
+  }
+  return Math.round(total * 100) / 100;
 }
 
 PAGES.citadel = (main) => {
   if (currentRole() !== 'admin') { main.innerHTML = `<div class="card"><div class="empty">${t('Admins only.', 'المسؤولون فقط.')}</div></div>`; return; }
+
+  // Keep the auto Citadel Company Share bank expenses in sync before we render, so the "paid to
+  // company" figure below reflects the current revenue/rate. (v6.577)
+  if (syncCitadelShare()) save();
 
   // Revenue-share rate (%). Default 30.
   const rawRate = Number(state.settings && state.settings.citadelRate);
@@ -7686,9 +7754,12 @@ PAGES.citadel = (main) => {
   const months = [...monthSet].filter(Boolean).sort().reverse();
   if (!Array.isArray(window._citMonths)) window._citMonths = [];
 
-  const { GROUPS, agg, details, grand } = citadelCompute(window._citMonths);
+  const { GROUPS, agg, details, grand, paid } = citadelCompute(window._citMonths);
   const groupTotal = (k) => agg[k].membership + agg[k].rent;
   const share = grand * RATE / 100;
+  const collected = paid || 0;                                   // paid by members for Football/Swimming
+  const paidToCompany = citadelPaidToCompany(window._citMonths); // already paid to the facility company
+  const balanceDue = Math.round((share - paidToCompany) * 100) / 100;
 
   const scopeLabel = window._citMonths.length
     ? (window._citMonths.length === 1 ? fmtMonth(window._citMonths[0]) : `${window._citMonths.length} ${t('months', 'أشهر')}`)
@@ -7769,6 +7840,23 @@ PAGES.citadel = (main) => {
 
     <div class="card" style="margin-top:16px">
       <div class="card-header"><div>
+        <div class="card-title">${t('Company settlement', 'تسوية الشركة')}</div>
+        <div class="card-subtitle">${escapeHtml(scopeLabel)} · ${t('billed vs collected vs paid to the company', 'مفوتر مقابل محصّل مقابل مدفوع للشركة')}</div>
+      </div></div>
+      <div class="table-wrap"><table>
+        <tbody>
+          <tr><td>${t('Total revenue (billed)', 'إجمالي الإيراد (مفوتر)')}</td><td class="text-right num">${fmt(grand)}</td></tr>
+          <tr><td>💵 ${t('Collected from members', 'المحصّل من الأعضاء')}</td><td class="text-right num" style="color:var(--green);font-weight:700">${fmt(collected)}</td></tr>
+          <tr><td>🏛 ${t('Company share', 'حصة الشركة')} (${RATE}%)</td><td class="text-right num" style="color:var(--red);font-weight:700">${fmt(share)}</td></tr>
+          <tr><td>✅ ${t('Paid to company', 'المدفوع للشركة')}</td><td class="text-right num" style="color:var(--green);font-weight:700">${fmt(paidToCompany)}</td></tr>
+          <tr style="border-top:2px solid var(--border);font-weight:800"><td>${t('Balance due to company', 'المتبقي للشركة')}</td><td class="text-right num" style="color:${balanceDue > 0.5 ? 'var(--red)' : 'var(--green)'};font-size:15px">${fmt(balanceDue)}</td></tr>
+        </tbody>
+      </table></div>
+      <div class="text-mute" style="font-size:11px;padding:8px 4px 0">${t('The company share is auto-posted each month as a “Citadel Company Share” bank expense; “Paid to company” is the sum of those expenses.', 'تُسجَّل حصة الشركة تلقائياً كل شهر كمصروف بنكي «حصة شركة سيتاديل»؛ «المدفوع للشركة» هو مجموع تلك المصروفات.')}</div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <div class="card-header"><div>
         <div class="card-title">${t('Contributing invoices', 'الفواتير المساهمة')}</div>
         <div class="card-subtitle">${details.length} ${t('lines make up the totals above', 'بند يشكّل الإجماليات أعلاه')}</div>
       </div></div>
@@ -7799,12 +7887,17 @@ PAGES.citadel = (main) => {
 // the screen exactly. Two flavours: a real .xlsx (Summary + Invoices sheets) and a printable PDF. (v6.378)
 function citadelExportXlsx(RATE, scopeLabel) {
   if (!window.XlsxMini || typeof window.XlsxMini.downloadFile !== 'function') { toast(t('Excel export unavailable', 'تصدير Excel غير متاح'), 'error'); return; }
-  const { GROUPS, agg, details, grand } = citadelCompute(window._citMonths);
+  const { GROUPS, agg, details, grand, paid } = citadelCompute(window._citMonths);
   const share = grand * RATE / 100;
+  const paidToCompany = citadelPaidToCompany(window._citMonths);
   const r2 = n => Math.round((Number(n) || 0) * 100) / 100;
   const summary = [['Activity', 'Membership', 'Rent', 'Total', `Company (${RATE}%)`]];
   GROUPS.forEach(g => summary.push([g.label, r2(agg[g.key].membership), r2(agg[g.key].rent), r2(agg[g.key].membership + agg[g.key].rent), r2((agg[g.key].membership + agg[g.key].rent) * RATE / 100)]));
   summary.push(['TOTAL', r2(GROUPS.reduce((s, g) => s + agg[g.key].membership, 0)), r2(GROUPS.reduce((s, g) => s + agg[g.key].rent, 0)), r2(grand), r2(share)]);
+  summary.push([]);
+  summary.push(['Collected from members', '', '', '', r2(paid || 0)]);
+  summary.push(['Paid to company', '', '', '', r2(paidToCompany)]);
+  summary.push(['Balance due to company', '', '', '', r2(share - paidToCompany)]);
   const inv = [['#', 'Month', 'Invoice', 'Customer', 'Activity', 'Type', 'Sport', 'Amount (QAR)']];
   details.forEach((d, i) => inv.push([i + 1, d.month, d.ref, d.customer, d.group.label, d.type === 'rent' ? 'Rent' : 'Membership', d.sport || '', r2(d.amount)]));
   const tag = (window._citMonths && window._citMonths.length) ? window._citMonths.slice().sort().join('_') : 'all-months';
@@ -7814,8 +7907,11 @@ function citadelExportXlsx(RATE, scopeLabel) {
   } catch (err) { toast(t('Excel export failed', 'فشل تصدير Excel') + ': ' + (err && err.message || err), 'error'); }
 }
 function citadelExportPdf(RATE, scopeLabel) {
-  const { GROUPS, agg, details, grand } = citadelCompute(window._citMonths);
+  const { GROUPS, agg, details, grand, paid } = citadelCompute(window._citMonths);
   const share = grand * RATE / 100;
+  const collected = paid || 0;
+  const paidToCompany = citadelPaidToCompany(window._citMonths);
+  const balanceDue = Math.round((share - paidToCompany) * 100) / 100;
   const w = window.open('', '_blank');
   if (!w) { toast(t('Popup blocked — please allow popups', 'المنبثقة محظورة — يرجى السماح بها'), 'error'); return; }
   const sumRows = GROUPS.map(g => `<tr><td>${escapeHtml(g.label)}</td><td class="n">${fmt(agg[g.key].membership)}</td><td class="n">${fmt(agg[g.key].rent)}</td><td class="n b">${fmt(agg[g.key].membership + agg[g.key].rent)}</td><td class="n" style="color:#dc2626">${fmt((agg[g.key].membership + agg[g.key].rent) * RATE / 100)}</td></tr>`).join('');
@@ -7824,19 +7920,28 @@ function citadelExportPdf(RATE, scopeLabel) {
     <style>body{font-family:'Helvetica Neue',Arial,sans-serif;color:#1a1a1a;padding:36px;max-width:900px;margin:0 auto}
       .hd{display:flex;justify-content:space-between;border-bottom:3px solid #f26060;padding-bottom:12px;margin-bottom:18px}
       .logo{font-size:20px;font-weight:800;color:#f26060} h2{font-size:14px;margin:20px 0 8px}
-      table{width:100%;border-collapse:collapse;font-size:12px;margin:4px 0} th{background:#f5f5f7;padding:7px;text-align:left;font-size:11px;text-transform:uppercase;color:#555}
+      table{width:100%;border-collapse:collapse;font-size:12px;margin:4px 0} th{background:#f5f5f7;padding:7px;text-align:left;font-size:11px;text-transform:uppercase;color:#555} th.n{text-align:right}
       td{padding:6px 7px;border-bottom:1px solid #eee} td.n{text-align:right;font-family:'Courier New',monospace} td.b{font-weight:700} td.mut{color:#999}
       tfoot td{font-weight:800;border-top:2px solid #ddd} .share{background:#fef2f2;border:2px solid #ef4444;padding:12px;margin-top:14px;display:flex;justify-content:space-between;font-size:16px;font-weight:800;color:#dc2626}
+      .settle{width:auto;min-width:340px;margin:14px 0} .settle td{padding:7px 10px} .settle td.lab{color:#444} .settle tr.tot td{font-weight:800;border-top:2px solid #ddd}
       @media print{body{padding:16px}}</style></head><body>
     <div class="hd"><div><div class="logo">★ Black Stars</div><div style="color:#666;font-size:11px">Sports Club · Waab, Doha</div></div>
       <div style="text-align:right"><div style="font-weight:700">🏛 CITADEL — COMPANY SHARE</div><div style="color:#666;font-size:11px">${escapeHtml(scopeLabel || '')} · ${RATE}% · ${t('Generated', 'صدر')} ${fmtDate(TODAY)}</div></div></div>
     <h2>Summary by activity</h2>
-    <table><thead><tr><th>Activity</th><th>Membership</th><th>Rent</th><th>Total</th><th>Company (${RATE}%)</th></tr></thead>
+    <table><thead><tr><th>Activity</th><th class="n">Membership</th><th class="n">Rent</th><th class="n">Total</th><th class="n">Company (${RATE}%)</th></tr></thead>
       <tbody>${sumRows}</tbody>
       <tfoot><tr><td>TOTAL</td><td class="n">${fmt(GROUPS.reduce((s, g) => s + agg[g.key].membership, 0))}</td><td class="n">${fmt(GROUPS.reduce((s, g) => s + agg[g.key].rent, 0))}</td><td class="n">${fmt(grand)}</td><td class="n" style="color:#dc2626">${fmt(share)}</td></tr></tfoot></table>
     <div class="share"><span>🏛 ${t('Company share to pay', 'حصة الشركة المستحقة')}</span><span>${fmt(share)} QAR</span></div>
+    <h2>${t('Company settlement', 'تسوية الشركة')}</h2>
+    <table class="settle"><tbody>
+      <tr><td class="lab">${t('Total revenue (billed)', 'إجمالي الإيراد (مفوتر)')}</td><td class="n">${fmt(grand)}</td></tr>
+      <tr><td class="lab">${t('Collected from members', 'المحصّل من الأعضاء')}</td><td class="n" style="color:#059669">${fmt(collected)}</td></tr>
+      <tr><td class="lab">${t('Company share', 'حصة الشركة')} (${RATE}%)</td><td class="n" style="color:#dc2626">${fmt(share)}</td></tr>
+      <tr><td class="lab">${t('Paid to company', 'المدفوع للشركة')}</td><td class="n" style="color:#059669">${fmt(paidToCompany)}</td></tr>
+      <tr class="tot"><td class="lab">${t('Balance due to company', 'المتبقي للشركة')}</td><td class="n" style="color:${balanceDue > 0.5 ? '#dc2626' : '#059669'}">${fmt(balanceDue)}</td></tr>
+    </tbody></table>
     <h2>Contributing invoices (${details.length})</h2>
-    <table><thead><tr><th>#</th><th>Month</th><th>Invoice</th><th>Customer</th><th>Activity</th><th>Type</th><th>Amount</th></tr></thead><tbody>${detRows}</tbody></table>
+    <table><thead><tr><th>#</th><th>Month</th><th>Invoice</th><th>Customer</th><th>Activity</th><th>Type</th><th class="n">Amount</th></tr></thead><tbody>${detRows}</tbody></table>
     </body></html>`);
   w.document.close();
   setTimeout(() => { try { w.print(); } catch (_) {} }, 350);
@@ -11016,13 +11121,17 @@ PAGES.schedule = (main) => {
             <span style="opacity:.6;font-size:10px">▾</span>
           </button>
           <div id="sch-filter-coach-menu" style="display:none;position:absolute;left:0;top:100%;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-top:4px;padding:8px;min-width:200px;max-height:300px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.4)">
+            <input type="text" id="sch-coach-search" placeholder="🔍 ${t('Search…', 'بحث…')}" style="width:100%;box-sizing:border-box;margin:0 0 6px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px" />
+            <div id="sch-coach-list">
             ${(() => {
-              const _teach = state.coaches.filter(isCoachRole);   // v6.507: exclude staff
+              const _teach = state.coaches.filter(isCoachRole).slice().sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' }));   // v6.575: A→Z
               const active = _teach.filter(c => isCoachActive(c));
               const inactive = _teach.filter(c => !isCoachActive(c));
-              const row = (c, faded) => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px${faded ? ';opacity:.72' : ''}"><input type="checkbox" class="sch-coach-cb" value="${c.id}" ${filter.coaches.includes(c.id) ? 'checked' : ''} /> ${escapeHtml(c.name)}${faded ? ' <span class="text-mute" style="font-size:10px">(inactive)</span>' : ''}</label>`;
+              const row = (c, faded) => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px${faded ? ';opacity:.72' : ''}"><input type="checkbox" class="sch-coach-cb" value="${c.id}" ${filter.coaches.includes(c.id) ? 'checked' : ''} /> ${escapeHtml(c.name)}${c.nameArabic ? ' <span style="font-size:11px;color:var(--text-mute)" dir="rtl">' + escapeHtml(c.nameArabic) + '</span>' : ''}${faded ? ' <span class="text-mute" style="font-size:10px">(inactive)</span>' : ''}</label>`;
               return active.map(c => row(c, false)).join('') + (inactive.length ? '<div style="height:1px;background:var(--border);margin:6px 0"></div>' + inactive.map(c => row(c, true)).join('') : '');
             })()}
+            <div id="sch-coach-empty" class="text-mute" style="display:none;padding:8px 6px;font-size:12px">${t('No matches', 'لا نتائج')}</div>
+            </div>
             <div style="border-top:1px solid var(--border);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between"><button type="button" class="btn ghost sm" id="sch-filter-coach-all">All</button><button type="button" class="btn ghost sm" id="sch-filter-coach-clear">Clear</button></div>
           </div>
         </div>`}
@@ -11085,6 +11194,18 @@ PAGES.schedule = (main) => {
   toggleMenu('sch-filter-coach-btn', 'sch-filter-coach-menu');
   toggleMenu('sch-filter-sport-btn', 'sch-filter-sport-menu');
   toggleMenu('sch-filter-day-btn', 'sch-filter-day-menu');
+  // v6.575 — searchable coach filter (Arabic + English), focused when the menu opens.
+  (() => {
+    const sInput = $('#sch-coach-search'), sEmpty = $('#sch-coach-empty');
+    if (!sInput) return;
+    const norm = s => (typeof normalizeArabicForSearch === 'function') ? normalizeArabicForSearch(String(s || '')) : String(s || '').toLowerCase();
+    const applySearch = () => { const q = norm(sInput.value.trim()); let shown = 0; $$('.sch-coach-cb').forEach(cb => { const lab = cb.parentElement; if (!lab) return; const hit = !q || norm(lab.textContent).includes(q); lab.style.display = hit ? '' : 'none'; if (hit) shown++; }); if (sEmpty) sEmpty.style.display = shown ? 'none' : ''; };
+    sInput.addEventListener('click', e => e.stopPropagation());
+    sInput.addEventListener('keydown', e => e.stopPropagation());
+    sInput.addEventListener('input', applySearch);
+    const cbtn = $('#sch-filter-coach-btn');
+    if (cbtn) cbtn.addEventListener('click', () => { setTimeout(() => { const menu = $('#sch-filter-coach-menu'); if (menu && menu.style.display === 'block') { sInput.value = ''; applySearch(); try { sInput.focus(); } catch (_) {} } }, 0); });
+  })();
   // Click outside closes the menus
   document.addEventListener('click', e => {
     if (!e.target.closest('#sch-filter-coach-menu, #sch-filter-coach-btn, #sch-filter-sport-menu, #sch-filter-sport-btn, #sch-filter-day-menu, #sch-filter-day-btn')) {
@@ -11521,7 +11642,7 @@ function multiFilterHTML(id, options, selected, o) {
         <button type="button" class="mf-all" style="background:none;border:none;color:var(--accent);font-size:12px;cursor:pointer;font-weight:600">${t('All', 'الكل')}</button>
         <button type="button" class="mf-none" style="background:none;border:none;color:var(--text-mute);font-size:12px;cursor:pointer">${t('Clear', 'مسح')}</button>
       </div>
-      ${pairs.length >= 8 ? `<input type="text" class="mf-search" placeholder="🔍 ${t('Search…', 'بحث…')}" style="width:100%;box-sizing:border-box;margin:0 0 6px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px" />` : ''}
+      ${(pairs.length >= 8 || o.search) ? `<input type="text" class="mf-search" placeholder="🔍 ${t('Search…', 'بحث…')}" style="width:100%;box-sizing:border-box;margin:0 0 6px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px" />` : ''}
       <div class="mf-list" style="display:flex;flex-direction:column">${pairs.map(([v, lab]) => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px;white-space:nowrap">
         <input type="checkbox" class="mf-cb" value="${escapeHtml(String(v))}" ${sel.has(String(v)) ? 'checked' : ''} /> ${escapeHtml(String(lab))}</label>`).join('')}
       <div class="mf-empty text-mute" style="display:none;padding:8px 6px;font-size:12px">${t('No matches', 'لا نتائج')}</div></div>
@@ -11995,7 +12116,7 @@ PAGES.invoices = (main) => {
         </div>
         ${multiFilterHTML('inv-category', INVOICE_CATS, filter.categories, { allText: t('All categories', 'كل الفئات'), noun: t('categories', 'فئات'), minWidth: 150 })}
         ${multiFilterHTML('inv-sport', sportsInInvoices, filter.sports, { allText: t('All activities', 'كل الأنشطة'), noun: t('activities', 'أنشطة'), minWidth: 150 })}
-        ${multiFilterHTML('inv-coach', coachesInInvoices, filter.coaches, { allText: t('All coaches', 'كل المدربين'), noun: t('coaches', 'مدربين'), minWidth: 150 })}
+        ${multiFilterHTML('inv-coach', coachesInInvoices, filter.coaches, { allText: t('All coaches', 'كل المدربين'), noun: t('coaches', 'مدربين'), minWidth: 150, search: true })}
         ${multiFilterHTML('inv-method', [['cash', t('Cash', 'نقداً')], ['card', t('Card', 'بطاقة')], ['fawran', t('Fawran', 'فوران')], ['transfer', t('Bank transfer', 'تحويل')]], filter.methods, { allText: t('All methods', 'كل الطرق'), noun: t('methods', 'طرق'), minWidth: 140 })}
         <button id="inv-clear-filters" class="btn ghost" title="${t('Clear all filters', 'مسح كل الفلاتر')}">✕ ${t('Clear filters', 'مسح الفلاتر')}</button>
       </div>
@@ -17302,6 +17423,7 @@ window.exportExpensesPDF = function(rows, meta) {
 // page load so new card payments are reflected until the admin overrides.
 const BANK_COMMISSION_RATE = 2.25;            // percent
 const BANK_COMMISSION_CATEGORY = 'Bank Commission';
+const CITADEL_SHARE_CATEGORY = 'Citadel Company Share';   // v6.577 — auto-posted facility-company payment
 
 // Sum of CARD payments dated in a given YYYY-MM (uses payment date, else invoice date).
 function cardPaidForMonth(ym) {
@@ -17375,6 +17497,56 @@ function syncBankCommission() {
   return changed;
 }
 
+// Ensure each month with Football/Swimming revenue has a (non-edited) "Citadel Company Share"
+// BANK expense equal to that month's facility-company share (citadel revenue × the configured rate).
+// Mirrors syncBankCommission: one auto row per month, keyed on autoCitadelShare + month, refreshed
+// whenever the revenue or rate changes — but never touches a row the admin has manually edited.
+// Returns true if anything changed (so the caller can save). (v6.577)
+function syncCitadelShare() {
+  if (!Array.isArray(state.expenses)) state.expenses = [];
+  const rawRate = Number(state.settings && state.settings.citadelRate);
+  const RATE = (isNaN(rawRate) || rawRate < 0) ? 30 : rawRate;
+  // Months that carry any citadel-eligible revenue.
+  const months = new Set();
+  for (const i of (state.invoices || [])) { if (!i.deleted) months.add(i.month || String(i.date || '').slice(0, 7)); }
+  let changed = false;
+  for (const ym of months) {
+    if (!ym || ym.length !== 7) continue;
+    const { grand } = citadelCompute([ym]);            // billed Football+Swimming revenue for this month
+    const auto = Math.round(grand * RATE / 100 * 100) / 100;
+    let row = state.expenses.find(e => e.autoCitadelShare && e.month === ym && !e.deleted);
+    if (auto <= 0 && !row) continue;                   // nothing to add
+    if (!row) {
+      row = {
+        id: nextId(state.expenses),
+        autoCitadelShare: true,
+        edited: false,
+        date: ym + '-01',
+        month: ym,
+        description: `Citadel company share (${RATE}% of Football + Swimming revenue)`,
+        category: CITADEL_SHARE_CATEGORY,
+        method: 'bank',
+        amount: auto,
+        citadelBase: grand,
+        citadelRate: RATE,
+      };
+      state.expenses.push(row);
+      changed = true;
+    } else if (!row.edited) {
+      if (Math.abs((row.amount || 0) - auto) > 0.001 || (row.citadelBase || 0) !== grand || (row.citadelRate || 0) !== RATE) {
+        row.amount = auto;
+        row.citadelBase = grand;
+        row.citadelRate = RATE;
+        row.method = row.method || 'bank';
+        row.category = CITADEL_SHARE_CATEGORY;
+        row.description = `Citadel company share (${RATE}% of Football + Swimming revenue)`;
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
+
 PAGES.expenses = (main) => {
   let filter = loadFilter('expenses', { search: '', months: [(TODAY || '').slice(0, 7)].filter(Boolean), categories: [], methods: [], coaches: [] });
   if (!Array.isArray(filter.months)) filter.months = (filter.month && filter.month !== 'all') ? [filter.month] : [];
@@ -17411,7 +17583,8 @@ PAGES.expenses = (main) => {
   function refresh() {
     saveFilter('expenses', filter);
     // Keep the auto Bank Commission rows up to date (card payments × 2.25%).
-    if (syncBankCommission()) save();
+    // Keep the auto Citadel Company Share rows up to date (Football+Swimming revenue × rate). (v6.577)
+    if ([syncBankCommission(), syncCitadelShare()].some(Boolean)) save();
     // Cash collections (owner taking cash out) are tracked on their own Cash
     // Collection screen — they are NOT real expenses, so keep them off this page.
     // Reception (viewer role) does not see Rent-category expenses at all.
@@ -19219,6 +19392,7 @@ window.showRevenueDetail = function(coachId, monthKey) {
         memberId: mem ? mem.id : null,
         sport: li.sport,
         price: parseFloat(li.price) || 0,
+        fee: parseFloat(li.price) || 0,   // v6.576: full course price for the "Course total" column
         isSwitch: !!inv.switchCredit,
         invoiceRef: inv.ref || `INV${inv.id}`,
         invoiceDate: inv.date,
@@ -19233,6 +19407,8 @@ window.showRevenueDetail = function(coachId, monthKey) {
   if (pay && pay.basis === 'attendance' && pay.attendanceLines) {
     lines = (pay.attendanceLines.lines || []).map(l => ({
       memberName: l.memberName, sport: l.sport, price: l.amountBase,
+      // Full course price = per-class fee × total classes. (v6.576)
+      fee: (l.perClass != null && l.total) ? Math.round(l.perClass * l.total * 100) / 100 : null,
       isSwitch: l.kind === 'switch', kind: l.kind, classes: l.classes,
       invoiceRef: '', invoiceDate: null,
     }));
@@ -19270,7 +19446,7 @@ window.showRevenueDetail = function(coachId, monthKey) {
       rebuilt.push({
         memberName: mem ? mem.name : (inv.customerName || '— deleted member —'), memberId: mem ? mem.id : null,
         sport: lis.filter(li => String(li.coachId) === String(coachId) && li.sport !== SUMMER_CAMP).map(li => li.sport).join(', ') || inv.sport,
-        price: share, isSwitch: !!inv.switchCredit, invoiceRef: inv.ref || `INV${inv.id}`, invoiceDate: inv.date,
+        price: share, fee: Math.round(coachFee * 100) / 100, isSwitch: !!inv.switchCredit, invoiceRef: inv.ref || `INV${inv.id}`, invoiceDate: inv.date,
       });
     }
     lines = rebuilt;
@@ -19288,6 +19464,7 @@ window.showRevenueDetail = function(coachId, monthKey) {
             <tr>
               <th style="text-align:left;padding:8px">Member</th>
               <th style="text-align:left;padding:8px">Sport</th>
+              <th style="text-align:right;padding:8px">Course total (QAR)</th>
               <th style="text-align:right;padding:8px">Amount (QAR)</th>
               <th style="text-align:right;padding:8px">Commission (${pay.commissionRate}%)</th>
             </tr>
@@ -19300,14 +19477,16 @@ window.showRevenueDetail = function(coachId, monthKey) {
                   ${l.isSwitch ? '<span class="badge" style="font-size:9px;padding:1px 6px;background:rgba(245,158,11,.15);color:var(--accent-2);margin-left:6px">SWITCH</span>' : ''}
                 </td>
                 <td style="padding:6px 8px;border-top:1px solid var(--border)">${escapeHtml(l.sport || '—')}</td>
+                <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace;color:var(--text-dim)">${(l.fee != null && isFinite(l.fee)) ? fmt(l.fee) : '—'}</td>
                 <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace;color:${l.price < 0 ? 'var(--red)' : 'var(--text)'}">${fmt(l.price)}</td>
                 <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace;font-weight:600;color:${l.price < 0 ? 'var(--red)' : 'var(--text)'}">${fmt(l.price * pay.commissionRate / 100)}</td>
               </tr>
-            `).join('') : '<tr><td colspan="4" style="padding:18px;text-align:center;color:var(--text-mute)">No commission-generating revenue this month</td></tr>'}
+            `).join('') : '<tr><td colspan="5" style="padding:18px;text-align:center;color:var(--text-mute)">No commission-generating revenue this month</td></tr>'}
           </tbody>
         </table>
       </div>
       <div style="margin-top:14px;padding:12px;background:var(--surface-2);border-radius:8px;font-size:13px">
+        <div style="display:flex;justify-content:space-between;padding:2px 0"><span class="text-mute">${lines.length} line${lines.length === 1 ? '' : 's'} · Course total</span><span style="font-family:monospace;font-weight:700">${fmt(lines.reduce((s, l) => s + ((l.fee != null && isFinite(l.fee)) ? l.fee : 0), 0))} QAR</span></div>
         <div style="display:flex;justify-content:space-between;padding:2px 0"><span class="text-mute">${lines.length} line${lines.length === 1 ? '' : 's'} · Commission base</span><span style="font-family:monospace;font-weight:700">${fmt(lines.reduce((s, l) => s + l.price, 0))} QAR</span></div>
         <div style="display:flex;justify-content:space-between;padding:2px 0"><span class="text-mute">Commission @ ${pay.commissionRate}%</span><span style="font-family:monospace;font-weight:700;color:var(--green)">${fmt(lines.reduce((s, l) => s + l.price, 0) * pay.commissionRate / 100)} QAR</span></div>
       </div>
@@ -19398,6 +19577,9 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
       memberName: l.memberName, sport: l.sport, price: l.amountBase,
       isSwitch: l.kind === 'switch', invoiceRef: l.kind === 'trueup' ? 'expiry true-up' : (l.kind === 'attended' ? (l.classes + ' class' + (l.classes === 1 ? '' : 'es')) : ''),
       invoiceDate: null, start: l.start, end: l.end, attended: l.attended, total: l.total, status: l.status,
+      perClass: l.perClass,
+      // Full course price = per-class fee × total classes (the whole package the member bought). (v6.576)
+      fee: (l.perClass != null && l.total) ? Math.round(l.perClass * l.total * 100) / 100 : null,
       _kind: l.kind, _trueupClasses: l.classes,   // v6.434: so the report can flag "expiry true-up" clearly
       _dupIgnored: !!l._dupIgnored, _origAmount: l._origAmount,
     }));
@@ -19434,7 +19616,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
       rebuilt.push({
         memberName: mem ? mem.name : (inv.customerName || '— deleted member —'),
         sport: lis.filter(li => String(li.coachId) === String(coachId) && li.sport !== SUMMER_CAMP).map(li => li.sport).join(', ') || inv.sport,
-        price: share, fee: share, isSwitch: !!inv.switchCredit, invoiceRef: inv.ref || `INV${inv.id}`, invoiceDate: inv.date,
+        price: share, fee: Math.round(coachFee * 100) / 100, isSwitch: !!inv.switchCredit, invoiceRef: inv.ref || `INV${inv.id}`, invoiceDate: inv.date,
         start: null, end: null, attended: null, total: null, status: 'paid',
       });
     }
@@ -19545,6 +19727,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
             <th>End</th>
             <th>Classes</th>
             <th>Status</th>
+            <th style="text-align:right">Course total (QAR)</th>
             <th style="text-align:right">Amount (QAR)</th>
             <th style="text-align:right">Commission (${pay.commissionRate}%)</th>
           </tr>
@@ -19552,6 +19735,12 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
         <tbody>
           ${(() => {
             const rate = pay.commissionRate;
+            // Full course price of a line (per-class fee × total classes, or the coach's full line fee). (v6.576)
+            const ct = (l) => (l.fee != null && isFinite(l.fee)) ? l.fee : null;
+            const ctCell = (l) => `<td class="num">${l._dupIgnored
+              ? (ct(l) != null ? `<span style="text-decoration:line-through;color:#c0c0c0">${fmt(ct(l))}</span>` : '—')
+              : (ct(l) != null ? fmt(ct(l)) : '—')}</td>`;
+            const grandCourse = lines.reduce((s, l) => s + (l._dupIgnored ? 0 : (ct(l) || 0)), 0);
             // One member row. `n` = the running index shown in the "#" column. (v6.380)
             const rowTr = (l, n) => `
             <tr${l._dupIgnored ? ' style="background:#fafafa;color:#b0b0b0"' : ''}>
@@ -19564,11 +19753,12 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
               <td style="font-size:11px">${l.end ? fmtDate(l.end) : '—'}</td>
               <td style="font-size:11px">${l._kind === 'trueup' ? (l._trueupClasses != null ? l._trueupClasses : 0) : (l.attended != null ? l.attended : 0)}${l.total ? ' / ' + l.total : ''}</td>
               <td style="font-size:11px">${escapeHtml(l.status || '—')}</td>
+              ${ctCell(l)}
               <td class="num ${l.price < 0 ? 'neg' : ''}">${l._dupIgnored ? `<span style="text-decoration:line-through;color:#c0c0c0">${fmt(l._origAmount || 0)}</span> → <b>0</b>` : fmt(l.price)}${l.prorated ? `<div style="color:#999;font-size:9px">of ${fmt(l.fee)} · ${l.attended}/${l.total} attended</div>` : ''}</td>
               <td class="num ${l.price < 0 ? 'neg' : ''}" style="font-weight:700">${l._dupIgnored ? '<b>0</b>' : fmt(l.price * rate / 100)}</td>
             </tr>`;
             const grand = lines.reduce((s, l) => s + l.price, 0);
-            const grandRow = (label) => `<tr style="background:#f5f5f7;font-weight:700"><td colspan="7">${label}</td><td class="num">${fmt(grand)}</td><td class="num">${fmt(grand * rate / 100)}</td></tr>`;
+            const grandRow = (label) => `<tr style="background:#f5f5f7;font-weight:700"><td colspan="7">${label}</td><td class="num">${fmt(grandCourse)}</td><td class="num">${fmt(grand)}</td><td class="num">${fmt(grand * rate / 100)}</td></tr>`;
             const sports = [...new Set(lines.map(l => l.sport || '—'))];
             let n = 0;
             // Single sport → simple flat list. MORE THAN ONE sport → group the members under a header
@@ -19579,10 +19769,11 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
             return Object.keys(bySp).sort().map(sp => {
               const grp = bySp[sp];
               const spBase = grp.reduce((s, l) => s + l.price, 0);
-              return `<tr style="background:#eef2ff"><td colspan="9" style="font-weight:800;color:#3730a3;padding:8px 8px">🏷 ${escapeHtml(sp)} · ${grp.length} member${grp.length === 1 ? '' : 's'}</td></tr>`
+              const spCourse = grp.reduce((s, l) => s + (l._dupIgnored ? 0 : (ct(l) || 0)), 0);
+              return `<tr style="background:#eef2ff"><td colspan="10" style="font-weight:800;color:#3730a3;padding:8px 8px">🏷 ${escapeHtml(sp)} · ${grp.length} member${grp.length === 1 ? '' : 's'}</td></tr>`
                 + grp.map(l => rowTr(l, ++n)).join('')
-                + `<tr style="background:#f5f5f7;font-weight:700"><td colspan="7" style="text-align:right">${escapeHtml(sp)} subtotal</td><td class="num">${fmt(spBase)}</td><td class="num">${fmt(spBase * rate / 100)}</td></tr>`;
-            }).join('') + `<tr style="background:#e8eaed;font-weight:800"><td colspan="7">TOTAL · Commission base (all sports)</td><td class="num">${fmt(grand)}</td><td class="num">${fmt(grand * rate / 100)}</td></tr>`;
+                + `<tr style="background:#f5f5f7;font-weight:700"><td colspan="7" style="text-align:right">${escapeHtml(sp)} subtotal</td><td class="num">${fmt(spCourse)}</td><td class="num">${fmt(spBase)}</td><td class="num">${fmt(spBase * rate / 100)}</td></tr>`;
+            }).join('') + `<tr style="background:#e8eaed;font-weight:800"><td colspan="7">TOTAL · Commission base (all sports)</td><td class="num">${fmt(grandCourse)}</td><td class="num">${fmt(grand)}</td><td class="num">${fmt(grand * rate / 100)}</td></tr>`;
           })()}
         </tbody>
       </table>
@@ -22726,7 +22917,7 @@ PAGES.attendance = (main) => {
           <option value="4">${t('Week', 'أسبوع')} 4 (22–28)</option>
           <option value="5">${t('Week', 'أسبوع')} 5 (29–${t('end', 'النهاية')})</option>
         </select>
-        <span ${myCoachId != null ? 'style="display:none"' : ''}>${multiFilterHTML('att-coach', state.coaches.filter(c => isCoachRole(c) && (isCoachActive(c) || filter.coaches.map(String).includes(String(c.id)))).map(c => [String(c.id), c.name]), filter.coaches, { allText: t('All coaches', 'كل المدربين'), noun: t('coaches', 'مدربين'), minWidth: 150 })}</span>
+        <span ${myCoachId != null ? 'style="display:none"' : ''}>${multiFilterHTML('att-coach', state.coaches.filter(c => isCoachRole(c) && (isCoachActive(c) || filter.coaches.map(String).includes(String(c.id)))).map(c => [String(c.id), c.name + (c.nameArabic ? ' · ' + c.nameArabic : '')]), filter.coaches, { allText: t('All coaches', 'كل المدربين'), noun: t('coaches', 'مدربين'), minWidth: 150, search: true })}</span>
         ${multiFilterHTML('att-mstatus', [['Active', '🟢 ' + t('Active', 'نشط')], ['Frozen', '🔵 ' + t('Frozen', 'مجمّد')], ['Expired', '⚪ ' + t('Expired', 'منتهي')], ['Completed', '🟣 ' + t('Completed', 'مكتمل')], ['Withdrawn', '🔴 ' + t('Withdrawn', 'منسحب')]], filter.statuses, { allText: t('All statuses', 'كل الحالات'), noun: t('statuses', 'حالات'), minWidth: 150 })}
         ${multiFilterHTML('att-status', [['attended', '✓ ' + t('Attended', 'حضر')], ['notattended', '✗ ' + t('Not attended', 'لم يحضر')]], filter.atts, { allText: t('All attendance', 'كل الحضور'), noun: t('selected', 'محدد'), minWidth: 150 })}
         <div style="position:relative">
@@ -25832,7 +26023,7 @@ PAGES.completed = (main) => {
       <div class="filter-bar" style="flex-wrap:wrap;gap:8px">
         <label style="font-size:12px;color:var(--text-mute);align-self:center">${t('Filter:', 'تصفية:')}</label>
         ${monthMultiHTML('comp-month', monthsInList, f.months)}
-        ${multiFilterHTML('comp-coach', coachesInList, f.coaches, { icon: '🥋', allText: t('All coaches', 'كل المدربين'), noun: t('coaches', 'مدربين') })}
+        ${multiFilterHTML('comp-coach', coachesInList, f.coaches, { icon: '🥋', allText: t('All coaches', 'كل المدربين'), noun: t('coaches', 'مدربين'), search: true })}
         ${multiFilterHTML('comp-sport', sportsInList, f.sports, { icon: '🎯', allText: t('All sports', 'كل الرياضات'), noun: t('sports', 'رياضات') })}
         <button class="btn ghost" id="comp-clear" title="${t('Clear all filters', 'مسح كل عوامل التصفية')}">✕ ${t('Clear', 'مسح')}</button>
       </div>

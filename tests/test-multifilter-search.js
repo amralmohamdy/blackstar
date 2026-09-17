@@ -8,7 +8,7 @@ const R = H.reporter('v6.565 · long filters are searchable');
 R.section('source wiring');
 {
   const src = H.readSrc();
-  R.ok('multiFilterHTML adds a search box for long lists (>= 8)', /pairs\.length >= 8 \? `<input type="text" class="mf-search"/.test(src));
+  R.ok('multiFilterHTML adds a search box for long lists (>= 8) or on demand (o.search)', /\(pairs\.length >= 8 \|\| o\.search\) \? `<input type="text" class="mf-search"/.test(src));
   R.ok('bindMultiFilter filters rows on input (Arabic-folded)', /const applySearch = \(\) => \{/.test(src) && /norm\(lab\.textContent\)\.includes\(q\)/.test(src));
   R.ok('search focuses + resets when the popup opens', /if \(open && search\) \{ search\.value = ''; applySearch\(\);/.test(src));
 }

@@ -10,7 +10,7 @@ const run = (c, s) => H.vm.runInContext(s, c);
 R.section('source wiring');
 {
   const app = H.readSrc();
-  R.ok('a Refund expense category is reserved', /'Refund', 'Cash collected by owner', 'Others'/.test(app) && /'Salary','Refund'/.test(app));
+  R.ok('a Refund expense category is reserved', /'Refund', 'Cash collected by owner', 'Citadel Company Share', 'Others'/.test(app) && /'Salary','Refund'/.test(app));
   R.ok('the campclosure route is registered admin-only', /campclosure: \{ label: 'Camp Closure'[\s\S]{0,80}adminOnly: true/.test(app));
   R.ok('the screen is admin-gated', /PAGES\.campclosure = \(main\) => \{[\s\S]{0,120}currentRole\(\) !== 'admin'/.test(app));
   R.ok('balance = paid days − live attended (matches the card)', /const attended = live\.total > 0 \? live\.y : \(parseInt\(sub\.attendedClasses\)/.test(app) && /balance = Math\.max\(0, total - attended\)/.test(app));

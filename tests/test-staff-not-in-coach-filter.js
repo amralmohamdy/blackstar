@@ -24,7 +24,7 @@ R.section('isCoachRole / teachingCoaches');
 
 R.section('the member-facing coach FILTERS use isCoachRole (source)');
 R.ok('Members filter excludes staff', /const _teach = state\.coaches\.filter\(isCoachRole\);[\s\S]{0,120}filter-coach-cb|filter-coach-cb[\s\S]{0,400}isCoachRole/.test(src) || /const _teach = state\.coaches\.filter\(isCoachRole\);\s*\/\/ v6\.507: exclude staff \(Ester/.test(src));
-R.ok('Schedule filter excludes staff', /sch-coach-cb[\s\S]{0,400}isCoachRole|const _teach = state\.coaches\.filter\(isCoachRole\);\s*\/\/ v6\.507: exclude staff\s*\n\s*const active/.test(src));
+R.ok('Schedule filter excludes staff', /const _teach = state\.coaches\.filter\(isCoachRole\)[\s\S]{0,600}class="sch-coach-cb"/.test(src));
 R.ok('Attendance filter excludes staff (and, v6.565, inactive coaches)', /multiFilterHTML\('att-coach', state\.coaches\.filter\(c => isCoachRole\(c\) && \(isCoachActive\(c\)/.test(src));
 
 R.section('Salaries still INCLUDES staff (must NOT use isCoachRole)');

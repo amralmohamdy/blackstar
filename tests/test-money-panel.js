@@ -50,6 +50,7 @@ R.section('runtime — a member with a switched-away sport reconciles + attribut
   R.section('runtime — Collect appends a payment (no rows lost, no restructuring)');
   const before = run(`state.invoices[0].payments.length`);
   run(`window.moneyPanel=function(){}; window.toast=function(){}; currentRole=()=>'admin';
+    window.render=function(){}; render=function(){};   // v6.579: _moneyCollect now refreshes the page behind the panel
     document={getElementById:id=>({value:({'mp-amt':'140.63','mp-method':'cash','mp-date':'2026-08-28'})[id]})};`);
   run(`_moneyCollect(1)`);
   const after = run(`state.invoices[0].payments.length`);

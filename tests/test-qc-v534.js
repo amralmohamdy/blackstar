@@ -30,7 +30,7 @@ R.ok('the sub-based reader passes the sub coach', /attendedYInMonth\(m, sub\.act
 R.ok('the monthly commission count passes the sub coach', /attendedYInMonth\(mem, li\.sport, monthKey, _cw\.from, _cw\.to, undefined, sub\.coachId\)/.test(src));
 
 R.section('3 — Products expense category');
-R.ok('Products is in the default categories', /'Bank Commission','Equipment','Products'/.test(src));
+R.ok('Products is in the default categories', /'Bank Commission','Citadel Company Share','Equipment','Products'/.test(src));
 R.ok('a migration inserts Products for existing installs', /String\(c\)\.toLowerCase\(\) === 'products'/.test(src));
 
 R.done();
