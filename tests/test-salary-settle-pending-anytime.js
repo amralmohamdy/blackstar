@@ -11,7 +11,7 @@ const run = (c, s) => H.vm.runInContext(s, c);
 function seed(ctx) {
   run(ctx, `
     state.user = { role:'admin' }; state.session = { role:'admin' };
-    state.settings = state.settings || {}; state.settings.commissionBasis = 'attendance';
+    state.settings = state.settings || {}; state.settings.commissionBasis = 'attendance'; state.settings.auditEnabled = true;   /* v6.580: audit is opt-in — enable it to test the audit rows */
     state.coaches = [{ id:4, name:'Aziz', rate:60, active:'Y', commissionRate:60 }];
     state.members = [{ id:7001, name:'New Student', coachId:4, sport:'Kick Boxing',
       enrollments:[{ sport:'Kick Boxing', coachId:4, classes:12, price:900 }],

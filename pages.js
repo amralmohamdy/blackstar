@@ -2415,7 +2415,19 @@ function viewMember(id) {
         <div class="kpi" style="padding:10px 12px"><div class="kpi-label" style="font-size:10px">Subs</div><div class="kpi-value" style="font-size:18px">${totalSubs}</div></div>
         <div class="kpi blue" style="padding:10px 12px;cursor:pointer" onclick="viewMemberAttendance(${m.id})" title="See this member's attendance">
           <div class="kpi-label" style="font-size:10px">Classes ${liveCount.total ? '· live' : ''} ›</div><div class="kpi-value" style="font-size:18px">${curAttended}/${curTotalClasses}</div></div>
-        ${isViewerRole() ? '' : `<div class="kpi ${balanceDue > 0.5 ? 'orange' : 'green'}" style="padding:10px 12px" title="${balanceDue > 0.5 ? `Paid ${fmt(totalPaid)} of ${fmt(totalCharged)} — ${fmt(balanceDue)} still due` : 'Fully paid'}"><div class="kpi-label" style="font-size:10px">${balanceDue > 0.5 ? 'Total · due' : 'Paid'}</div><div class="kpi-value" style="font-size:18px">${fmt(totalCharged)}</div>${balanceDue > 0.5 ? `<div style="font-size:9px;color:var(--red);font-weight:700;margin-top:1px">${fmt(balanceDue)} due · ${fmt(totalPaid)} paid</div>` : ''}</div>`}
+        ${isViewerRole() ? '' : (() => {
+          // v6.580 — the tile used to ALWAYS show totalCharged, even under a "Paid" label, so an
+          // overpaid / drifted member (e.g. a switch left an invoice line out of sync with its
+          // subscription) showed the CHARGED total as if it were the amount paid. Now:
+          //  • has a balance → "Total · due" with the charged total + a due/paid sub-line (unchanged)
+          //  • fully paid     → "Paid" showing the ACTUAL cash paid (totalPaid)
+          //  • overpaid       → "Paid" (actual) + a red "N overpaid" flag so the drift is visible
+          const over = Math.round((totalPaid - totalCharged) * 100) / 100;
+          const cls = balanceDue > 0.5 ? 'orange' : (over > 0.5 ? 'orange' : 'green');
+          const title = balanceDue > 0.5 ? `Paid ${fmt(totalPaid)} of ${fmt(totalCharged)} — ${fmt(balanceDue)} still due`
+            : (over > 0.5 ? `Charged ${fmt(totalCharged)} but ${fmt(totalPaid)} recorded paid — ${fmt(over)} overpaid (check this member's invoices)` : 'Fully paid');
+          return `<div class="kpi ${cls}" style="padding:10px 12px" title="${title}"><div class="kpi-label" style="font-size:10px">${balanceDue > 0.5 ? 'Total · due' : 'Paid'}</div><div class="kpi-value" style="font-size:18px">${fmt(balanceDue > 0.5 ? totalCharged : totalPaid)}</div>${balanceDue > 0.5 ? `<div style="font-size:9px;color:var(--red);font-weight:700;margin-top:1px">${fmt(balanceDue)} due · ${fmt(totalPaid)} paid</div>` : (over > 0.5 ? `<div style="font-size:9px;color:var(--red);font-weight:700;margin-top:1px">⚠ ${fmt(over)} overpaid</div>` : '')}</div>`;
+        })()}
         <div class="kpi orange" style="padding:10px 12px;cursor:pointer;position:relative" onclick="viewMemberAttendance(${m.id})" title="See this member's attendance">
           <div class="kpi-label" style="font-size:10px">Att Rate ›</div><div class="kpi-value" style="font-size:18px">${attRatePct}%</div>
           <button onclick="event.stopPropagation();exportMemberAttendance(${m.id})" title="Export attendance history (CSV)" style="position:absolute;top:6px;right:6px;background:transparent;border:none;cursor:pointer;font-size:13px;opacity:.7;padding:2px">⬇</button>
@@ -20940,10 +20952,32 @@ window.moveSport = function(name, delta) {
 // AUDIT LOG PAGE — view who changed what, when.
 // Read-only. Records hooked from key actions in app.js audit() helper.
 // ═══════════════════════════════════════════════════════════════════
+// v6.580 — turn the audit log on/off (opt-in). On enable, records start from now; the screen + nav
+// entry appear. On disable, recording stops and the nav entry hides. Never deletes existing entries.
+window.setAuditEnabled = function(on) {
+  if (currentRole() !== 'admin') { toast(t('Admins only', 'للمسؤولين فقط'), 'error'); return; }
+  if (!state.settings) state.settings = {};
+  state.settings.auditEnabled = !!on;
+  if (typeof save === 'function') save();
+  toast(on ? t('Audit logging turned on', 'تم تشغيل سجل التدقيق') : t('Audit logging turned off', 'تم إيقاف سجل التدقيق'));
+  if (typeof render === 'function') render();
+};
+
 PAGES.audit = (main) => {
   // Admin-only, hard guard (req #8) — Reception/Coach/Member never see this.
   if (currentRole() !== 'admin') {
     main.innerHTML = `<div class="card" style="text-align:center;padding:40px"><div style="font-size:40px">🔒</div><h2>${t('Admins only', 'للمسؤولين فقط')}</h2><div class="text-mute">${t('The Audit Trail is restricted to administrators.', 'سجل التدقيق متاح للمسؤولين فقط.')}</div></div>`;
+    return;
+  }
+  // v6.580 — the audit log is OFF by default (it grew unbounded and dominated storage). When disabled,
+  // show an explainer + an opt-in toggle instead of trying to load it.
+  if (!(state.settings && state.settings.auditEnabled)) {
+    main.innerHTML = `<div class="card" style="max-width:560px;margin:24px auto;text-align:center;padding:34px 28px">
+      <div style="font-size:40px">📋</div>
+      <h2 style="margin:8px 0 4px">${t('Audit Log is off', 'سجل التدقيق متوقف')}</h2>
+      <div class="text-mute" style="font-size:13px;line-height:1.6;margin-bottom:18px">${t('The audit log records every edit for traceability, but it grows forever and was filling the app’s storage. It is now off by default. You can turn it on any time — recording starts from the moment you enable it.', 'يسجّل سجل التدقيق كل تعديل للتتبع، لكنه ينمو بلا حدود وكان يملأ مساحة التخزين. أصبح متوقفاً افتراضياً. يمكنك تشغيله في أي وقت — يبدأ التسجيل من لحظة التفعيل.')}</div>
+      <button class="btn primary" onclick="window.setAuditEnabled(true)">${t('Turn on audit logging', 'تشغيل سجل التدقيق')}</button>
+    </div>`;
     return;
   }
   let filter = { search: '', module: 'all', action: 'all', user: 'all', from: '', to: '' };
@@ -21225,6 +21259,12 @@ PAGES.settings = (main, section) => {
           <input id="pref-idlemin" type="number" min="0" max="240" step="1" value="${cur.idleLogoutMin ?? 10}" />
           <div class="text-mute" style="font-size:11px;margin-top:4px">${t('When the app sits idle this long, a dialog asks to Continue the session or Log out (auto sign-out if ignored). Active use — clicks, typing, mouse movement — never triggers it. Set 0 to disable auto sign-out.', 'عند خمول التطبيق لهذه المدة يظهر مربع لمتابعة الجلسة أو تسجيل الخروج (خروج تلقائي إذا تُرك). الاستخدام النشط لا يفعّله. اضبط 0 للتعطيل.')}</div>
         </div>
+      </div>
+      <div class="form-row">
+        <div class="field">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input id="pref-auditenabled" type="checkbox" ${cur.auditEnabled ? 'checked' : ''} style="width:auto" /> 📋 ${t('Enable audit log (record every edit)', 'تفعيل سجل التدقيق (تسجيل كل تعديل)')}</label>
+          <div class="text-mute" style="font-size:11px;margin-top:4px">${t('OFF by default. The audit log traces who changed what, but it grows forever and can fill the app’s storage, so it is off unless you need it. Turning it on starts recording from now — it does not recover past history. The Audit Log screen only appears when this is on.', 'متوقف افتراضياً. يتتبع السجل من غيّر ماذا، لكنه ينمو بلا حدود وقد يملأ مساحة التخزين، لذا يبقى متوقفاً ما لم تحتجه. تفعيله يبدأ التسجيل من الآن — لا يستعيد السجل السابق. تظهر شاشة السجل فقط عند تفعيله.')}</div>
+        </div>
       </div>` : ''}
       <div style="margin-top:12px"><button class="btn primary" id="save-prefs">💾 Save preferences</button></div>
     </div>
@@ -21459,7 +21499,9 @@ PAGES.settings = (main, section) => {
         if (typeof _idleReset === 'function') _idleReset();  // apply the new timeout immediately
       }
     }
-    
+    const auditEl = $('#pref-auditenabled');
+    if (auditEl && currentRole() === 'admin') state.settings.auditEnabled = !!auditEl.checked;   // v6.580
+
     confirmSaved(`Preferences saved (alert ${days} days before expiry)`);
   });
 
