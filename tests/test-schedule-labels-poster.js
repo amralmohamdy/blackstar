@@ -22,7 +22,12 @@ R.section('daily poster (WhatsApp status)');
   R.ok('it is a PORTRAIT canvas (1080 wide, ≥1920 tall)', /const W = 1080/.test(src) && /const H = Math\.max\(1920,/.test(src));
   R.ok('it only lists slots that HAVE classes this day', /classesAt\(day\.key, slot\.hour\)\.filter\(isFiltered\)[\s\S]{0,60}filter\(s => s\.cls\.length\)/.test(src));
   R.ok('each class chip uses the language-appropriate custom label (v6.530 bilingual)', /const nm = ar \? \(c\.labelAr \|\| c\.label \|\| sportNameAR\(c\.sport\)\) : \(c\.label \|\| c\.sport\)/.test(src));
-  R.ok('it shows the coach on each chip', /\(ar \? 'المدرب: ' : 'Coach: '\) \+ cn/.test(src));
+  R.ok('it shows the coach on each chip', /\(ar \? 'المدرب: ' : 'Coach: '\) \+ _iso\(cn\)/.test(src));
+
+  R.section('v6.583 — Arabic bidi: name runs are isolated so the label/colon don\'t scramble');
+  R.ok('a First-Strong Isolate helper wraps runs', /const _iso = s =>[\s\S]{0,40}⁨[\s\S]{0,40}⁩/.test(src));
+  R.ok('the coach name is isolated (fixes "Aziz: \u0628" / "Riahi :")', /'Coach: '\) \+ _iso\(cn\)/.test(src));
+  R.ok('the sport/class name run is isolated too', /sportEmoji\(c\.sport\) \+ '  ' \+ _iso\(nm\)/.test(src));
   R.ok('it downloads a PNG named for the day', /a\.download = `BlackStars-\$\{ar \? 'AR-' : ''\}\$\{day\.label\}-status\.png`/.test(src));
 
   R.ok('a Day-poster button + day picker are in the toolbar', /id="sch-status"/.test(src) && /id="sch-status-day"/.test(src));

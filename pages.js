@@ -7749,6 +7749,23 @@ function citadelPaidToCompany(selMonths) {
   return Math.round(total * 100) / 100;
 }
 
+// v6.581 — re-pivot the citadel totals into the 3 categories the owner tracks:
+//   1) Rental (all Football-Court + Swimming-Pool rent), 2) Swimming membership, 3) Football membership.
+// Derived from the same agg citadelCompute already returns (no recompute). Returns [{label,icon,amount}].
+function citadelCategories(res) {
+  const { GROUPS, agg } = res;
+  const rental = GROUPS.reduce((s, g) => s + (agg[g.key].rent || 0), 0);
+  const cats = [{ key: 'rental', label: 'Rental', icon: '🏟', amount: rental }];
+  // Memberships, swimming before football to match the owner's list (1 rental · 2 swimming · 3 football).
+  const order = ['swimming', 'football'];
+  const gsorted = GROUPS.slice().sort((a, b) => (order.indexOf(a.key) + 99 * (order.indexOf(a.key) < 0)) - (order.indexOf(b.key) + 99 * (order.indexOf(b.key) < 0)));
+  for (const g of gsorted) {
+    const memName = (g.membership && g.membership[0]) || g.label;   // 'Swimming' / 'Football' (not the facility label 'Swimming Pool')
+    cats.push({ key: g.key + '-mem', label: memName + ' membership', icon: g.icon, amount: agg[g.key].membership || 0 });
+  }
+  return cats;
+}
+
 PAGES.citadel = (main) => {
   if (currentRole() !== 'admin') { main.innerHTML = `<div class="card"><div class="empty">${t('Admins only.', 'المسؤولون فقط.')}</div></div>`; return; }
 
@@ -7790,6 +7807,15 @@ PAGES.citadel = (main) => {
     <td class="text-right num" style="color:var(--red);font-weight:700">${fmt(groupTotal(g.key) * RATE / 100)}</td>
   </tr>`).join('');
 
+  // v6.581 — the owner's 3-way categorisation: Rental · Swimming membership · Football membership.
+  const cats = citadelCategories({ GROUPS, agg });
+  const catTotal = cats.reduce((s, c) => s + c.amount, 0);
+  const categoryRows = cats.map(c => `<tr>
+    <td class="font-bold">${c.icon} ${escapeHtml(c.label)}</td>
+    <td class="text-right num">${fmt(c.amount)}</td>
+    <td class="text-right num" style="color:var(--red);font-weight:700">${fmt(c.amount * RATE / 100)}</td>
+  </tr>`).join('');
+
   const detailRows = details.length ? details.map((d, i) => `<tr>
     <td class="text-mute" style="text-align:center;font-size:12px">${i + 1}</td>
     <td class="text-mute" style="font-size:12px;white-space:nowrap">${fmtMonth(d.month)}</td>
@@ -7827,6 +7853,26 @@ PAGES.citadel = (main) => {
     </div>
 
     <div class="card">
+      <div class="card-header"><div>
+        <div class="card-title">${t('Summary by category', 'ملخص حسب الفئة')}</div>
+        <div class="card-subtitle">${escapeHtml(scopeLabel)} · ${t('Rental · Swimming membership · Football membership', 'إيجار · اشتراك سباحة · اشتراك كرة قدم')} · ${t('share', 'الحصة')} = ${RATE}%</div>
+      </div></div>
+      <div class="table-wrap"><table>
+        <thead><tr>
+          <th>${t('Category', 'الفئة')}</th>
+          <th class="text-right">${t('Amount', 'المبلغ')}</th>
+          <th class="text-right">🏛 ${t('Company', 'الشركة')} (${RATE}%)</th>
+        </tr></thead>
+        <tbody>${categoryRows}</tbody>
+        <tfoot><tr style="border-top:2px solid var(--border);font-weight:800">
+          <td>${t('TOTAL', 'الإجمالي')}</td>
+          <td class="text-right num" style="font-size:15px">${fmt(catTotal)}</td>
+          <td class="text-right num" style="color:var(--red);font-size:15px">${fmt(catTotal * RATE / 100)}</td>
+        </tr></tfoot>
+      </table></div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
       <div class="card-header"><div>
         <div class="card-title">${t('Summary by activity', 'ملخص حسب النشاط')}</div>
         <div class="card-subtitle">${escapeHtml(scopeLabel)} · ${t('share', 'الحصة')} = ${RATE}%</div>
@@ -7907,6 +7953,10 @@ function citadelExportXlsx(RATE, scopeLabel) {
   GROUPS.forEach(g => summary.push([g.label, r2(agg[g.key].membership), r2(agg[g.key].rent), r2(agg[g.key].membership + agg[g.key].rent), r2((agg[g.key].membership + agg[g.key].rent) * RATE / 100)]));
   summary.push(['TOTAL', r2(GROUPS.reduce((s, g) => s + agg[g.key].membership, 0)), r2(GROUPS.reduce((s, g) => s + agg[g.key].rent, 0)), r2(grand), r2(share)]);
   summary.push([]);
+  // v6.581 — by category: Rental · Swimming membership · Football membership
+  summary.push(['By category', 'Amount', '', '', `Company (${RATE}%)`]);
+  citadelCategories({ GROUPS, agg }).forEach(c => summary.push([c.label, r2(c.amount), '', '', r2(c.amount * RATE / 100)]));
+  summary.push([]);
   summary.push(['Collected from members', '', '', '', r2(paid || 0)]);
   summary.push(['Paid to company', '', '', '', r2(paidToCompany)]);
   summary.push(['Balance due to company', '', '', '', r2(share - paidToCompany)]);
@@ -7927,6 +7977,9 @@ function citadelExportPdf(RATE, scopeLabel) {
   const w = window.open('', '_blank');
   if (!w) { toast(t('Popup blocked — please allow popups', 'المنبثقة محظورة — يرجى السماح بها'), 'error'); return; }
   const sumRows = GROUPS.map(g => `<tr><td>${escapeHtml(g.label)}</td><td class="n">${fmt(agg[g.key].membership)}</td><td class="n">${fmt(agg[g.key].rent)}</td><td class="n b">${fmt(agg[g.key].membership + agg[g.key].rent)}</td><td class="n" style="color:#dc2626">${fmt((agg[g.key].membership + agg[g.key].rent) * RATE / 100)}</td></tr>`).join('');
+  const _cats = citadelCategories({ GROUPS, agg });
+  const _catTotal = _cats.reduce((s, c) => s + c.amount, 0);
+  const catRowsPdf = _cats.map(c => `<tr><td>${escapeHtml(c.label)}</td><td class="n b">${fmt(c.amount)}</td><td class="n" style="color:#dc2626">${fmt(c.amount * RATE / 100)}</td></tr>`).join('');
   const detRows = details.map((d, i) => `<tr><td class="mut">${i + 1}</td><td class="mut">${escapeHtml(d.month)}</td><td>${escapeHtml(d.ref)}</td><td>${escapeHtml(d.customer)}</td><td>${escapeHtml(d.group.label)}</td><td>${d.type === 'rent' ? 'Rent' : 'Membership'}${d.sport ? ' · ' + escapeHtml(d.sport) : ''}</td><td class="n">${fmt(d.amount)}</td></tr>`).join('');
   w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Citadel-${escapeHtml(scopeLabel || '')}</title>
     <style>body{font-family:'Helvetica Neue',Arial,sans-serif;color:#1a1a1a;padding:36px;max-width:900px;margin:0 auto}
@@ -7939,6 +7992,10 @@ function citadelExportPdf(RATE, scopeLabel) {
       @media print{body{padding:16px}}</style></head><body>
     <div class="hd"><div><div class="logo">★ Black Stars</div><div style="color:#666;font-size:11px">Sports Club · Waab, Doha</div></div>
       <div style="text-align:right"><div style="font-weight:700">🏛 CITADEL — COMPANY SHARE</div><div style="color:#666;font-size:11px">${escapeHtml(scopeLabel || '')} · ${RATE}% · ${t('Generated', 'صدر')} ${fmtDate(TODAY)}</div></div></div>
+    <h2>Summary by category</h2>
+    <table><thead><tr><th>Category</th><th class="n">Amount</th><th class="n">Company (${RATE}%)</th></tr></thead>
+      <tbody>${catRowsPdf}</tbody>
+      <tfoot><tr><td>TOTAL</td><td class="n">${fmt(_catTotal)}</td><td class="n" style="color:#dc2626">${fmt(_catTotal * RATE / 100)}</td></tr></tfoot></table>
     <h2>Summary by activity</h2>
     <table><thead><tr><th>Activity</th><th class="n">Membership</th><th class="n">Rent</th><th class="n">Total</th><th class="n">Company (${RATE}%)</th></tr></thead>
       <tbody>${sumRows}</tbody>
@@ -11014,11 +11071,17 @@ PAGES.schedule = (main) => {
         // sport names showed only their last few letters. RTL base direction lays them out correctly.
         ctx.direction = ar ? 'rtl' : 'ltr';
         ctx.font = 'bold 40px sans-serif';
-        ctx.fillText(sportEmoji(c.sport) + '  ' + nm, TX, y + (coach ? 54 : cardH / 2 + 14));
+        // v6.583 — wrap each NAME run in a Unicode First-Strong Isolate (U+2068…U+2069). On the Arabic
+        // poster a Latin coach name ("Aziz", "Aziz (Private)") next to the Arabic "المدرب:" label made
+        // the neutral ":" and the parens reorder around the name — it printed as "Aziz: ب" / "Riahi :".
+        // Isolating the name keeps the label + colon on the right and the name as its own run. FSI also
+        // handles an Arabic coach/sport name correctly, so it is safe for both directions.
+        const _iso = s => '⁨' + String(s == null ? '' : s) + '⁩';
+        ctx.fillText(sportEmoji(c.sport) + '  ' + _iso(nm), TX, y + (coach ? 54 : cardH / 2 + 14));
         if (coach) {
           ctx.font = '28px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.95)';
           const cn = (ar && coach.nameArabic) ? coach.nameArabic : coach.name;
-          ctx.fillText((ar ? 'المدرب: ' : 'Coach: ') + cn, TX, y + 96);
+          ctx.fillText((ar ? 'المدرب: ' : 'Coach: ') + _iso(cn), TX, y + 96);
         }
         ctx.restore();
         ctx.direction = 'ltr';   // reset for the LTR header/footer/time labels drawn outside this block
