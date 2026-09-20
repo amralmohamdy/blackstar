@@ -1705,7 +1705,10 @@ PAGES.members = (main) => {
     const _applySearch = () => {
       const q = _norm((_search && _search.value || '').trim());
       let shown = 0;
-      $$('.' + cbClass).forEach(cb => { const lab = cb.parentElement; if (!lab) return; const hit = !q || _norm(lab.textContent).includes(q); lab.style.display = hit ? '' : 'none'; if (hit) shown++; });
+      // v6.588 — restore 'flex' (not ''), or the <label>s revert to their inline DEFAULT display and
+      // flow horizontally, so short options paired up on one line (Boxing+Football, Mixed+MMA). The rows
+      // are display:flex, so re-showing them must set flex to keep the single-column layout.
+      $$('.' + cbClass).forEach(cb => { const lab = cb.parentElement; if (!lab) return; const hit = !q || _norm(lab.textContent).includes(q); lab.style.display = hit ? 'flex' : 'none'; if (hit) shown++; });
       if (_empty) _empty.style.display = shown ? 'none' : '';
     };
     if (_search) { _search.addEventListener('click', e => e.stopPropagation()); _search.addEventListener('keydown', e => e.stopPropagation()); _search.addEventListener('input', _applySearch); }
@@ -6215,7 +6218,30 @@ function _memberMoneyRows(m) {
   const fillOrder = rows.slice().sort((a, b) => (a.switched ? 1 : 0) - (b.switched ? 1 : 0));   // active first, switched last
   for (const g of fillOrder) { const need = Math.max(0, Math.round((g.price - g.paid) * 100) / 100); const add = Math.max(0, Math.min(need, pool)); g.paid = Math.round((g.paid + add) * 100) / 100; pool = Math.round((pool - add) * 100) / 100; }
   for (const g of rows) g.remaining = Math.max(0, Math.round((g.price - g.paid) * 100) / 100);
-  return { rows, charged, paidTotal: Math.round(paidTotal * 100) / 100, due, realInvs };
+  // v6.586 — NON-MEMBERSHIP invoices (Product, Court Rental, Boxing Room, …) were completely absent from
+  // this panel, so a member who owed on a product (e.g. Ahmad — Product 245, paid 225, 20 due) had NO
+  // row to collect against; a "Collect" then misrouted the money onto a membership invoice, OVERPAYING it
+  // while the product stayed due. Add each non-membership invoice that still has a balance as its own row
+  // (keyed by its OWN invoice id) and fold every non-membership invoice into Charged/Paid/Due so the header
+  // reconciles and the collect can target the right invoice. (Fully-paid ones aren't listed to avoid clutter.)
+  const otherInvs = (state.invoices || []).filter(i => !i.deleted && i.customerId === memberId
+    && (i.category || 'Membership') !== 'Membership' && !i.switchCredit && i.activityType !== 'switch-credit');
+  let otherCharged = 0, otherPaid = 0, otherDue = 0;
+  for (const iv of otherInvs) {
+    const tot = (typeof invoiceTotal === 'function') ? invoiceTotal(iv) : (Number(iv.amount) || 0);
+    const pd = (typeof invoicePaid === 'function') ? invoicePaid(iv) : (Number(iv.amountPaid) || 0);
+    const bal = Math.round((tot - pd) * 100) / 100;
+    otherCharged += tot; otherPaid += pd; otherDue += Math.max(0, bal);
+    if (bal > 0.001) rows.push({ sport: iv.category || 'Other', coach: '', price: Math.round(tot * 100) / 100,
+      paid: Math.round(pd * 100) / 100, remaining: Math.max(0, bal), invId: iv.id, ref: iv.ref, nonMembership: true });
+  }
+  return {
+    rows,
+    charged: Math.round((charged + otherCharged) * 100) / 100,
+    paidTotal: Math.round((paidTotal + otherPaid) * 100) / 100,
+    due: Math.round((due + otherDue) * 100) / 100,
+    realInvs: [...realInvs, ...otherInvs],
+  };
 }
 window._moneyMethod = function(v, el) {
   // v6.579 — the highlight was applied as an INLINE style only at render time (on the default 'cash'
@@ -8065,14 +8091,42 @@ PAGES.duepayment = (main) => {
     // rounding noise, not a real debt — drop it. A genuine ≥ 0.5 balance (incl. a withdrawn member who
     // truly still owes) still shows, so real money is never hidden.
     if (total < 0.5) continue;
-    // Per-sport / per-category split (use the invoice's sport, else its line item's
-    // sport, else the category label).
+    // Per-sport / per-category split. v6.589 — with NO month filter the row total is member-NETTED
+    // (memberOutstanding), so an overpayment on one invoice offsets a due on another. The old per-sport
+    // chip summed each invoice's floored balance, so it could read 325 while the netted DUE read 150
+    // (Ohood: both payments landed on the July invoice, overpaying it, while August showed 325). Net the
+    // MEMBERSHIP sports the same way (charged − paid per sport) so the chips agree with the DUE column;
+    // non-membership invoices stay per-invoice (matching the `total` formula above). A month-filtered view
+    // stays per-invoice too, matching its per-invoice total.
     const bySport = {};
-    for (const inv of invs) {
-      const bal = invoiceBalance(inv);
-      if (bal <= 0.001) continue;
-      const sp = inv.sport || (Array.isArray(inv.lineItems) && inv.lineItems[0] && inv.lineItems[0].sport) || inv.category || (inv.description || 'Other');
-      bySport[sp] = (bySport[sp] || 0) + bal;
+    if (f.months.length) {
+      for (const inv of invs) {
+        const bal = invoiceBalance(inv);
+        if (bal <= 0.001) continue;
+        const sp = inv.sport || (Array.isArray(inv.lineItems) && inv.lineItems[0] && inv.lineItems[0].sport) || inv.category || (inv.description || 'Other');
+        bySport[sp] = (bySport[sp] || 0) + bal;
+      }
+    } else {
+      const chg = {}, pd = {};
+      for (const inv of invs) {
+        const isMemb = (inv.category || 'Membership') === 'Membership' && inv.activityType !== 'switch-credit';
+        if (isMemb) {
+          if (inv.amountPaid == null && !(Array.isArray(inv.payments) && inv.payments.length)) continue;   // legacy fully-paid, like memberOutstanding
+          const lines = (Array.isArray(inv.lineItems) && inv.lineItems.length) ? inv.lineItems : [{ sport: inv.sport, price: inv.amount || 0 }];
+          const gross = lines.reduce((a, l) => a + Math.max(0, Number(l.price) || 0), 0) || (Number(inv.amount) || 0);
+          const paid = invoicePaid(inv);
+          for (const l of lines) {
+            const sp = l.sport || inv.category || 'Other';
+            const price = Math.max(0, Number(l.price) || 0);
+            chg[sp] = (chg[sp] || 0) + price;
+            pd[sp] = (pd[sp] || 0) + (gross > 0 ? paid * (price / gross) : 0);
+          }
+        } else {
+          const bal = invoiceBalance(inv);
+          if (bal > 0.001) { const sp = inv.category || inv.sport || 'Other'; bySport[sp] = (bySport[sp] || 0) + bal; }
+        }
+      }
+      for (const sp of Object.keys(chg)) { const due = Math.round((chg[sp] - (pd[sp] || 0)) * 100) / 100; if (due > 0.001) bySport[sp] = (bySport[sp] || 0) + due; }
     }
     all.push({ m, total, bySport, st: memberStatus(m), expiry: m.expiryDate, lastReminded: m.lastRemindedAt || null, remind: reminderInfo(m) });
   }
@@ -11278,7 +11332,7 @@ PAGES.schedule = (main) => {
     const sInput = $('#sch-coach-search'), sEmpty = $('#sch-coach-empty');
     if (!sInput) return;
     const norm = s => (typeof normalizeArabicForSearch === 'function') ? normalizeArabicForSearch(String(s || '')) : String(s || '').toLowerCase();
-    const applySearch = () => { const q = norm(sInput.value.trim()); let shown = 0; $$('.sch-coach-cb').forEach(cb => { const lab = cb.parentElement; if (!lab) return; const hit = !q || norm(lab.textContent).includes(q); lab.style.display = hit ? '' : 'none'; if (hit) shown++; }); if (sEmpty) sEmpty.style.display = shown ? 'none' : ''; };
+    const applySearch = () => { const q = norm(sInput.value.trim()); let shown = 0; $$('.sch-coach-cb').forEach(cb => { const lab = cb.parentElement; if (!lab) return; const hit = !q || norm(lab.textContent).includes(q); lab.style.display = hit ? 'flex' : 'none'; if (hit) shown++; }); if (sEmpty) sEmpty.style.display = shown ? 'none' : ''; };   /* v6.588 — 'flex' not '' (label default is inline → rows paired up) */
     sInput.addEventListener('click', e => e.stopPropagation());
     sInput.addEventListener('keydown', e => e.stopPropagation());
     sInput.addEventListener('input', applySearch);
@@ -11445,7 +11499,7 @@ PAGES.coaches = (main) => {
     mayStats[c.id] = coachStats(c.id, currentM);
   }
 
-  let filter = { active: 'all', search: '', role: 'coach' };
+  let filter = { active: 'active', search: '', role: 'coach' };   // v6.587 — default to ACTIVE-only coaches (inactive still selectable in the dropdown)
 
   function visibleCoaches() {
     return state.coaches.filter(c => {
@@ -11591,9 +11645,9 @@ PAGES.coaches = (main) => {
           <option value="all">All (coaches + staff)</option>
         </select>
         <select id="coach-active-filter" class="btn ghost">
-          <option value="all">All statuses</option>
-          <option value="active">Active only (Y)</option>
-          <option value="inactive">Inactive only (N)</option>
+          <option value="active" ${filter.active === 'active' ? 'selected' : ''}>Active only (Y)</option>
+          <option value="all" ${filter.active === 'all' ? 'selected' : ''}>All statuses</option>
+          <option value="inactive" ${filter.active === 'inactive' ? 'selected' : ''}>Inactive only (N)</option>
         </select>
       </div>
       <div class="table-wrap">
