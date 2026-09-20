@@ -2189,6 +2189,10 @@ function viewMember(id) {
   }
   allSubs.sort((a, b) => (b.start || '').localeCompare(a.start || ''));
 
+  // v6.585 — per-row PAID from the invoice lines (source of truth), so the rows reconcile with the
+  // invoice-based header even after a switch left a sub.amountPaid stale. Falls back to sub.amountPaid.
+  const _rowPaid = (typeof memberSubPaidMap === 'function') ? memberSubPaidMap(m, allSubs) : new Map();
+
   const subs = allSubs.map(s => {
     const total = (typeof subClassLimit === 'function') ? subClassLimit(s) : s.totalClasses;
     // Live count for THIS subscription period only — windowed so it doesn't overlap
@@ -2249,7 +2253,7 @@ function viewMember(id) {
         <td>${s.start ? fmtDate(s.start) : '—'}</td>
         <td>${s.end ? fmtDate(s.end) : '—'}</td>
         <td>${attCell}</td>
-        ${isViewerRole() ? '' : `<td class="text-right num">${s.amountPaid ? fmt(s.amountPaid) : '—'}</td>`}
+        ${isViewerRole() ? '' : (() => { const rp = _rowPaid.has(s) ? _rowPaid.get(s) : (Number(s.amountPaid) || 0); return `<td class="text-right num">${rp ? fmt(rp) : '—'}</td>`; })()}
         <td>${(() => {
           // Derive this subscription's own status from its END date + attendance,
           // rather than a stored 'status' that was set once and never updated. So
