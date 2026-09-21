@@ -57,6 +57,9 @@
       if (!state) return false;
       const persistable = { ...state };
       for (const k of DEVICE_ONLY) delete persistable[k];
+      // v6.593 — never let the crash-safety journal itself blow the localStorage quota: drop the heavy
+      // lazy collection (auditLog) — it's create-only in the cloud and non-critical to replay.
+      delete persistable.auditLog;
       localStorage.setItem(PENDING_KEY, JSON.stringify({
         at: new Date().toISOString(), reason: reason || 'write-failed', state: persistable,
       }));
@@ -247,11 +250,16 @@
         return raw ? JSON.parse(raw) : null;
       } catch (e) { console.warn('[Storage:local] load failed:', e); return null; }
     },
-    save(state) {
+    save(state, opts) {
       if (blockEmptyWrite(state)) return;
       try {
         const persistable = { ...state };
         for (const k of DEVICE_ONLY) delete persistable[k];
+        // v6.593 — when a CLOUD backend is active, the local cache is only a safety-net/fast-start copy and
+        // the audit log (append-only history, by far the biggest payload) lives authoritatively in Firestore
+        // and is fetched on demand. Keeping it OUT of localStorage stops the ~5MB browser quota from filling
+        // ("Storage 95% full" warnings) while losing nothing. A pure-offline install keeps it (only copy).
+        if (opts && opts.skipHeavy) delete persistable.auditLog;
         localStorage.setItem(LS_KEY, JSON.stringify(persistable));
       } catch (e) {
         const isQuota = e && (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014 || /quota/i.test(e.message || ''));
@@ -822,7 +830,7 @@
           try { if (typeof window !== 'undefined' && typeof window.__onCloudSaveStatus === 'function') window.__onCloudSaveStatus({ phase: 'error' }); } catch (_) {}
           return;
         }
-        try { localBackend.save(state); } catch (e) { console.warn('[Storage:firebase] local safety-net save failed:', e); }
+        try { localBackend.save(state, { skipHeavy: true }); } catch (e) { console.warn('[Storage:firebase] local safety-net save failed:', e); }
         if (writeInFlight) { pendingAfterWrite = state; return; }
         // v6.389: renew a near-expired ID token BEFORE sending, so a long-open tab stops failing
         // its first write of the day and flashing the "session expired" bar. The check is
@@ -849,7 +857,7 @@
       saveConfirmed(state) {
         if (state) {
           if (blockEmptyWrite(state)) return Promise.resolve({ ok: false, blocked: 'empty-guard' });
-          try { localBackend.save(state); } catch (e) { console.warn('[Storage:firebase] local safety-net save failed:', e); }
+          try { localBackend.save(state, { skipHeavy: true }); } catch (e) { console.warn('[Storage:firebase] local safety-net save failed:', e); }
         }
         return new Promise(resolve => {
           if (!state && !writeInFlight) { resolve({ ok: true, noop: true }); return; }
