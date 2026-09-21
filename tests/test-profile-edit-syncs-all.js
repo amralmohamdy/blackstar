@@ -24,7 +24,7 @@ ok('sets line.coachId + line.coach', /line\.coachId = newCoachId; line\.coach = 
 ok('recomputes inv.amount via the summary-guarded total', /inv\.amount = \(typeof invoiceTotal === 'function'\) \? invoiceTotal\(inv\)/.test(src));
 
 R.section('saving syncs the ENROLLMENT (the source Generate reads)');
-ok('finds the matching enrollment', /const enr = m\.enrollments\.find\(e => e\.sport === sub\.activity\);/.test(src));
+ok('finds the matching enrollment (sport + coach, current period only — v6.590)', /const enr = m\.enrollments\.find\(e => e\.sport === sub\.activity && String\(e\.coachId\) === String\(sub\.coachId\)\)\s*\n?\s*\|\| m\.enrollments\.find\(e => e\.sport === sub\.activity\);/.test(src));
 ok('updates enr price / classes / coach', /enr\.classes = cls;\s*\n\s*if \(!isNaN\(price\)\) enr\.price = price;\s*\n\s*if \(newCoachId !== undefined\) enr\.coachId = newCoachId;/.test(src));
 ok('creates an enrollment if the sport had none (and is still active)', /else if \(st !== 'completed' && st !== 'expired' && st !== 'withdrawn'\) \{\s*\n\s*m\.enrollments\.push\(\{ sport: sub\.activity/.test(src));
 

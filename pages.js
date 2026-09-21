@@ -25717,7 +25717,8 @@ window.editSubscription = function(memberId, sid) {
     title: `✎ ${t('Edit sport (price · classes · coach)', 'تعديل الرياضة (السعر · الحصص · المدرب)')} · ${escapeHtml(sub.activity || '')}`,
     body: `
       <div style="display:grid;gap:12px;font-size:13px">
-        <div class="text-mute" style="font-size:11px;line-height:1.5">${t('The profile is the source of truth — this updates the invoice line, commission and the enrollment together.', 'الملف هو المصدر — هذا يحدّث بند الفاتورة والعمولة والتسجيل معاً.')}</div>
+        <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px">📅 ${t('Editing ONLY this period', 'تعديل هذه الفترة فقط')}: <b>${sub.start ? fmtDate(sub.start) : '—'} → ${sub.end ? fmtDate(sub.end) : '—'}</b>${escapeHtml(sub.coach ? ' · ' + sub.coach : '')}</div>
+        <div class="text-mute" style="font-size:11px;line-height:1.5">${t('This updates ONLY the selected period above — its invoice line and commission. Other periods of the same sport are left untouched.', 'يحدّث هذه الفترة المحددة فقط — بند فاتورتها وعمولتها. الفترات الأخرى لنفس الرياضة تبقى كما هي.')}</div>
         <label style="display:grid;gap:4px">${t('Total classes', 'إجمالي الحصص')}
           <input id="es-classes" type="number" min="0" value="${sub.totalClasses != null ? sub.totalClasses : 0}" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)"></label>
         <label style="display:grid;gap:4px">${t('Price (QAR)', 'السعر')} <span class="text-mute" style="font-size:10px">${t('updates the invoice line + commission + profile', 'يحدّث بند الفاتورة والعمولة والملف')}</span>
@@ -25761,10 +25762,18 @@ window.editSubscription = function(memberId, sid) {
           if (Array.isArray(inv.lineItems)) { inv.amount = (typeof invoiceTotal === 'function') ? invoiceTotal(inv) : inv.lineItems.reduce((s, l) => s + (Number(l.price) || 0), 0); if (typeof stampUpdate === 'function') stampUpdate(inv); }
         }
         // v6.482: the ENROLLMENT is the source of truth — sync it too, so "Generate latest invoice"
-        // (reads enrollments) always matches the invoice and the drift that used to need
-        // "Rebuild from profile" can't happen.
-        if (Array.isArray(m.enrollments)) {
-          const enr = m.enrollments.find(e => e.sport === sub.activity);
+        // (reads enrollments) always matches the invoice.
+        // v6.590 — but the enrollment represents the CURRENT active period of a sport, and a member can
+        // have SEVERAL periods of the same sport (e.g. July + August Kick Boxing). Matching by sport ONLY
+        // meant editing an OLD period rewrote the CURRENT enrollment's classes/price/coach — the "editing
+        // one period impacts the other" bug. Only sync the enrollment when THIS sub is the CURRENT period
+        // for the sport (latest start), and match it by sport + coach. Editing a historical period leaves
+        // the enrollment (and therefore the other periods + "Generate invoice") untouched.
+        const _sameSport = (m.subscriptions || []).filter(s => (s.activity || '') === (sub.activity || ''));
+        const _isCurrentPeriod = !_sameSport.some(s => s !== sub && (s.start || '') > (sub.start || ''));
+        if (_isCurrentPeriod && Array.isArray(m.enrollments)) {
+          const enr = m.enrollments.find(e => e.sport === sub.activity && String(e.coachId) === String(sub.coachId))
+                   || m.enrollments.find(e => e.sport === sub.activity);
           if (enr) {
             enr.classes = cls;
             if (!isNaN(price)) enr.price = price;

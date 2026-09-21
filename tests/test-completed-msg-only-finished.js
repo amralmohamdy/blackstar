@@ -46,8 +46,11 @@ R.section('functional: 3 sports, only Kick Boxing finished');
   `);
   R.ok('completedSubsForRenewal returns ONLY Kick Boxing', JSON.stringify(res.done) === JSON.stringify(['Kick Boxing']), JSON.stringify(res.done));
   R.ok('completed message names Kick Boxing', /Kick Boxing/.test(res.completedMsg));
-  R.ok('completed message does NOT claim Swimming', !/Swimming/.test(res.completedMsg), res.completedMsg);
-  R.ok('completed message does NOT claim Football', !/Football/.test(res.completedMsg), res.completedMsg);
+  // v6.552 guarantee kept: the COMPLETION congrats claims only the finished sport (never "completed … Swimming/Football").
+  R.ok('completed message does NOT claim Swimming as finished', !/all your Swimming/.test(res.completedMsg) && !/جميع حصص Swimming/.test(res.completedMsg), res.completedMsg);
+  R.ok('completed message does NOT claim Football as finished', !/all your Football/.test(res.completedMsg) && !/جميع حصص Football/.test(res.completedMsg), res.completedMsg);
+  // v6.591: the still-active sports ARE acknowledged as ongoing (not congratulated as complete).
+  R.ok('ongoing sports acknowledged as still in progress (Swimming & Football)', /still going strong[\s\S]{0,80}Swimming[\s\S]{0,30}Football/.test(res.completedMsg), res.completedMsg);
   // expiring reminder is about the whole membership → still lists every sport
   R.ok('expiring reminder still lists all three sports',
     /Swimming/.test(res.expiringMsg) && /Kick Boxing/.test(res.expiringMsg) && /Football/.test(res.expiringMsg),
