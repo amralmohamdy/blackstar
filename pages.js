@@ -26427,7 +26427,7 @@ PAGES.expiring = (main) => {
                   ? 'background:var(--green);border-color:var(--green);color:#fff'
                   : '';
                 const btnLabel = wasReminded ? `✓ ${t('Remind again', 'تذكير مجدداً')}` : `💬 Remind`;
-                return `<a class="btn primary sm" style="${btnStyle}" href="${reminderHref}" target="_blank" onclick="event.stopPropagation();markReminded(${m.id})" title="${wasReminded ? 'Already reminded — click to send another reminder' : 'Send bilingual reminder via WhatsApp'}">${btnLabel}</a>`;
+                return `<a class="btn primary sm" style="${btnStyle}" href="${reminderHref}" target="_blank" onclick="event.stopPropagation();markReminded(${m.id}, { rerender: false });window._expRerender && window._expRerender()" title="${wasReminded ? 'Already reminded — click to send another reminder' : 'Send bilingual reminder via WhatsApp'}">${btnLabel}</a>`;
               })()
             : `<span class="text-mute" style="font-size:11px">No phone</span>`}
           <button class="btn ghost sm" onclick="event.stopPropagation();addRenewal(${m.id})" title="Record renewal">🔄 Renew</button>
@@ -26702,6 +26702,10 @@ PAGES.expiring = (main) => {
   }
 
   renderSections();
+  // v6.595 — expose the PARTIAL re-render so the row "Remind" button can refresh just the sections
+  // (updating the reminded state) WITHOUT a full render() that would reset the filters / search /
+  // collapsed sections / current selection. The button calls markReminded(id,{rerender:false}) then this.
+  window._expRerender = renderSections;
 
   $('#exp-bucket').addEventListener('change', e => { filter.bucket = e.target.value; renderSections(); });
   bindMultiFilter('exp-sport', v => { filter.sports = v; renderSections(); }, { allText: t('All sports', 'كل الرياضات'), noun: t('sports', 'رياضات') });   // v6.519: multi-select sports
