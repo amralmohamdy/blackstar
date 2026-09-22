@@ -11,6 +11,7 @@ R.section('source wiring');
 {
   const app = H.readSrc();
   R.ok('the social route is registered (Engagement, admin-only)', /social:\s*\{ label: 'Social Media'[\s\S]{0,80}adminOnly: true/.test(app));
+  R.ok('the social route is HIDDEN from the menu (v6.597, route kept for deep-links)', /social:\s*\{ label: 'Social Media'[\s\S]{0,140}hidden: true/.test(app));
   R.ok('PAGES.social is admin-gated', /PAGES\.social = \(main\) => \{[\s\S]{0,120}currentRole\(\) !== 'admin'/.test(app));
   R.ok('8 platforms are defined', /SOCIAL_PLATFORMS = \[[\s\S]{0,600}youtube/.test(app));
   R.ok('share buttons call _socialShare', /onclick="_socialShare\('\$\{p\.id\}'\)"/.test(app));
