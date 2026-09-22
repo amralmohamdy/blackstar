@@ -15293,6 +15293,24 @@ window.recordPaymentUI = function(id) {
   $('#pay-card')?.addEventListener('input', recomputeSplit);
 };
 
+// v6.601 — Edit-invoice split toggle: swap the single Method for per-method amount boxes; the paid
+// field mirrors the split total and the balance recomputes live.
+window._efSplitToggle = function(el) {
+  const on = !!(el && el.checked);
+  const rows = document.getElementById('ef-split-rows'); if (rows) rows.style.display = on ? 'block' : 'none';
+  const method = document.getElementById('ef-method'); if (method) method.disabled = on;
+  const paid = document.getElementById('ef-paid'); if (paid) paid.readOnly = on;
+  if (on) window._efSplitSum();
+};
+window._efSplitSum = function() {
+  let tot = 0;
+  document.querySelectorAll('.ef-sp').forEach(i => { tot += Math.max(0, parseFloat(i.value) || 0); });
+  tot = Math.round(tot * 100) / 100;
+  const sumEl = document.getElementById('ef-split-sum'); if (sumEl) sumEl.textContent = fmt(tot);
+  const paid = document.getElementById('ef-paid'); if (paid) paid.value = tot;
+  const amtEl = document.getElementById('ef-amt'); const bal = document.getElementById('ef-balance');
+  if (bal && amtEl) bal.textContent = Math.max(0, (parseFloat(amtEl.value) || 0) - tot).toFixed(2);
+};
 window.editInvoiceQuick = function(id) {
   if (currentRole() !== 'admin') { toast('Only admins can edit invoices', 'error'); return; }
   const inv = state.invoices.find(i => i.id === id);
@@ -15380,6 +15398,17 @@ window.editInvoiceQuick = function(id) {
         <div class="field"><label>Paid / collected (QAR) <span class="text-mute" style="font-size:10px">(correct a wrong entry)</span></label><input id="ef-paid" type="number" step="0.01" min="0" value="${invoicePaid(inv)}" oninput="document.getElementById('ef-balance').textContent=Math.max(0,(parseFloat(document.getElementById('ef-amt').value)||0)-(parseFloat(document.getElementById('ef-paid').value)||0)).toFixed(2)" /></div>
         <div class="field"><label>Balance due (QAR)</label><div id="ef-balance" style="padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--accent-2);font-size:14px;font-weight:700">${invoiceBalance(inv).toFixed(2)}</div></div>
       </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;cursor:pointer;margin:2px 0;color:var(--text-mute)"><input type="checkbox" id="ef-split" onchange="window._efSplitToggle(this)" style="width:auto;margin:0" /> ${t('Split the paid amount across methods (part cash + part card)', 'تقسيم المبلغ المدفوع بين الطرق (جزء نقدي + جزء بطاقة)')}</label>
+      <div id="ef-split-rows" style="display:none;margin:2px 0 6px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:stretch">
+          ${[['cash', '💵', t('Cash', 'نقدي'), '#16a34a'], ['card', '💳', t('Card', 'بطاقة'), '#3b82f6'], ['fawran', '📲', 'Fawran', '#8b5cf6'], ['transfer', '🏦', t('Transfer', 'تحويل'), '#f59e0b']].map(([mk, ic, lbl, col]) => `
+            <div style="flex:1 1 90px;min-width:88px;background:color-mix(in srgb, ${col} 9%, var(--surface));border:1px solid color-mix(in srgb, ${col} 35%, transparent);border-radius:10px;padding:6px 9px">
+              <div style="font-size:10px;font-weight:700;color:${col};margin-bottom:3px">${ic} ${lbl}</div>
+              <input class="ef-sp" data-method="${mk}" oninput="window._efSplitSum()" type="number" min="0" step="0.01" value="" placeholder="0" inputmode="decimal" style="width:100%;font-size:14px;font-weight:700;text-align:right;background:transparent;border:none;border-bottom:1px solid color-mix(in srgb, ${col} 30%, var(--border));color:var(--text);outline:none" />
+            </div>`).join('')}
+        </div>
+        <div style="font-size:11.5px;margin-top:7px;text-align:right">${t('Split total', 'مجموع التقسيم')}: <b id="ef-split-sum" style="color:var(--green)">${fmt(0)}</b> QAR <span class="text-mute">— ${t('replaces the paid breakdown for this invoice', 'يستبدل توزيع المدفوع لهذه الفاتورة')}</span></div>
+      </div>
       <div class="text-mute" style="font-size:11px;margin:2px 0 6px">When a member pays the rest <b>later</b>, use the <b style="color:var(--green)">💵 Pay</b> button on the invoice row — it dates the payment in the month received. Edit "Paid" here only to <b>fix a wrong amount</b>.</div>
       <div class="field"><label>Date</label><input id="ef-date" type="date" value="${inv.date}" /></div>
       ${stockPanel}
@@ -15405,6 +15434,28 @@ window.editInvoiceQuick = function(id) {
         // lowered below what's collected). Rebuild the ledger as a single
         // corrected entry on the invoice date — this is a fix, not a new
         // payment (for a real later payment, use the 💵 Pay button instead).
+        // v6.601 — SPLIT the paid amount across methods. When on, the per-method boxes REPLACE this
+        // invoice's paid breakdown (dated the invoice date), so an admin can fix "how it was paid"
+        // (part cash + part card). Guard: never FLATTEN a real multi-month installment history into
+        // one date (that would move revenue between months) — send those to the 💳 Payments editor.
+        const _efSplit = !!(document.getElementById('ef-split') && document.getElementById('ef-split').checked);
+        if (_efSplit) {
+          const parts = [];
+          document.querySelectorAll('.ef-sp').forEach(i => { const a = Math.round((parseFloat(i.value) || 0) * 100) / 100; if (a > 0) parts.push({ method: i.dataset.method || 'cash', amount: a }); });
+          if (!parts.length) { toast(t('Enter an amount for at least one method', 'أدخل مبلغاً لطريقة واحدة على الأقل'), 'error'); return; }
+          const splitTotal = Math.round(parts.reduce((s, p) => s + p.amount, 0) * 100) / 100;
+          if (splitTotal > invoiceTotal(inv) + 0.001) { toast(t(`The split (${fmt(splitTotal)}) is more than the invoice total (${fmt(invoiceTotal(inv))})`, `التقسيم (${fmt(splitTotal)}) أكبر من إجمالي الفاتورة (${fmt(invoiceTotal(inv))})`), 'error'); return; }
+          const _months = new Set((inv.payments || []).map(p => String(p.month || (p.date || '').slice(0, 7))).filter(Boolean));
+          if (_months.size > 1) { toast(t('This invoice has installments across several months — edit the split from the 💳 Payments screen so no month’s revenue moves.', 'هذه الفاتورة أقساط عبر عدة أشهر — عدّل التقسيم من شاشة الدفعات 💳 حتى لا تنتقل إيرادات أي شهر.'), 'error'); return; }
+          inv.method = parts[0].method;
+          inv.payments = parts.map(p => ({ date: inv.date, month: (inv.date || TODAY).slice(0, 7), amount: p.amount, method: p.method, by: currentUserId(), byName: currentUserName(), at: new Date().toISOString(), note: t('Split via Edit invoice', 'تقسيم عبر تعديل الفاتورة') }));
+          inv.amountPaid = splitTotal;
+          save();
+          closeModal();
+          if (typeof window._invoicesRefresh === 'function' && state.route === 'invoices') window._invoicesRefresh(); else render();
+          toast(invoiceBalance(inv) > 0.001 ? `Invoice updated · ${fmt(invoiceBalance(inv))} still due` : t('Invoice updated · split saved', 'حُدّثت الفاتورة · حُفظ التقسيم'));
+          return;
+        }
         let newPaid = parseFloat($('#ef-paid').value);
         if (isNaN(newPaid)) newPaid = invoicePaid(inv);
         // v6.397: clamp against invoiceTotal, not inv.amount. When the line-sum was HIGHER than
@@ -18873,57 +18924,73 @@ window._salToggleSettle = function(checked, net, pending) {
   if (amt) amt.value = val > 0 ? val : '';
 };
 
+// v6.601 — split a coach payout across methods (part cash + part transfer). Toggle swaps the single
+// amount+method for one box PER method; each non-zero method becomes its OWN payment row AND its own
+// Salary expense (so the expenses ledger + method reports stay exact), all on the same date + month.
+window._salSplitToggle = function(el) {
+  const on = !!(el && el.checked);
+  const single = document.getElementById('sp-single'); if (single) single.style.display = on ? 'none' : 'flex';
+  const split = document.getElementById('sp-split'); if (split) split.style.display = on ? 'block' : 'none';
+  if (on) window._salSplitSum();
+};
+window._salSplitSum = function() {
+  let tot = 0; document.querySelectorAll('.sp-sp').forEach(i => { tot += Math.max(0, parseFloat(i.value) || 0); });
+  const el = document.getElementById('sp-split-sum'); if (el) el.textContent = fmt(Math.round(tot));
+};
 window._salAddPay = function(coachId, monthKey) {
-  const amount = parseFloat(($('#sp-add-amt') || {}).value);
+  const splitOn = !!(document.getElementById('sp-split-cb') && document.getElementById('sp-split-cb').checked);
   const tEl = $('#sp-target');
   const target = (tEl && tEl.value !== '') ? parseFloat(tEl.value) : null;
-  // ZERO-VALUE SETTLEMENT (v6.383): a coach who earned NOTHING this month (no fixed salary, no
-  // commission → net 0) must still be settleable at 0 QAR so the month reads "paid" instead of
-  // hanging as "Not paid yet" forever. So 0 is accepted when nothing is owed; a 0 against a REAL
-  // outstanding balance is still rejected (that's a mis-entry, not a settlement).
-  const _pay = (typeof computeMonthlyPay === 'function') ? computeMonthlyPay(coachId, monthKey) : null;
-  const _owed = (target != null && !isNaN(target)) ? target : (_pay ? (Number(_pay.net) || 0) : 0);
-  if (isNaN(amount) || amount < 0) { toast(t('Enter a payment amount', 'أدخل مبلغ الدفعة'), 'error'); return; }
-  if (amount === 0 && Math.abs(_owed) > 0.5) {
-    toast(t(`This coach is owed ${fmt(_owed)} QAR — enter the amount paid (0 is only for a coach with nothing due)`, `المستحق ${fmt(_owed)} ر.ق — أدخل المبلغ المدفوع (0 فقط لمن لا مستحق له)`), 'error');
-    return;
-  }
   const date = (($('#sp-add-date') || {}).value) || TODAY;
-  const method = (($('#sp-add-method') || {}).value) || 'cash';
   const settle = !!(document.getElementById('sp-settle') && document.getElementById('sp-settle').checked);
   const c = state.coaches.find(x => x.id === coachId);
+  // Build the payout as one part (single method) or several (a split).
+  let parts;
+  if (splitOn) {
+    parts = [];
+    document.querySelectorAll('.sp-sp').forEach(i => { const a = Math.round(parseFloat(i.value) || 0); if (a > 0) parts.push({ method: i.dataset.method || 'cash', amount: a }); });
+    if (!parts.length) { toast(t('Enter an amount for at least one method', 'أدخل مبلغاً لطريقة واحدة على الأقل'), 'error'); return; }
+  } else {
+    const amount = parseFloat(($('#sp-add-amt') || {}).value);
+    // ZERO-VALUE SETTLEMENT (v6.383): a coach who earned NOTHING this month (net 0) must still be
+    // settleable at 0 QAR so the month reads "paid"; a 0 against a REAL balance is still rejected.
+    const _pay = (typeof computeMonthlyPay === 'function') ? computeMonthlyPay(coachId, monthKey) : null;
+    const _owed = (target != null && !isNaN(target)) ? target : (_pay ? (Number(_pay.net) || 0) : 0);
+    if (isNaN(amount) || amount < 0) { toast(t('Enter a payment amount', 'أدخل مبلغ الدفعة'), 'error'); return; }
+    if (amount === 0 && Math.abs(_owed) > 0.5) {
+      toast(t(`This coach is owed ${fmt(_owed)} QAR — enter the amount paid (0 is only for a coach with nothing due)`, `المستحق ${fmt(_owed)} ر.ق — أدخل المبلغ المدفوع (0 فقط لمن لا مستحق له)`), 'error');
+      return;
+    }
+    parts = [{ method: (($('#sp-add-method') || {}).value) || 'cash', amount }];
+  }
   const rec = _salEnsureRec(coachId, monthKey, target, settle);
-  const payId = 'p' + nextId(state.salaries);
-  rec.payments.push({ id: payId, amount, date, method });
-  // Each payment = its OWN Salary expense (money out) — mentions method + date.
-  // The accounting month is the SALARY month (monthKey), NOT the payment date: paying
-  // June salaries on 4 July books the expense in JUNE. The `date` keeps the real payout day.
   if (!Array.isArray(state.expenses)) state.expenses = [];
-  const _salExpense = {
-    id: nextId(state.expenses), date, month: monthKey, amount,
-    category: 'Salary', method,
-    description: `Coach salary — ${c ? c.name : ''} · ${fmtMonth(monthKey)} · payment ${rec.payments.length} (${method})`,
-    coachId, coachName: c ? c.name : '', _salaryAutoExpense: true, salaryId: rec.id, salaryPaymentId: payId,
-  };
-  // A 0 QAR settlement moves NO money — don't write a zero expense row (it would clutter the
-  // expenses ledger, the Salary category total and the monthly reports with an empty entry). The
-  // payment record itself is still stored, so the month correctly reads as settled. (v6.383)
-  if (amount > 0.005) state.expenses.push(_salExpense);
-  audit('salary.payment', `coach:${coachId}`, amount > 0.005
-    ? `Paid ${c ? c.name : ''} ${fmt(amount)} QAR (${method}) toward ${fmtMonth(monthKey)} salary`
-    : `Settled ${c ? c.name : ''} at 0 QAR for ${fmtMonth(monthKey)} (nothing due)`, { coachId, month: monthKey, amount, method, date });
+  const verify = [{ collection: 'salaries', id: rec.id }];
+  let totalPaid = 0;
+  for (const part of parts) {
+    const payId = 'p' + nextId(state.salaries);
+    rec.payments.push({ id: payId, amount: part.amount, date, method: part.method });
+    totalPaid += part.amount;
+    // Each payment = its OWN Salary expense (money out), booked in the SALARY month (monthKey), NOT
+    // the payment date: paying June salaries on 4 July books the expense in JUNE. `date` keeps the day.
+    const _salExpense = {
+      id: nextId(state.expenses), date, month: monthKey, amount: part.amount,
+      category: 'Salary', method: part.method,
+      description: `Coach salary — ${c ? c.name : ''} · ${fmtMonth(monthKey)} · payment ${rec.payments.length} (${part.method})`,
+      coachId, coachName: c ? c.name : '', _salaryAutoExpense: true, salaryId: rec.id, salaryPaymentId: payId,
+    };
+    // A 0 QAR settlement moves NO money — don't write a zero expense row.
+    if (part.amount > 0.005) { state.expenses.push(_salExpense); verify.push({ collection: 'expenses', id: _salExpense.id }); }
+    audit('salary.payment', `coach:${coachId}`, part.amount > 0.005
+      ? `Paid ${c ? c.name : ''} ${fmt(part.amount)} QAR (${part.method}) toward ${fmtMonth(monthKey)} salary`
+      : `Settled ${c ? c.name : ''} at 0 QAR for ${fmtMonth(monthKey)} (nothing due)`, { coachId, month: monthKey, amount: part.amount, method: part.method, date });
+  }
   render();
-  // Write-through: WAIT for the cloud to confirm the payment, show the salary + its expense
-  // exactly as the SERVER holds them, and only re-open the manager once the user clicks OK —
-  // otherwise the manager's own modal would replace the confirmation popup. (v6.344)
+  // Write-through: WAIT for the cloud, show what the SERVER holds, reopen the manager on OK. (v6.344)
   if (typeof withCloudConfirm === 'function') {
     withCloudConfirm({
-      // A 0 QAR settlement writes NO expense, so only verify the salary record — otherwise the
-      // read-back would look for an expense that was intentionally never created. (v6.383)
-      verify: amount > 0.005
-        ? [{ collection: 'salaries', id: rec.id }, { collection: 'expenses', id: _salExpense.id }]
-        : [{ collection: 'salaries', id: rec.id }],
-      okMsg: amount > 0.005 ? t('Payment saved to cloud', 'تم حفظ الدفعة في السحابة') : t('Settled at 0 — saved to cloud', 'تمت التسوية بصفر — حُفظت في السحابة'),
+      verify: totalPaid > 0.005 ? verify : [{ collection: 'salaries', id: rec.id }],
+      okMsg: totalPaid > 0.005 ? t('Payment saved to cloud', 'تم حفظ الدفعة في السحابة') : t('Settled at 0 — saved to cloud', 'تمت التسوية بصفر — حُفظت في السحابة'),
       afterOk: () => markPaid(coachId, monthKey),
       onFail: () => markPaid(coachId, monthKey),
     });
@@ -19097,11 +19164,24 @@ window.markPaid = function(coachId, monthKey) {
       <div style="background:var(--surface-2);padding:10px;border-radius:8px;margin-bottom:12px">
         <div style="font-weight:700;font-size:12px;margin-bottom:8px">＋ ${t('Add a payment', 'إضافة دفعة')}</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">
-          <div class="field" style="margin:0"><label style="font-size:11px">${t('Amount', 'المبلغ')}</label><input id="sp-add-amt" type="number" min="0" step="1" value="${remaining > 0 ? Math.round(remaining) : ''}" placeholder="0" style="max-width:120px" /></div>
+          <div id="sp-single" style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">
+            <div class="field" style="margin:0"><label style="font-size:11px">${t('Amount', 'المبلغ')}</label><input id="sp-add-amt" type="number" min="0" step="1" value="${remaining > 0 ? Math.round(remaining) : ''}" placeholder="0" style="max-width:120px" /></div>
+            <div class="field" style="margin:0"><label style="font-size:11px">${t('Method', 'الطريقة')}</label>${methodSel}</div>
+          </div>
+          <div id="sp-split" style="display:none;flex:1 1 100%">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:stretch">
+              ${[['cash', '💵', methodLabel('cash'), '#16a34a'], ['transfer', '🏦', methodLabel('transfer'), '#f59e0b'], ['card', '💳', methodLabel('card'), '#3b82f6']].map(([mk, ic, lbl, col]) => `
+                <div style="flex:1 1 100px;min-width:96px;background:color-mix(in srgb, ${col} 9%, var(--surface));border:1px solid color-mix(in srgb, ${col} 35%, transparent);border-radius:10px;padding:6px 9px">
+                  <div style="font-size:10px;font-weight:700;color:${col};margin-bottom:3px">${ic} ${escapeHtml(lbl)}</div>
+                  <input class="sp-sp" data-method="${mk}" oninput="window._salSplitSum()" type="number" min="0" step="1" value="" placeholder="0" inputmode="numeric" style="width:100%;font-size:14px;font-weight:700;text-align:right;background:transparent;border:none;border-bottom:1px solid color-mix(in srgb, ${col} 30%, var(--border));color:var(--text);outline:none" />
+                </div>`).join('')}
+            </div>
+            <div style="font-size:11.5px;margin-top:7px;text-align:right">${t('Paying', 'المدفوع')}: <b id="sp-split-sum" style="color:var(--green)">${fmt(0)}</b> QAR</div>
+          </div>
           <div class="field" style="margin:0"><label style="font-size:11px">${t('Date', 'التاريخ')}</label><input id="sp-add-date" type="date" value="${TODAY}" /></div>
-          <div class="field" style="margin:0"><label style="font-size:11px">${t('Method', 'الطريقة')}</label>${methodSel}</div>
           <button class="btn primary" onclick="_salAddPay(${coachId},'${monthKey}')">＋ ${t('Add payment', 'إضافة الدفعة')}</button>
         </div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:11.5px;font-weight:600;cursor:pointer;margin-top:9px;color:var(--text-mute)"><input type="checkbox" id="sp-split-cb" onchange="window._salSplitToggle(this)" style="width:auto;margin:0" /> ${t('Split this payout across methods (e.g. part cash + part transfer)', 'تقسيم هذه الدفعة بين الطرق (مثلاً جزء نقدي + جزء تحويل)')}</label>
       </div>
 
       <div style="display:flex;justify-content:space-between;align-items:center;padding:11px 12px;border-radius:8px;background:${pay.paidStatus === 'partial' ? 'rgba(245,158,11,.10)' : pay.paidStatus === 'paid' ? 'rgba(18,114,74,.10)' : 'var(--surface-2)'};font-size:13px">
