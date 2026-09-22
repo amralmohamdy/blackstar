@@ -12,7 +12,7 @@ R.section('source — the panel exists and reuses verified primitives');
 R.ok('window.moneyPanel is defined', /window\.moneyPanel = function/.test(src));
 R.ok('_memberMoneyRows helper is defined', /function _memberMoneyRows\(/.test(src));
 R.ok('the header is authoritative (member-level netting)', /memberMembershipPaid\(/.test(src) && /memberOutstanding\(/.test(src));
-R.ok('Collect routes through the SAFE append-only recordPayment', /window\._moneyCollect[\s\S]{0,1200}?recordPayment\(/.test(src));
+R.ok('Collect routes through the SAFE append-only recordPayment', /window\._moneyCollect[\s\S]{0,2200}?recordPayment\(/.test(src));
 R.ok('Collect NEVER rewrites/derives amountPaid itself (append-only)', !/_moneyCollect[\s\S]{0,1200}?\.amountPaid\s*=/.test(src));
 R.ok('active sports are filled before switched-away ones', /fillOrder[\s\S]{0,120}?a\.switched/.test(src));
 R.ok('the Installments/Collect buttons open the panel', (src.match(/moneyPanel\(\$\{/g) || []).length >= 3);

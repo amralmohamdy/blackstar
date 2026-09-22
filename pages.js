@@ -240,6 +240,7 @@ PAGES.dashboard = (main) => {
         </select>
         <button class="btn ghost" id="export-btn">📥 ${t('Export','تصدير')}</button>
         <button class="btn ghost" id="dash-backup-top" title="Download a JSON backup of all your data">💾 ${t('Backup','نسخة احتياطية')}</button>
+        ${currentRole() === 'admin' ? `<button class="btn ghost" id="dash-cloud-storage" title="${t('See how much data is stored in the cloud, by collection','اطّلع على حجم البيانات المخزّنة في السحابة حسب المجموعة')}">☁ ${t('Storage','التخزين')}</button>` : ''}
         <button class="btn primary" id="refresh-btn">🔄 ${t('Refresh','تحديث')}</button>
       </div>
     </div>
@@ -587,6 +588,8 @@ PAGES.dashboard = (main) => {
   $('#export-btn').addEventListener('click', exportDashboardCSV);
   const dashBackupTop = $('#dash-backup-top');
   if (dashBackupTop) dashBackupTop.addEventListener('click', () => window.downloadBackup());
+  const dashCloudStorage = $('#dash-cloud-storage');
+  if (dashCloudStorage) dashCloudStorage.addEventListener('click', () => window.showCloudStorageUI());
   const dashPeriodSel = $('#dash-period');
   if (dashPeriodSel) dashPeriodSel.addEventListener('change', () => {
     const v = dashPeriodSel.value;
@@ -6256,22 +6259,52 @@ window._moneyMethod = function(v, el) {
   });
   const h = document.getElementById('mp-method'); if (h) h.value = v;
 };
+// v6.600 — split a Collect across payment methods (part cash + part card, etc.). The toggle swaps the
+// single amount+chips for one amount box PER method; each non-zero box becomes its own payment row on
+// Save, so the method breakdown (Citadel, reports) stays exact. Mirrors recordPaymentUI's split.
+window._moneySplitToggle = function(el) {
+  const on = !!(el && el.checked);
+  const single = document.getElementById('mp-single');
+  const split = document.getElementById('mp-split-rows');
+  if (single) single.style.display = on ? 'none' : 'flex';
+  if (split) split.style.display = on ? 'block' : 'none';
+  if (on) window._moneySplitSum();
+};
+window._moneySplitSum = function() {
+  let tot = 0;
+  document.querySelectorAll('.mp-sp').forEach(i => { tot += Math.max(0, parseFloat(i.value) || 0); });
+  const el = document.getElementById('mp-split-sum'); if (el) el.textContent = fmt(Math.round(tot * 100) / 100);
+};
 window._moneyCollect = function(memberId) {
   if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast('Admins or receptionists only', 'error'); return; }
   const m = (state.members || []).find(x => x.id === memberId); if (!m) return;
-  const amt = Math.round((parseFloat((document.getElementById('mp-amt') || {}).value) || 0) * 100) / 100;
-  if (!(amt > 0)) { toast(t('Enter an amount', 'أدخل مبلغاً'), 'error'); return; }
-  const method = (document.getElementById('mp-method') || {}).value || 'cash';
   const date = (document.getElementById('mp-date') || {}).value || TODAY;
+  // v6.600 — SPLIT mode: gather an amount PER method and record each non-zero one as its own payment.
+  const splitOn = !!(document.getElementById('mp-split') && document.getElementById('mp-split').checked);
+  let parts;
+  if (splitOn) {
+    parts = [];
+    document.querySelectorAll('.mp-sp').forEach(i => { const a = Math.round((parseFloat(i.value) || 0) * 100) / 100; if (a > 0) parts.push({ method: i.dataset.method || 'cash', amount: a }); });
+    if (!parts.length) { toast(t('Enter an amount for at least one method', 'أدخل مبلغاً لطريقة واحدة على الأقل'), 'error'); return; }
+  } else {
+    const amt = Math.round((parseFloat((document.getElementById('mp-amt') || {}).value) || 0) * 100) / 100;
+    if (!(amt > 0)) { toast(t('Enter an amount', 'أدخل مبلغاً'), 'error'); return; }
+    parts = [{ method: (document.getElementById('mp-method') || {}).value || 'cash', amount: amt }];
+  }
+  const amt = parts.reduce((s, p) => s + p.amount, 0);
   const { rows } = _memberMoneyRows(m);
   const target = rows.find(g => g.remaining > 0.001) || rows[0];
   if (!target) { toast(t('No sport to collect for', 'لا توجد رياضة للتحصيل'), 'error'); return; }
   const inv = (state.invoices || []).find(i => i.id === target.invId);
   if (!inv) { toast('Invoice not found', 'error'); return; }
   // SAFE append-only payment (recordPayment can never corrupt the ledger by re-derivation).
-  if (typeof recordPayment === 'function') recordPayment(inv, { amount: amt, method, date, sport: target.sport });
-  else { if (!Array.isArray(inv.payments)) inv.payments = []; inv.payments.push({ amount: amt, method, date, month: String(date).slice(0, 7), sport: target.sport }); inv.amountPaid = inv.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0); }
-  if (typeof audit === 'function') audit('member.payment', 'member:' + m.id, `collected ${fmt(amt)} · ${method} · ${target.sport}`, { recordName: m.name });
+  // A split records one row PER method, same date + sport, so the method breakdown stays exact.
+  for (const p of parts) {
+    if (typeof recordPayment === 'function') recordPayment(inv, { amount: p.amount, method: p.method, date, sport: target.sport });
+    else { if (!Array.isArray(inv.payments)) inv.payments = []; inv.payments.push({ amount: p.amount, method: p.method, date, month: String(date).slice(0, 7), sport: target.sport }); inv.amountPaid = inv.payments.reduce((s, q) => s + (Number(q.amount) || 0), 0); }
+  }
+  const method = parts.map(p => p.method).join('+');
+  if (typeof audit === 'function') audit('member.payment', 'member:' + m.id, `collected ${fmt(amt)} · ${splitOn ? parts.map(p => p.method + ' ' + fmt(p.amount)).join(' + ') : method} · ${target.sport}`, { recordName: m.name });
   if (typeof saveConfirmed === 'function') saveConfirmed().then(r => { if (r && !r.ok) toast('⚠ ' + t('Saved on this device but not yet in the cloud', 'محفوظ على الجهاز لكن لم يصل السحابة'), 'error'); }); else save();
   toast(t('Collected', 'تم التحصيل') + ' ' + fmt(amt) + ' · ' + method);
   // v6.579 — refresh the page BEHIND the panel (the Due Payment / Members list) so a now-settled member
@@ -6321,10 +6354,21 @@ window.moneyPanel = function(memberId) {
       <div class="card" style="background:var(--surface-2);padding:13px;margin-top:14px">
         <div style="font-size:12.5px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:6px">➕ ${t('Collect a payment', 'تحصيل دفعة')}${target ? `<span style="margin-left:auto;font-weight:500;font-size:11px;color:var(--text-mute)">${t('applies to', 'للرياضة')} <b style="color:var(--accent-2)">${escapeHtml(sportName(target))}</b></span>` : ''}</div>
         <input type="hidden" id="mp-method" value="cash" />
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:stretch">
+        <div id="mp-single" style="display:flex;gap:8px;flex-wrap:wrap;align-items:stretch">
           <div style="flex:1 1 120px;position:relative"><input id="mp-amt" type="text" inputmode="decimal" value="${target ? fmt(target.remaining) : ''}" style="width:100%;font-family:ui-monospace,monospace;font-weight:700;font-size:17px;padding:9px 40px 9px 11px;border:1.5px solid var(--border);border-radius:9px;background:var(--surface);color:var(--text)" /><span style="position:absolute;right:11px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--text-mute)">QAR</span></div>
           <div style="display:flex;gap:6px;flex:2 1 200px">${methodChip('cash', '💵', t('Cash', 'نقدي'), true)}${methodChip('card', '💳', t('Card', 'بطاقة'), false)}${methodChip('fawran', '📲', 'Fawran', false)}${methodChip('transfer', '🏦', t('Transfer', 'تحويل'), false)}</div>
         </div>
+        <div id="mp-split-rows" style="display:none">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:stretch">
+            ${[['cash', '💵', t('Cash', 'نقدي'), '#16a34a'], ['card', '💳', t('Card', 'بطاقة'), '#3b82f6'], ['fawran', '📲', 'Fawran', '#8b5cf6'], ['transfer', '🏦', t('Transfer', 'تحويل'), '#f59e0b']].map(([mk, ic, lbl, col]) => `
+              <div style="flex:1 1 90px;min-width:88px;background:color-mix(in srgb, ${col} 9%, var(--surface));border:1px solid color-mix(in srgb, ${col} 35%, transparent);border-radius:10px;padding:6px 9px">
+                <div style="font-size:10px;font-weight:700;color:${col};margin-bottom:3px">${ic} ${lbl}</div>
+                <input class="mp-sp" data-method="${mk}" oninput="window._moneySplitSum()" type="number" min="0" step="1" value="" placeholder="0" inputmode="numeric" style="width:100%;font-size:14px;font-weight:700;text-align:right;background:transparent;border:none;border-bottom:1px solid color-mix(in srgb, ${col} 30%, var(--border));color:var(--text);outline:none" />
+              </div>`).join('')}
+          </div>
+          <div style="font-size:11.5px;margin-top:8px;text-align:right">${t('Collecting', 'جاري التحصيل')}: <b id="mp-split-sum" style="color:var(--green)">${fmt(0)}</b> QAR</div>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;cursor:pointer;margin-top:10px;color:var(--text-mute)"><input type="checkbox" id="mp-split" onchange="window._moneySplitToggle(this)" style="width:auto;margin:0" /> ${t('Split across methods (e.g. part cash + part card)', 'تقسيم بين الطرق (مثلاً جزء نقدي + جزء بطاقة)')}</label>
         <div style="display:flex;gap:10px;align-items:center;margin-top:10px">
           <input type="date" id="mp-date" value="${TODAY}" style="font-size:12.5px;padding:7px 9px;border:1.5px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text)" />
           <button class="btn primary" style="margin-left:auto;font-weight:700" onclick="window._moneyCollect(${m.id})">${t('Collect', 'تحصيل')}</button>
@@ -14884,6 +14928,113 @@ window.showDataHealthUI = function () {
       ],
   });
 };
+// ─── CLOUD STORAGE USAGE (v6.599) ────────────────────────────────────────────
+// "Show the cloud storage usage." The app already holds the FULL cloud dataset in memory (every
+// Firestore collection is loaded/synced into `state`), so we can size exactly what the cloud stores,
+// per collection, with no extra reads. The ONE exception is the audit log: it is lazy (never in the
+// hot sync — see storage.js LAZY_COLLECTIONS), so it is fetched from Firebase on demand and folded in.
+// NOTE: this is the STORED-DATA size (≈ Firestore's stored bytes). The *billed* quota + daily
+// reads/writes live in the Firebase Console (Firestore → Usage); no app can read those about itself.
+const _CLOUD_COLLECTIONS = [
+  'members', 'coaches', 'invoices', 'expenses', 'salaries', 'sales', 'advices',
+  'trials', 'rentals', 'rentalCustomers', 'schedule', 'swimGroups', 'auditLog',
+  'membershipTransfers', 'cashCounts', 'families', 'notes', 'products', 'drivers', 'posts',
+];
+const _CLOUD_LABELS = {
+  members: 'Members', coaches: 'Coaches', invoices: 'Invoices', expenses: 'Expenses',
+  salaries: 'Salaries', sales: 'Sales', advices: 'Advice', trials: 'Trials', rentals: 'Rentals',
+  rentalCustomers: 'Rental customers', schedule: 'Schedule', swimGroups: 'Groups', auditLog: 'Audit log',
+  membershipTransfers: 'Transfers', cashCounts: 'Cash counts', families: 'Families', notes: 'Notes',
+  products: 'Products', drivers: 'Drivers', posts: 'Posts',
+};
+// auditBytes / auditCount: when the audit log has been fetched from Firebase, pass its measured size
+// (state.auditLog is usually empty because it is lazy). rows are sorted biggest-first.
+window._cloudStorageBreakdown = function (auditFetched) {
+  const rows = [];
+  let total = 0, docs = 0;
+  for (const name of _CLOUD_COLLECTIONS) {
+    let arr = Array.isArray(state[name]) ? state[name] : [];
+    if (name === 'auditLog' && auditFetched && Array.isArray(auditFetched.rows)) arr = auditFetched.rows;
+    const bytes = arr.length ? _byteLen(arr) : 0;
+    const known = name !== 'auditLog' || (auditFetched && auditFetched.loaded) || arr.length > 0;
+    rows.push({ name, label: _CLOUD_LABELS[name] || name, bytes, count: arr.length, known });
+    total += bytes; docs += arr.length;
+  }
+  // How much of the members collection is attendance history (the usual growth driver).
+  let attBytes = 0;
+  for (const m of (state.members || [])) {
+    if (m && m.dailyAttendance) attBytes += _byteLen(m.dailyAttendance);
+    if (m && m.mixedAttendance) attBytes += _byteLen(m.mixedAttendance);
+  }
+  // Biggest single documents (a doc nearing Firestore's 1 MiB cap starts failing to save).
+  const big = [];
+  const scan = (coll, arr, nameOf) => { for (const r of (arr || [])) { const b = _byteLen(r); big.push({ coll, name: nameOf(r), bytes: b }); } };
+  scan('members', state.members, r => r.name || ('#' + r.id));
+  scan('invoices', state.invoices, r => r.ref || ('#' + r.id));
+  big.sort((a, b) => b.bytes - a.bytes);
+  rows.sort((a, b) => b.bytes - a.bytes);
+  return { rows, total, docs, attBytes, biggest: big.slice(0, 5) };
+};
+// module-scoped so a re-render after fetching the audit log keeps the number
+let _cloudAuditFetched = null;
+window.showCloudStorageUI = function () {
+  if (typeof currentRole === 'function' && currentRole() !== 'admin') { toast(t('Admins only', 'المدراء فقط'), 'error'); return; }
+  const isCloud = (typeof isCloudStorage === 'function') ? isCloudStorage() : false;
+  const b = window._cloudStorageBreakdown(_cloudAuditFetched);
+  const mb = n => (n / 1048576).toFixed(n >= 1048576 ? 2 : (n >= 104857 ? 2 : 3));
+  const barColor = (name) => name === 'auditLog' ? 'var(--accent-2)' : name === 'members' ? 'var(--accent)' : name === 'invoices' ? '#5b8def' : 'var(--green)';
+  const maxBytes = Math.max(1, ...b.rows.map(r => r.bytes));
+  const rowHtml = b.rows.filter(r => r.bytes > 0 || r.name === 'auditLog').map(r => {
+    const pct = b.total ? Math.round(r.bytes / b.total * 100) : 0;
+    const w = Math.max(2, Math.round(r.bytes / maxBytes * 100));
+    const sizeCell = (r.name === 'auditLog' && !r.known)
+      ? `<span class="text-mute" style="font-size:12px">${t('not loaded', 'غير محمّل')}</span>`
+      : `<b>${mb(r.bytes)} MB</b> <span class="text-mute" style="font-size:11px">· ${pct}%</span>`;
+    return `<tr>
+        <td style="padding:6px 0;white-space:nowrap">${escapeHtml(r.label)} <span class="text-mute" style="font-size:11px">(${r.count})</span></td>
+        <td style="padding:6px 10px;width:52%"><div style="height:8px;background:var(--surface-2);border-radius:6px;overflow:hidden"><div style="height:100%;width:${r.known ? w : 0}%;background:${barColor(r.name)};border-radius:6px"></div></div></td>
+        <td style="padding:6px 0;text-align:right;white-space:nowrap">${sizeCell}</td>
+      </tr>`;
+  }).join('');
+  const bigHtml = b.biggest.length ? b.biggest.map(x => `${escapeHtml(String(x.name))} <span class="text-mute">(${x.coll}, ${(x.bytes/1024).toFixed(0)} KB)</span>`).join(' · ') : '—';
+  const auditRow = b.rows.find(r => r.name === 'auditLog');
+  const auditPending = isCloud && auditRow && !auditRow.known;
+  const body = `
+    <div style="font-size:14px;line-height:1.6">
+      <div style="text-align:center;padding:16px;border-radius:12px;margin-bottom:14px;background:linear-gradient(135deg,rgba(91,141,239,.12),rgba(16,163,74,.08));border:1px solid var(--border)">
+        <div style="font-size:32px">☁</div>
+        <div style="font-size:26px;font-weight:900">${mb(b.total)} MB</div>
+        <div class="text-mute" style="font-size:12px">${b.docs.toLocaleString()} ${t('documents across', 'مستند في')} ${b.rows.filter(r=>r.bytes>0).length} ${t('collections', 'مجموعة')}${auditPending ? ' · ' + t('audit log not counted yet', 'سجل التدقيق غير محسوب بعد') : ''}</div>
+      </div>
+      ${auditPending ? `<div style="background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.4);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;display:flex;align-items:center;justify-content:space-between;gap:10px">
+        <span>${t('The audit log is stored in the cloud only and isn’t loaded on start. Fetch it to include its size.', 'سجل التدقيق مخزَّن في السحابة فقط ولا يُحمَّل عند البدء. حمِّله لإضافة حجمه.')}</span>
+        <button class="btn sm primary" id="cloud-fetch-audit" style="white-space:nowrap">📥 ${t('Fetch audit log', 'تحميل سجل التدقيق')}</button>
+      </div>` : ''}
+      <table style="width:100%;border-collapse:collapse">${rowHtml}</table>
+      <div class="text-mute" style="font-size:12px;margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
+        📎 ${t('Attendance history inside member records', 'سجل الحضور داخل بيانات الأعضاء')}: <b>${mb(b.attBytes)} MB</b><br>
+        📦 ${t('Largest documents', 'أكبر المستندات')}: ${bigHtml}
+      </div>
+      <div class="text-mute" style="font-size:11px;margin-top:12px">
+        ${t('This is the size of the data your club has stored (≈ Firestore’s stored bytes). Your billed quota and daily reads/writes are shown in the Firebase Console → Firestore Database → Usage. Firestore rejects any single document ≥ 1 MB.', 'هذا حجم البيانات المخزّنة لناديك (≈ حجم Firestore المخزَّن). حصتك المفوترة وعمليات القراءة/الكتابة اليومية تظهر في وحدة تحكم Firebase ← Firestore ← الاستخدام. يرفض Firestore أي مستند يبلغ 1 ميغابايت أو أكثر.')}
+      </div>
+    </div>`;
+  showModal({
+    title: '☁ ' + t('Cloud Storage Usage', 'استخدام التخزين السحابي'),
+    body,
+    actions: [{ label: t('Close', 'إغلاق'), class: 'btn primary', onclick: () => closeModal() }],
+  });
+  const fetchBtn = document.getElementById('cloud-fetch-audit');
+  if (fetchBtn) fetchBtn.addEventListener('click', async () => {
+    fetchBtn.disabled = true; fetchBtn.textContent = '⏳ ' + t('Loading…', 'جارٍ التحميل…');
+    try {
+      const rows = (window.Storage && typeof window.Storage.loadAuditLog === 'function') ? await window.Storage.loadAuditLog() : null;
+      _cloudAuditFetched = { loaded: true, rows: Array.isArray(rows) ? rows : [] };
+    } catch (_) { _cloudAuditFetched = { loaded: true, rows: [] }; }
+    closeModal(); window.showCloudStorageUI();
+  });
+};
+
 // One-click repair for the health panel: backup first, then run the full guard
 // (subscriptions by _sid + enrollments by content) and save with cloud confirmation.
 window._applyDataRepair = function () {
@@ -21527,6 +21678,7 @@ PAGES.settings = (main, section) => {
         ${isCloudStorage() ? `<button class="btn ghost" id="synccheck-btn" title="Compare this device's data against the cloud and flag anything not yet synced">🔍 ${t('Verify against cloud', 'التحقق من السحابة')}</button>` : ''}
         <button class="btn ghost" id="fixnames-btn" title="Correct member English names to Title Case (anas madni → Anas Madni)">Aa Fix name capitalisation</button>
         <button class="btn ghost" id="datahealth-btn" title="One-glance data integrity check — duplicates, oversized records, storage size — with one-click safe repair">🩺 ${t('Data Health Check', 'فحص سلامة البيانات')}</button>
+        <button class="btn ghost" id="cloudstorage-btn" title="See how much data is stored in the cloud, broken down by collection (members, invoices, attendance, audit log…)">☁ ${t('Cloud Storage Usage', 'استخدام التخزين السحابي')}</button>
         <button class="btn ghost" id="fixdupsubs-btn" title="Find & remove duplicate subscription rows on member cards (attendance is kept safe)">🧹 ${t('Fix duplicate subscriptions', 'إصلاح الاشتراكات المكررة')}</button>
         <input type="file" id="restore-file" accept=".json" style="display:none" />
       </div>
@@ -21774,6 +21926,7 @@ PAGES.settings = (main, section) => {
   $('#synccheck-btn')?.addEventListener('click', () => window.runSyncCheck());
   $('#fixnames-btn')?.addEventListener('click', () => window.fixNameCapitalization());
   $('#datahealth-btn')?.addEventListener('click', () => window.showDataHealthUI());
+  $('#cloudstorage-btn')?.addEventListener('click', () => window.showCloudStorageUI());
   $('#fixdupsubs-btn')?.addEventListener('click', () => window.showFixDuplicateSubsUI());
 
   // ── Multi-document migration (one-click) ──────────────────────────────────
@@ -22650,8 +22803,14 @@ PAGES.attendance = (main) => {
     const rec = (m.mixedAttendance && m.mixedAttendance[mo] && m.mixedAttendance[mo][String(day)]) || null;
     const sportChoices = ((typeof SPORTS !== 'undefined' && SPORTS) ? SPORTS : DEFAULT_SPORTS).filter(s => s !== MIXED && s !== SUMMER_CAMP);
     const coaches = (state.coaches || []).filter(c => (typeof isCoachRole !== 'function' || isCoachRole(c)) && (typeof isCoachActive !== 'function' || isCoachActive(c) || (rec && String(rec.coachId) === String(c.id))));
+    // v6.598 — when a COACH is logging the class, pre-select THEIR OWN name (they taught it), so they
+    // only pick the sport and hit Save. Without this the coach dropdown defaulted to blank and Save
+    // failed with "Pick the coach" — which read to coaches as "I can't mark Mixed attendance". An
+    // existing record still wins (keeps the coach it was credited to); admins still get the blank default.
+    const _selfCoach = (typeof currentRole === 'function' && currentRole() === 'coach' && typeof effectiveCoachId === 'function') ? effectiveCoachId() : null;
+    const _defCoach = rec ? rec.coachId : _selfCoach;
     const sportOpts = `<option value="">${t('— pick sport —', '— اختر الرياضة —')}</option>` + sportChoices.map(s => `<option value="${escapeHtml(s)}" ${rec && rec.sport === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('');
-    const coachOpts = `<option value="">${t('— pick coach —', '— اختر المدرب —')}</option>` + coaches.map(c => `<option value="${c.id}" ${rec && String(rec.coachId) === String(c.id) ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+    const coachOpts = `<option value="">${t('— pick coach —', '— اختر المدرب —')}</option>` + coaches.map(c => `<option value="${c.id}" ${_defCoach != null && String(_defCoach) === String(c.id) ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
     const actions = [{ label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal }];
     if (rec) actions.push({ label: '🗑 ' + t('Clear', 'مسح'), class: 'btn ghost', onclick: () => { closeModal(); applyMixedMark(memberId, day, null, null, true); } });
     actions.push({ label: '✓ ' + t('Save', 'حفظ'), class: 'btn primary', onclick: () => {
