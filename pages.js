@@ -15181,14 +15181,17 @@ window.recordPaymentUI = function(id) {
           <div class="field" id="pay-method-field" style="margin:0"><label>${t('Method', 'الطريقة')}</label><select id="pay-method"><option value="cash">💵 ${t('Cash', 'نقداً')}</option><option value="card">💳 ${t('Card', 'بطاقة')}</option><option value="fawran">📲 ${t('Fawran', 'فوران')}</option></select></div>
         </div>
         ${invoiceInstallmentHistoryHtml(inv)}
-        <label class="pay-split-toggle"><input type="checkbox" id="pay-split" /> ${t('Split between cash + card', 'تقسيم بين النقد والبطاقة')}</label>
+        <label class="pay-split-toggle"><input type="checkbox" id="pay-split" /> ${t('Split across methods (cash + card + fawran + transfer)', 'تقسيم بين الطرق (نقد + بطاقة + فوران + تحويل)')}</label>
         <div id="pay-single" style="margin-top:12px">
           <div class="field" style="margin:0"><label>${t('Amount (QAR)', 'المبلغ (ر.ق)')}</label><input id="pay-amt" type="number" min="0" step="0.01" value="${bal.toFixed(2)}" /></div>
         </div>
       <div id="pay-split-rows" style="display:none;margin-top:8px">
-        <div class="form-row">
-          <div class="field"><label>💵 ${t('Cash (QAR)', 'النقد (ر.ق)')}</label><input id="pay-cash" type="number" min="0" step="0.01" value="" placeholder="0.00" /></div>
-          <div class="field"><label>💳 ${t('Card (QAR)', 'البطاقة (ر.ق)')}</label><input id="pay-card" type="number" min="0" step="0.01" value="" placeholder="0.00" /></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:stretch">
+          ${[['cash', '💵', t('Cash', 'نقدي'), '#16a34a'], ['card', '💳', t('Card', 'بطاقة'), '#3b82f6'], ['fawran', '📲', 'Fawran', '#8b5cf6'], ['transfer', '🏦', t('Transfer', 'تحويل'), '#f59e0b']].map(([mk, ic, lbl, col]) => `
+            <div style="flex:1 1 90px;min-width:88px;background:color-mix(in srgb, ${col} 9%, var(--surface));border:1px solid color-mix(in srgb, ${col} 35%, transparent);border-radius:10px;padding:6px 9px">
+              <div style="font-size:10px;font-weight:700;color:${col};margin-bottom:3px">${ic} ${lbl}</div>
+              <input class="pay-sp" data-method="${mk}" type="number" min="0" step="0.01" value="" placeholder="0" inputmode="decimal" style="width:100%;font-size:14px;font-weight:700;text-align:right;background:transparent;border:none;border-bottom:1px solid color-mix(in srgb, ${col} 30%, var(--border));color:var(--text);outline:none" />
+            </div>`).join('')}
         </div>
         <div id="pay-split-summary" style="margin-top:8px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center">
           <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px">
@@ -15216,23 +15219,18 @@ window.recordPaymentUI = function(id) {
         const date = $('#pay-date').value || TODAY;
         const isSplit = $('#pay-split').checked;
         if (isSplit) {
-          const cash = parseFloat($('#pay-cash').value) || 0;
-          const card = parseFloat($('#pay-card').value) || 0;
-          if (cash <= 0 && card <= 0) { toast('Enter at least one of cash or card', 'error'); return; }
-          let totalSplit = cash + card;
+          // v6.602 — split across ALL four methods (cash / card / fawran / transfer). One payment
+          // row per non-zero method; over-balance is trimmed from the last-entered method(s) down.
+          const parts = [];
+          $$('.pay-sp').forEach(i => { const a = Math.round((parseFloat(i.value) || 0) * 100) / 100; if (a > 0) parts.push({ method: i.dataset.method || 'cash', amount: a }); });
+          if (!parts.length) { toast(t('Enter an amount for at least one method', 'أدخل مبلغاً لطريقة واحدة على الأقل'), 'error'); return; }
+          let totalSplit = Math.round(parts.reduce((s, p) => s + p.amount, 0) * 100) / 100;
           if (totalSplit > bal + 0.001) {
             if (!confirm(`That's more than the ${fmt(bal)} balance — only record up to the ${fmt(bal)} balance?`)) return;
-            // Trim card first (cash is usually the exact change), then cash if still over.
-            let over = totalSplit - bal;
-            let cardAdj = card, cashAdj = cash;
-            if (over > 0 && cardAdj > 0) { const cut = Math.min(over, cardAdj); cardAdj -= cut; over -= cut; }
-            if (over > 0) cashAdj = Math.max(0, cashAdj - over);
-            if (cardAdj > 0) recordInvoicePayment(inv, cardAdj, { date, method: 'card' });
-            if (cashAdj > 0) recordInvoicePayment(inv, cashAdj, { date, method: 'cash' });
-          } else {
-            if (card > 0) recordInvoicePayment(inv, card, { date, method: 'card' });
-            if (cash > 0) recordInvoicePayment(inv, cash, { date, method: 'cash' });
+            let over = Math.round((totalSplit - bal) * 100) / 100;
+            for (let k = parts.length - 1; k >= 0 && over > 0.001; k--) { const cut = Math.min(over, parts[k].amount); parts[k].amount = Math.round((parts[k].amount - cut) * 100) / 100; over = Math.round((over - cut) * 100) / 100; }
           }
+          for (const p of parts) { if (p.amount > 0.005) recordInvoicePayment(inv, p.amount, { date, method: p.method }); }
         } else {
           const amt = parseFloat($('#pay-amt').value) || 0;
           if (amt <= 0) { toast('Enter a payment amount', 'error'); return; }
@@ -15255,9 +15253,8 @@ window.recordPaymentUI = function(id) {
   });
   // Wire the split toggle + live sum
   function recomputeSplit() {
-    const cash = parseFloat($('#pay-cash')?.value) || 0;
-    const card = parseFloat($('#pay-card')?.value) || 0;
-    const sum = cash + card;
+    let sum = 0; $$('.pay-sp').forEach(i => { sum += Math.max(0, parseFloat(i.value) || 0); });
+    sum = Math.round(sum * 100) / 100;
     const rem = bal - sum;
     if ($('#pay-split-sum')) $('#pay-split-sum').textContent = fmt(sum);
     const remEl = $('#pay-split-rem');
@@ -15289,8 +15286,7 @@ window.recordPaymentUI = function(id) {
     $('#pay-split-rows').style.display = split ? '' : 'none';
     if (split) recomputeSplit();
   });
-  $('#pay-cash')?.addEventListener('input', recomputeSplit);
-  $('#pay-card')?.addEventListener('input', recomputeSplit);
+  $$('.pay-sp').forEach(i => i.addEventListener('input', recomputeSplit));
 };
 
 // v6.601 — Edit-invoice split toggle: swap the single Method for per-method amount boxes; the paid

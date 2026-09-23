@@ -16,7 +16,7 @@ R.section('source wiring');
   R.ok('withCloudConfirm has a stall timeout (SLOW_SAVE_MS)', /SLOW_SAVE_MS\s*=\s*\(opts\.slowMs != null\)/.test(app));
   R.ok('a stall resolves { slow:true } and does NOT reject', /resolve\(\{ ok: false, slow: true \}\)/.test(app));
   R.ok('a stall hides the blocking overlay + returns true', /if \(res && res\.slow\)[\s\S]{0,300}hideSavingOverlay\(\)[\s\S]{0,900}return true;/.test(app));
-  R.ok('the QC-harness synchronous-timer guard is present', /navigator\.userAgent === 'qc'[\s\S]{0,120}\? await saveConfirmed\(\)/.test(app));
+  R.ok('stall fires ONLY after real elapsed time (immune to synchronous test timers)', /\(Date\.now\(\) - _t0\) >= SLOW_SAVE_MS_N \* 0\.5/.test(app));
 }
 
 R.section('a STALLED write unblocks instead of hanging');
@@ -24,7 +24,6 @@ R.section('a STALLED write unblocks instead of hanging');
   const ctx = H.seed(H.makeCtx({ role: 'admin' }));
   const res = run(ctx, `
     (function(){
-      navigator.userAgent = 'not-qc';               // take the real race path (harness fires timers now)
       var events = { onOk:0, afterOk:0, overlayHidden:0, toast:'' };
       window.saveConfirmed = () => new Promise(function(){ /* NEVER resolves — a stalled commit */ });
       window.showSavingOverlay = () => {};
@@ -32,7 +31,7 @@ R.section('a STALLED write unblocks instead of hanging');
       window.showLockedModal = () => { events.locked = true; };
       window.toast = (m) => { events.toast = String(m); };
       return withCloudConfirm({
-        slowMs: 5,                                    // fire the stall timer promptly for the test
+        __forceStall: true,                           // exercise the stall path directly (no real wait)
         onOk: () => { events.onOk++; },
         afterOk: () => { events.afterOk++; },
       }).then(function(ret){ events.ret = ret; return events; });
@@ -50,15 +49,14 @@ R.section('a STALLED write unblocks instead of hanging');
     const ctx2 = H.seed(H.makeCtx({ role: 'admin' }));
     const res2 = run(ctx2, `
       (function(){
-        // keep userAgent='qc' → the guarded original 'await saveConfirmed()' path (the harness fires
-        // timers synchronously, so a race here would always mis-trigger the stall). This proves the
-        // guard preserves the normal fast-confirm flow in production for a prompt server ack.
+        // A prompt server ack: the time-guard means the synchronous test timer (0 ms elapsed) does NOT
+        // trip the stall, so the normal green-popup flow runs — proving no false stall in production.
         var ev = { locked:false, okay:null };
         window.saveConfirmed = () => Promise.resolve({ ok:true });
         window.showSavingOverlay = () => {}; window.hideSavingOverlay = () => {};
         window.showLockedModal = (o) => { ev.locked = true; ev.okay = o.okay; };
         window.toast = () => {};
-        return withCloudConfirm({ slowMs: 5000, onOk:()=>{} }).then(function(ret){ ev.ret = ret; return ev; });
+        return withCloudConfirm({ onOk:()=>{} }).then(function(ret){ ev.ret = ret; return ev; });
       })()
     `);
     return Promise.resolve(res2);

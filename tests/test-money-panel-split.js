@@ -69,7 +69,7 @@ R.section('source wiring');
   R.ok('money panel has a Split toggle + per-method inputs', /id="mp-split"[\s\S]{0,120}_moneySplitToggle/.test(src) && /class="mp-sp" data-method=/.test(src));
   R.ok('toggle + live-sum helpers exist', /window\._moneySplitToggle = function/.test(src) && /window\._moneySplitSum = function/.test(src));
   R.ok('_moneyCollect records one payment per split part', /for \(const p of parts\)[\s\S]{0,200}recordPayment\(inv, \{ amount: p\.amount, method: p\.method/.test(src));
-  R.ok('invoice Record-payment dialog still has its cash+card split', /id="pay-split"/.test(src) && /id="pay-cash"/.test(src) && /id="pay-card"/.test(src) && /\$\('#pay-split'\)\?\.addEventListener/.test(src));
+  R.ok('invoice Record-payment dialog has its (now 4-method) split', /id="pay-split"/.test(src) && /class="pay-sp" data-method=/.test(src) && /\$\('#pay-split'\)\?\.addEventListener/.test(src));
 }
 
 R.done();
