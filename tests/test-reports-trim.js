@@ -36,4 +36,10 @@ R.section('reports screen still renders');
   R.ok('PAGES.reports renders without error', r.ok, r.error);
 }
 
+R.section('v6.610 — Renewals shown beside New Members in the same KPI box');
+{
+  R.ok('report computes renewals in the period', /const _repRenewals = \(state\.members \|\| \[\]\)\.reduce\([\s\S]{0,140}inPeriodDate\(r\.start \|\| r\.createdAt/.test(src));
+  R.ok('the New Members box shows both 🆕 new + 🔄 renewals', /New Members[\s\S]{0,220}🆕 \$\{d\.newMembers\}[\s\S]{0,80}🔄 <span[\s\S]{0,40}\$\{_repRenewals\}/.test(src));
+}
+
 R.done();

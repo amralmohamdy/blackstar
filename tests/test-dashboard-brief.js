@@ -31,11 +31,17 @@ R.section('removed sections are gone; kept sections remain');
   R.ok('Top Coaches by Students removed', !/Top Coaches by Students/.test(r.html));
   R.ok('Recent Invoices removed', !/Recent Invoices/.test(r.html));
   R.ok('Monthly Summary table removed', !/Monthly Summary/.test(r.html));
+  // v6.609 — revenue-stream cards + backup card removed per owner
+  R.ok('Coaching Revenue card removed', !/Coaching Revenue/.test(r.html));
+  R.ok('Cash Collected card removed', !/Cash Collected/.test(r.html));
+  R.ok('Revenue Mix card removed', !/Revenue Mix/.test(r.html));
+  R.ok('Backup-before-updates card removed', !/Backup before updates/.test(r.html));
   // kept
   R.ok('KPIs kept (Total Revenue, Net Profit)', /Total Revenue/.test(r.html) && /Net Profit/.test(r.html));
   R.ok('Needs-attention kept', /Needs attention today/.test(r.html));
-  R.ok('revenue detail cards kept (Coaching Revenue)', /Coaching Revenue/.test(r.html));
-  R.ok('Data & Cloud Sync kept', /Data & Cloud Sync/.test(r.html));
+  R.ok('Renewal revenue potential kept', /Renewal revenue potential/.test(r.html));
+  R.ok('Data & Cloud Sync kept (compact strip, v6.610)', /Data & Cloud Sync/.test(r.html) && /documents in cloud/.test(r.html));
+  R.ok('per-collection breakdown removed from dashboard (moved to ☁ Storage)', !/Payment records/.test(r.html));
 }
 
 R.section('source: draw fns are guarded (no null-deref after removal)');

@@ -79,6 +79,14 @@ service cloud.firestore {
         allow update, delete: if false;
       }
 
+      // v6.611 — Logins Logs Audit. ANY signed-in user (incl. members) records their OWN sign-in,
+      // so all logins are captured; only STAFF can read the log; append-only (no edits/deletes).
+      match /loginLogs/{docId} {
+        allow read:   if isStaff();
+        allow create: if request.auth != null;
+        allow update, delete: if false;
+      }
+
       // Every OTHER per-record subcollection: staff read/write; members read ONLY
       // the portal collections (memberReadable) — the club's financial/operational
       // data is never exposed to a member login.

@@ -83,7 +83,7 @@
     'members', 'coaches', 'invoices', 'expenses', 'salaries', 'sales', 'advices',
     'trials', 'rentals', 'rentalCustomers', 'schedule', 'swimGroups', 'auditLog',
     'membershipTransfers', 'cashCounts', 'families', 'notes', 'products', 'drivers',
-    'posts',
+    'posts', 'loginLogs',
   ];
   const isCollectionKey = k => COLLECTIONS.indexOf(k) !== -1;
   // LAZY collections (v6.453): the audit log is by far the biggest collection (append-only, grows
@@ -92,7 +92,7 @@
   // live per-document snapshot listener — removes that download and a heavy real-time query, so every
   // login and sync is far lighter. New audit rows are STILL written (create-only) by _flushWrite; the
   // full log is fetched on demand via loadAuditLog(). HOT_COLLECTIONS = everything loaded/listened live.
-  const LAZY_COLLECTIONS = new Set(['auditLog']);
+  const LAZY_COLLECTIONS = new Set(['auditLog', 'loginLogs']);   // v6.611 — loginLogs fetched on demand (Logins Logs Audit screen), kept out of the hot sync
   const HOT_COLLECTIONS = COLLECTIONS.filter(c => !LAZY_COLLECTIONS.has(c));
   // Collections a MEMBER (portal login on a member domain) is allowed to READ.
   // Everything else — invoices/revenue, expenses, salaries, cash counts, product
@@ -921,6 +921,19 @@
           return null;
         }
       },
+      // v6.611 — fetch the lazy loginLogs collection for the Logins Logs Audit screen. Display-only:
+      // rows are NEVER merged into state (loginLogs is immutable append-only), so the delta writer
+      // never re-sends them. Returns the array or null on failure (member scope is denied by rules).
+      async loadLoginLogs() {
+        try {
+          const qs = await colRef('loginLogs').get({ source: 'server' });
+          const arr = []; qs.forEach(d => arr.push(d.data()));
+          return arr;
+        } catch (e) {
+          console.warn('[Storage:firebase] loadLoginLogs failed:', (e && e.code) || e);
+          return null;
+        }
+      },
 
       // PURE server read for a sync-check / discrepancy diff: reads the authoritative
       // cloud copy with NO side effects (does not touch the write base, live maps or
@@ -1203,6 +1216,7 @@
     // Lazy audit-log fetch (v6.453) — the audit log is not in the hot sync; the Audit/Trash screens
     // and the "last updated by" lookups pull it on demand. Null on a backend that can't provide it.
     async loadAuditLog() { if (!activeBackend) this.init(); return activeBackend.loadAuditLog ? await activeBackend.loadAuditLog() : null; },
+    async loadLoginLogs() { if (!activeBackend) this.init(); return activeBackend.loadLoginLogs ? await activeBackend.loadLoginLogs() : null; },
     onRemoteUpdate(cb) { if (!activeBackend) this.init(); activeBackend.onRemoteUpdate(cb); },
     needsMigration() { if (!activeBackend) this.init(); return activeBackend.needsMigration ? activeBackend.needsMigration() : false; },
     async migrateToMultiDoc(onProgress) { if (!activeBackend) this.init(); if (!activeBackend.migrateToMultiDoc) throw new Error('Migration requires cloud sign-in (Firebase).'); return await activeBackend.migrateToMultiDoc(onProgress); },

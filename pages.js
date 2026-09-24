@@ -279,7 +279,7 @@ PAGES.dashboard = (main) => {
     ` : ''}
 
     ${totalActions > 0 ? `
-      <div class="card" style="border:1px solid rgba(242,163,60,.35);background:linear-gradient(180deg,rgba(242,163,60,.08),transparent);margin-bottom:16px">
+      <div class="card" style="border:1px solid rgba(242,163,60,.35);background:linear-gradient(180deg,rgba(242,163,60,.08),transparent);margin-bottom:12px">
         <div class="card-header" style="margin-bottom:8px">
           <div><div class="card-title" style="display:flex;align-items:center;gap:8px">🔔 ${t('Needs attention today','يحتاج انتباهك اليوم')} <span class="badge" style="background:var(--accent-2);color:#1a1a1a">${totalActions}</span></div>
           <div class="card-subtitle">${t('Action items based on today\'s data — tap any to act','عناصر إجرائية حسب بيانات اليوم — اضغط لأي منها')}</div></div>
@@ -312,7 +312,7 @@ PAGES.dashboard = (main) => {
         </div>
       </div>
     ` : `
-      <div class="card" style="border:1px solid rgba(16,185,129,.3);background:rgba(16,185,129,.06);margin-bottom:16px;display:flex;align-items:center;gap:12px;padding:14px 16px">
+      <div class="card" style="border:1px solid rgba(16,185,129,.3);background:rgba(16,185,129,.06);margin-bottom:12px;display:flex;align-items:center;gap:12px;padding:14px 16px">
         <span style="font-size:22px">✅</span>
         <div><div style="font-weight:600;color:var(--green)">${t('All clear — nothing needs attention right now','كل شيء على ما يرام — لا شيء يحتاج انتباهك الآن')}</div>
         <div class="text-mute" style="font-size:11px">${t('No expired memberships, none expiring soon, stock levels healthy','لا عضويات منتهية، ولا قاربت على الانتهاء، والمخزون جيد')}</div></div>
@@ -321,7 +321,7 @@ PAGES.dashboard = (main) => {
 
     <!-- Birthdays · Renewing soon · Top sport (small info row) -->
     ${(birthdayList.length || renewingThisWeek.length || topSport) ? `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:16px">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:12px">
       ${birthdayList.length ? `
         <div class="card" style="padding:12px 14px;border:1px solid rgba(245,158,11,.25);background:rgba(245,158,11,.05);cursor:pointer" onclick="navigate('birthdays')" title="Open Birthdays — send celebration messages">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
@@ -413,84 +413,32 @@ PAGES.dashboard = (main) => {
       const saveBadge = saveTxt
         ? `<span style="color:var(--green);font-weight:700">✅ ${t('Saved to cloud','تم الحفظ في السحابة')} · ${saveTxt}</span>`
         : `<span class="text-mute">${t('No changes saved yet this session','لا تغييرات محفوظة بعد هذه الجلسة')}</span>`;
-      const cells = [['Members','الأعضاء','members'],['Invoices','الفواتير','invoices'],['Coaches','المدربون','coaches'],['Expenses','المصروفات','expenses'],['Sales','المبيعات','sales'],['Rentals','الإيجارات','rentals'],['Trials','التجارب','trials'],['Families','العائلات','families'],['Products','المنتجات','products'],['Schedule','الجدول','schedule'],['Transfers','التحويلات','membershipTransfers'],['Audit log','سجل التدقيق','auditLog']]
-        .map(([en,ar,k]) => `<div style="display:flex;justify-content:space-between;font-size:11px;padding:2px 0"><span class="text-mute">${t(en,ar)}</span><span class="num font-bold">${(counts[k]||0).toLocaleString()}</span></div>`).join('');
-      return `
-    <div class="card" id="data-sync-card" style="margin-bottom:16px;border:1px solid rgba(34,197,94,.28)">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">
-        <div style="display:flex;align-items:center;gap:10px">
-          <span style="font-size:22px">☁️</span>
-          <div>
-            <div style="font-weight:700;font-size:14px">${t('Data & Cloud Sync','البيانات والمزامنة السحابية')}</div>
-            <div class="text-mute" style="font-size:11px">${t('Every record is its own document — no overwriting, safe for many users at once','كل سجل مستند مستقل — بلا استبدال، آمن للاستخدام المتعدد')}</div>
-          </div>
-        </div>
-        <div style="text-align:right">
-          <div style="font-size:26px;font-weight:800;color:var(--green);line-height:1">${totalDocs.toLocaleString()}</div>
-          <div class="text-mute" style="font-size:10px;text-transform:uppercase;letter-spacing:.05em">${t('documents in cloud','مستند في السحابة')}</div>
-        </div>
-      </div>
-      <div style="display:flex;gap:18px;flex-wrap:wrap;font-size:12px;margin-bottom:10px;padding:8px 10px;background:var(--surface-2);border-radius:8px">
-        <div>⬇️ ${readBadge}</div>
-        <div>⬆️ ${saveBadge}</div>
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:0 18px;border-top:1px solid var(--border);padding-top:8px">
-        ${cells}
-        <div style="display:flex;justify-content:space-between;font-size:11px;padding:2px 0"><span class="text-mute">${t('Payment records','سجلات الدفع')}</span><span class="num font-bold">${paymentRows.toLocaleString()}</span></div>
-      </div>
-      ${(() => {
-        const cp = state.settings && state.settings.dataCheckpoint;
-        let line;
-        if (!cp) line = `<span class="text-mute">${t('Set a checkpoint to prove nothing gets lost during the day.','اضبط نقطة تحقق لإثبات عدم فقد أي بيانات خلال اليوم.')}</span>`;
-        else {
-          const cur = window._safetyCounts ? window._safetyCounts() : {};
+      // v6.610 — compact single-row strip (per-collection breakdown lives behind the ☁ Storage button).
+      let _cp;
+      { const cp = state.settings && state.settings.dataCheckpoint;
+        if (!cp) _cp = `<span class="text-mute">${t('Set a checkpoint to prove nothing gets lost during the day.','اضبط نقطة تحقق لإثبات عدم فقد أي بيانات خلال اليوم.')}</span>`;
+        else { const cur = window._safetyCounts ? window._safetyCounts() : {};
           let drops = 0; for (const k of Object.keys(cp.counts || {})) if ((cur[k] || 0) < (cp.counts[k] || 0)) drops++;
           const ago = window._safetyTimeAgo ? window._safetyTimeAgo(cp.at) : '';
-          line = drops
-            ? `<span style="color:var(--red);font-weight:700">⚠ ${drops} ${t('record type(s) decreased since','نوع سجل انخفض منذ')} ${escapeHtml(ago)}</span>`
-            : `<span style="color:var(--green);font-weight:700">✓ ${t('Nothing lost since','لم يُفقد شيء منذ')} ${escapeHtml(ago)}</span>`;
-        }
-        return `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;border-top:1px solid var(--border);margin-top:8px;padding-top:10px">
-          <div style="font-size:12px">${line}</div>
-          <button class="btn primary" style="font-size:12px;padding:6px 14px" onclick="window.showDataSafety && window.showDataSafety()">🛡 ${t('Verify data safety','تحقق من سلامة البيانات')}</button>
-        </div>`;
-      })()}
+          _cp = drops ? `<span style="color:var(--red);font-weight:700">⚠ ${drops} ${t('record type(s) decreased since','نوع سجل انخفض منذ')} ${escapeHtml(ago)}</span>`
+                      : `<span style="color:var(--green);font-weight:700">✓ ${t('Nothing lost since','لم يُفقد شيء منذ')} ${escapeHtml(ago)}</span>`; } }
+      return `
+    <div class="card" id="data-sync-card" style="margin-bottom:12px;border:1px solid rgba(34,197,94,.28);display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:10px 14px">
+      <div style="display:flex;align-items:center;gap:10px;min-width:0">
+        <span style="font-size:20px">☁️</span>
+        <div style="min-width:0">
+          <div style="font-weight:700;font-size:13px">${t('Data & Cloud Sync','البيانات والمزامنة السحابية')} · <span style="color:var(--green)">${totalDocs.toLocaleString()} ${t('documents in cloud','مستند في السحابة')}</span></div>
+          <div style="font-size:11px;margin-top:2px;display:flex;gap:14px;flex-wrap:wrap">⬇️ ${readBadge} ⬆️ ${saveBadge}</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <span style="font-size:12px">${_cp}</span>
+        <button class="btn primary" style="font-size:12px;padding:6px 12px" onclick="window.showDataSafety && window.showDataSafety()">🛡 ${t('Verify data safety','تحقق من سلامة البيانات')}</button>
+      </div>
     </div>`;
     })()}
 
-    <!-- Revenue stream breakdown -->
-    <div class="kpi-grid mb-3">
-      <div class="kpi green">
-        <div class="kpi-icon">🥋</div>
-        <div class="kpi-label">${t('Coaching Revenue','إيرادات التدريب')} (${s.periodShort})</div>
-        <div class="kpi-value num">${fmt(s.currCoachingRevenue)} <span style="font-size:13px;color:var(--text-dim);font-weight:500">QAR</span></div>
-        <div class="kpi-delta flat">${t('Memberships + classes','اشتراكات + حصص')}</div>
-      </div>
-      <div class="kpi cyan">
-        <div class="kpi-icon">🏟</div>
-        <div class="kpi-label">${t('Court Rental Revenue','إيرادات تأجير الملاعب')} (${s.periodShort})</div>
-        <div class="kpi-value num">${fmt(s.currRentalRevenue)} <span style="font-size:13px;color:var(--text-dim);font-weight:500">QAR</span></div>
-        <div class="kpi-delta flat">${s.currRentalCount} ${t('bookings','حجوزات')}</div>
-      </div>
-      <div class="kpi purple">
-        <div class="kpi-icon">🛒</div>
-        <div class="kpi-label">${t('Equipment Sales','مبيعات المعدات')} (${s.periodShort})</div>
-        <div class="kpi-value num">${fmt(s.maySales)} <span style="font-size:13px;color:var(--text-dim);font-weight:500">QAR</span></div>
-        <div class="kpi-delta flat">${t('Uniforms & gear','الأزياء والمعدات')}</div>
-      </div>
-      <div class="kpi">
-        <div class="kpi-icon">📊</div>
-        <div class="kpi-label">${t('Revenue Mix','توزيع الإيرادات')} (${s.periodShort})</div>
-        <div class="kpi-value num">${s.mayRevenue > 0 ? Math.round(s.mayCoachingRevenue / s.mayRevenue * 100) : 0}<span style="font-size:14px">%</span> <span style="font-size:12px;color:var(--text-dim);font-weight:500">${t('coaching','تدريب')}</span></div>
-        <div class="kpi-delta flat">${s.mayRevenue > 0 ? Math.round(s.mayRentalRevenue / s.mayRevenue * 100) : 0}% ${t('rental','تأجير')}</div>
-      </div>
-      <div class="kpi">
-        <div class="kpi-icon">🧾</div>
-        <div class="kpi-label" title="${t('Money physically received this month, by each payment’s date (the drawer). May differ from Revenue: a camp prepaid this month counts as cash now but as revenue in the month it starts, and unpaid billed sports are revenue but not yet cash.', 'المال المستلم فعلياً هذا الشهر حسب تاريخ كل دفعة. قد يختلف عن الإيراد: معسكر مدفوع مقدماً يُحتسب نقداً الآن لكنه إيراد في شهر بدايته.')}">${t('Cash Collected','النقد المُحصّل')} (${s.periodShort})</div>
-        <div class="kpi-value num">${fmt(s.currCashCollected)} <span style="font-size:13px;color:var(--text-dim);font-weight:500">QAR</span></div>
-        ${kpiDelta(s.currCashCollected, s.prevCashCollected)}
-      </div>
-    </div>
+    <!-- v6.609 — revenue-stream breakdown cards removed per owner (full detail on Reports). -->
 
     ${(() => {
       const proj = clubRenewalValue(state.members);
@@ -509,20 +457,7 @@ PAGES.dashboard = (main) => {
     </div>`;
     })()}
 
-    <!-- v6.605 — brief dashboard: five detail cards removed per owner; full breakdowns live on Reports. -->
-    <!-- Backup reminder & version info -->
-    <div class="card" style="margin-top:14px;display:flex;align-items:center;gap:14px;padding:14px 16px;background:rgba(91,141,239,.05);border:1px solid rgba(91,141,239,.2)">
-      <div style="font-size:26px">💾</div>
-      <div style="flex:1">
-        <div style="font-weight:600;font-size:13px">Backup before updates</div>
-        <div class="text-mute" style="font-size:11px;margin-top:2px">
-          Running <b>v${APP_VERSION}</b>. ${isCloudStorage()
-            ? 'Your data is stored in the cloud (Firebase) and syncs across devices — a JSON export is just an extra offline copy you can keep for safety.'
-            : 'When you receive a new version of this app, ALWAYS export a backup first, then import it after replacing files. Your data lives in this browser only.'}
-        </div>
-      </div>
-      <button class="btn ghost sm" onclick="navigate('settings')">⚙️ Settings</button>
-    </div>
+    <!-- v6.605/6.609 — brief dashboard: detail cards + backup-reminder card removed per owner. -->
   `;
 
   // Post-render — wire buttons FIRST so a later chart-draw error can't break them.
@@ -1550,7 +1485,9 @@ PAGES.members = (main) => {
           </button>
           <div id="filter-emonth-menu" style="display:none;position:absolute;left:0;top:100%;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-top:4px;padding:8px;min-width:180px;max-height:300px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.4)">
             <div style="display:flex;justify-content:space-between;padding:2px 6px 6px;border-bottom:1px solid var(--border);margin-bottom:4px"><button type="button" class="mfilter-all" data-cb="filter-emonth-cb" data-group="enrollMonths" style="background:none;border:none;color:var(--accent);font-size:12px;cursor:pointer;font-weight:600">All</button><button type="button" class="mfilter-none" data-cb="filter-emonth-cb" data-group="enrollMonths" style="background:none;border:none;color:var(--text-mute);font-size:12px;cursor:pointer">Clear</button></div>
+            <input type="text" class="mf2-search" placeholder="🔍 ${t('Search…', 'بحث…')}" style="width:100%;box-sizing:border-box;margin:0 0 6px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px" />
             ${enrollMonthOptions.length ? enrollMonthOptions.map(mo => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px"><input type="checkbox" class="filter-emonth-cb" value="${mo}" ${(filter.enrollMonths || []).includes(mo) ? 'checked' : ''} /> ${fmtMonth(mo)}</label>`).join('') : `<div class="text-mute" style="padding:6px;font-size:12px">${t('No enrollment dates', 'لا تواريخ تسجيل')}</div>`}
+            <div class="mf2-empty text-mute" style="display:none;padding:8px 6px;font-size:12px">${t('No matches', 'لا نتائج')}</div>
           </div>
         </div>
         <div style="position:relative">
@@ -1581,7 +1518,9 @@ PAGES.members = (main) => {
           </button>
           <div id="filter-nat-menu" style="display:none;position:absolute;left:0;top:100%;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-top:4px;padding:8px;min-width:180px;max-height:300px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.4)">
             <div style="display:flex;justify-content:space-between;padding:2px 6px 6px;border-bottom:1px solid var(--border);margin-bottom:4px"><button type="button" class="mfilter-all" data-cb="filter-nat-cb" data-group="nationalities" style="background:none;border:none;color:var(--accent);font-size:12px;cursor:pointer;font-weight:600">${t('All','الكل')}</button><button type="button" class="mfilter-none" data-cb="filter-nat-cb" data-group="nationalities" style="background:none;border:none;color:var(--text-mute);font-size:12px;cursor:pointer">${t('Clear','مسح')}</button></div>
+            <input type="text" class="mf2-search" placeholder="🔍 ${t('Search…', 'بحث…')}" style="width:100%;box-sizing:border-box;margin:0 0 6px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px" />
             ${[...new Set(state.members.map(m => m.nationality).filter(Boolean))].sort().map(n => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px"><input type="checkbox" class="filter-nat-cb" value="${escapeHtml(n)}" ${(filter.nationalities||[]).includes(n) ? 'checked' : ''} /> ${escapeHtml(n)}</label>`).join('') || `<div class="text-mute" style="font-size:12px;padding:4px">${t('No nationalities recorded','لا توجد جنسيات مسجلة')}</div>`}
+            <div class="mf2-empty text-mute" style="display:none;padding:8px 6px;font-size:12px">${t('No matches', 'لا نتائج')}</div>
           </div>
         </div>
         <select id="filter-incomplete" class="btn ghost" title="${t('Find records missing key fields','البحث عن سجلات ناقصة الحقول')}">
@@ -22113,7 +22052,32 @@ PAGES.settings = (main, section) => {
 PAGES.preferences = (main) => PAGES.settings(main, 'preferences');
 PAGES.club = (main) => PAGES.settings(main, 'club');
 PAGES.databackup = (main) => PAGES.settings(main, 'data');
-PAGES.danger = (main) => PAGES.settings(main, 'danger');
+// v6.612 — Danger Zone is PIN-gated (owner: '4242'). Client-side gate only (a second confirm on top
+// of the admin-only route + the existing double-confirm on each action), NOT cryptographic security.
+const DANGER_PIN = '4242';
+PAGES.danger = (main) => {
+  if (currentRole() !== 'admin') { main.innerHTML = `<div class="card" style="text-align:center;padding:40px"><div style="font-size:40px">🔒</div><h2>${t('Admins only', 'للمسؤولين فقط')}</h2></div>`; return; }
+  if (window._dangerUnlocked) { PAGES.settings(main, 'danger'); return; }
+  main.innerHTML = `
+    <div class="topbar"><div><h1>⚠️ ${t('Danger Zone', 'منطقة الخطر')}</h1><div class="subtitle">${t('Enter the PIN to continue', 'أدخل الرمز للمتابعة')}</div></div></div>
+    <div class="card" style="max-width:360px;margin:48px auto;text-align:center;padding:28px;border:1px solid var(--red)">
+      <div style="font-size:42px">🔒</div>
+      <div style="font-weight:800;font-size:16px;margin:8px 0 4px">${t('Protected page', 'صفحة محمية')}</div>
+      <div class="text-mute" style="font-size:12px;margin-bottom:18px;line-height:1.5">${t('This page can permanently delete data. Enter the PIN to open it.', 'قد تحذف هذه الصفحة البيانات نهائياً. أدخل الرمز لفتحها.')}</div>
+      <input id="danger-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="••••" style="width:150px;text-align:center;font-size:24px;letter-spacing:8px;padding:10px;border:1.5px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text)" onkeydown="if(event.key==='Enter')window._dangerUnlock()" />
+      <div style="margin-top:18px;display:flex;gap:8px;justify-content:center">
+        <button class="btn ghost" onclick="navigate('settings')">${t('Cancel', 'إلغاء')}</button>
+        <button class="btn primary" onclick="window._dangerUnlock()">🔓 ${t('Unlock', 'فتح')}</button>
+      </div>
+    </div>`;
+  setTimeout(() => { try { const el = document.getElementById('danger-pin'); if (el) el.focus(); } catch (_) {} }, 0);
+};
+window._dangerUnlock = function() {
+  const el = document.getElementById('danger-pin');
+  const v = (el && el.value || '').trim();
+  if (v === DANGER_PIN) { window._dangerUnlocked = true; render(); }
+  else { toast(t('Wrong PIN', 'رمز خاطئ'), 'error'); if (el) { el.value = ''; el.focus(); } }
+};
 
 // ─── Modal helpers ──────────────────────────────────────────
 // Shows a fixed banner when this browser is running an old cached version while
@@ -23463,23 +23427,35 @@ PAGES.attendance = (main) => {
   function exportAttendanceDetailsPdf(rows) {
     const months = (filter.months && filter.months.length) ? filter.months.slice().sort() : monthsWithData();
     if (!months.length) { toast(t('No attendance recorded yet', 'لا يوجد حضور مسجل بعد'), 'error'); return; }
-    const monthHeads = months.map(mo => `<th style="border:1px solid #e5e5ea;padding:4px 3px;font-size:9px;color:#777">${fmtMonth(mo)}</th>`).join('');
+    // v6.606 — PARENT-FRIENDLY layout: large fonts, a coloured month band, row striping and a bold
+    // per-student total, so a parent reads the sheet at a glance.
+    const monthHeads = months.map(mo => `<th class="mh">${fmtMonth(mo)}</th>`).join('');
     let grandY = 0;
-    const bodyRows = rows.map(({ m, sport, coachId, window: win, attKey }) => {
+    const bodyRows = rows.map(({ m, sport, coachId, window: win, attKey }, ri) => {
+      const _mix = attKey === MIXED;
       let rowY = 0;
       const cells = months.map(mo => {
         const dd = (attKey === MIXED) ? mixedDayMarks(m, mo) : (m.dailyAttendance?.[mo]?.[attKey || sport] || {});
+        const _monShort = fmtMonth(mo).split(' ')[0];   // full date per attended day (e.g. "5 Jul")
         const days = [];
         for (const k in dd) { if (dd[k] === 'Y' && inWin(win, mo, k)) days.push(parseInt(k, 10)); }
         days.sort((a, b) => a - b); rowY += days.length;
-        return `<td style="border:1px solid #eee;text-align:center;font-size:8.5px;vertical-align:top;background:${days.length ? '#f0fdf4' : '#fff'}">${days.length ? `<div style="font-weight:700;color:#059669">${days.length}</div><div style="color:#555;font-size:7.5px;line-height:1.3">${days.join(', ')}</div>` : '<span style="color:#ccc">·</span>'}</td>`;
+        const dateList = days.map(d => d + ' ' + _monShort).join(' · ');
+        return `<td class="dcell${days.length ? ' has' : ''}">${days.length ? `<div class="cnt">${days.length}</div><div class="dts">${dateList}</div>` : '<span class="none">—</span>'}</td>`;
       }).join('');
       grandY += rowY;
-      const _mix = attKey === MIXED;
-      return `<tr>
-        <td style="border:1px solid #e5e5ea;padding:4px 6px;font-size:9px;font-weight:600"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(m.name)}</div><div style="font-size:7.5px;color:#999;font-weight:400">${escapeHtml(sport)}${_mix ? ' · ' + escapeHtml(t('multi-coach', 'عدة مدربين')) : (sport !== SUMMER_CAMP ? ' · ' + escapeHtml(coachName(coachId)) : '')}</div></td>
+      // membership period (Start → Expiry) for this sport. Mixed/camp subs carry no coach.
+      const _sub = (m.subscriptions || []).filter(su => (su.activity || '') === sport)
+        .filter(su => _mix || coachId == null || su.coachId == null || String(su.coachId) === String(coachId))
+        .sort((a, b) => String(a.start || '').localeCompare(String(b.start || ''))).slice(-1)[0] || null;
+      const _start = (_sub && _sub.start) || (win && win.from) || null;
+      const _exp = (_sub && _sub.end) || (win && win.to) || null;
+      const _period = (_start || _exp) ? `<div class="period">📅 ${t('Membership', 'الاشتراك')}: <b>${_start ? fmtDate(_start) : '—'}</b> → <b>${_exp ? fmtDate(_exp) : '—'}</b></div>` : '';
+      const _coachLine = _mix ? t('multi-coach', 'عدة مدربين') : (sport !== SUMMER_CAMP ? coachName(coachId) : '');
+      return `<tr class="${ri % 2 ? 'odd' : ''}">
+        <td class="scell"><div class="sname">${escapeHtml(m.name)}</div><div class="ssport">${escapeHtml(sport)}${_coachLine ? ' · ' + escapeHtml(_coachLine) : ''}</div>${_period}</td>
         ${cells}
-        <td style="border:1px solid #e5e5ea;text-align:center;font-size:10px;font-weight:800;color:#059669">${rowY}</td>
+        <td class="tcell"><span class="tpill">${rowY}</span></td>
       </tr>`;
     }).join('');
     const coachLabel = filter.coaches.length ? filter.coaches.map(c => coachName(parseInt(c))).filter(Boolean).join(', ') : t('All coaches', 'كل المدربين');
@@ -23490,27 +23466,43 @@ PAGES.attendance = (main) => {
     win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>attendance_details</title>
     <style>
       *{margin:0;padding:0;box-sizing:border-box}
-      @page{size:A4 landscape;margin:8mm}
-      body{font-family:-apple-system,'Segoe UI',Arial,sans-serif;color:#1a1a1a;padding:14px}
-      .head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #f26060;padding-bottom:10px;margin-bottom:12px}
-      .brand{font-size:18px;font-weight:800}.brand span{color:#f26060}
-      .sub{color:#777;font-size:11px;margin-top:2px}
-      .meta{font-size:11px;color:#555;margin-bottom:10px}.meta b{color:#1a1a1a}
+      @page{size:A4 landscape;margin:9mm}
+      body{font-family:-apple-system,'Segoe UI',Arial,sans-serif;color:#1a1a1a;padding:16px;font-size:14px}
+      .head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:4px solid #f26060;padding-bottom:12px;margin-bottom:14px}
+      .brand{font-size:26px;font-weight:900;letter-spacing:-.3px}.brand span{color:#f26060}
+      .sub{color:#555;font-size:15px;margin-top:3px;font-weight:600}
+      .gen{text-align:right;font-size:13px;color:#777}.gen b{font-size:15px;color:#1a1a1a}
+      .meta{font-size:14px;color:#333;margin-bottom:14px;background:#f6f8ff;border:1px solid #e3e8f7;border-radius:10px;padding:11px 14px}.meta b{color:#0a0a0a;font-size:15px}
       table{border-collapse:collapse;width:100%}
-      thead th{background:#fafafa;text-align:center}
-      thead th:first-child{text-align:left}
-      .foot{margin-top:14px;font-size:9px;color:#aaa;text-align:center;border-top:1px solid #eee;padding-top:6px}
+      thead th{background:#1f2a44;color:#fff;text-align:center;font-size:14px;font-weight:700;padding:9px 6px;border:1px solid #2b3a5e}
+      thead th.mh{min-width:120px}
+      thead th:first-child{text-align:left;border-top-left-radius:8px}
+      thead th:last-child{border-top-right-radius:8px}
+      tbody tr.odd td{background:#f7f9fc}
+      td{border:1px solid #e5e5ea;vertical-align:middle}
+      .scell{padding:9px 11px}
+      .sname{font-size:16px;font-weight:800;line-height:1.15}
+      .ssport{font-size:13px;color:#555;font-weight:600;margin-top:2px}
+      .period{font-size:12px;color:#3b5bdb;margin-top:5px}.period b{color:#1a3aa0}
+      .dcell{text-align:center;padding:8px 6px}
+      .dcell.has{background:#eafaf1}
+      .cnt{font-size:22px;font-weight:900;color:#0f9d58;line-height:1}
+      .dts{color:#444;font-size:12px;line-height:1.5;margin-top:4px}
+      .none{color:#ccc;font-size:18px}
+      .tcell{text-align:center;padding:8px}
+      .tpill{display:inline-block;min-width:40px;background:#0f9d58;color:#fff;font-size:20px;font-weight:900;border-radius:20px;padding:5px 12px}
+      .foot{margin-top:16px;font-size:12px;color:#888;text-align:center;border-top:1px solid #eee;padding-top:9px}
     </style></head><body>
       <div class="head">
         <div><div class="brand">Black <span>Stars</span> Sports Club</div><div class="sub">Waab, Doha · ${t('Attendance details report', 'تقرير الحضور المفصّل')}</div></div>
-        <div style="text-align:right;font-size:11px;color:#777">${t('Generated', 'صدر')}<br><b>${fmtDate(TODAY)}</b></div>
+        <div class="gen">${t('Generated', 'صدر')}<br><b>${fmtDate(TODAY)}</b></div>
       </div>
-      <div class="meta">${escapeHtml(monthsLabel)} (${months.length}) · ${escapeHtml(coachLabel)} · ${escapeHtml(sportLabel)} · <b>${distinctMembers}</b> ${t('students', 'طالب')} · <b>${rows.length}</b> ${t('rows', 'صفوف')} · <b>${grandY}</b> ${t('present total', 'إجمالي الحضور')}</div>
+      <div class="meta">📆 <b>${escapeHtml(monthsLabel)}</b> (${months.length} ${t('month(s)', 'شهر')}) · 🧑‍🏫 ${escapeHtml(coachLabel)} · 🏅 ${escapeHtml(sportLabel)} · 👥 <b>${distinctMembers}</b> ${t('students', 'طالب')} · <b>${rows.length}</b> ${t('rows', 'صفوف')} · ✅ <b>${grandY}</b> ${t('classes attended in total', 'إجمالي الحصص المحضورة')}</div>
       <table>
-        <thead><tr><th style="border:1px solid #e5e5ea;padding:4px 6px;font-size:9px;color:#777">${t('Student · Sport · Coach', 'الطالب · الرياضة · المدرب')}</th>${monthHeads}<th style="border:1px solid #e5e5ea;font-size:9px;color:#777">${t('Total Y', 'إجمالي')}</th></tr></thead>
+        <thead><tr><th>${t('Student · Sport · Coach', 'الطالب · الرياضة · المدرب')}</th>${monthHeads}<th>${t('Total', 'الإجمالي')}</th></tr></thead>
         <tbody>${bodyRows}</tbody>
       </table>
-      <div class="foot">Black Stars CRM · ${t('each cell = the days present that month', 'كل خلية = أيام الحضور في ذلك الشهر')}</div>
+      <div class="foot">Black Stars CRM · ${t('each cell shows the dates the student attended that month', 'كل خلية تعرض تواريخ حضور الطالب في ذلك الشهر')} · 📅 ${t('Membership = start → expiry', 'الاشتراك = البداية ← الانتهاء')}</div>
       <script>window.onload=()=>window.print();<\/script>
     </body></html>`);
     win.document.close();
@@ -26545,6 +26537,11 @@ PAGES.expiring = (main) => {
     [m.sport, ...((m.enrollments||[]).map(e=>e.sport)), ...((m.subscriptions||[]).map(s=>s.activity))].filter(Boolean)
   ))].sort();
   const coachesInList = [...new Set(allEntries.map(({m}) => m.coachId).filter(Boolean))];
+  // v6.608 — total renewal VALUE per bucket (sum each member's current membership price). Shown on
+  // every summary box so the desk sees the money at stake, not just the head-count.
+  const _rv = m => (typeof memberRenewalValue === 'function' ? (Number(memberRenewalValue(m)) || 0) : 0);
+  const _sumVal = arr => arr.reduce((s, x) => s + _rv(x.m), 0);
+  const valExpired = _sumVal(expired), valSoon = _sumVal(expiringSoon), valWeek = _sumVal(week), valUpcoming = _sumVal(upcoming), valCompleted = _sumVal(completed);
 
   function matchFilter({ m, days }) {
     // "Recently expired" bucket: only expired within the last N days.
@@ -26699,7 +26696,7 @@ PAGES.expiring = (main) => {
             <span class="exp-chevron" style="display:inline-block;transition:transform .15s;transform:rotate(${isCollapsed ? '-90' : '0'}deg);color:${color};font-size:13px">▾</span>
             <div>
               <div class="card-title" style="color:${color}">${icon} ${title}</div>
-              <div class="card-subtitle">${list.length} member${list.length === 1 ? '' : 's'}${(!isViewerRole() && list.length) ? ` · 💰 <b style="color:${color}">${fmt(list.length * AVG_RENEWAL)} QAR</b> ${t('potential', 'محتمل')}` : ''}${selectedInSection ? ` · <b style="color:var(--blue)">${selectedInSection} selected</b>` : ''}${isCollapsed ? ' · collapsed (click to expand)' : ''}</div>
+              <div class="card-subtitle">${list.length} member${list.length === 1 ? '' : 's'}${(!isViewerRole() && list.length) ? ` · 💰 <b style="color:${color}">${fmt(_sumVal(list))} QAR</b> ${t('potential', 'محتمل')}` : ''}${selectedInSection ? ` · <b style="color:var(--blue)">${selectedInSection} selected</b>` : ''}${isCollapsed ? ' · collapsed (click to expand)' : ''}</div>
             </div>
           </div>
         </div>
@@ -26740,37 +26737,42 @@ PAGES.expiring = (main) => {
         <div class="kpi-icon">⛔</div>
         <div class="kpi-label">Already Expired</div>
         <div class="kpi-value num">${expired.length}</div>
+        <div class="kpi-delta" style="color:#0f9d58;font-weight:700">💰 ${fmt(valExpired)} QAR</div>
         <div class="kpi-delta flat">Lost members · click to filter</div>
       </div>
       <div class="kpi orange" style="cursor:pointer" onclick="document.getElementById('exp-bucket').value='soon';document.getElementById('exp-bucket').dispatchEvent(new Event('change'))">
         <div class="kpi-icon">⏰</div>
         <div class="kpi-label">Expiring in ≤ ${threshold} days</div>
         <div class="kpi-value num">${expiringSoon.length}</div>
+        <div class="kpi-delta" style="color:#0f9d58;font-weight:700">💰 ${fmt(valSoon)} QAR</div>
         <div class="kpi-delta flat">Call them now · click to filter</div>
       </div>
       <div class="kpi orange" style="cursor:pointer" onclick="document.getElementById('exp-bucket').value='d7';document.getElementById('exp-bucket').dispatchEvent(new Event('change'))">
         <div class="kpi-icon">⏳</div>
         <div class="kpi-label">Expiring in ≤ 7 days</div>
         <div class="kpi-value num">${expiringSoon.length + week.length}</div>
+        <div class="kpi-delta" style="color:#0f9d58;font-weight:700">💰 ${fmt(valSoon + valWeek)} QAR</div>
         <div class="kpi-delta flat">This week · click to filter</div>
       </div>
       <div class="kpi" style="cursor:pointer;border:1px solid var(--purple)" onclick="document.getElementById('exp-bucket').value='completed';document.getElementById('exp-bucket').dispatchEvent(new Event('change'))">
         <div class="kpi-icon">✅</div>
         <div class="kpi-label" style="color:var(--purple)">Completed</div>
         <div class="kpi-value num" style="color:var(--purple)">${completed.length}</div>
+        <div class="kpi-delta" style="color:#0f9d58;font-weight:700">💰 ${fmt(valCompleted)} QAR</div>
         <div class="kpi-delta flat">Finished classes · click to filter</div>
       </div>
       <div class="kpi blue" style="cursor:pointer" onclick="document.getElementById('exp-bucket').value='upcoming';document.getElementById('exp-bucket').dispatchEvent(new Event('change'))">
         <div class="kpi-icon">📅</div>
         <div class="kpi-label">Expiring in ≤ 30 days</div>
         <div class="kpi-value num">${week.length + upcoming.length}</div>
+        <div class="kpi-delta" style="color:#0f9d58;font-weight:700">💰 ${fmt(valWeek + valUpcoming)} QAR</div>
         <div class="kpi-delta flat">On the horizon · click to filter</div>
       </div>
       ${isViewerRole() ? '' : `<div class="kpi green">
         <div class="kpi-icon">💰</div>
         <div class="kpi-label">Potential Revenue</div>
-        <div class="kpi-value num">${fmt((expired.length + expiringSoon.length) * AVG_RENEWAL)} <span style="font-size:12px;color:var(--text-dim)">QAR</span></div>
-        <div class="kpi-delta flat">@ ${fmt(AVG_RENEWAL)} QAR avg/renewal</div>
+        <div class="kpi-value num">${fmt(valExpired + valSoon)} <span style="font-size:12px;color:var(--text-dim)">QAR</span></div>
+        <div class="kpi-delta flat">Expired + due soon · at current membership price</div>
       </div>`}
     </div>
 
@@ -29112,14 +29114,19 @@ function userRolesListHtml() {
   const groups = {};
   for (const e of emails) { const role = (map[e] || {}).role || 'student'; (groups[role] = groups[role] || []).push(e); }
   const orderedRoles = ROLE_ORDER.filter(r => groups[r]).concat(Object.keys(groups).filter(r => ROLE_ORDER.indexOf(r) === -1));
+  window._userGroupCollapsed = window._userGroupCollapsed || {};
+  const _searching = !!(window._userSearch && window._userSearch.trim());   // while searching, keep all groups open
   const body = orderedRoles.map(role => {
     const list = groups[role].sort();
-    const hdr = `<tr style="background:var(--surface-2)"><td colspan="4" style="padding:7px 8px;font-weight:700;font-size:12px">${EMOJI[role] || '•'} ${ROLE_LABELS[role] || role} <span class="text-mute" style="font-weight:400">· ${list.length}</span></td></tr>`;
-    return hdr + list.map(rowHtml).join('');
+    const collapsed = !_searching && !!window._userGroupCollapsed[role];   // v6.611 — click a group header to collapse/expand
+    const chev = collapsed ? '▸' : '▾';
+    const hdr = `<tr style="background:var(--surface-2);cursor:pointer" onclick="window._toggleUserGroup('${role}')" title="${t('Click to collapse / expand', 'اضغط للطي / التوسيع')}"><td colspan="4" style="padding:7px 8px;font-weight:700;font-size:12px"><span style="display:inline-block;width:14px;color:var(--text-mute)">${chev}</span> ${EMOJI[role] || '•'} ${ROLE_LABELS[role] || role} <span class="text-mute" style="font-weight:400">· ${list.length}</span></td></tr>`;
+    return hdr + (collapsed ? '' : list.map(rowHtml).join(''));
   }).join('');
   return `<table style="width:100%;border-collapse:collapse"><thead><tr style="text-align:left;font-size:11px;color:var(--text-mute)"><th style="padding:4px 8px">Email</th><th style="padding:4px 8px">Role</th><th style="padding:4px 8px">Linked to</th><th></th></tr></thead><tbody>${body}</tbody></table>`;
 }
 window.renderUserRolesList = function() { const elx = document.getElementById('user-roles-list'); if (elx) elx.innerHTML = userRolesListHtml(); const s = document.getElementById('user-roles-summary'); if (s) s.innerHTML = userRolesSummaryHtml(); };
+window._toggleUserGroup = function(role) { window._userGroupCollapsed = window._userGroupCollapsed || {}; window._userGroupCollapsed[role] = !window._userGroupCollapsed[role]; renderUserRolesList(); };
 function userRolesSummaryHtml() {
   const map = (state.settings && state.settings.userRoles) || {};
   let admins = 0, coaches = 0, students = 0, receptionists = 0, revoked = 0;
@@ -29156,6 +29163,70 @@ window.lookupUserRole = function() {
     <span style="font-family:monospace;font-size:12px">${escapeHtml(email)}</span> → <span class="badge">${ROLE_LABELS[r.role] || r.role}</span>${revoked}${escapeHtml(linked)}
     <div class="text-mute" style="font-size:11px;margin-top:2px">${how}</div>${upd}</div>`;
 };
+// ─── Logins Logs Audit — every sign-in captured (v6.611) ───────────────────────
+PAGES.loginlogs = (main) => {
+  if (currentRole() !== 'admin') {
+    main.innerHTML = `<div class="card" style="text-align:center;padding:40px"><div style="font-size:40px">🔒</div><h2>${t('Admins only', 'للمسؤولين فقط')}</h2><div class="text-mute">${t('Logins Logs Audit is restricted to administrators.', 'سجل تسجيلات الدخول متاح للمسؤولين فقط.')}</div></div>`;
+    return;
+  }
+  const isCloud = (typeof isCloudStorage === 'function') ? isCloudStorage() : false;
+  // loginLogs is lazy (kept out of the hot sync) — fetch it once per open for DISPLAY only; never
+  // merge server rows into state (they are immutable, and merging would re-send them). This session's
+  // own recorded logins (state.loginLogs) are unioned in so they show immediately.
+  if (isCloud && window._loginLogsFetched === undefined && window.Storage && typeof window.Storage.loadLoginLogs === 'function') {
+    window._loginLogsFetched = null;   // pending
+    window.Storage.loadLoginLogs().then(rows => { window._loginLogsFetched = Array.isArray(rows) ? rows : []; if (state.route === 'loginlogs') render(); })
+      .catch(() => { window._loginLogsFetched = []; if (state.route === 'loginlogs') render(); });
+  }
+  const _fetched = Array.isArray(window._loginLogsFetched) ? window._loginLogsFetched : [];
+  const _byId = new Map();
+  for (const l of _fetched) if (l && l.id != null) _byId.set(String(l.id), l);
+  for (const l of (state.loginLogs || [])) if (l && l.id != null) _byId.set(String(l.id), l);
+  const logs = [...(_byId.size ? _byId.values() : (state.loginLogs || []))].sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
+  const _loading = isCloud && window._loginLogsFetched === null;
+  window._loginLogSearch = window._loginLogSearch || '';
+  const q = (window._loginLogSearch || '').trim().toLowerCase();
+  const filtered = q ? logs.filter(l => [l.email, l.name, l.role, l.device].filter(Boolean).join(' ').toLowerCase().includes(q)) : logs;
+  const roleBadge = r => `<span class="badge">${ROLE_LABELS[r] || r || '—'}</span>`;
+  const rows = filtered.slice(0, 1000).map(l => `<tr style="border-top:1px solid var(--border)">
+      <td style="padding:6px 8px;white-space:nowrap">${fmtDateTime(l.at)}</td>
+      <td style="padding:6px 8px;font-family:monospace;font-size:12px">${escapeHtml(l.email || '')}</td>
+      <td style="padding:6px 8px">${escapeHtml(l.name || '')}</td>
+      <td style="padding:6px 8px">${roleBadge(l.role)}</td>
+      <td style="padding:6px 8px;font-size:12px">${escapeHtml(l.device || '—')}</td>
+    </tr>`).join('');
+  main.innerHTML = `
+    <div class="topbar">
+      <div><h1>🕵 ${t('Logins Logs Audit', 'سجل تسجيلات الدخول')}</h1><div class="subtitle">${t('Every sign-in captured — newest first', 'كل تسجيل دخول مُسجَّل — الأحدث أولاً')}</div></div>
+      <div class="topbar-actions"><button class="btn ghost" id="loginlogs-refresh">🔄 ${t('Refresh', 'تحديث')}</button><button class="btn ghost" id="loginlogs-export">📥 ${t('Export CSV', 'تصدير CSV')}</button></div>
+    </div>
+    <div class="card">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+        <input id="loginlogs-search" placeholder="🔎 ${t('Search email, name, role, device…', 'ابحث بالبريد أو الاسم أو الدور أو الجهاز…')}" value="${escapeHtml(window._loginLogSearch || '')}" style="flex:1;min-width:220px;padding:7px 11px" oninput="window._loginLogSearch=this.value; render();" />
+        <span class="text-mute" style="font-size:12px">${filtered.length} / ${logs.length} ${t('logins', 'تسجيل')}</span>
+      </div>
+      ${logs.length ? `<div style="max-height:66vh;overflow:auto;border:1px solid var(--border);border-radius:8px">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead style="position:sticky;top:0;background:var(--surface)"><tr style="text-align:left;color:var(--text-mute);font-size:11px">
+            <th style="padding:7px 8px">${t('When', 'الوقت')}</th><th style="padding:7px 8px">${t('Email', 'البريد')}</th><th style="padding:7px 8px">${t('Name', 'الاسم')}</th><th style="padding:7px 8px">${t('Role', 'الدور')}</th><th style="padding:7px 8px">${t('Device', 'الجهاز')}</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        ${filtered.length > 1000 ? `<div class="text-mute" style="padding:8px;font-size:11px">${t('Showing the newest 1000 of', 'عرض أحدث 1000 من')} ${filtered.length}</div>` : ''}
+      </div>` : `<div class="text-mute" style="padding:24px;text-align:center">${_loading ? '⏳ ' + t('Loading logins from the cloud…', 'جارٍ تحميل تسجيلات الدخول من السحابة…') : t('No logins captured yet. New sign-ins will appear here.', 'لا توجد تسجيلات دخول بعد. ستظهر عمليات الدخول الجديدة هنا.')}</div>`}
+    </div>`;
+  const rfr = document.getElementById('loginlogs-refresh');
+  if (rfr) rfr.addEventListener('click', () => { window._loginLogsFetched = undefined; render(); });
+  const exp = document.getElementById('loginlogs-export');
+  if (exp) exp.addEventListener('click', () => {
+    const esc = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+    const csv = ['When,Email,Name,Role,Device,UserAgent']
+      .concat(filtered.map(l => [l.at, l.email, l.name, l.role, l.device, l.ua].map(esc).join(','))).join('\n');
+    downloadFile('login-logs.csv', csv, 'text/csv');
+    toast(t('Exported login-logs.csv', 'تم تصدير login-logs.csv'));
+  });
+};
+
 // ─── Users & Roles — dedicated admin screen ────────────────────────
 PAGES.users = (main) => {
   // Admin-only, hard guard — this screen exposes the role map, revoke-access controls and the
@@ -30686,6 +30757,8 @@ PAGES.reports = (main) => {
     // ── v6.574: visual insights (folded in from the old Charts screen) — same period, same canonical
     // numbers as the tables above, so the charts and the figures can never disagree.
     const _scoped = (typeof allDataMonths === 'function' ? allDataMonths() : []).filter(inPeriod).sort();
+    // v6.610 — renewals done in the report period (count renewal rows whose start month is in scope).
+    const _repRenewals = (state.members || []).reduce((n, m) => m.deleted ? n : n + (m.renewals || []).filter(r => inPeriodDate(r.start || r.createdAt || '')).length, 0);
     const _monthly = _scoped.map(mk => { const fa = financeAgg([mk]); return {
       short: (typeof _chMonthShort === 'function' ? _chMonthShort(mk) : fmtMonth(mk)),
       revenue: fa.revenue, cost: fa.expenses + fa.salaries, profit: fa.profit, expenses: fa.expenses,
@@ -30720,9 +30793,9 @@ PAGES.reports = (main) => {
           <div class="kpi-delta flat">${d.invCount} invoices</div>
         </div>
         <div class="kpi orange">
-          <div class="kpi-label">New Members</div>
-          <div class="kpi-value num">${d.newMembers}</div>
-          <div class="kpi-delta flat">${d.activeMembers} active overall</div>
+          <div class="kpi-label">${t('New Members', 'أعضاء جدد')} · ${t('Renewals', 'التجديدات')}</div>
+          <div class="kpi-value num">🆕 ${d.newMembers} <span style="color:var(--text-dim);font-weight:500;margin:0 4px">·</span> 🔄 <span style="color:var(--purple)">${_repRenewals}</span></div>
+          <div class="kpi-delta flat">${d.activeMembers} ${t('active overall', 'نشط إجمالاً')} · ${_repRenewals} ${_repRenewals === 1 ? t('renewal', 'تجديد') : t('renewals', 'تجديدات')}</div>
         </div>
       </div>
 
@@ -34559,6 +34632,30 @@ window.normalizeAllMethodsUI = function () {
   confirmSaved('✅ ' + t(`Normalised ${n} invoice method(s)`, `تم توحيد طرق الدفع في ${n} فاتورة`));
 };
 
+// v6.614 — make every Cleanup Center section card collapsible. Generic: click a card header (but not
+// its buttons) to toggle its body; a ▾/▸ chevron shows the state. No re-render (the page's scans are
+// heavy), so collapsing is instant.
+function _wireCleanupCollapse(root) {
+  if (!root || !root.querySelectorAll) return;
+  root.querySelectorAll('.card').forEach(card => {
+    const head = card.querySelector('.card-header');
+    if (!head || head._collapseWired) return;
+    head._collapseWired = true;
+    head.style.cursor = 'pointer';
+    const chev = document.createElement('span');
+    chev.className = 'cleanup-chev';
+    chev.textContent = '▾';
+    chev.style.cssText = 'margin-left:8px;color:var(--text-mute);display:inline-block;transition:transform .15s;flex:none';
+    head.appendChild(chev);
+    const bodies = Array.prototype.slice.call(card.children).filter(c => c !== head);
+    head.addEventListener('click', e => {
+      if (e.target && e.target.closest && e.target.closest('button, a, input, select')) return;   // let the Fix-all etc. buttons work
+      const hidden = bodies.length && bodies[0].style.display === 'none';
+      bodies.forEach(b => { b.style.display = hidden ? '' : 'none'; });
+      chev.style.transform = hidden ? '' : 'rotate(-90deg)';
+    });
+  });
+}
 PAGES.cleanup = (main) => {
   if (currentRole() !== 'admin') { main.innerHTML = `<div class="empty"><div class="empty-icon">🔐</div>${t('Admins only', 'للمشرفين فقط')}</div>`; return; }
   const dupEnr = findDuplicateEnrollments();
@@ -34589,10 +34686,10 @@ PAGES.cleanup = (main) => {
     <div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
         <div><b>${escapeHtml(d.member.name)}</b> · <span class="text-mute" style="font-size:12px">${d.invoices.length} ${t('invoices', 'فواتير')} · ${fmt(d.total)} QAR ${t('total', 'إجمالي')} · ${fmt(d.paid)} ${t('paid', 'مدفوع')}</span></div>
-        <button class="btn ghost sm" style="color:var(--blue)" onclick="mergeMemberInvoicesUI(${d.member.id})">🧾 ${t('Merge into one', 'دمج في واحدة')}</button>
+        <button class="btn ghost sm" style="color:var(--blue)" onclick="mergeMemberInvoicesUI(${d.member.id}, [${(d.ids || d.invoices.map(i => i.id)).join(',')}])">🧾 ${t('Merge duplicates', 'دمج المكرر')}</button>
       </div>
       <div style="margin-top:6px;font-size:11px" class="text-mute">${d.invoices.map((iv, i) => `${i === 0 ? '✅ ' : '↪ '}${escapeHtml(iv.ref || ('INV' + iv.id))} · ${iv.date ? fmtDate(iv.date) : '—'} · ${fmt(iv.amount || 0)}`).join('<br>')}</div>
-    </div>`).join('') : `<div class="text-mute" style="padding:14px;text-align:center;font-size:13px">✅ ${t('No members with splittable invoices', 'لا يوجد أعضاء بفواتير متعددة')}</div>`;
+    </div>`).join('') : `<div class="text-mute" style="padding:14px;text-align:center;font-size:13px">✅ ${t('No duplicate invoices found', 'لا توجد فواتير مكررة')}</div>`;
 
   const misdatedSection = misdated.length ? misdated.map(d => `
     <div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px">
@@ -34665,7 +34762,7 @@ PAGES.cleanup = (main) => {
 
     <div class="kpi-grid" style="grid-template-columns:repeat(7,1fr);gap:12px;margin-bottom:16px">
       <div class="kpi ${dupEnr.length ? 'red' : 'green'}"><div class="kpi-label">${t('Duplicate enrollments', 'تسجيلات مكررة')}</div><div class="kpi-value num">${dupEnr.length}</div></div>
-      <div class="kpi ${mergeable.length ? 'orange' : 'green'}"><div class="kpi-label">${t('Members with split invoices', 'أعضاء بفواتير متعددة')}</div><div class="kpi-value num">${mergeable.length}</div></div>
+      <div class="kpi ${mergeable.length ? 'orange' : 'green'}"><div class="kpi-label">${t('Duplicate invoices', 'فواتير مكررة')}</div><div class="kpi-value num">${mergeable.length}</div></div>
       <div class="kpi ${misdated.length ? 'orange' : 'green'}"><div class="kpi-label">${t('Misdated invoices', 'فواتير بتواريخ خاطئة')}</div><div class="kpi-value num">${misdated.length}</div></div>
       <div class="kpi ${dupProducts.length ? 'orange' : 'green'}"><div class="kpi-label">${t('Duplicate products', 'منتجات مكررة')}</div><div class="kpi-value num">${dupProducts.length}</div></div>
       <div class="kpi ${campRecalc.length ? 'orange' : 'green'}"><div class="kpi-label">${t('Camp to recalc', 'معسكر للإعادة')}</div><div class="kpi-value num">${campRecalc.length}</div></div>
@@ -34700,7 +34797,7 @@ PAGES.cleanup = (main) => {
     </div>
 
     <div class="card">
-      <div class="card-header"><div><div class="card-title">🧾 ${t('Consolidate invoices', 'دمج الفواتير')}</div><div class="card-subtitle">${t('Members with several membership invoices. Merge combines them into the oldest one; payments keep their months so revenue is unchanged.', 'أعضاء لديهم عدة فواتير اشتراك. الدمج يجمعها في الأقدم؛ المدفوعات تحتفظ بشهورها فلا يتغير الإيراد.')}</div></div></div>
+      <div class="card-header"><div><div class="card-title">🧾 ${t('Merge duplicate invoices', 'دمج الفواتير المكررة')}</div><div class="card-subtitle">${t('Only TRUE duplicates — same date, same amount and same sport(s). Merge folds them into the oldest; payments keep their months so revenue is unchanged. Different-date renewals are NOT duplicates and are left alone.', 'فقط المكرر الحقيقي — نفس التاريخ والمبلغ والرياضة. الدمج يجمعها في الأقدم؛ المدفوعات تحتفظ بشهورها فلا يتغير الإيراد. تجديدات بتواريخ مختلفة ليست مكررة وتُترك كما هي.')}</div></div></div>
       <div style="padding:12px">${mergeSection}</div>
     </div>
 
@@ -34733,6 +34830,7 @@ PAGES.cleanup = (main) => {
       <div style="padding:12px">${enrDriftSection}</div>
     </div>
   `;
+  _wireCleanupCollapse(main);
 };
 
 window.dedupeMemberEnrollment = function(memberId, sport) {
@@ -34830,13 +34928,14 @@ window.fixAllInvoiceDatesUI = function() {
   confirmSaved(`Re-dated ${n} invoice${n === 1 ? '' : 's'} to their start dates`);   // v6.388: confirm before success
 };
 
-window.mergeMemberInvoicesUI = function(memberId) {
+window.mergeMemberInvoicesUI = function(memberId, ids) {
   const m = state.members.find(x => x.id === memberId);
   if (!m) return;
-  const invs = (state.invoices || []).filter(inv => !inv.deleted && inv.customerId === memberId && !inv.switchCredit && inv.activityType !== 'switch-credit' && (inv.category || 'Membership') === 'Membership');
+  const restrict = (Array.isArray(ids) && ids.length) ? ids.map(String) : null;   // v6.613 — the DUPLICATE group only
+  const invs = (state.invoices || []).filter(inv => !inv.deleted && inv.customerId === memberId && !inv.switchCredit && inv.activityType !== 'switch-credit' && (inv.category || 'Membership') === 'Membership' && (!restrict || restrict.includes(String(inv.id))));
   if (invs.length < 2) { toast('Only one invoice — nothing to merge', 'info'); return; }
-  if (!confirm(`Merge ${m.name}'s ${invs.length} membership invoices into one?\n\nAll sport lines and payments move into the oldest invoice; the others are archived (soft-deleted). Payments keep their own months, so monthly revenue does not change.`)) return;
-  const kept = mergeMemberInvoices(memberId);
+  if (!confirm(`Merge these ${invs.length} DUPLICATE invoices for ${m.name} (same date, amount & sport) into one?\n\nTheir lines and payments move into the oldest; the others are archived (soft-deleted). A backup is taken first and revenue is unchanged.`)) return;
+  const kept = mergeMemberInvoices(memberId, restrict);
   if (!kept) { toast('Merge failed', 'error'); return; }
   if (typeof audit === 'function') audit('cleanup.merge_invoices', 'member:' + memberId, `Merged ${invs.length} invoices into ${kept.ref || ('INV' + kept.id)}`);
   render();

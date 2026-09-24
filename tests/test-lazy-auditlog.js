@@ -13,7 +13,7 @@ const R = H.reporter('LAZY AUDIT LOG · hot/lazy split');
 
 R.section('storage.js: auditLog is split OUT of the hot path');
 {
-  R.ok('LAZY_COLLECTIONS contains auditLog', /LAZY_COLLECTIONS = new Set\(\['auditLog'\]\)/.test(storage));
+  R.ok('LAZY_COLLECTIONS contains auditLog', /LAZY_COLLECTIONS = new Set\(\[[^\]]*'auditLog'[^\]]*\]\)/.test(storage));
   R.ok('HOT_COLLECTIONS excludes the lazy ones', /HOT_COLLECTIONS = COLLECTIONS\.filter\(c => !LAZY_COLLECTIONS\.has\(c\)\)/.test(storage));
   R.ok('the blocking load reads HOT_COLLECTIONS (not auditLog)', /readCols = memberScope \? HOT_COLLECTIONS\.filter\(c => MEMBER_READABLE\.has\(c\)\) : HOT_COLLECTIONS/.test(storage));
   R.ok('the live listener subscribes to HOT_COLLECTIONS only', /for \(const name of HOT_COLLECTIONS\) \{\s*\n\s*_seeded\[name\] = false;/.test(storage));

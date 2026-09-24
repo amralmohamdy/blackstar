@@ -24,8 +24,17 @@ R.section('same data as the grid: attKey / Mixed / window');
   const src = H.readSrc();
   R.ok('Mixed rows read mixedDayMarks; normal rows read attKey||sport', /\(attKey === MIXED\) \? mixedDayMarks\(m, mo\) : \(m\.dailyAttendance\?\.\[mo\]\?\.\[attKey \|\| sport\] \|\| \{\}\)/.test(src));
   R.ok('a day counts only inside the row window (inWin)', /if \(dd\[k\] === 'Y' && inWin\(win, mo, k\)\) days\.push/.test(src));
-  R.ok('the attended DATES are listed (details), not just a count', /days\.join\(', '\)/.test(src));
+  R.ok('the attended DATES are listed in FULL (v6.606: "5 Jul"), not just day numbers', /const dateList = days\.map\(d => d \+ ' ' \+ _monShort\)\.join\(' · '\)/.test(src));
   R.ok('per-row total + grand total accumulate', /rowY \+= days\.length/.test(src) && /grandY \+= rowY/.test(src));
+}
+
+R.section('v6.606 — membership Start → Expiry per row');
+{
+  const src = H.readSrc();
+  R.ok('resolves the sub for this sport (coach-matched, Mixed/camp exempt)', /const _sub = \(m\.subscriptions \|\| \[\]\)\.filter\(su => \(su\.activity \|\| ''\) === sport\)/.test(src));
+  R.ok('start/expiry fall back to the window when no sub', /const _start = \(_sub && _sub\.start\) \|\| \(win && win\.from\)/.test(src) && /const _exp = \(_sub && _sub\.end\) \|\| \(win && win\.to\)/.test(src));
+  R.ok('a 📅 start → expiry line is rendered in the name cell', /📅 \$\{t\('Membership'[\s\S]{0,60}<b>\$\{_start \? fmtDate\(_start\) : '—'\}<\/b> → <b>\$\{_exp \? fmtDate\(_exp\) : '—'\}<\/b>/.test(src));
+  R.ok('v6.606 parent-friendly styling present (big count + total pill)', /\.cnt\{font-size:22px/.test(src) && /\.tpill\{[\s\S]{0,80}font-size:20px/.test(src));
 }
 
 R.section('renders on the attendance screen');
