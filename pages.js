@@ -145,13 +145,23 @@ PAGES.dashboard = (main) => {
   const s = computeStats();
   // v6.605 — renewals done in the SAME period as the KPIs (count renewal rows whose start month is in scope).
   const _dashMonthsSet = new Set(dashPeriodMonths(normalizeDashPeriod()));
-  let renewalsThisPeriod = 0;
+  let renewalsThisPeriod = 0, newThisPeriod = 0, withdrawnCount = 0;
   for (const _m of state.members) {
     if (_m.deleted) continue;
     for (const _r of (_m.renewals || [])) {
       const _mo = String(_r.start || _r.createdAt || '').slice(0, 7);
       if (_mo && _dashMonthsSet.has(_mo)) renewalsThisPeriod++;
     }
+    // v6.617 — new members registered in this period; withdrawn count (any period).
+    const _fr = String(_m.firstRegistration || _m.joinDate || '').slice(0, 7);
+    if (_fr && _dashMonthsSet.has(_fr)) newThisPeriod++;
+    if (typeof memberStatus === 'function' && memberStatus(_m) === 'Withdrawn') withdrawnCount++;
+  }
+  // v6.617 — money physically collected TODAY (payments dated today across all invoices).
+  let todayRevenue = 0;
+  for (const _inv of (state.invoices || [])) {
+    if (_inv.deleted) continue;
+    for (const _p of (_inv.payments || [])) if ((_p.date || '') === TODAY) todayRevenue += Number(_p.amount) || 0;
   }
 
   // ─── "Needs attention today" — consolidated action items ───
@@ -298,6 +308,12 @@ PAGES.dashboard = (main) => {
         <div class="kpi-value num">${s.completedMembers}</div>
         <div class="kpi-delta flat">${t('finished classes','أنهوا الحصص')}</div>
       </div>
+      <div class="kpi" style="cursor:pointer" onclick="navigate('members')" title="${t('Withdrawn — left the club','منسحبون — غادروا النادي')}">
+        <div class="kpi-icon">↩</div>
+        <div class="kpi-label">${t('Withdrawn','منسحب')}</div>
+        <div class="kpi-value num">${withdrawnCount}</div>
+        <div class="kpi-delta flat">${t('left the club','غادروا النادي')}</div>
+      </div>
       ${s.frozenMembers ? `<div class="kpi" style="cursor:pointer" onclick="navigate('members')" title="${t('Frozen memberships','عضويات مجمّدة')}">
         <div class="kpi-icon">❄️</div>
         <div class="kpi-label">${t('Frozen','مجمّد')}</div>
@@ -306,9 +322,18 @@ PAGES.dashboard = (main) => {
       </div>` : ''}
     </div>
 
-    <!-- v6.616 Section 2 — low stock · birthdays · renewing this week · most popular -->
-    ${(lowStockList.length || birthdayList.length || renewingThisWeek.length || topSport) ? `
+    <!-- v6.617 Section 2 — today revenue · new/renewals · low stock · renewing this week · most popular -->
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:12px">
+      <div class="card" style="padding:12px 14px;border:1px solid rgba(16,185,129,.25);background:rgba(16,185,129,.05)">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="font-size:18px">💵</span><div style="font-weight:600;font-size:13px">${t("Today's revenue", 'إيراد اليوم')}</div></div>
+        <div style="font-size:20px;font-weight:800;color:var(--green);line-height:1">${fmt(todayRevenue)} <span style="font-size:12px;color:var(--text-dim);font-weight:500">QAR</span></div>
+        <div class="text-mute" style="font-size:11px;margin-top:3px">${t('collected today', 'المُحصّل اليوم')}</div>
+      </div>
+      <div class="card" style="padding:12px 14px;border:1px solid rgba(139,92,246,.25);background:rgba(139,92,246,.05);cursor:pointer" onclick="navigate('members')" title="${t('New registrations + renewals this period', 'التسجيلات الجديدة + التجديدات هذه الفترة')}">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="font-size:18px">🆕</span><div style="font-weight:600;font-size:13px">${t('New / Renewals', 'جديد / تجديدات')} (${s.periodShort})</div></div>
+        <div style="font-size:20px;font-weight:800;line-height:1">${newThisPeriod} <span style="font-size:12px;color:var(--text-dim);font-weight:500">${t('new', 'جديد')}</span> <span style="color:var(--text-dim);margin:0 2px">·</span> ${renewalsThisPeriod} <span style="font-size:13px">🔄</span></div>
+        <div class="text-mute" style="font-size:11px;margin-top:3px">${t('new members + renewals', 'أعضاء جدد + تجديدات')}</div>
+      </div>
       ${lowStockList.length ? `
         <div class="card" style="padding:12px 14px;border:1px solid rgba(139,92,246,.25);background:rgba(139,92,246,.05);cursor:pointer" onclick="navigate('products')" title="Open Products — restock low items">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
@@ -316,20 +341,6 @@ PAGES.dashboard = (main) => {
             <div style="font-weight:600;font-size:13px">${lowStockList.length} ${t('low stock items','أصناف قاربت على النفاد')}</div>
           </div>
           <div class="text-mute" style="font-size:11px;line-height:1.5">${lowStockList.slice(0, 4).map(p => escapeHtml(p.name)).join(', ')}${lowStockList.length > 4 ? '…' : ''}</div>
-        </div>` : ''}
-      ${birthdayList.length ? `
-        <div class="card" style="padding:12px 14px;border:1px solid rgba(245,158,11,.25);background:rgba(245,158,11,.05);cursor:pointer" onclick="navigate('birthdays')" title="Open Birthdays — send celebration messages">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-            <span style="font-size:18px">🎂</span>
-            <div style="font-weight:600;font-size:13px">${birthdayList.length} ${t('birthday(s) this month','عيد ميلاد هذا الشهر')}</div>
-          </div>
-          <div class="text-mute" style="font-size:11px;line-height:1.5">
-            ${birthdayList.slice(0, 4).map(({m, days}) => {
-              const age = memberAge(m.birthdate);
-              const ageNext = age != null ? age + (days > 0 ? 1 : 0) : null;
-              return `${escapeHtml(String(m.name || '').split(' ')[0])}${ageNext != null ? ` (${ageNext})` : ''}${days === 0 ? ' 🎉' : days <= 7 ? ` · in ${days}d` : ''}`;
-            }).join(', ')}${birthdayList.length > 4 ? `… +${birthdayList.length - 4}` : ''}
-          </div>
         </div>` : ''}
       ${renewingThisWeek.length ? `
         <div class="card" style="padding:12px 14px;border:1px solid rgba(242,163,60,.25);background:rgba(242,163,60,.05);cursor:pointer" onclick="navigate('expiring')" title="Open Expiring page">
@@ -352,7 +363,6 @@ PAGES.dashboard = (main) => {
           </div>
         </div>` : ''}
     </div>
-    ` : ''}
 
     <!-- KPI cards -->
     <div class="kpi-grid">
@@ -362,12 +372,6 @@ PAGES.dashboard = (main) => {
         <div class="kpi-value num">${fmt(s.currRevenue)} <span style="font-size:13px;color:var(--text-dim);font-weight:500">QAR</span></div>
         ${kpiDelta(s.currRevenue, s.prevRevenue)}
         ${sparkline([s.prevRevenue, s.currRevenue])}
-      </div>
-      <div class="kpi blue">
-        <div class="kpi-icon">👥</div>
-        <div class="kpi-label">${t('Active Members','الأعضاء النشطون')}</div>
-        <div class="kpi-value num">${s.activeMembers}</div>
-        <div class="kpi-delta flat">${s.frozenMembers ? `${s.frozenMembers} ❄️ frozen · ` : ''}${s.completedMembers ? `${s.completedMembers} completed · ` : ''}${s.expiredMembers} expired</div>
       </div>
       <div class="kpi orange">
         <div class="kpi-icon">💸</div>
@@ -433,25 +437,7 @@ PAGES.dashboard = (main) => {
     </div>`;
     })()}
 
-    <!-- v6.609 — revenue-stream breakdown cards removed per owner (full detail on Reports). -->
-
-    ${(() => {
-      const proj = clubRenewalValue(state.members);
-      return `
-    <div class="card mb-3" onclick="navigate('renewaldetail')" title="${t('Click for the full breakdown by member & sport', 'اضغط لعرض التفصيل حسب العضو والرياضة')}" style="cursor:pointer;border:1px solid rgba(16,185,129,.35);background:linear-gradient(135deg,rgba(16,185,129,.10),rgba(16,185,129,.02))">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
-        <div>
-          <div class="card-title" style="display:flex;align-items:center;gap:8px">💰 ${t('Renewal revenue potential','إجمالي قيمة التجديد المحتملة')} <span style="font-size:11px;color:var(--green)">→</span></div>
-          <div class="card-subtitle">${t('If every member renewed once at their current membership price', 'إذا جدّد كل عضو اشتراكه مرة واحدة بسعره الحالي')}</div>
-        </div>
-        <div style="text-align:right">
-          <div class="num" style="font-size:30px;font-weight:800;color:var(--green);line-height:1">${fmt(proj.total)} <span style="font-size:15px;color:var(--text-dim);font-weight:500">QAR</span></div>
-          <div class="text-mute" style="font-size:11px;margin-top:4px">${t('across', 'عبر')} ${proj.members} ${t('distinct members', 'عضو')} · ${proj.withValue} ${t('with a priced membership', 'لديهم اشتراك مُسعّر')}</div>
-        </div>
-      </div>
-    </div>`;
-    })()}
-
+    <!-- v6.617 — renewal-potential card moved to the Reports screen per owner. -->
     <!-- v6.605/6.609 — brief dashboard: detail cards + backup-reminder card removed per owner. -->
   `;
 
@@ -15262,7 +15248,11 @@ window.editInvoiceQuick = function(id) {
       </div>
       <div class="form-row">
         <div class="field"><label>Coach</label><select id="ef-coach"><option value="">— none —</option>${coachOptions.map(c => `<option ${c===inv.coach?'selected':''}>${escapeHtml(c)}</option>`).join('')}</select></div>
-        <div class="field"><label>Customer</label>${memberPickerHtml('ef-cust', { placeholder: '— none —', selectedId: inv.customerId || null })}</div>
+        <div class="field"><label>${t('Customer (member)', 'العميل (عضو)')}</label>${memberPickerHtml('ef-cust', { placeholder: '— none —', selectedId: inv.customerId || null })}</div>
+      </div>
+      <div class="form-row">
+        <div class="field"><label>${t('Walk-in name', 'اسم زائر')} <span class="text-mute" style="font-size:10px">(${t('if not a registered member', 'إن لم يكن عضواً مسجلاً')})</span></label><input id="ef-wname" value="${inv.customerId ? '' : escapeHtml(inv.customerName || '')}" placeholder="${t('e.g. Ahmed (court renter)', 'مثال: أحمد (مستأجر الملعب)')}" /></div>
+        <div class="field"><label>${t('Walk-in phone', 'هاتف الزائر')}</label><input id="ef-wphone" value="${inv.customerId ? '' : escapeHtml(inv.customerPhone || '')}" placeholder="${t('Optional', 'اختياري')}" /></div>
       </div>
       <div class="form-row">
         <div class="field"><label>Method</label><select id="ef-method"><option value="cash" ${inv.method==='cash'?'selected':''}>Cash</option><option value="card" ${inv.method==='card'?'selected':''}>Card</option><option value="fawran" ${inv.method==='fawran'?'selected':''}>Fawran</option></select></div>
@@ -15298,8 +15288,19 @@ window.editInvoiceQuick = function(id) {
         const cId = parseInt($('#ef-cust').value) || null;
         inv.customerId = cId;
         const cm = cId ? state.members.find(m => m.id === cId) : null;
-        inv.customerName = cm ? cm.name : null;
-        if (cm && !inv.coachId) inv.coachId = cm.coachId;
+        if (cm) {
+          inv.customerName = cm.name;
+          if (cm.phone) inv.customerPhone = cm.phone;
+          if (!inv.coachId) inv.coachId = cm.coachId;
+        } else {
+          // Walk-in (rental / court renter): keep the typed free-text name + phone.
+          // Previously this always set customerName = null when no member was picked,
+          // which silently WIPED a walk-in name on every unrelated edit.
+          const _wn = ($('#ef-wname') ? $('#ef-wname').value : '').trim();
+          const _wp = ($('#ef-wphone') ? $('#ef-wphone').value : '').trim();
+          inv.customerName = _wn || null;
+          inv.customerPhone = _wp || null;
+        }
         inv.method = $('#ef-method').value;
         inv.amount = parseFloat($('#ef-amt').value) || 0;
         inv.date = $('#ef-date').value;
@@ -20142,13 +20143,15 @@ PAGES.products = (main) => {
   function refresh() {
     const all = applyFilter();
     const rows = paginate(all, pg);
-    $('#prod-tbody').innerHTML = rows.length ? rows.map(p => {
+    const _rowOffset = (pg.size === 'all') ? 0 : (pg.page - 1) * pg.size;   // v6.618 — continuous # across pages
+    $('#prod-tbody').innerHTML = rows.length ? rows.map((p, _i) => {
       const stock = productCurrentStock(p.id);
       const threshold = p.lowStockThreshold || 3;
       const stockColor = stock === 0 ? 'var(--red)' : stock <= threshold ? 'var(--accent-2)' : 'var(--green)';
       const stockLabel = stock === 0 ? t('Out of stock', 'نفد المخزون') : stock <= threshold ? t('Low', 'منخفض') : t('In stock', 'متوفر');
       return `
         <tr>
+          <td class="text-mute num" style="width:34px;text-align:right">${_rowOffset + _i + 1}</td>
           <td><div class="font-bold">${escapeHtml(p.name)}</div>${p.sku ? `<div class="text-mute" style="font-size:11px">SKU: ${escapeHtml(p.sku)}</div>` : ''}</td>
           <td><span class="badge">${escapeHtml(p.category || '—')}</span></td>
           ${isViewerRole() ? '' : `<td class="text-right num">${p.cost ? fmt(p.cost) : '<span class="text-mute">—</span>'}</td>`}
@@ -20162,7 +20165,7 @@ PAGES.products = (main) => {
             <button class="btn ghost sm" onclick="deleteProduct(${p.id})" title="${t('Delete', 'حذف')}">🗑</button>`}
           </td>
         </tr>`;
-    }).join('') : `<tr><td colspan="${isViewerRole() ? 6 : 8}" class="empty"><div class="empty-icon">📦</div>${t('No products match', 'لا توجد منتجات مطابقة')}</td></tr>`;
+    }).join('') : `<tr><td colspan="${isViewerRole() ? 7 : 9}" class="empty"><div class="empty-icon">📦</div>${t('No products match', 'لا توجد منتجات مطابقة')}</td></tr>`;
     $('#prod-count').textContent = `${all.length} ${t('products', 'منتج')}`;
     renderPagination('prod-pagination', pg, all.length, refresh);
   }
@@ -20226,7 +20229,7 @@ PAGES.products = (main) => {
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>${t('Product', 'المنتج')}</th><th>${t('Category', 'الفئة')}</th>${isViewerRole() ? '' : `<th class="text-right">${t('Cost', 'التكلفة')}</th>`}<th class="text-right">${t('Sell price', 'سعر البيع')}</th><th class="text-right">${t('Stock', 'المخزون')}</th>${isViewerRole() ? '' : `<th class="text-right">${t('Stock value', 'قيمة المخزون')}</th>`}<th>${t('Status', 'الحالة')}</th><th></th></tr></thead>
+          <thead><tr><th class="text-right" style="width:34px">#</th><th>${t('Product', 'المنتج')}</th><th>${t('Category', 'الفئة')}</th>${isViewerRole() ? '' : `<th class="text-right">${t('Cost', 'التكلفة')}</th>`}<th class="text-right">${t('Sell price', 'سعر البيع')}</th><th class="text-right">${t('Stock', 'المخزون')}</th>${isViewerRole() ? '' : `<th class="text-right">${t('Stock value', 'قيمة المخزون')}</th>`}<th>${t('Status', 'الحالة')}</th><th></th></tr></thead>
           <tbody id="prod-tbody"></tbody>
         </table>
       </div>
@@ -22088,10 +22091,12 @@ window.showStaleVersionBanner = function (newVer) {
   document.body.appendChild(bar);
   document.body.style.paddingTop = '44px';
 };
-function showModal({ title, body, actions = [] }) {
+function showModal({ title, body, actions = [], size }) {
   closeModal();
   const backdrop = el('div', { className: 'modal-backdrop', id: 'modal-backdrop' });
   const modal = el('div', { className: 'modal' });
+  // v6.618 — optional larger modal. 'lg' ≈ 720px, 'xl' ≈ 1000px, 'full' ≈ 95vw. Caps at the viewport.
+  if (size) { const w = size === 'full' ? '95vw' : size === 'xl' ? '1000px' : '720px'; try { modal.style.maxWidth = w; modal.style.width = '96vw'; } catch (_) {} }
   modal.innerHTML = `
     <div class="modal-header">
       <div class="modal-title">${title}</div>
@@ -30843,6 +30848,22 @@ PAGES.reports = (main) => {
 
       <div style="margin:18px 0 8px;font-weight:700;font-size:15px;color:var(--text)">📊 ${t('Visual insights', 'رؤى بصرية')}</div>
       ${_chartsHTML}
+      ${(() => {   // v6.617 — Renewal revenue potential (moved here from the Dashboard), shown last.
+        const proj = (typeof clubRenewalValue === 'function') ? clubRenewalValue(state.members) : { total: 0, members: 0, withValue: 0 };
+        return `
+      <div class="card mt-3" onclick="navigate('renewaldetail')" title="${t('Click for the full breakdown by member & sport', 'اضغط لعرض التفصيل حسب العضو والرياضة')}" style="cursor:pointer;border:1px solid rgba(16,185,129,.35);background:linear-gradient(135deg,rgba(16,185,129,.10),rgba(16,185,129,.02))">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+          <div>
+            <div class="card-title" style="display:flex;align-items:center;gap:8px">💰 ${t('Renewal revenue potential', 'إجمالي قيمة التجديد المحتملة')} <span style="font-size:11px;color:var(--green)">→</span></div>
+            <div class="card-subtitle">${t('If every member renewed once at their current membership price', 'إذا جدّد كل عضو اشتراكه مرة واحدة بسعره الحالي')}</div>
+          </div>
+          <div style="text-align:right">
+            <div class="num" style="font-size:30px;font-weight:800;color:var(--green);line-height:1">${fmt(proj.total)} <span style="font-size:15px;color:var(--text-dim);font-weight:500">QAR</span></div>
+            <div class="text-mute" style="font-size:11px;margin-top:4px">${t('across', 'عبر')} ${proj.members} ${t('distinct members', 'عضو')} · ${proj.withValue} ${t('with a priced membership', 'لديهم اشتراك مُسعّر')}</div>
+          </div>
+        </div>
+      </div>`;
+      })()}
     `;
     try { _wireCardCollapse($('#rep-body')); } catch (_) {}   // v6.615 — collapsible report sections
   }
@@ -32472,6 +32493,7 @@ function showRentalCustomersList() {
   const totalRev = customers.reduce((s, c) => s + ((stats[c.id]?.amount) || 0), 0);
 
   showModal({
+    size: 'xl',   // v6.618 — bigger popup per owner
     title: `👥 Rental Customers (${customers.length})`,
     body: `
       <div style="margin-bottom:12px">
@@ -32483,7 +32505,7 @@ function showRentalCustomersList() {
       ${customers.length ? `
       <div class="table-wrap" style="max-height:400px;overflow-y:auto">
         <table>
-          <thead><tr><th>Customer</th><th>Mobile</th><th class="text-right">Bookings</th><th class="text-right">Hours</th><th class="text-right">Total Paid</th><th>Last Visit</th><th></th></tr></thead>
+          <thead><tr><th>Customer</th><th>Mobile</th><th class="text-right">Bookings</th><th class="text-right">Hours</th><th class="text-right">Total Paid</th><th>Last Visit</th><th class="text-center">${t('Reminder', 'تذكير')}</th><th></th></tr></thead>
           <tbody id="rcust-tbody">
             ${customers.map(c => {
               const s = stats[c.id] || { bookings: 0, hours: 0, amount: 0, lastDate: null };
@@ -32497,6 +32519,7 @@ function showRentalCustomersList() {
                 <td class="text-right num">${s.hours}h</td>
                 <td class="text-right num font-bold">${fmt(s.amount)}</td>
                 <td class="text-dim" style="font-size:11px;white-space:nowrap">${s.lastDate ? fmtDate(s.lastDate) : '—'}</td>
+                <td class="text-center">${(c.phone && String(c.phone).replace(/\D/g, '').length >= 6) ? `<button class="btn ghost sm" onclick="rentalRebookReminder(${c.id})" title="${t('Send a WhatsApp: come rent again now the weather is better', 'أرسل واتساب: عُد للحجز فقد تحسّن الطقس')}">📲 ${t('Remind', 'ذكّر')}</button>` : '<span class="text-mute" style="font-size:11px">—</span>'}</td>
                 <td class="text-right">
                   <button class="btn ghost sm" onclick="viewRentalCustomerHistory(${c.id})" title="View history">📜</button>
                   <button class="btn ghost sm" onclick="editRentalCustomer(${c.id})" title="Edit">✏️</button>
@@ -32525,6 +32548,25 @@ function showRentalCustomersList() {
     }
   }, 50);
 }
+
+// v6.618 — WhatsApp a rental customer to come book again now the weather has improved.
+window.rentalRebookReminder = function(rcustId) {
+  const c = (state.rentalCustomers || []).find(x => x.id === rcustId);
+  if (!c) { toast('Customer not found', 'error'); return; }
+  const digits = String(c.phone || '').replace(/\D/g, '');
+  if (digits.length < 6) { toast(t('No valid mobile for this customer', 'لا يوجد جوال صالح لهذا الزبون'), 'error'); return; }
+  const first = String(c.name || '').split(' ')[0];
+  const ar = `أهلاً ${first}! ☀️\n`
+    + `الطقس أصبح ألطف الآن — وقت مثالي للعب على ملاعب بلاك ستارز! 🏟️\n`
+    + `يسعدنا عودتك — احجز موعدك القادم وسنجهّز الملعب لك. 💪\n`
+    + `نادي بلاك ستارز الرياضي · الوعب، الدوحة`;
+  const en = `Hi ${first}! ☀️\n`
+    + `The weather is lovely again — a perfect time to be back on the Black Stars courts! 🏟️\n`
+    + `We'd love to have you back — book your next slot and we'll have the court ready for you. 💪\n`
+    + `Black Stars Sports Club · Waab, Doha`;
+  const msg = ar + '\n\n———\n\n' + en;
+  try { window.open(`https://wa.me/${digits}?text=${encodeURIComponent(msg)}`, '_blank'); } catch (_) {}
+};
 
 window.editRentalCustomer = function(rcustId) {
   const c = (state.rentalCustomers || []).find(x => x.id === rcustId);
@@ -33527,7 +33569,7 @@ PAGES.transfers = (main) => {
       </div>
     </div>
 
-    <div style="max-width:680px;margin:0 auto">
+    <div style="max-width:920px;margin:0 auto">
       <!-- v6.463: two clear tabs — New Transfer | History -->
       <div style="display:flex;gap:6px;margin-bottom:16px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:5px">
         ${[['transfer', '🔁 ' + t('New Transfer', 'نقل جديد')], ['history', '🗂 ' + t('History', 'السجل') + ` (${transfers.length})`]].map(([k, lbl]) => {
@@ -33550,19 +33592,16 @@ PAGES.transfers = (main) => {
                 <button class="btn ghost sm" onclick="window._trState={...window._trState,fromId:null,sport:null,toId:null};render()">↺ ${t('Change', 'تغيير')}</button>
               </div>
             ` : `
+              <!-- v6.619 — searchable coach/sport filters (type to filter; pick from the list; clear = all) -->
               <div style="display:flex;gap:6px;margin-bottom:8px">
-                <select id="tr-fcoach" style="${selStyle}">
-                  <option value="all">${t('All coaches', 'كل المدربين')}</option>
-                  ${coachIdsInList.map(cid => `<option value="${cid}" ${String(st.fcoach) === String(cid) ? 'selected' : ''}>${escapeHtml(coachName(cid) || '—')}</option>`).join('')}
-                </select>
-                <select id="tr-fsport" style="${selStyle}">
-                  <option value="all">${st.fcoach === 'all' ? t('All sports', 'كل الرياضات') : t('All his sports', 'كل رياضاته')}</option>
-                  ${sportsInList.map(s => `<option value="${escapeHtml(s)}" ${st.fsport === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
-                </select>
+                <input id="tr-fcoach" list="tr-fcoach-dl" placeholder="🔍 ${t('All coaches', 'كل المدربين')}" value="${st.fcoach === 'all' ? '' : escapeHtml(coachName(parseInt(st.fcoach)) || '')}" style="${selStyle}" />
+                <datalist id="tr-fcoach-dl">${coachIdsInList.map(cid => `<option value="${escapeHtml(coachName(cid) || '')}"></option>`).join('')}</datalist>
+                <input id="tr-fsport" list="tr-fsport-dl" placeholder="🔍 ${st.fcoach === 'all' ? t('All sports', 'كل الرياضات') : t('All his sports', 'كل رياضاته')}" value="${st.fsport === 'all' ? '' : escapeHtml(st.fsport)}" style="${selStyle}" />
+                <datalist id="tr-fsport-dl">${sportsInList.map(s => `<option value="${escapeHtml(s)}"></option>`).join('')}</datalist>
               </div>
               <input id="tr-fromq" placeholder="🔍 ${t('Search name (EN/AR) or mobile…', 'ابحث بالاسم (عربي/إنجليزي) أو الجوال…')}" value="${escapeHtml(st.fromQ)}" style="${inputStyle};margin-bottom:8px" />
               <div class="text-mute" style="font-size:11px;margin-bottom:6px">${fromFiltered.length} ${t('of', 'من')} ${eligible.length} ${t('transferable members', 'عضو قابل للنقل')}${fromFiltered.length > 40 ? ' · ' + t('showing first 40', 'أول 40') : ''}</div>
-              <div style="display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto;padding-right:2px">
+              <div style="display:flex;flex-direction:column;gap:6px;max-height:440px;overflow:auto;padding-right:2px">
                 ${fromRows || `<div class="text-mute" style="padding:14px;text-align:center;font-size:13px">${t('No members match', 'لا يوجد أعضاء مطابقون')}</div>`}
               </div>
             `}
@@ -33598,7 +33637,7 @@ PAGES.transfers = (main) => {
               </div>
             ` : `
               <input id="tr-toq" placeholder="🔍 ${t('Search name (EN/AR) or mobile…', 'ابحث بالاسم (عربي/إنجليزي) أو الجوال…')}" value="${escapeHtml(st.toQ)}" style="${inputStyle};margin-bottom:8px" />
-              <div style="display:flex;flex-direction:column;gap:6px;max-height:240px;overflow:auto;padding-right:2px">
+              <div style="display:flex;flex-direction:column;gap:6px;max-height:440px;overflow:auto;padding-right:2px">
                 ${toRows || `<div class="text-mute" style="padding:14px;text-align:center;font-size:13px">${t('No members match', 'لا يوجد أعضاء مطابقون')}</div>`}
               </div>
             `}
@@ -33615,7 +33654,17 @@ PAGES.transfers = (main) => {
 
           ${blockMsg ? `<div style="color:var(--red);font-size:12px;font-weight:600">⛔ ${escapeHtml(blockMsg)}</div>` : ''}
 
-          <button id="tr-go" class="btn primary" style="padding:12px;font-size:15px" ${(fromMember && selEnr && toMember && !blockMsg) ? '' : 'disabled style="opacity:.45;cursor:not-allowed;padding:12px;font-size:15px"'}>🔁 ${t('Transfer membership', 'نقل الاشتراك')}</button>
+          ${(() => {
+            const ready = fromMember && selEnr && toMember && !blockMsg;
+            // v6.619 — a single style attr (the old code emitted TWO, so the disabled look never applied),
+            // + a hint of what's still missing so the gated button is self-explanatory.
+            const missing = [];
+            if (!fromMember) missing.push(t('a member', 'عضو'));
+            else if (!selEnr) missing.push(t('a sport', 'رياضة'));
+            if (!toMember && fromMember && selEnr) missing.push(t('a receiver', 'مستلم'));
+            const hint = (!ready && !blockMsg && missing.length) ? `<div class="text-mute" style="font-size:12px;text-align:center">${t('Select', 'اختر')} ${missing.join(' + ')} ${t('to enable transfer', 'لتفعيل النقل')}</div>` : '';
+            return `${hint}<button id="tr-go" class="btn primary" style="padding:12px;font-size:15px${ready ? '' : ';opacity:.45;cursor:not-allowed'}" ${ready ? '' : 'disabled'}>🔁 ${t('Transfer membership', 'نقل الاشتراك')}</button>`;
+          })()}
         </div>
       </div>
 
@@ -33641,9 +33690,10 @@ PAGES.transfers = (main) => {
 
   // Wiring
   document.querySelectorAll('[data-trtab]').forEach(b => b.addEventListener('click', () => { st.tab = b.dataset.trtab; render(); }));
-  $('#tr-fsport')?.addEventListener('change', e => { st.fsport = e.target.value; render(); });
+  // v6.619 — coach/sport are searchable datalist inputs: map the typed/picked text back to an id/sport.
+  $('#tr-fsport')?.addEventListener('change', e => { const v = (e.target.value || '').trim(); st.fsport = (v && sportsInList.some(s => s.toLowerCase() === v.toLowerCase())) ? sportsInList.find(s => s.toLowerCase() === v.toLowerCase()) : 'all'; render(); });
   // Switching coach resets the sport pick so the sport list re-narrows to the new coach's sports.
-  $('#tr-fcoach')?.addEventListener('change', e => { st.fcoach = e.target.value; st.fsport = 'all'; render(); });
+  $('#tr-fcoach')?.addEventListener('change', e => { const v = (e.target.value || '').trim(); const hit = v ? coachIdsInList.find(cid => (coachName(cid) || '').toLowerCase() === v.toLowerCase()) : null; st.fcoach = (hit != null) ? String(hit) : 'all'; st.fsport = 'all'; render(); });
   $('#tr-fromq')?.addEventListener('input', e => { st.fromQ = e.target.value; render(); setTimeout(() => { const el = $('#tr-fromq'); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }, 0); });
   document.querySelectorAll('input[name="tr-sport"]').forEach(r => r.addEventListener('change', e => { st.sport = e.target.value; st.toId = null; render(); }));
   $('#tr-toq')?.addEventListener('input', e => { st.toQ = e.target.value; render(); setTimeout(() => { const el = $('#tr-toq'); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }, 0); });
