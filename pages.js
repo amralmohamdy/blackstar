@@ -143,6 +143,16 @@ function sparkline(values, color) {
 // ─── DASHBOARD ──────────────────────────────────────────────────
 PAGES.dashboard = (main) => {
   const s = computeStats();
+  // v6.605 — renewals done in the SAME period as the KPIs (count renewal rows whose start month is in scope).
+  const _dashMonthsSet = new Set(dashPeriodMonths(normalizeDashPeriod()));
+  let renewalsThisPeriod = 0;
+  for (const _m of state.members) {
+    if (_m.deleted) continue;
+    for (const _r of (_m.renewals || [])) {
+      const _mo = String(_r.start || _r.createdAt || '').slice(0, 7);
+      if (_mo && _dashMonthsSet.has(_mo)) renewalsThisPeriod++;
+    }
+  }
 
   // ─── "Needs attention today" — consolidated action items ───
   const threshold = state.settings?.expiringSoonDays || 3;
@@ -377,6 +387,12 @@ PAGES.dashboard = (main) => {
         ${kpiDelta(s.currProfit, s.prevProfit)}
         ${sparkline([s.prevProfit, s.currProfit])}
       </div>
+      <div class="kpi purple" style="cursor:pointer" onclick="navigate('history')" title="${t('Memberships renewed in this period', 'الاشتراكات المجددة في هذه الفترة')}">
+        <div class="kpi-icon">🔄</div>
+        <div class="kpi-label">${t('Renewals','التجديدات')} (${s.periodShort})</div>
+        <div class="kpi-value num">${renewalsThisPeriod}</div>
+        <div class="kpi-delta flat">${renewalsThisPeriod === 1 ? t('membership renewed','اشتراك مجدد') : t('memberships renewed','اشتراكات مجددة')}</div>
+      </div>
     </div>
 
     <!-- Data & Cloud Sync — document count + server load/save confirmation -->
@@ -493,81 +509,7 @@ PAGES.dashboard = (main) => {
     </div>`;
     })()}
 
-    <!-- Revenue chart + Members breakdown -->
-    <div class="row row-2-1 mb-3">
-      <div class="card">
-        <div class="card-header">
-          <div>
-            <div class="card-title">${t('Revenue vs Expenses','الإيرادات مقابل المصروفات')}</div>
-            <div class="card-subtitle">${t('Monthly comparison','مقارنة شهرية')}</div>
-          </div>
-        </div>
-        <div id="rev-chart"></div>
-      </div>
-      <div class="card">
-        <div class="card-header">
-          <div>
-            <div class="card-title">${t('Members by Sport','الأعضاء حسب الرياضة')}</div>
-            <div class="card-subtitle">${t('Active enrollments','اشتراكات نشطة')}</div>
-          </div>
-        </div>
-        <div id="sport-chart"></div>
-      </div>
-    </div>
-
-    <!-- Top coaches + Recent invoices -->
-    <div class="row row-2 mb-3">
-      <div class="card">
-        <div class="card-header">
-          <div>
-            <div class="card-title">${t('Top Coaches by Students', 'أفضل المدربين حسب الطلاب')}</div>
-            <div class="card-subtitle">Most-enrolled coaches</div>
-          </div>
-        </div>
-        <div id="coach-leaderboard"></div>
-      </div>
-      <div class="card">
-        <div class="card-header">
-          <div>
-            <div class="card-title">${t('Recent Invoices', 'أحدث الفواتير')}</div>
-            <div class="card-subtitle">Latest 8 transactions</div>
-          </div>
-          <button class="btn ghost sm" onclick="navigate('invoices')">View all →</button>
-        </div>
-        <div id="recent-invoices"></div>
-      </div>
-    </div>
-
-    <!-- Monthly summary table -->
-    <div class="card">
-      <div class="card-header">
-        <div>
-          <div class="card-title">${t('Monthly Summary', 'الملخص الشهري')}</div>
-          <div class="card-subtitle">${s.prevShort} vs ${s.periodShort} comparison</div>
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Metric</th>
-              <th class="text-right">${s.prevShort}</th>
-              <th class="text-right">${s.periodShort}</th>
-              <th class="text-right">Change</th>
-              <th class="text-right">% Δ</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr><td>Revenue</td><td class="text-right num">${fmtMoney(s.aprRevenue)}</td><td class="text-right num">${fmtMoney(s.mayRevenue)}</td><td class="text-right num ${s.mayRevenue-s.aprRevenue>=0?'text-up':'text-down'}">${s.mayRevenue-s.aprRevenue>=0?'+':''}${fmt(s.mayRevenue-s.aprRevenue)}</td><td class="text-right num text-dim">${pctChangeStr(s.aprRevenue, s.mayRevenue)}%</td></tr>
-            <tr><td>Operating expenses</td><td class="text-right num">${fmtMoney(s.aprExpenses)}</td><td class="text-right num">${fmtMoney(s.mayExpenses)}</td><td class="text-right num ${s.mayExpenses-s.aprExpenses>=0?'text-down':'text-up'}">${s.mayExpenses-s.aprExpenses>=0?'+':''}${fmt(s.mayExpenses-s.aprExpenses)}</td><td class="text-right num text-dim">${pctChangeStr(s.aprExpenses, s.mayExpenses)}%</td></tr>
-            <tr><td>Salaries & commissions</td><td class="text-right num">${fmtMoney(s.aprSalaries)}</td><td class="text-right num">${fmtMoney(s.maySalaries)}</td><td class="text-right num ${s.maySalaries-s.aprSalaries>=0?'text-down':'text-up'}">${s.maySalaries-s.aprSalaries>=0?'+':''}${fmt(s.maySalaries-s.aprSalaries)}</td><td class="text-right num text-dim">${pctChangeStr(s.aprSalaries, s.maySalaries)}%</td></tr>
-            <tr><td>Sales (gear)</td><td class="text-right num">${fmtMoney(s.aprSales)}</td><td class="text-right num">${fmtMoney(s.maySales)}</td><td class="text-right num ${s.maySales-s.aprSales>=0?'text-up':'text-down'}">${s.maySales-s.aprSales>=0?'+':''}${fmt(s.maySales-s.aprSales)}</td><td class="text-right num text-dim">${pctChangeStr(s.aprSales, s.maySales)}%</td></tr>
-            <tr style="font-weight:700;background:var(--surface-2)"><td>Net profit</td><td class="text-right num ${s.aprProfit>=0?'text-up':'text-down'}">${fmtMoney(s.aprProfit)}</td><td class="text-right num ${s.mayProfit>=0?'text-up':'text-down'}">${fmtMoney(s.mayProfit)}</td><td class="text-right num ${s.mayProfit-s.aprProfit>=0?'text-up':'text-down'}">${s.mayProfit-s.aprProfit>=0?'+':''}${fmt(s.mayProfit-s.aprProfit)}</td><td class="text-right num">—</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
+    <!-- v6.605 — brief dashboard: five detail cards removed per owner; full breakdowns live on Reports. -->
     <!-- Backup reminder & version info -->
     <div class="card" style="margin-top:14px;display:flex;align-items:center;gap:14px;padding:14px 16px;background:rgba(91,141,239,.05);border:1px solid rgba(91,141,239,.2)">
       <div style="font-size:26px">💾</div>
@@ -597,6 +539,8 @@ PAGES.dashboard = (main) => {
     render();
   });
 
+  // v6.605 — these four cards were removed from the brief dashboard; the draw fns no-op when their
+  // container is absent (guarded), so these calls stay harmless and the fns remain for reuse.
   drawRevenueChart();
   drawSportDonut();
   drawCoachLeaderboard();
@@ -605,8 +549,8 @@ PAGES.dashboard = (main) => {
 
 // ─── Revenue chart (bars) ───────────────────────────────────
 function drawRevenueChart() {
+  const container = $('#rev-chart'); if (!container) return;
   const s = computeStats();
-  const container = $('#rev-chart');
   const maxVal = Math.max(s.aprRevenue, s.mayRevenue, s.aprExpenses + s.aprSalaries, s.mayExpenses + s.maySalaries, 1);
 
   const months = [
@@ -643,7 +587,7 @@ function drawRevenueChart() {
 
 // ─── Sport donut chart (SVG) ────────────────────────────────
 function drawSportDonut() {
-  const container = $('#sport-chart');
+  const container = $('#sport-chart'); if (!container) return;
   const breakdown = {};
   // isCurrentMember: memberStatus() has no archived concept (an archived member with no expiry
   // reads as Active), and a WITHDRAWN member is not active either — the donut centre used to
@@ -694,7 +638,7 @@ function drawSportDonut() {
 
 // ─── Coach leaderboard ───────────────────────────────────────
 function drawCoachLeaderboard() {
-  const container = $('#coach-leaderboard');
+  const container = $('#coach-leaderboard'); if (!container) return;
   const counts = {};
   // Archived and withdrawn members are nobody's student — they inflated every coach's count.
   for (const m of state.members.filter(isCurrentMember)) {
@@ -729,7 +673,7 @@ function drawCoachLeaderboard() {
 
 // ─── Recent invoices ────────────────────────────────────────
 function drawRecentInvoices() {
-  const container = $('#recent-invoices');
+  const container = $('#recent-invoices'); if (!container) return;
   // Voided invoices are excluded by every money helper — listing them here made the visible
   // rows contradict the revenue KPI directly above them.
   const recent = state.invoices.filter(i => !i.deleted).sort((a,b) => String(b.date||'').localeCompare(String(a.date||''))).slice(0, 8);
@@ -23287,6 +23231,7 @@ PAGES.attendance = (main) => {
         <button class="btn ghost" id="att-import">📂 ${t('Import CSV', 'استيراد CSV')}</button>
         <button class="btn ghost" id="att-export">📥 ${t('Export CSV', 'تصدير CSV')}</button>
         <button class="btn ghost" id="att-export-pdf">📄 ${t('Export PDF', 'تصدير PDF')}</button>
+        <button class="btn ghost" id="att-export-details" title="${t('Detailed report over the selected months — the attended dates per student, sport and coach', 'تقرير مفصّل عبر الأشهر المحددة — أيام الحضور لكل طالب ورياضة ومدرب')}">📋 ${t('Details report', 'تقرير مفصّل')}</button>
         <button class="btn ghost" id="att-export-img-en" title="${t('Download the sheet as an image (English)', 'تنزيل الورقة كصورة (إنجليزي)')}">🖼 ${t('Image (EN)', 'صورة (EN)')}</button>
         <button class="btn ghost" id="att-export-img-ar" title="${t('Download the sheet as an image (Arabic)', 'تحميل الورقة كصورة (عربي)')}">🖼 ${t('Image (AR)', 'صورة (AR)')}</button>
       </div>
@@ -23510,6 +23455,73 @@ PAGES.attendance = (main) => {
     win.document.close();
     toast(`PDF · all months · ${rows.length} rows`);
   }
+
+  // v6.604 — DETAILS REPORT across the SELECTED months, every sport + coach in the filtered view.
+  // Unlike the month-summary PDF (a Y-count per month), this lists the ACTUAL attended dates per
+  // student·sport·coach for each month in scope, so it reads as a full detailed record. Uses the SAME
+  // data the grid does — attKey (Mixed + per-coach split) and the row window — so counts always match.
+  function exportAttendanceDetailsPdf(rows) {
+    const months = (filter.months && filter.months.length) ? filter.months.slice().sort() : monthsWithData();
+    if (!months.length) { toast(t('No attendance recorded yet', 'لا يوجد حضور مسجل بعد'), 'error'); return; }
+    const monthHeads = months.map(mo => `<th style="border:1px solid #e5e5ea;padding:4px 3px;font-size:9px;color:#777">${fmtMonth(mo)}</th>`).join('');
+    let grandY = 0;
+    const bodyRows = rows.map(({ m, sport, coachId, window: win, attKey }) => {
+      let rowY = 0;
+      const cells = months.map(mo => {
+        const dd = (attKey === MIXED) ? mixedDayMarks(m, mo) : (m.dailyAttendance?.[mo]?.[attKey || sport] || {});
+        const days = [];
+        for (const k in dd) { if (dd[k] === 'Y' && inWin(win, mo, k)) days.push(parseInt(k, 10)); }
+        days.sort((a, b) => a - b); rowY += days.length;
+        return `<td style="border:1px solid #eee;text-align:center;font-size:8.5px;vertical-align:top;background:${days.length ? '#f0fdf4' : '#fff'}">${days.length ? `<div style="font-weight:700;color:#059669">${days.length}</div><div style="color:#555;font-size:7.5px;line-height:1.3">${days.join(', ')}</div>` : '<span style="color:#ccc">·</span>'}</td>`;
+      }).join('');
+      grandY += rowY;
+      const _mix = attKey === MIXED;
+      return `<tr>
+        <td style="border:1px solid #e5e5ea;padding:4px 6px;font-size:9px;font-weight:600"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(m.name)}</div><div style="font-size:7.5px;color:#999;font-weight:400">${escapeHtml(sport)}${_mix ? ' · ' + escapeHtml(t('multi-coach', 'عدة مدربين')) : (sport !== SUMMER_CAMP ? ' · ' + escapeHtml(coachName(coachId)) : '')}</div></td>
+        ${cells}
+        <td style="border:1px solid #e5e5ea;text-align:center;font-size:10px;font-weight:800;color:#059669">${rowY}</td>
+      </tr>`;
+    }).join('');
+    const coachLabel = filter.coaches.length ? filter.coaches.map(c => coachName(parseInt(c))).filter(Boolean).join(', ') : t('All coaches', 'كل المدربين');
+    const sportLabel = filter.sports.length ? filter.sports.join(', ') : t('All sports', 'كل الرياضات');
+    const distinctMembers = new Set(rows.map(r => r.m.id)).size;
+    const monthsLabel = months.map(fmtMonth).join(', ');
+    const win = window.open('', '_blank');
+    win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>attendance_details</title>
+    <style>
+      *{margin:0;padding:0;box-sizing:border-box}
+      @page{size:A4 landscape;margin:8mm}
+      body{font-family:-apple-system,'Segoe UI',Arial,sans-serif;color:#1a1a1a;padding:14px}
+      .head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #f26060;padding-bottom:10px;margin-bottom:12px}
+      .brand{font-size:18px;font-weight:800}.brand span{color:#f26060}
+      .sub{color:#777;font-size:11px;margin-top:2px}
+      .meta{font-size:11px;color:#555;margin-bottom:10px}.meta b{color:#1a1a1a}
+      table{border-collapse:collapse;width:100%}
+      thead th{background:#fafafa;text-align:center}
+      thead th:first-child{text-align:left}
+      .foot{margin-top:14px;font-size:9px;color:#aaa;text-align:center;border-top:1px solid #eee;padding-top:6px}
+    </style></head><body>
+      <div class="head">
+        <div><div class="brand">Black <span>Stars</span> Sports Club</div><div class="sub">Waab, Doha · ${t('Attendance details report', 'تقرير الحضور المفصّل')}</div></div>
+        <div style="text-align:right;font-size:11px;color:#777">${t('Generated', 'صدر')}<br><b>${fmtDate(TODAY)}</b></div>
+      </div>
+      <div class="meta">${escapeHtml(monthsLabel)} (${months.length}) · ${escapeHtml(coachLabel)} · ${escapeHtml(sportLabel)} · <b>${distinctMembers}</b> ${t('students', 'طالب')} · <b>${rows.length}</b> ${t('rows', 'صفوف')} · <b>${grandY}</b> ${t('present total', 'إجمالي الحضور')}</div>
+      <table>
+        <thead><tr><th style="border:1px solid #e5e5ea;padding:4px 6px;font-size:9px;color:#777">${t('Student · Sport · Coach', 'الطالب · الرياضة · المدرب')}</th>${monthHeads}<th style="border:1px solid #e5e5ea;font-size:9px;color:#777">${t('Total Y', 'إجمالي')}</th></tr></thead>
+        <tbody>${bodyRows}</tbody>
+      </table>
+      <div class="foot">Black Stars CRM · ${t('each cell = the days present that month', 'كل خلية = أيام الحضور في ذلك الشهر')}</div>
+      <script>window.onload=()=>window.print();<\/script>
+    </body></html>`);
+    win.document.close();
+    toast(`${t('Details report', 'تقرير مفصّل')} · ${months.length} ${t('month(s)', 'شهر')} · ${rows.length} ${t('rows', 'صفوف')}`);
+  }
+  window._attDetailsPdf = exportAttendanceDetailsPdf;
+  $('#att-export-details')?.addEventListener('click', () => {
+    const rows = getRows();
+    if (!rows.length) { toast(t('No students to export', 'لا يوجد طلاب للتصدير'), 'error'); return; }
+    exportAttendanceDetailsPdf(rows);
+  });
 
   $('#att-export-pdf').addEventListener('click', () => {
     const rows = getRows();
@@ -30681,22 +30693,13 @@ PAGES.reports = (main) => {
     });
     const _coachPerf = state.coaches.map(c => ({ label: c.name, value: _scoped.reduce((s, mk) => s + ((typeof computeMonthlyPay === 'function') ? (computeMonthlyPay(c.id, mk).gross || 0) : 0), 0) }))
       .filter(r => r.value > 0).sort((a, b) => b.value - a.value).slice(0, 10);
+    // v6.605 — trimmed per owner: removed Revenue vs Cost, Net Profit trend, Expenses by Category
+    // (donut), Expenses by month, and New Members. Kept Revenue by Category + Coach Performance.
     const _chartsHTML = `
-      <div class="card" style="padding:16px 18px">
-        <div style="font-weight:700;font-size:14px;margin-bottom:2px">💰 ${t('Revenue vs Cost', 'الإيراد مقابل التكلفة')}</div>
-        <div class="text-mute" style="font-size:11px;margin-bottom:12px">${t('Per month · billed revenue vs (expenses + payroll)', 'شهرياً · الإيراد المُحتسب مقابل (المصروفات + الرواتب)')} · ${escapeHtml(periodLabel())}</div>
-        ${_monthly.length ? _chBars(_monthly.map(m => ({ label: m.short, values: [m.revenue, m.cost] })), [{ name: t('Revenue', 'الإيراد'), color: '#10b981' }, { name: t('Cost', 'التكلفة'), color: '#f59e0b' }]) : `<div class="text-mute" style="font-size:12px;padding:10px">${t('No data', 'لا توجد بيانات')}</div>`}
-      </div>
-      ${_CH_CARD('📈 ' + t('Net Profit trend', 'اتجاه صافي الربح'), escapeHtml(periodLabel()), _monthly.length ? _chLine(_monthly.map(m => m.profit), _monthly.map(m => m.short), '#5b8def') : `<div class="text-mute" style="font-size:12px;padding:10px">${t('No data', 'لا توجد بيانات')}</div>`)}
       <div class="row row-2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
         ${_CH_CARD('🍩 ' + t('Revenue by Category', 'الإيراد حسب الفئة'), escapeHtml(periodLabel()), _chDonut(allRevCats.map(([k, v]) => ({ label: k, value: v }))))}
         ${_CH_CARD('🥋 ' + t('Coach Performance', 'أداء المدربين'), t('Gross payroll', 'إجمالي الرواتب') + ' · ' + escapeHtml(periodLabel()), _chHBars(_coachPerf))}
       </div>
-      <div class="row row-2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-        ${_CH_CARD('🧾 ' + t('Expenses by Category', 'المصروفات حسب الفئة'), escapeHtml(periodLabel()), _chDonut(sortedExpCats.map(([k, v]) => ({ label: k, value: v }))))}
-        ${_CH_CARD('📉 ' + t('Expenses by month', 'المصروفات شهرياً'), escapeHtml(periodLabel()), _monthly.length ? _chBars(_monthly.map(m => ({ label: m.short, values: [m.expenses] })), [{ name: t('Expenses', 'المصروفات'), color: '#ef4444' }]) : `<div class="text-mute" style="font-size:12px;padding:10px">${t('No data', 'لا توجد بيانات')}</div>`)}
-      </div>
-      ${_CH_CARD('👥 ' + t('New Members', 'أعضاء جدد'), escapeHtml(periodLabel()), _monthly.length ? _chLine(_monthly.map(m => m.newMembers), _monthly.map(m => m.short), '#10b981') : `<div class="text-mute" style="font-size:12px;padding:10px">${t('No data', 'لا توجد بيانات')}</div>`)}
     `;
 
     $('#rep-body').innerHTML = `
@@ -30744,31 +30747,17 @@ PAGES.reports = (main) => {
         </div>
       </div>
 
-      <div class="row row-2 mb-3" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-        <div class="card">
-          <div class="card-header"><div><div class="card-title">Revenue by Sport</div><div class="card-subtitle">From linked invoices · ${escapeHtml(periodLabel())}</div></div></div>
-          ${sortedSports.length ? sortedSports.map(([sport, rev]) => `
-            <div style="margin-bottom:10px">
-              <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
-                <span>${escapeHtml(sport)}</span><span class="font-bold">${fmt(rev)} QAR</span>
-              </div>
-              <div style="height:8px;background:var(--surface-2);border-radius:4px;overflow:hidden">
-                <div style="height:100%;width:${(rev/sortedSports[0][1]*100).toFixed(1)}%;background:linear-gradient(90deg,var(--blue),var(--purple));border-radius:4px"></div>
-              </div>
-            </div>`).join('') : '<div class="text-mute" style="padding:16px">No sport revenue in this period</div>'}
-        </div>
-        <div class="card">
-          <div class="card-header"><div><div class="card-title">Expenses by Category</div><div class="card-subtitle">${escapeHtml(periodLabel())} · Total ${fmt(d.expensesTotal)} QAR</div></div></div>
-          ${sortedExpCats.length ? sortedExpCats.map(([cat, amt]) => `
-            <div style="margin-bottom:10px">
-              <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
-                <span>${escapeHtml(cat)}</span><span class="font-bold">${fmt(amt)} QAR</span>
-              </div>
-              <div style="height:8px;background:var(--surface-2);border-radius:4px;overflow:hidden">
-                <div style="height:100%;width:${(amt/sortedExpCats[0][1]*100).toFixed(1)}%;background:linear-gradient(90deg,var(--accent-2),var(--accent));border-radius:4px"></div>
-              </div>
-            </div>`).join('') : '<div class="text-mute" style="padding:16px">No expenses in this period</div>'}
-        </div>
+      <div class="card mb-3">
+        <div class="card-header"><div><div class="card-title">Revenue by Sport</div><div class="card-subtitle">From linked invoices · ${escapeHtml(periodLabel())}</div></div></div>
+        ${sortedSports.length ? sortedSports.map(([sport, rev]) => `
+          <div style="margin-bottom:10px">
+            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+              <span>${escapeHtml(sport)}</span><span class="font-bold">${fmt(rev)} QAR</span>
+            </div>
+            <div style="height:8px;background:var(--surface-2);border-radius:4px;overflow:hidden">
+              <div style="height:100%;width:${(rev/sortedSports[0][1]*100).toFixed(1)}%;background:linear-gradient(90deg,var(--blue),var(--purple));border-radius:4px"></div>
+            </div>
+          </div>`).join('') : '<div class="text-mute" style="padding:16px">No sport revenue in this period</div>'}
       </div>
 
       <div class="card">
