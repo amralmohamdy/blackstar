@@ -250,7 +250,7 @@ PAGES.dashboard = (main) => {
             const set = new Set([currentMonth()]);
             for (const i of state.invoices) if (i.month) set.add(i.month);
             for (const e of (state.expenses || [])) { const mo = expenseMonth(e); if (mo) set.add(mo); }
-            const months = [...set].filter(Boolean).sort().reverse();
+            const months = [...set].filter(plausibleMonthKey).sort().reverse();   // drop corrupt years (v6.621)
             const years = [...new Set(months.map(m => m.slice(0, 4)))].sort().reverse();
             const opt = (v, lab) => `<option value="${v}" ${v === selVal ? 'selected' : ''}>${lab}</option>`;
             return opt('all', t('All time', 'كل الوقت'))
@@ -322,7 +322,7 @@ PAGES.dashboard = (main) => {
       </div>` : ''}
     </div>
 
-    <!-- v6.617 Section 2 — today revenue · new/renewals · low stock · renewing this week · most popular -->
+    <!-- v6.622 Section 2 — today & this week (4 boxes): today revenue · new/renewals · renewing this week · most popular -->
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:12px">
       <div class="card" style="padding:12px 14px;border:1px solid rgba(16,185,129,.25);background:rgba(16,185,129,.05)">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="font-size:18px">💵</span><div style="font-weight:600;font-size:13px">${t("Today's revenue", 'إيراد اليوم')}</div></div>
@@ -334,34 +334,24 @@ PAGES.dashboard = (main) => {
         <div style="font-size:20px;font-weight:800;line-height:1">${newThisPeriod} <span style="font-size:12px;color:var(--text-dim);font-weight:500">${t('new', 'جديد')}</span> <span style="color:var(--text-dim);margin:0 2px">·</span> ${renewalsThisPeriod} <span style="font-size:13px">🔄</span></div>
         <div class="text-mute" style="font-size:11px;margin-top:3px">${t('new members + renewals', 'أعضاء جدد + تجديدات')}</div>
       </div>
-      ${lowStockList.length ? `
-        <div class="card" style="padding:12px 14px;border:1px solid rgba(139,92,246,.25);background:rgba(139,92,246,.05);cursor:pointer" onclick="navigate('products')" title="Open Products — restock low items">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-            <span style="font-size:18px">📦</span>
-            <div style="font-weight:600;font-size:13px">${lowStockList.length} ${t('low stock items','أصناف قاربت على النفاد')}</div>
-          </div>
-          <div class="text-mute" style="font-size:11px;line-height:1.5">${lowStockList.slice(0, 4).map(p => escapeHtml(p.name)).join(', ')}${lowStockList.length > 4 ? '…' : ''}</div>
-        </div>` : ''}
-      ${renewingThisWeek.length ? `
-        <div class="card" style="padding:12px 14px;border:1px solid rgba(242,163,60,.25);background:rgba(242,163,60,.05);cursor:pointer" onclick="navigate('expiring')" title="Open Expiring page">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-            <span style="font-size:18px">⏰</span>
-            <div style="font-weight:600;font-size:13px">${renewingThisWeek.length} ${t('renewing this week','تجديد هذا الأسبوع')}</div>
-          </div>
-          <div class="text-mute" style="font-size:11px;line-height:1.5">
-            ${t('Members with expiry in the next 7 days — chase those renewals','أعضاء تنتهي عضويتهم خلال 7 أيام — تابع التجديدات')}
-          </div>
-        </div>` : ''}
-      ${topSport ? `
-        <div class="card" style="padding:12px 14px;border:1px solid rgba(91,141,239,.25);background:rgba(91,141,239,.05)">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-            <span style="font-size:18px">🏆</span>
-            <div style="font-weight:600;font-size:13px">${t('Most popular','الأكثر شعبية')}: ${escapeHtml(topSport[0])}</div>
-          </div>
-          <div class="text-mute" style="font-size:11px;line-height:1.5">
-            ${topSport[1]} ${t('active members enrolled','عضو نشط مسجّل')}
-          </div>
-        </div>` : ''}
+      <div class="card" style="padding:12px 14px;border:1px solid rgba(242,163,60,.25);background:rgba(242,163,60,.05);cursor:pointer" onclick="navigate('expiring')" title="Open Expiring page">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span style="font-size:18px">⏰</span>
+          <div style="font-weight:600;font-size:13px">${renewingThisWeek.length} ${t('renewing this week','تجديد هذا الأسبوع')}</div>
+        </div>
+        <div class="text-mute" style="font-size:11px;line-height:1.5">
+          ${renewingThisWeek.length ? t('Members with expiry in the next 7 days — chase those renewals','أعضاء تنتهي عضويتهم خلال 7 أيام — تابع التجديدات') : t('No renewals due in the next 7 days','لا تجديدات مستحقة خلال 7 أيام')}
+        </div>
+      </div>
+      <div class="card" style="padding:12px 14px;border:1px solid rgba(91,141,239,.25);background:rgba(91,141,239,.05)">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span style="font-size:18px">🏆</span>
+          <div style="font-weight:600;font-size:13px">${topSport ? t('Most popular','الأكثر شعبية') + ': ' + escapeHtml(topSport[0]) : t('Most popular','الأكثر شعبية')}</div>
+        </div>
+        <div class="text-mute" style="font-size:11px;line-height:1.5">
+          ${topSport ? topSport[1] + ' ' + t('active members enrolled','عضو نشط مسجّل') : t('No active enrollments yet','لا تسجيلات نشطة بعد')}
+        </div>
+      </div>
     </div>
 
     <!-- KPI cards -->
@@ -386,11 +376,11 @@ PAGES.dashboard = (main) => {
         ${kpiDelta(s.currProfit, s.prevProfit)}
         ${sparkline([s.prevProfit, s.currProfit])}
       </div>
-      <div class="kpi purple" style="cursor:pointer" onclick="navigate('history')" title="${t('Memberships renewed in this period', 'الاشتراكات المجددة في هذه الفترة')}">
-        <div class="kpi-icon">🔄</div>
-        <div class="kpi-label">${t('Renewals','التجديدات')} (${s.periodShort})</div>
-        <div class="kpi-value num">${renewalsThisPeriod}</div>
-        <div class="kpi-delta flat">${renewalsThisPeriod === 1 ? t('membership renewed','اشتراك مجدد') : t('memberships renewed','اشتراكات مجددة')}</div>
+      <div class="kpi ${lowStockList.length ? 'red' : 'green'}" style="cursor:pointer" onclick="navigate('products')" title="${t('Products at or below their low-stock threshold — click to restock','أصناف عند أو تحت حد المخزون المنخفض — اضغط لإعادة التزويد')}">
+        <div class="kpi-icon">📦</div>
+        <div class="kpi-label">${t('Low Stock','مخزون منخفض')}</div>
+        <div class="kpi-value num">${lowStockList.length}</div>
+        <div class="kpi-delta flat">${lowStockList.length ? (escapeHtml(lowStockList.slice(0, 2).map(p => p.name).join(', ')) + (lowStockList.length > 2 ? '…' : '')) : t('all items stocked','كل الأصناف متوفرة')}</div>
       </div>
     </div>
 
@@ -30667,7 +30657,7 @@ PAGES.reports = (main) => {
     state.invoices.forEach(i => { if (i.month) months.add(i.month); });
     state.expenses.forEach(e => { if (e.date) months.add(e.date.slice(0, 7)); });
     state.salaries.forEach(x => { if (x.month) months.add(x.month); });
-    return [...months].sort();
+    return [...months].filter(plausibleMonthKey).sort();   // drop corrupt "0001"-style years (v6.621)
   }
   const allMonths = discoverPeriods();
   const allYears = [...new Set(allMonths.map(m => m.slice(0, 4)))].sort();
@@ -30768,8 +30758,9 @@ PAGES.reports = (main) => {
       .filter(r => r.value > 0).sort((a, b) => b.value - a.value).slice(0, 10);
     // v6.605 — trimmed per owner: removed Revenue vs Cost, Net Profit trend, Expenses by Category
     // (donut), Expenses by month, and New Members. Kept Revenue by Category + Coach Performance.
+    // v6.622 — split into TWO stacked rows (one chart each), full width.
     const _chartsHTML = `
-      <div class="row row-2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div style="display:grid;grid-template-columns:1fr;gap:16px">
         ${_CH_CARD('🍩 ' + t('Revenue by Category', 'الإيراد حسب الفئة'), escapeHtml(periodLabel()), _chDonut(allRevCats.map(([k, v]) => ({ label: k, value: v }))))}
         ${_CH_CARD('🥋 ' + t('Coach Performance', 'أداء المدربين'), t('Gross payroll', 'إجمالي الرواتب') + ' · ' + escapeHtml(periodLabel()), _chHBars(_coachPerf))}
       </div>
@@ -30846,8 +30837,10 @@ PAGES.reports = (main) => {
         </div>
       </div>
 
-      <div style="margin:18px 0 8px;font-weight:700;font-size:15px;color:var(--text)">📊 ${t('Visual insights', 'رؤى بصرية')}</div>
-      ${_chartsHTML}
+      <div class="card" style="margin-top:18px">
+        <div class="card-header"><div><div class="card-title">📊 ${t('Visual insights', 'رؤى بصرية')}</div><div class="card-subtitle">${t('Revenue by category & coach performance — click to collapse', 'الإيراد حسب الفئة وأداء المدربين — اضغط للطي')}</div></div></div>
+        ${_chartsHTML}
+      </div>
       ${(() => {   // v6.617 — Renewal revenue potential (moved here from the Dashboard), shown last.
         const proj = (typeof clubRenewalValue === 'function') ? clubRenewalValue(state.members) : { total: 0, members: 0, withValue: 0 };
         return `
@@ -30870,7 +30863,11 @@ PAGES.reports = (main) => {
 
   // ── Static shell ──
   const monthOptions = allMonths.map(m => `<option value="${m}" ${period.value === m && period.type === 'month' ? 'selected' : ''}>${fmtMonth(m)}</option>`).join('');
-  const yearOptions = allYears.map(y => `<option value="${y}">${y}</option>`).join('');
+  // v6.621 — pre-select the CURRENT year (else the latest with data) so the Year tab opens on
+  // this year, not the earliest one in the list.
+  const _curYear = String(new Date().getFullYear());
+  const _defYear = allYears.includes(_curYear) ? _curYear : (allYears[allYears.length - 1] || _curYear);
+  const yearOptions = allYears.map(y => `<option value="${y}" ${y === _defYear ? 'selected' : ''}>${y}</option>`).join('');
 
   main.innerHTML = `
     <div class="topbar">
@@ -34083,7 +34080,7 @@ PAGES.transactions = (main) => {
             [['1','Jan'],['2','Feb'],['3','Mar'],['4','Apr'],['5','May'],['6','Jun'],['7','Jul'],['8','Aug'],['9','Sep'],['10','Oct'],['11','Nov'],['12','Dec']].map(([v, l]) => ({ value: v, label: l })),
             st.months)}
           ${multiSelectHtml('txn-years', t('Years', 'السنوات'),
-            [...new Set([...(state.invoices || []).map(i => String(i.month || i.date || '').slice(0, 4)).filter(y => y && y.length === 4), String(TODAY).slice(0, 4)])].sort().reverse().map(y => ({ value: y, label: y })),
+            [...new Set([...(state.invoices || []).map(i => String(i.month || i.date || '').slice(0, 4)).filter(y => y && y.length === 4 && plausibleYearStr(y)), String(TODAY).slice(0, 4)])].sort().reverse().map(y => ({ value: y, label: y })),
             st.years)}
         </div>
         ${multiSelectHtml('txn-cat', t('Category', 'الفئة'),
