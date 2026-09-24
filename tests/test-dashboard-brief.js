@@ -36,9 +36,12 @@ R.section('removed sections are gone; kept sections remain');
   R.ok('Cash Collected card removed', !/Cash Collected/.test(r.html));
   R.ok('Revenue Mix card removed', !/Revenue Mix/.test(r.html));
   R.ok('Backup-before-updates card removed', !/Backup before updates/.test(r.html));
+  // v6.616 — restructured: Section 1 status tiles + Section 2 info row
+  R.ok('Section 1 shows Active / Expired / Completed', /Active</.test(r.html) && /Expired</.test(r.html) && /Completed</.test(r.html));
+  R.ok('old "Needs attention today" card is gone', !/Needs attention today/.test(r.html));
+  R.ok('Section 2 includes Low stock', /low stock items/.test(r.html));
   // kept
   R.ok('KPIs kept (Total Revenue, Net Profit)', /Total Revenue/.test(r.html) && /Net Profit/.test(r.html));
-  R.ok('Needs-attention kept', /Needs attention today/.test(r.html));
   R.ok('Renewal revenue potential kept', /Renewal revenue potential/.test(r.html));
   R.ok('Data & Cloud Sync kept (compact strip, v6.610)', /Data & Cloud Sync/.test(r.html) && /documents in cloud/.test(r.html));
   R.ok('per-collection breakdown removed from dashboard (moved to ☁ Storage)', !/Payment records/.test(r.html));

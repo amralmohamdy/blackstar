@@ -278,50 +278,45 @@ PAGES.dashboard = (main) => {
       </div>
     ` : ''}
 
-    ${totalActions > 0 ? `
-      <div class="card" style="border:1px solid rgba(242,163,60,.35);background:linear-gradient(180deg,rgba(242,163,60,.08),transparent);margin-bottom:12px">
-        <div class="card-header" style="margin-bottom:8px">
-          <div><div class="card-title" style="display:flex;align-items:center;gap:8px">🔔 ${t('Needs attention today','يحتاج انتباهك اليوم')} <span class="badge" style="background:var(--accent-2);color:#1a1a1a">${totalActions}</span></div>
-          <div class="card-subtitle">${t('Action items based on today\'s data — tap any to act','عناصر إجرائية حسب بيانات اليوم — اضغط لأي منها')}</div></div>
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px">
-          ${alreadyExpired ? `
-            <div onclick="navigate('expiring')" style="cursor:pointer;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:12px">
-              <div style="font-size:24px;font-weight:800;color:var(--red)">${alreadyExpired}</div>
-              <div style="font-size:12px;font-weight:600">${t('Expired memberships','عضويات منتهية')}</div>
-              <div class="text-mute" style="font-size:10px;margin-top:2px">${t('Need renewal now →','بحاجة للتجديد الآن →')}</div>
-            </div>` : ''}
-          ${expiringSoon ? `
-            <div onclick="navigate('expiring')" style="cursor:pointer;background:rgba(242,163,60,.1);border:1px solid rgba(242,163,60,.3);border-radius:8px;padding:12px">
-              <div style="font-size:24px;font-weight:800;color:var(--accent-2)">${expiringSoon}</div>
-              <div style="font-size:12px;font-weight:600">${t(`Expiring in ≤ ${threshold} days`,`تنتهي خلال ≤ ${threshold} يوم`)}</div>
-              <div class="text-mute" style="font-size:10px;margin-top:2px">${expiringList.slice(0,2).map(x => escapeHtml(String(x.m.name || '').split(' ')[0])).join(', ')}${expiringSoon > 2 ? '…' : ''} →</div>
-            </div>` : ''}
-          ${finishedList.length ? `
-            <div onclick="navigate('members')" style="cursor:pointer;background:rgba(91,141,239,.1);border:1px solid rgba(91,141,239,.3);border-radius:8px;padding:12px">
-              <div style="font-size:24px;font-weight:800;color:var(--blue)">${finishedList.length}</div>
-              <div style="font-size:12px;font-weight:600">${t('Finished all classes','أنهوا جميع الحصص')}</div>
-              <div class="text-mute" style="font-size:10px;margin-top:2px">${t('Likely need renewal →','غالباً بحاجة للتجديد →')}</div>
-            </div>` : ''}
-          ${lowStockList.length ? `
-            <div onclick="navigate('products')" style="cursor:pointer;background:rgba(139,92,246,.1);border:1px solid rgba(139,92,246,.3);border-radius:8px;padding:12px">
-              <div style="font-size:24px;font-weight:800;color:#8b5cf6">${lowStockList.length}</div>
-              <div style="font-size:12px;font-weight:600">${t('Low stock items','أصناف قاربت على النفاد')}</div>
-              <div class="text-mute" style="font-size:10px;margin-top:2px">${lowStockList.slice(0,2).map(p => escapeHtml(p.name)).join(', ')} →</div>
-            </div>` : ''}
-        </div>
+    <!-- v6.616 Section 1 — member status (Active · Expired · Completed) -->
+    <div class="kpi-grid mb-3" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px">
+      <div class="kpi green" style="cursor:pointer" onclick="navigate('members')" title="${t('Active memberships','العضويات النشطة')}">
+        <div class="kpi-icon">✅</div>
+        <div class="kpi-label">${t('Active','نشط')}</div>
+        <div class="kpi-value num">${s.activeMembers}</div>
+        <div class="kpi-delta flat">${t('active memberships','عضويات نشطة')}</div>
       </div>
-    ` : `
-      <div class="card" style="border:1px solid rgba(16,185,129,.3);background:rgba(16,185,129,.06);margin-bottom:12px;display:flex;align-items:center;gap:12px;padding:14px 16px">
-        <span style="font-size:22px">✅</span>
-        <div><div style="font-weight:600;color:var(--green)">${t('All clear — nothing needs attention right now','كل شيء على ما يرام — لا شيء يحتاج انتباهك الآن')}</div>
-        <div class="text-mute" style="font-size:11px">${t('No expired memberships, none expiring soon, stock levels healthy','لا عضويات منتهية، ولا قاربت على الانتهاء، والمخزون جيد')}</div></div>
+      <div class="kpi red" style="cursor:pointer" onclick="navigate('expiring')" title="${t('Expired — need renewal','منتهية — بحاجة للتجديد')}">
+        <div class="kpi-icon">⛔</div>
+        <div class="kpi-label">${t('Expired','منتهية')}</div>
+        <div class="kpi-value num">${s.expiredMembers}</div>
+        <div class="kpi-delta flat">${t('need renewal','بحاجة للتجديد')}</div>
       </div>
-    `}
+      <div class="kpi purple" style="cursor:pointer" onclick="navigate('expiring')" title="${t('Completed all classes','أنهوا جميع الحصص')}">
+        <div class="kpi-icon">🎓</div>
+        <div class="kpi-label">${t('Completed','مكتمل')}</div>
+        <div class="kpi-value num">${s.completedMembers}</div>
+        <div class="kpi-delta flat">${t('finished classes','أنهوا الحصص')}</div>
+      </div>
+      ${s.frozenMembers ? `<div class="kpi" style="cursor:pointer" onclick="navigate('members')" title="${t('Frozen memberships','عضويات مجمّدة')}">
+        <div class="kpi-icon">❄️</div>
+        <div class="kpi-label">${t('Frozen','مجمّد')}</div>
+        <div class="kpi-value num">${s.frozenMembers}</div>
+        <div class="kpi-delta flat">${t('paused','متوقّف مؤقتاً')}</div>
+      </div>` : ''}
+    </div>
 
-    <!-- Birthdays · Renewing soon · Top sport (small info row) -->
-    ${(birthdayList.length || renewingThisWeek.length || topSport) ? `
+    <!-- v6.616 Section 2 — low stock · birthdays · renewing this week · most popular -->
+    ${(lowStockList.length || birthdayList.length || renewingThisWeek.length || topSport) ? `
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:12px">
+      ${lowStockList.length ? `
+        <div class="card" style="padding:12px 14px;border:1px solid rgba(139,92,246,.25);background:rgba(139,92,246,.05);cursor:pointer" onclick="navigate('products')" title="Open Products — restock low items">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+            <span style="font-size:18px">📦</span>
+            <div style="font-weight:600;font-size:13px">${lowStockList.length} ${t('low stock items','أصناف قاربت على النفاد')}</div>
+          </div>
+          <div class="text-mute" style="font-size:11px;line-height:1.5">${lowStockList.slice(0, 4).map(p => escapeHtml(p.name)).join(', ')}${lowStockList.length > 4 ? '…' : ''}</div>
+        </div>` : ''}
       ${birthdayList.length ? `
         <div class="card" style="padding:12px 14px;border:1px solid rgba(245,158,11,.25);background:rgba(245,158,11,.05);cursor:pointer" onclick="navigate('birthdays')" title="Open Birthdays — send celebration messages">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
