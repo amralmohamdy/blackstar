@@ -23421,6 +23421,7 @@ PAGES.attendance = (main) => {
     // per-student total, so a parent reads the sheet at a glance.
     const monthHeads = months.map(mo => `<th class="mh">${fmtMonth(mo)}</th>`).join('');
     let grandY = 0;
+    const monthTotals = {}; months.forEach(mo => monthTotals[mo] = 0);   // v6.623 — per-month column totals
     const bodyRows = rows.map(({ m, sport, coachId, window: win, attKey }, ri) => {
       const _mix = attKey === MIXED;
       let rowY = 0;
@@ -23429,7 +23430,7 @@ PAGES.attendance = (main) => {
         const _monShort = fmtMonth(mo).split(' ')[0];   // full date per attended day (e.g. "5 Jul")
         const days = [];
         for (const k in dd) { if (dd[k] === 'Y' && inWin(win, mo, k)) days.push(parseInt(k, 10)); }
-        days.sort((a, b) => a - b); rowY += days.length;
+        days.sort((a, b) => a - b); rowY += days.length; monthTotals[mo] += days.length;
         const dateList = days.map(d => d + ' ' + _monShort).join(' · ');
         return `<td class="dcell${days.length ? ' has' : ''}">${days.length ? `<div class="cnt">${days.length}</div><div class="dts">${dateList}</div>` : '<span class="none">—</span>'}</td>`;
       }).join('');
@@ -23481,6 +23482,10 @@ PAGES.attendance = (main) => {
       .none{color:#ccc;font-size:18px}
       .tcell{text-align:center;padding:8px}
       .tpill{display:inline-block;min-width:40px;background:#0f9d58;color:#fff;font-size:20px;font-weight:900;border-radius:20px;padding:5px 12px}
+      tfoot .totrow td{background:#1f2a44;color:#fff;border-color:#2b3a5e}
+      tfoot .totrow .tlabel{font-size:15px;font-weight:800;text-align:right}
+      tfoot .totrow .cnt{color:#fff;font-size:22px}
+      tfoot .totrow .tpill.grand{background:#f26060}
       .foot{margin-top:16px;font-size:12px;color:#888;text-align:center;border-top:1px solid #eee;padding-top:9px}
     </style></head><body>
       <div class="head">
@@ -23491,6 +23496,11 @@ PAGES.attendance = (main) => {
       <table>
         <thead><tr><th>${t('Student · Sport · Coach', 'الطالب · الرياضة · المدرب')}</th>${monthHeads}<th>${t('Total', 'الإجمالي')}</th></tr></thead>
         <tbody>${bodyRows}</tbody>
+        <tfoot><tr class="totrow">
+          <td class="scell tlabel">${t('Total attended (per month)', 'إجمالي الحضور (لكل شهر)')}</td>
+          ${months.map(mo => `<td class="dcell"><div class="cnt">${monthTotals[mo]}</div></td>`).join('')}
+          <td class="tcell"><span class="tpill grand">${grandY}</span></td>
+        </tr></tfoot>
       </table>
       <div class="foot">Black Stars CRM · ${t('each cell shows the dates the student attended that month', 'كل خلية تعرض تواريخ حضور الطالب في ذلك الشهر')} · 📅 ${t('Membership = start → expiry', 'الاشتراك = البداية ← الانتهاء')}</div>
       <script>window.onload=()=>window.print();<\/script>
