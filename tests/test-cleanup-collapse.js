@@ -7,8 +7,8 @@ const R = H.reporter('v6.614 · cleanup collapse');
 R.section('source wiring');
 {
   const src = H.readSrc();
-  R.ok('the enhancer is defined', /function _wireCleanupCollapse\(root\)/.test(src));
-  R.ok('PAGES.cleanup calls it after render', /_wireCleanupCollapse\(main\);/.test(src));
+  R.ok('the enhancer is defined', /function _wireCardCollapse\(root\)/.test(src));
+  R.ok('PAGES.cleanup calls it after render', /_wireCardCollapse\(main\);/.test(src));
   R.ok('a click on a header button does NOT toggle', /closest\('button, a, input, select'\)\) return;/.test(src));
   R.ok('it toggles the body display + rotates a chevron', /b\.style\.display = hidden \? '' : 'none'/.test(src) && /rotate\(-90deg\)/.test(src));
 }
@@ -30,7 +30,7 @@ R.section('functional: header click toggles the body, buttons are ignored');
       const body = { style:{ display:'' } };
       const card = { children:[head, body], querySelector:(s)=> s==='.card-header' ? head : null };
       const root = { querySelectorAll:(s)=> s==='.card' ? [card] : [] };
-      _wireCleanupCollapse(root);
+      _wireCardCollapse(root);
       const wired = typeof head._fn === 'function';
       head._fn({ target:{ closest:()=>null } });   // header click → collapse
       const afterCollapse = body.style.display;

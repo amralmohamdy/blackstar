@@ -36,6 +36,11 @@ R.section('reports screen still renders');
   R.ok('PAGES.reports renders without error', r.ok, r.error);
 }
 
+R.section('v6.615 — report sections are collapsible');
+{
+  R.ok('rep-body render wires _wireCardCollapse', /_wireCardCollapse\(\$\('#rep-body'\)\)/.test(src));
+}
+
 R.section('v6.610 — Renewals shown beside New Members in the same KPI box');
 {
   R.ok('report computes renewals in the period', /const _repRenewals = \(state\.members \|\| \[\]\)\.reduce\([\s\S]{0,140}inPeriodDate\(r\.start \|\| r\.createdAt/.test(src));

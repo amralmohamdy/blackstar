@@ -30849,6 +30849,7 @@ PAGES.reports = (main) => {
       <div style="margin:18px 0 8px;font-weight:700;font-size:15px;color:var(--text)">📊 ${t('Visual insights', 'رؤى بصرية')}</div>
       ${_chartsHTML}
     `;
+    try { _wireCardCollapse($('#rep-body')); } catch (_) {}   // v6.615 — collapsible report sections
   }
 
   // ── Static shell ──
@@ -34632,10 +34633,10 @@ window.normalizeAllMethodsUI = function () {
   confirmSaved('✅ ' + t(`Normalised ${n} invoice method(s)`, `تم توحيد طرق الدفع في ${n} فاتورة`));
 };
 
-// v6.614 — make every Cleanup Center section card collapsible. Generic: click a card header (but not
-// its buttons) to toggle its body; a ▾/▸ chevron shows the state. No re-render (the page's scans are
-// heavy), so collapsing is instant.
-function _wireCleanupCollapse(root) {
+// v6.614/6.615 — REUSABLE: make every section .card inside `root` collapsible. Click a card header
+// (but not its buttons) to toggle its body; a ▾/▸ chevron shows the state. No re-render, so it's
+// instant. Used by the Cleanup Center and the Reports screen.
+function _wireCardCollapse(root) {
   if (!root || !root.querySelectorAll) return;
   root.querySelectorAll('.card').forEach(card => {
     const head = card.querySelector('.card-header');
@@ -34830,7 +34831,7 @@ PAGES.cleanup = (main) => {
       <div style="padding:12px">${enrDriftSection}</div>
     </div>
   `;
-  _wireCleanupCollapse(main);
+  _wireCardCollapse(main);
 };
 
 window.dedupeMemberEnrollment = function(memberId, sport) {
