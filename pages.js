@@ -5891,9 +5891,32 @@ window.rebuildMemberFromProfile = function (memberId) {
   const enrolledSports = new Set(enrollments.map(e => e.sport));
   const membershipInvs = (state.invoices || []).filter(i => !i.deleted && i.customerId === m.id
     && (i.category || 'Membership') === 'Membership' && !i.switchCredit && i.activityType !== 'switch-credit');
-  const findLine = (sp) => { for (const iv of membershipInvs) { if (Array.isArray(iv.lineItems)) { const li = iv.lineItems.find(x => x.sport === sp); if (li) return { inv: iv, li }; } } return null; };
-  const activeSub = (sp) => (m.subscriptions || []).find(s => s.activity === sp && !['withdrawn', 'completed'].includes((s.status || '').toLowerCase()))
-    || (m.subscriptions || []).find(s => s.activity === sp && (s.status || '').toLowerCase() !== 'withdrawn');
+  // v6.630 — PERIOD-AWARE matching. A renewed member has SEVERAL periods of one sport; matching by sport
+  // ONLY grabbed the FIRST (oldest) invoice line + sub and overwrote it with the CURRENT enrollment's
+  // values, corrupting the other period ("Rebuild changed my other period"). Match the enrollment to the
+  // sub that represents ITS period (same sport +coach, preferring an EXACT start match, else the latest
+  // start), and match the invoice LINE to THAT sub's own invoice — never a different period's.
+  const subForEnr = (e) => {
+    const sp = e.sport, cid = e.coachId;
+    const cands = (m.subscriptions || []).filter(s => s.activity === sp && (s.status || '').toLowerCase() !== 'withdrawn');
+    const coachCands = cands.filter(s => cid == null || s.coachId == null || String(s.coachId) === String(cid));
+    const pool = coachCands.length ? coachCands : cands;
+    return pool.find(s => String(s.start || '') === String(e.start || '') && e.start)
+        || pool.slice().sort((a, b) => String(a.start || '').localeCompare(String(b.start || ''))).slice(-1)[0]
+        || null;
+  };
+  const lineForSub = (sp, sub) => {
+    if (sub && sub.invoiceNumber) {
+      const iv = membershipInvs.find(v => v.ref === sub.invoiceNumber || v.invoiceNumber === sub.invoiceNumber);
+      if (iv && Array.isArray(iv.lineItems)) {
+        const li = iv.lineItems.find(x => x.sport === sp && String(x.coachId) === String(sub.coachId)) || iv.lineItems.find(x => x.sport === sp);
+        if (li) return { inv: iv, li };
+      }
+    }
+    // Fallback (legacy single-period member with no invoiceNumber on the sub): first sport match.
+    for (const iv of membershipInvs) { if (Array.isArray(iv.lineItems)) { const li = iv.lineItems.find(x => x.sport === sp); if (li) return { inv: iv, li }; } }
+    return null;
+  };
   const cn = (id) => id != null ? (coachName(id) || '—') : '—';
 
   const rows = [], applies = [];
@@ -5901,7 +5924,8 @@ window.rebuildMemberFromProfile = function (memberId) {
   // 1) Enrolled sports → sync sub + invoice line to the enrollment.
   for (const e of enrollments) {
     const eCls = parseInt(e.classes) || 0, ePrice = Number(e.price) || 0, eCoach = (e.coachId != null) ? e.coachId : null;
-    const L = findLine(e.sport);
+    const sub = subForEnr(e);                 // v6.630 — the sub for THIS enrollment's period
+    const L = lineForSub(e.sport, sub);       // v6.630 — the invoice line of THAT sub, not the first sport match
     if (L) {
       const li = L.li, iv = L.inv;
       if ((Number(li.price) || 0) !== ePrice || (parseInt(li.classes) || 0) !== eCls || String(li.coachId) !== String(eCoach)) {
@@ -5909,7 +5933,6 @@ window.rebuildMemberFromProfile = function (memberId) {
         applies.push(() => { li.price = ePrice; li.classes = eCls; li.coachId = eCoach; li.coach = eCoach != null ? coachName(eCoach) : ''; touchedInvs.add(iv); });
       }
     }
-    const sub = activeSub(e.sport);
     if (sub) {
       if ((parseInt(sub.totalClasses) || 0) !== eCls || (Number(sub.amountPaid) || 0) !== ePrice || String(sub.coachId) !== String(eCoach)) {
         rows.push(`<tr><td>${escapeHtml(e.sport)}</td><td>${t('Subscription', 'الاشتراك')}</td><td class="text-mute">${fmt(sub.amountPaid)} · ${sub.totalClasses || 0}cl · ${escapeHtml(cn(sub.coachId))}</td><td class="font-bold">${fmt(ePrice)} · ${eCls}cl · ${escapeHtml(cn(eCoach))}</td></tr>`);
@@ -32945,13 +32968,25 @@ window.transferMembership = function(fromId, sport, toId) {
   const found = _membershipInvoiceForSport(fromId, sport);
   const coachId = enr.coachId;
   const fullClasses = enr.classes || (found && found.li && found.li.classes) || 0;
-  // Account for attendance: only the UNATTENDED (remaining) classes transfer, since
-  // the attended ones were already consumed by A. Use LIVE attendance (the actual
-  // roll-call marks) so this is accurate even if the stored counter is stale.
-  const aSub = (A.subscriptions || []).find(s => (s.activity || '') === sport);
-  const liveAtt = (typeof liveAttendanceCount === 'function') ? liveAttendanceCount(A, sport, null, null).y : 0;
+  // Account for attendance: only the UNATTENDED (remaining) classes transfer, since the attended ones
+  // were already consumed by A. Use LIVE attendance (the actual roll-call marks) so this is accurate
+  // even if the stored counter is stale.
+  // v6.629 — window the count to the CURRENT cycle's sub, NOT all-time. `fullClasses` is the CURRENT
+  // package's class count; a renewed member's all-time attendance (finished cycle + new cycle) exceeded
+  // it, so `fullClasses - attended` went negative → clamped to 0: B got 0 classes at full price with no
+  // invoice and A's invoice was inflated. switchSport windows this; transfer must too. Pick the sub that
+  // matches the enrollment's coach with the latest start (the live cycle), and count only its window.
+  const _sameSportSubs = (A.subscriptions || []).filter(s => (s.activity || '') === sport);
+  const _byStart = (a, b) => String(a.start || '').localeCompare(String(b.start || ''));
+  const aSub = (_sameSportSubs.filter(s => coachId == null || s.coachId == null || String(s.coachId) === String(coachId)).sort(_byStart).slice(-1)[0])
+            || (_sameSportSubs.slice().sort(_byStart).slice(-1)[0])
+            || null;
+  const _aWin = (aSub && typeof subAttendanceWindow === 'function') ? subAttendanceWindow(A, aSub)
+              : { from: (aSub && aSub.start) || null, to: (aSub && aSub.end) || null };
+  const liveAtt = (typeof liveAttendanceCount === 'function') ? liveAttendanceCount(A, sport, _aWin.from, _aWin.to).y : 0;
   const storedAtt = aSub ? (parseInt(aSub.attendedClasses) || 0) : 0;
-  const attended = Math.max(liveAtt, storedAtt);   // whichever reflects more attendance
+  // Never let attendance exceed the package: keeps `classes`, attendedValue and keepValue consistent.
+  const attended = Math.min(fullClasses || 0, Math.max(liveAtt, storedAtt));
   const classes = Math.max(0, fullClasses - attended);
   const price = enr.price || (found && found.li && found.li.price) || 0;
   // Split the price by attendance so the ORIGINAL coach keeps commission for the
