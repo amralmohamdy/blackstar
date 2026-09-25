@@ -9,6 +9,10 @@
 // v6.574 — ONE month-resolver for an expense, used everywhere (Dashboard/Report). An expense with only a
 // `date` (no `month`) was INVISIBLE on the old Dashboard (it filtered on e.month) → wrong Net Profit.
 function expenseMonth(e) { return (e && (e.month || (e.date ? String(e.date).slice(0, 10).slice(0, 7) : ''))) || ''; }
+// v6.627 — "Cash collected by owner" is till cash the owner moves to the bank: a cash MOVEMENT, not a
+// business expense. It must NEVER reduce Net Profit / Total Expenses (kept only as a cash-in-hand
+// record + reconciliation). Every P&L expense sum skips it, exactly like salary-settlement rows.
+function isCashMovementExpense(cat) { return String(cat || '') === 'Cash collected by owner'; }
 // v6.574 — the Dashboard/Report period model: a single month, a whole year, or all-time.
 function _dashDefaultPeriod() { return { type: 'month', value: (typeof currentMonth === 'function' ? currentMonth() : '') }; }
 function normalizeDashPeriod(arg) {
@@ -52,6 +56,7 @@ function financeAgg(months) {
   for (const e of (state.expenses || [])) {
     if (e.deleted) continue;
     const mo = expenseMonth(e); if (!mset.has(mo)) continue;
+    if (isCashMovementExpense(e.category)) continue;   // v6.627 — bank deposit / owner cash-out is a transfer, not an expense
     const amt = Number(e.amount) || 0; cashExpenses += amt;
     if (!isSalaryCategory(e.category)) expenses += amt;   // P&L expenses exclude salary-settlement rows (cost via salariesEarned)
   }
@@ -9018,6 +9023,7 @@ function computeMonthlyReport(ym) {
     const m = e.month || String(d).slice(0, 7);
     if (m !== ym) continue;
     if (isSalaryCategory(e.category)) continue;   // salary payments are not a P&L expense (cost = auto-calc)
+    if (isCashMovementExpense(e.category)) continue;   // v6.627 — owner cash-out / bank deposit is a transfer, not an expense
     expenseEntries += Number(e.amount) || 0;
   }
   // Salaries = the auto-calculated salary COST for the month (single source of
@@ -17437,7 +17443,7 @@ PAGES.cashcollection = (main) => {
     <div class="topbar">
       <div>
         <h1>💵 ${t('Cash Collection', 'تحصيل النقدية')}</h1>
-        <div class="subtitle">${t('Cash taken from the till by the owner / partner — recorded as an expense for accounting', 'النقد المسحوب من الصندوق من قِبَل المالك / الشريك — يُسجَّل كمصروف للأغراض المحاسبية')}</div>
+        <div class="subtitle">${t('Cash taken from the till and deposited in the bank — a cash movement, NOT a business expense (it does not reduce Net Profit)', 'النقد المسحوب من الصندوق والمودع في البنك — حركة نقدية، وليست مصروفاً (لا يُخفّض صافي الربح)')}</div>
       </div>
       <div class="topbar-actions">
         <button class="btn primary" onclick="openCashCollectionModal()">+ ${t('Record collection', 'تسجيل تحصيل')}</button>
@@ -22466,12 +22472,17 @@ PAGES.attendance = (main) => {
   // to the plain sport for ordinary single-coach rows.
   function rowAttended(m, attKey, window) {
     const key = attKey || '';
+    // v6.626 — a Mixed row's marks live in m.mixedAttendance (via mixedDayMarks), NOT in
+    // dailyAttendance['Mixed'] — reading the empty plain cell made every attended Mixed student look
+    // NOT-attended, so the "Attended" filter dropped them (and "Not attended" wrongly showed them),
+    // disagreeing with the ATTENDED KPI which special-cases Mixed. Read the same source here.
+    const cellFor = (mo) => key === MIXED ? mixedDayMarks(m, mo) : (m.dailyAttendance?.[mo]?.[key] || {});
     if (filter.month === 'all') {
-      const da = m.dailyAttendance || {};
-      return Object.keys(da).some(mo => { const cell = da[mo]?.[key] || {}; return Object.keys(cell).some(k => cell[k] === 'Y' && inWin(window, mo, k)); });
+      const months = key === MIXED ? Object.keys(m.mixedAttendance || {}) : Object.keys(m.dailyAttendance || {});
+      return months.some(mo => { const cell = cellFor(mo); return Object.keys(cell).some(k => cell[k] === 'Y' && inWin(window, mo, k)); });
     }
     const mo = gridMonth();
-    const data = m.dailyAttendance?.[mo]?.[key] || {};
+    const data = cellFor(mo);
     const total = daysInMonth(mo);
     const days = (filter.days && filter.days.length)
       ? filter.days.filter(d => d >= 1 && d <= total)
@@ -25930,13 +25941,22 @@ window.editSubscription = function(memberId, sid) {
   const sub = m.subscriptions.find(s => (s._sid || s._rid) === sid);
   if (!sub) { toast(t('Subscription not found', 'الاشتراك غير موجود'), 'error'); return; }
   const inv = (state.invoices || []).find(v => !v.deleted && !v.switchCredit && v.ref === sub.invoiceNumber);
-  // v6.483: find the sport's line ROBUSTLY. Prefer an exact sport+coach match (string-normalized, so a
-  // legacy string coachId "5" still matches a numeric 5), then fall back to a sport-only match — so the
-  // line is always found and its price/coach actually get synced (else invoice + commission go stale).
-  const line = inv && Array.isArray(inv.lineItems)
-    ? (inv.lineItems.find(l => l.sport === sub.activity && String(l.coachId) === String(sub.coachId))
-       || inv.lineItems.find(l => l.sport === sub.activity))
-    : null;
+  // v6.626 — SAFE, period-scoped line resolution. Prefer an exact sport+coach match (string-normalized,
+  // so a legacy string coachId "5" still matches a numeric 5). Only fall back to a sport-only match when
+  // there is EXACTLY ONE such line, so we can never grab a DIFFERENT period's line.
+  const _sameSportLines = (inv && Array.isArray(inv.lineItems)) ? inv.lineItems.filter(l => l.sport === sub.activity) : [];
+  const _coachLines = _sameSportLines.filter(l => String(l.coachId) === String(sub.coachId));
+  const line = _coachLines.length === 1 ? _coachLines[0]
+             : (_sameSportLines.length === 1 ? _sameSportLines[0] : null);
+  // v6.626 — CRITICAL SAFETY: if ANOTHER subscription of the same sport + coach points to the SAME
+  // invoice, this invoice LINE is shared across periods. Rewriting its price/coach here would silently
+  // change the OTHER period too (the "editing one period updates all the previous ones" bug). When that
+  // is the case we update ONLY this subscription record and leave the shared invoice line untouched.
+  const _sid2 = sub._sid || sub._rid;
+  const _lineShared = !!line && (m.subscriptions || []).some(o => (o._sid || o._rid) !== _sid2
+    && (o.activity || '') === (sub.activity || '')
+    && (o.invoiceNumber || '') === (sub.invoiceNumber || '')
+    && String(o.coachId) === String(sub.coachId));
   const linePrice = line ? (Number(line.price) || 0) : (Number(sub.amountPaid) || 0);
   const hasSwitchCredit = (state.invoices || []).some(v => !v.deleted && v.switchCredit && v.customerId === m.id && Array.isArray(v.lineItems) && v.lineItems.some(l => l.sport === sub.activity));
   const statuses = ['active', 'completed', 'expired', 'frozen'];
@@ -25988,8 +26008,10 @@ window.editSubscription = function(memberId, sid) {
         }
         if (newCoachId !== undefined) { sub.coachId = newCoachId; sub.coach = newCoachId != null ? coachName(newCoachId) : ''; }
         if (!isNaN(price)) sub.amountPaid = price;
-        // Keep the invoice LINE (price + coach → commission + total) in sync with this profile edit.
-        if (line) {
+        // Keep the invoice LINE (price + coach → commission + total) in sync with this profile edit —
+        // but ONLY when the line is uniquely this period's. A line shared with another period (v6.626
+        // _lineShared) is left untouched so editing one period can never rewrite another.
+        if (line && !_lineShared) {
           if (!isNaN(price)) line.price = price;
           if (newCoachId !== undefined) { line.coachId = newCoachId; line.coach = newCoachId != null ? coachName(newCoachId) : ''; }
           if (Array.isArray(inv.lineItems)) { inv.amount = (typeof invoiceTotal === 'function') ? invoiceTotal(inv) : inv.lineItems.reduce((s, l) => s + (Number(l.price) || 0), 0); if (typeof stampUpdate === 'function') stampUpdate(inv); }
@@ -26020,7 +26042,9 @@ window.editSubscription = function(memberId, sid) {
         if (typeof stampUpdate === 'function') stampUpdate(m);
         if (typeof audit === 'function') audit('subscription.edit', 'member:' + m.id, `Edited ${sub.activity}: ${cls} classes · ${fmt(isNaN(price) ? linePrice : price)} · ${st}${newCoachId !== undefined ? ' · coach ' + (coachName(newCoachId) || '—') : ''} (profile+invoice synced)`, { memberId: m.id, sport: sub.activity });
         closeModal();
-        confirmSaved(t('Sport updated (profile + invoice)', 'تم تحديث الرياضة (الملف والفاتورة)'), { onOk: () => viewMember(m.id) });
+        confirmSaved(_lineShared
+          ? t('Sport updated (this period only). Its invoice line is SHARED with another period, so it was left unchanged to protect the other period — split them into separate invoices to edit the price here.', 'تم تحديث هذه الفترة فقط. بند فاتورتها مشترك مع فترة أخرى، لذا تُرك دون تغيير لحماية الفترة الأخرى — افصلهما في فاتورتين منفصلتين لتعديل السعر هنا.')
+          : t('Sport updated (profile + invoice)', 'تم تحديث الرياضة (الملف والفاتورة)'), { onOk: () => viewMember(m.id) });
       } },
     ],
   });
@@ -30572,7 +30596,7 @@ PAGES.charts = (main) => {
 
   const monthly = scoped.map(mk => {
     const revenue = billedInPeriod(m => m === mk);
-    let expenses = 0; for (const e of (state.expenses || [])) { if (e.deleted) continue; const em = e.month || (e.date || '').slice(0, 7); if (em !== mk || isSalaryCategory(e.category)) continue; expenses += Number(e.amount) || 0; }
+    let expenses = 0; for (const e of (state.expenses || [])) { if (e.deleted) continue; const em = e.month || (e.date || '').slice(0, 7); if (em !== mk || isSalaryCategory(e.category) || isCashMovementExpense(e.category)) continue; expenses += Number(e.amount) || 0; }
     const salaries = salariesEarnedInPeriod(m => m === mk);
     const cost = expenses + salaries;
     const newMembers = (state.members || []).filter(x => (x.firstRegistration || '').slice(0, 7) === mk).length;
@@ -30583,7 +30607,7 @@ PAGES.charts = (main) => {
   const revBySport = billedBySportInPeriod(m => scopedSet.has(m));
   // Expenses by category over the scoped period (excludes salaries — payroll has its own chart). (v6.462)
   const expByCat = {};
-  for (const e of (state.expenses || [])) { if (e.deleted) continue; const em = e.month || (e.date || '').slice(0, 7); if (!scopedSet.has(em) || isSalaryCategory(e.category)) continue; const c = e.category || t('Other', 'أخرى'); expByCat[c] = (expByCat[c] || 0) + (Number(e.amount) || 0); }
+  for (const e of (state.expenses || [])) { if (e.deleted) continue; const em = e.month || (e.date || '').slice(0, 7); if (!scopedSet.has(em) || isSalaryCategory(e.category) || isCashMovementExpense(e.category)) continue; const c = e.category || t('Other', 'أخرى'); expByCat[c] = (expByCat[c] || 0) + (Number(e.amount) || 0); }
   const totExpenses = Object.values(expByCat).reduce((s, v) => s + v, 0);
   const latestMk = scoped[scoped.length - 1] || months[months.length - 1];
   const coachPerf = (state.coaches || []).filter(c => typeof isCoachActive !== 'function' || isCoachActive(c)).map(c => {
@@ -30685,7 +30709,7 @@ PAGES.reports = (main) => {
     const invs = state.invoices.filter(i => !i.deleted && invoiceMonths(i).some(inPeriod));
     // v6.574 — ONE expense month-resolver (expenseMonth) + honour the soft-delete, so Reports, Dashboard
     // and the Expenses screen all total the same expenses (was: date‖month union, and counted deleted rows).
-    const exps = state.expenses.filter(e => !e.deleted && inPeriod(expenseMonth(e)));
+    const exps = state.expenses.filter(e => !e.deleted && !isCashMovementExpense(e.category) && inPeriod(expenseMonth(e)));   // v6.627 — cash collected by owner is a bank transfer, not an expense
 
     const revenue = billedInPeriod(inPeriod);
     // P&L expenses EXCLUDE salary-category entries (those are settlements; the cost
