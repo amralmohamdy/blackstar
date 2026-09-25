@@ -236,6 +236,15 @@ PAGES.dashboard = (main) => {
   }
   const topSport = Object.entries(sportCounts).sort((a, b) => b[1] - a[1])[0];
 
+  // v6.624 — a labelled section separator (icon + title + hairline rule) so the three KPI bands read
+  // as distinct groups.
+  const _secHead = (icon, label, mt) => `
+    <div style="display:flex;align-items:center;gap:10px;margin:${mt ? '22px' : '2px'} 0 10px">
+      <span style="font-size:16px;line-height:1">${icon}</span>
+      <span style="font-size:12px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--text-mute);white-space:nowrap">${label}</span>
+      <div style="flex:1;height:1px;background:linear-gradient(90deg,var(--border),transparent)"></div>
+    </div>`;
+
   main.innerHTML = `
     <div class="topbar">
       <div>
@@ -289,6 +298,7 @@ PAGES.dashboard = (main) => {
     ` : ''}
 
     <!-- v6.616 Section 1 — member status (Active · Expired · Completed) -->
+    ${_secHead('👥', t('Membership status', 'حالة العضوية'), false)}
     <div class="kpi-grid mb-3" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px">
       <div class="kpi green" style="cursor:pointer" onclick="navigate('members')" title="${t('Active memberships','العضويات النشطة')}">
         <div class="kpi-icon">✅</div>
@@ -323,6 +333,7 @@ PAGES.dashboard = (main) => {
     </div>
 
     <!-- v6.622 Section 2 — today & this week (4 boxes): today revenue · new/renewals · renewing this week · most popular -->
+    ${_secHead('📅', t('Today & this week', 'اليوم وهذا الأسبوع'), true)}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:12px">
       <div class="card" style="padding:12px 14px;border:1px solid rgba(16,185,129,.25);background:rgba(16,185,129,.05)">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="font-size:18px">💵</span><div style="font-weight:600;font-size:13px">${t("Today's revenue", 'إيراد اليوم')}</div></div>
@@ -355,6 +366,7 @@ PAGES.dashboard = (main) => {
     </div>
 
     <!-- KPI cards -->
+    ${_secHead('💰', t('This month', 'هذا الشهر') + ' · ' + s.periodShort, true)}
     <div class="kpi-grid">
       <div class="kpi">
         <div class="kpi-icon">💰</div>
@@ -385,6 +397,7 @@ PAGES.dashboard = (main) => {
     </div>
 
     <!-- Data & Cloud Sync — document count + server load/save confirmation -->
+    ${_secHead('☁️', t('Data & storage', 'البيانات والتخزين'), true)}
     ${(() => {
       const COLS = ['members','coaches','invoices','expenses','salaries','sales','advices','trials','rentals','rentalCustomers','schedule','swimGroups','auditLog','membershipTransfers','cashCounts','families','notes','products','drivers','posts'];
       const counts = {}; let totalDocs = 1;   // + parent meta document
@@ -22040,31 +22053,12 @@ PAGES.settings = (main, section) => {
 PAGES.preferences = (main) => PAGES.settings(main, 'preferences');
 PAGES.club = (main) => PAGES.settings(main, 'club');
 PAGES.databackup = (main) => PAGES.settings(main, 'data');
-// v6.612 — Danger Zone is PIN-gated (owner: '4242'). Client-side gate only (a second confirm on top
-// of the admin-only route + the existing double-confirm on each action), NOT cryptographic security.
-const DANGER_PIN = '4242';
+// v6.625 — the Danger Zone (and every other System page) is PIN-gated centrally in render() via the
+// System-module gate (isSystemRoute + systemPinScreen, PIN '4242'). This handler just renders the
+// page once the section is unlocked. The destructive actions inside still require their own PIN too.
 PAGES.danger = (main) => {
   if (currentRole() !== 'admin') { main.innerHTML = `<div class="card" style="text-align:center;padding:40px"><div style="font-size:40px">🔒</div><h2>${t('Admins only', 'للمسؤولين فقط')}</h2></div>`; return; }
-  if (window._dangerUnlocked) { PAGES.settings(main, 'danger'); return; }
-  main.innerHTML = `
-    <div class="topbar"><div><h1>⚠️ ${t('Danger Zone', 'منطقة الخطر')}</h1><div class="subtitle">${t('Enter the PIN to continue', 'أدخل الرمز للمتابعة')}</div></div></div>
-    <div class="card" style="max-width:360px;margin:48px auto;text-align:center;padding:28px;border:1px solid var(--red)">
-      <div style="font-size:42px">🔒</div>
-      <div style="font-weight:800;font-size:16px;margin:8px 0 4px">${t('Protected page', 'صفحة محمية')}</div>
-      <div class="text-mute" style="font-size:12px;margin-bottom:18px;line-height:1.5">${t('This page can permanently delete data. Enter the PIN to open it.', 'قد تحذف هذه الصفحة البيانات نهائياً. أدخل الرمز لفتحها.')}</div>
-      <input id="danger-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="••••" style="width:150px;text-align:center;font-size:24px;letter-spacing:8px;padding:10px;border:1.5px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text)" onkeydown="if(event.key==='Enter')window._dangerUnlock()" />
-      <div style="margin-top:18px;display:flex;gap:8px;justify-content:center">
-        <button class="btn ghost" onclick="navigate('settings')">${t('Cancel', 'إلغاء')}</button>
-        <button class="btn primary" onclick="window._dangerUnlock()">🔓 ${t('Unlock', 'فتح')}</button>
-      </div>
-    </div>`;
-  setTimeout(() => { try { const el = document.getElementById('danger-pin'); if (el) el.focus(); } catch (_) {} }, 0);
-};
-window._dangerUnlock = function() {
-  const el = document.getElementById('danger-pin');
-  const v = (el && el.value || '').trim();
-  if (v === DANGER_PIN) { window._dangerUnlocked = true; render(); }
-  else { toast(t('Wrong PIN', 'رمز خاطئ'), 'error'); if (el) { el.value = ''; el.focus(); } }
+  PAGES.settings(main, 'danger');
 };
 
 // ─── Modal helpers ──────────────────────────────────────────
