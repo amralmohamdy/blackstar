@@ -92,7 +92,10 @@ service cloud.firestore {
       // data is never exposed to a member login.
       match /{collection}/{docId} {
         allow read:  if isStaff() || (isMember() && memberReadable(collection));
-        allow write: if isStaff() && collection != 'auditLog';
+        // v6.634 (#13) — exclude loginLogs too (like auditLog): the specific match above makes it
+        // append-only, but Firestore UNIONS rules, so this generic write would otherwise re-grant staff
+        // update/delete on the login audit. Keep both append-only logs out of the generic write.
+        allow write: if isStaff() && collection != 'auditLog' && collection != 'loginLogs';
       }
     }
 

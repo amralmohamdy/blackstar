@@ -228,9 +228,25 @@ PAGES.targets = (main) => {
     // Admin + reception: reception income target. Admin also sees every active coach's target.
     const income = receptionIncome(ym);
     const receptionCard = `<div style="max-width:420px;margin:0 auto 6px">${_targetCard('🧾', t('Reception — Income Target', 'الاستقبال — هدف الدخل'), t('Cash collected this month', 'النقد المُحصّل هذا الشهر'), income, receptionTargets(), 'QAR')}</div>`;
+    // v6.633 — the reception bonus is SPLIT equally between the ACTIVE receptionists (role = receptionist).
+    const _recTT = targetTier(income, receptionTargets());
+    const _recps = (state.coaches || []).filter(c => _coachActive(c) && isReceptionStaff(c));
+    const _n = _recps.length;
+    let splitHtml = '';
+    if (_recTT.hit) {
+      const per = _n > 0 ? Math.round(_recTT.bonus / _n) : _recTT.bonus;
+      splitHtml = `<div class="card" style="max-width:420px;margin:6px auto 0;padding:12px 14px">
+        <div style="font-weight:700;font-size:13px;margin-bottom:6px">🏆 ${t('Bonus', 'المكافأة')}: ${fmt(_recTT.bonus)} QAR${_n > 1 ? ` · ${t('split between', 'مقسّمة بين')} ${_n} ${t('receptionists', 'موظفي استقبال')}` : ''}</div>
+        ${_n > 0
+          ? _recps.map(r => `<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0"><span>🧾 ${escapeHtml(r.name)}</span><span style="font-weight:700;color:var(--green)">${fmt(per)} QAR</span></div>`).join('')
+          : `<div class="text-mute" style="font-size:12px">${t('No active receptionist assigned — set a staff member’s role to Receptionist to split this bonus.', 'لا يوجد موظف استقبال نشط — عيّن دور «استقبال» لأحد الموظفين لتقسيم المكافأة.')}</div>`}
+      </div>`;
+    } else {
+      splitHtml = `<div class="text-mute" style="font-size:11px;text-align:center;margin-top:4px">${_n} ${t('active receptionist(s) — the bonus splits equally between them once a tier is reached.', 'موظف استقبال نشط — تُقسَّم المكافأة بالتساوي بينهم عند بلوغ الهدف.')}</div>`;
+    }
     let coachesHtml = '';
     if (role === 'admin') {
-      const coaches = (state.coaches || []).filter(_coachActive)
+      const coaches = (state.coaches || []).filter(c => isCoachRole(c) && _coachActive(c))
         .map(c => ({ c, cnt: coachNewRenewCount(c.id, ym) }))
         .sort((a, b) => b.cnt - a.cnt);
       const cards = coaches.map(({ c, cnt }) => _targetCard('🥋', c.name, t('New / renew this month', 'جديد/تجديد هذا الشهر'), cnt, coachTargets(), 'count')).join('');
@@ -238,7 +254,7 @@ PAGES.targets = (main) => {
         <div style="margin:20px 0 8px;font-weight:800;font-size:15px">🥋 ${t('Coach Targets', 'أهداف المدربين')} <span class="text-mute" style="font-size:12px;font-weight:500">· ${coaches.length} ${t('coaches', 'مدرب')}</span></div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px">${cards || `<div class="text-mute">${t('No active coaches', 'لا يوجد مدربون نشطون')}</div>`}</div>`;
     }
-    bodyHtml = receptionCard + coachesHtml;
+    bodyHtml = receptionCard + splitHtml + coachesHtml;
   }
 
   main.innerHTML = `
@@ -4563,7 +4579,7 @@ window.viewCoach = function(id) {
           <div class="text-dim">${(c.sports || []).join(' · ')}</div>
           <div class="mt-1">
             <span class="badge ${active ? 'active' : 'expired'}">${active ? 'Active' : 'Inactive'}</span>
-            <span class="badge">${(c.role || 'coach') === 'staff' ? '👔 Staff' : '🥋 Coach'}</span>
+            <span class="badge">${staffRoleEmoji(c.role)} ${staffRoleLabel(c.role)}</span>
             ${isViewerRole() ? '' : `${c.fixedSalary > 0 ? `<span class="badge blue">Fixed ${fmt(c.fixedSalary)} QAR</span>` : ''}
             ${c.rate > 0 ? `<span class="badge blue">${c.rate}% commission</span>` : ''}`}
           </div>
@@ -4868,7 +4884,9 @@ window.editCoach = function(id, defaultRole) {
         <div class="field"><label>Role</label>
           <select id="c-role">
             <option value="coach" ${role==='coach'?'selected':''}>🥋 Coach — teaches classes</option>
-            <option value="staff" ${role==='staff'?'selected':''}>👔 Staff — admin / reception / cleaner</option>
+            <option value="receptionist" ${role==='receptionist'?'selected':''}>🧾 Receptionist — front desk (income bonus)</option>
+            <option value="cleaner" ${role==='cleaner'?'selected':''}>🧹 Cleaner</option>
+            <option value="staff" ${role==='staff'?'selected':''}>👔 Staff — admin / other</option>
           </select>
         </div>
       </div>
@@ -6212,7 +6230,11 @@ function _memberMoneyRows(m) {
   const _allMemb = (state.invoices || []).filter(i => !i.deleted && i.customerId === memberId && (i.category || 'Membership') === 'Membership');
   const charged = Math.round(_allMemb.reduce((s, i) => (i.amountPaid == null && !(Array.isArray(i.payments) && i.payments.length))
     ? s : s + ((typeof invoiceTotal === 'function') ? invoiceTotal(i) : (Number(i.amount) || 0)), 0) * 100) / 100;
-  const paidTotal = (typeof memberMembershipPaid === 'function') ? memberMembershipPaid(memberId) : 0;
+  // v6.634 (#10) — Paid uses the SAME legacy-skip as Charged above (not the shared memberMembershipPaid,
+  // which counts legacy no-ledger invoices as fully paid), so Charged/Paid/Due are over one set and a
+  // clean-books member no longer shows a false "not reconciling" warning.
+  const paidTotal = Math.round(_allMemb.reduce((s, i) => (i.amountPaid == null && !(Array.isArray(i.payments) && i.payments.length))
+    ? s : s + ((typeof invoicePaid === 'function') ? invoicePaid(i) : (Number(i.amountPaid) || 0)), 0) * 100) / 100;
   const due = (typeof memberOutstanding === 'function') ? memberOutstanding(memberId) : Math.max(0, Math.round((charged - paidTotal) * 100) / 100);
   // Allocate the AUTHORITATIVE total paid across sports: sport-tagged payments first, then fill by order.
   const allMembInvs = (state.invoices || []).filter(i => !i.deleted && i.customerId === memberId && (i.category || 'Membership') === 'Membership');
@@ -6299,17 +6321,40 @@ window._moneyCollect = function(memberId) {
     if (!(amt > 0)) { toast(t('Enter an amount', 'أدخل مبلغاً'), 'error'); return; }
     parts = [{ method: (document.getElementById('mp-method') || {}).value || 'cash', amount: amt }];
   }
-  const amt = parts.reduce((s, p) => s + p.amount, 0);
+  const amt = Math.round(parts.reduce((s, p) => s + p.amount, 0) * 100) / 100;
   const { rows } = _memberMoneyRows(m);
   const target = rows.find(g => g.remaining > 0.001) || rows[0];
   if (!target) { toast(t('No sport to collect for', 'لا توجد رياضة للتحصيل'), 'error'); return; }
-  const inv = (state.invoices || []).find(i => i.id === target.invId);
-  if (!inv) { toast('Invoice not found', 'error'); return; }
-  // SAFE append-only payment (recordPayment can never corrupt the ledger by re-derivation).
-  // A split records one row PER method, same date + sport, so the method breakdown stays exact.
+  // v6.634 (#1) — OVER-PAYMENT GUARD + multi-sport allocation. Was: the whole amount was dumped on the
+  // FIRST due sport with no clamp — a fat-fingered amount silently overpaid it, and a member with a 2nd
+  // due sport could never collect for it. Now the amount is spread across EVERY due sport in order, and
+  // anything beyond the total due needs a confirm (recorded on the last invoice as an overpayment).
+  const dueRows = rows.filter(g => g.remaining > 0.001);
+  const totalRemaining = Math.round(dueRows.reduce((s, g) => s + g.remaining, 0) * 100) / 100;
+  if (amt > totalRemaining + 0.01) {
+    const over = Math.round((amt - totalRemaining) * 100) / 100;
+    if (!confirm(t(`This is ${fmt(over)} QAR more than the ${fmt(totalRemaining)} QAR due for ${m.name}. Record the extra as an overpayment?`, `هذا ${fmt(over)} ر.ق أكثر من ${fmt(totalRemaining)} ر.ق المستحقة على ${m.name}. هل تُسجّل الزائد كدفعة زائدة؟`))) return;
+  }
+  // Allocation targets: each due row's invoice up to its remaining; the LAST entry is the overflow sink
+  // (takes any leftover, including a confirmed overpayment). Falls back to the target when nothing is due.
+  const alloc = (dueRows.length ? dueRows : [target]).map(g => ({ invId: g.invId, sport: g.sport, cap: dueRows.length ? g.remaining : Infinity }));
+  const _recordOne = (invId, sport, amount, method) => {
+    const inv = (state.invoices || []).find(i => i.id === invId);
+    if (!inv) return;
+    if (typeof recordPayment === 'function') recordPayment(inv, { amount: Math.round(amount * 100) / 100, method, date, sport });
+    else { if (!Array.isArray(inv.payments)) inv.payments = []; inv.payments.push({ amount: Math.round(amount * 100) / 100, method, date, month: String(date).slice(0, 7), sport }); inv.amountPaid = inv.payments.reduce((s, q) => s + (Number(q.amount) || 0), 0); }
+  };
+  // Distribute each METHOD's amount across the due invoices in order (caps persist across methods so the
+  // split breakdown stays exact and no sport is over-filled).
   for (const p of parts) {
-    if (typeof recordPayment === 'function') recordPayment(inv, { amount: p.amount, method: p.method, date, sport: target.sport });
-    else { if (!Array.isArray(inv.payments)) inv.payments = []; inv.payments.push({ amount: p.amount, method: p.method, date, month: String(date).slice(0, 7), sport: target.sport }); inv.amountPaid = inv.payments.reduce((s, q) => s + (Number(q.amount) || 0), 0); }
+    let left = p.amount;
+    for (let ai = 0; ai < alloc.length && left > 0.001; ai++) {
+      const a = alloc[ai];
+      const take = (ai === alloc.length - 1) ? left : Math.min(left, Math.max(0, a.cap));
+      if (take <= 0.001) continue;
+      _recordOne(a.invId, a.sport, take, p.method);
+      a.cap -= take; left -= take;
+    }
   }
   const method = parts.map(p => p.method).join('+');
   if (typeof audit === 'function') audit('member.payment', 'member:' + m.id, `collected ${fmt(amt)} · ${splitOn ? parts.map(p => p.method + ' ' + fmt(p.amount)).join(' + ') : method} · ${target.sport}`, { recordName: m.name });
@@ -30892,7 +30937,7 @@ PAGES.reports = (main) => {
     const activeMembers_ = _mcR.active;
     const totalMembers = _mcR.total;
     const expiredInPeriod = _activeList.filter(m => inPeriodDate(m.expiryDate) && memberStatus(m) === 'Expired').length;
-    const newMembers = state.members.filter(m => inPeriodDate(m.firstRegistration)).length;
+    const newMembers = state.members.filter(m => !m.deleted && inPeriodDate(m.firstRegistration)).length;   // v6.634 — exclude archived (was diverging from the Dashboard)
 
     return { invs, exps, sals: [], revenue, expensesTotal, salariesTotal, profit, profitMargin,
              avgInvoice, prevRev, revByCat, sportRev, expByCat, topExp,
@@ -33125,7 +33170,7 @@ window.transferMembership = function(fromId, sport, toId) {
   // we add the remaining classes onto B's existing enrollment instead of creating a
   // duplicate row. Different coach can't be merged (use Switch Sport instead).
   const bExistingEnr = (B.enrollments || []).find(e => e.sport === sport);
-  if (bExistingEnr && (bExistingEnr.coachId || null) !== (coachId || null)) {
+  if (bExistingEnr && String(bExistingEnr.coachId == null ? '' : bExistingEnr.coachId) !== String(coachId == null ? '' : coachId)) {   // v6.634 — string-normalized (a legacy "5" vs 5 no longer falsely blocks a same-coach transfer)
     toast(`${B.name} already has ${sport} with a different coach. Same-coach transfers merge automatically; for a different coach use Switch Sport.`, 'error');
     return false;
   }
@@ -33276,7 +33321,7 @@ window.transferMembership = function(fromId, sport, toId) {
   // 5) Subscription record on B: merge into the matching active sub when present.
   if (!Array.isArray(B.subscriptions)) B.subscriptions = [];
   const bExistingSub = mergeIntoExisting
-    ? B.subscriptions.find(s => (s.activity || '') === sport && (s.coachId || null) === (coachId || null) && s.status !== 'Withdrawn')
+    ? B.subscriptions.find(s => (s.activity || '') === sport && String(s.coachId == null ? '' : s.coachId) === String(coachId == null ? '' : coachId) && s.status !== 'Withdrawn')   // v6.634 — string-normalized coachId (else a "5" vs 5 makes a duplicate sub)
     : null;
   if (bExistingSub) {
     bExistingSub.totalClasses = (parseInt(bExistingSub.totalClasses) || 0) + classes;
@@ -33968,7 +34013,7 @@ function bindMultiSelect(id, onChange) {
 }
 
 PAGES.transactions = (main) => {
-  const isoOf = x => x.toISOString().slice(0, 10);
+  const isoOf = x => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;   // v6.634 — LOCAL date parts (toISOString shifted UTC+3 → "yesterday"/"this week" off by one)
   if (!window._txnState) window._txnState = { preset: 'this_month', from: '', to: '', months: [], years: [], categories: [], activities: [], methods: [], coachIds: [], hasDue: false, dueMode: 'gross', amountField: 'due', amountPreset: 'any', amountMin: '', amountMax: '', search: '' };
   // Migrate older single-value state shape → arrays (so a returning session doesn't break).
   (() => {
@@ -34508,7 +34553,7 @@ window.removeExactDuplicatesSafely = function() {
 // per-transaction Sales list with product-level analytics.
 // ═══════════════════════════════════════════════════════════════════════════
 PAGES.productsales = (main) => {
-  const isoOf = x => x.toISOString().slice(0, 10);
+  const isoOf = x => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;   // v6.634 — LOCAL date parts (toISOString shifted UTC+3 → "yesterday"/"this week" off by one)
   if (!window._psState) window._psState = { preset: 'this_month', from: '', to: '', sort: 'revenue' };
   const st = window._psState;
 
