@@ -145,6 +145,119 @@ function sparkline(values, color) {
   </svg>`;
 }
 
+// ─── TARGETS (v6.632) ───────────────────────────────────────────
+// Bonus targets shown as a CLOCK-STYLE dial: reception by monthly collected income, coaches by
+// new/renew packages sold. A coach also gets a notification (buildNotifications) when they hit a tier.
+// _targetDial — a circular "clock" gauge: track ring + progress arc (green once a tier is hit) + a tick
+// per tier around the rim (green when reached) + the current value and bonus in the centre.
+function _targetDial(value, tiers, unit) {
+  const size = 200, cx = 100, cy = 100, r = 78, C = 2 * Math.PI * r;
+  const top = (tiers[tiers.length - 1] && tiers[tiers.length - 1].at) || 1;
+  const frac = Math.max(0, Math.min(1, value / top));
+  const tt = targetTier(value, tiers);
+  const done = !!tt.hit;
+  const accent = done ? '#0f9d58' : 'var(--accent, #5b8def)';
+  const dash = C * frac;
+  const ticks = tiers.map(tr => {
+    const ang = -90 + (tr.at / top) * 360, rad = ang * Math.PI / 180;
+    const x1 = cx + (r - 9) * Math.cos(rad), y1 = cy + (r - 9) * Math.sin(rad);
+    const x2 = cx + (r + 3) * Math.cos(rad), y2 = cy + (r + 3) * Math.sin(rad);
+    const reached = value >= tr.at;
+    return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${reached ? '#0f9d58' : '#c9cfdb'}" stroke-width="3.5" stroke-linecap="round"/>`;
+  }).join('');
+  const centreMain = unit === 'QAR' ? fmt(value) : String(value);
+  const centreSub = unit === 'QAR' ? 'QAR' : t('new / renew', 'جديد/تجديد');
+  const bonusLine = done
+    ? `🏆 ${fmt(tt.bonus)} QAR`
+    : (tt.next ? `${(tt.next.at - value).toLocaleString()} → ${fmt(tt.next.bonus)}` : '');
+  return `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" role="img" style="max-width:100%;height:auto">
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--surface-2,#eef1f7)" stroke-width="14"/>
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${accent}" stroke-width="14" stroke-linecap="round"
+      stroke-dasharray="${dash.toFixed(1)} ${(C - dash).toFixed(1)}" transform="rotate(-90 ${cx} ${cy})"/>
+    ${ticks}
+    <text x="${cx}" y="${cy - 6}" text-anchor="middle" font-size="30" font-weight="800" fill="var(--text,#1a1a1a)">${escapeHtml(centreMain)}</text>
+    <text x="${cx}" y="${cy + 14}" text-anchor="middle" font-size="12" fill="var(--text-mute,#888)">${escapeHtml(centreSub)}</text>
+    <text x="${cx}" y="${cy + 36}" text-anchor="middle" font-size="14" font-weight="800" fill="${done ? '#0f9d58' : 'var(--text-dim,#aaa)'}">${escapeHtml(bonusLine)}</text>
+  </svg>`;
+}
+// A full target card: dial + a tier legend (each tier ticked when reached).
+function _targetCard(emoji, title, subtitle, value, tiers, unit) {
+  const tt = targetTier(value, tiers);
+  const legend = tiers.map(tr => {
+    const reached = value >= tr.at;
+    const isCurrent = tt.hit && tt.hit.at === tr.at;
+    return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 8px;border-radius:7px;${isCurrent ? 'background:rgba(16,185,129,.12)' : ''}">
+      <span style="font-size:12px;color:${reached ? 'var(--green,#0f9d58)' : 'var(--text-mute)'};font-weight:${reached ? 700 : 500}">${reached ? '✓' : '○'} ${unit === 'QAR' ? fmt(tr.at) + ' QAR' : tr.at + ' ' + t('new/renew', 'جديد/تجديد')}</span>
+      <span style="font-size:12px;font-weight:700;color:${reached ? 'var(--green,#0f9d58)' : 'var(--text-dim)'}">${fmt(tr.bonus)} QAR</span>
+    </div>`;
+  }).join('');
+  return `<div class="card" style="text-align:center;padding:16px 16px 12px">
+    <div style="font-weight:800;font-size:15px;margin-bottom:2px">${emoji} ${escapeHtml(title)}</div>
+    <div class="text-mute" style="font-size:11px;margin-bottom:8px">${escapeHtml(subtitle)}</div>
+    ${_targetDial(value, tiers, unit)}
+    <div style="margin-top:8px;display:grid;gap:2px;text-align:left">${legend}</div>
+  </div>`;
+}
+PAGES.targets = (main) => {
+  const role = currentRole();
+  const isCoach = role === 'coach';
+  const months = (typeof availableMonths === 'function' ? availableMonths() : []).slice().sort().reverse();
+  if (window._targetMonth == null || (months.length && !months.includes(window._targetMonth) && window._targetMonth !== currentMonth())) window._targetMonth = currentMonth();
+  const ym = window._targetMonth;
+  const monthLabel = (typeof fmtMonth === 'function') ? fmtMonth(ym) : ym;
+  const monthOpts = [...new Set([currentMonth(), ...months])].map(mk => `<option value="${mk}" ${mk === ym ? 'selected' : ''}>${fmtMonth(mk)}</option>`).join('');
+
+  const _coachActive = (c) => c && (c.active === 'Y' || c.active === true || c.active === 1 || c.active === 'Yes' || c.active == null);
+
+  // Coach view: only their own dial + a celebratory banner when the target is hit.
+  let bodyHtml = '';
+  if (isCoach) {
+    const cid = (typeof effectiveCoachId === 'function') ? effectiveCoachId() : null;
+    const me = (state.coaches || []).find(c => String(c.id) === String(cid));
+    const cnt = cid != null ? coachNewRenewCount(cid, ym) : 0;
+    const tt = targetTier(cnt, coachTargets());
+    const banner = tt.hit
+      ? `<div class="card" style="border:1px solid rgba(16,185,129,.4);background:linear-gradient(135deg,rgba(16,185,129,.14),rgba(16,185,129,.03));text-align:center;padding:16px;margin-bottom:14px">
+          <div style="font-size:30px">🏆</div>
+          <div style="font-weight:800;font-size:16px;color:var(--green)">${t('Target reached — bonus earned!', 'تحقّق الهدف — مكافأة!')}</div>
+          <div class="text-mute" style="font-size:12px;margin-top:3px">${cnt} ${t('new/renew this month', 'جديد/تجديد هذا الشهر')} · <b style="color:var(--green)">${fmt(tt.bonus)} QAR</b></div>
+        </div>`
+      : (tt.next ? `<div class="card" style="text-align:center;padding:14px;margin-bottom:14px"><div style="font-size:13px">🎯 ${t('You need', 'تحتاج')} <b>${tt.next.at - cnt}</b> ${t('more new/renew to earn', 'المزيد من جديد/تجديد لتحصل على')} <b style="color:var(--green)">${fmt(tt.next.bonus)} QAR</b></div></div>` : '');
+    bodyHtml = banner + `<div style="max-width:360px;margin:0 auto">${_targetCard('🥋', me ? me.name : t('My target', 'هدفي'), t('New / renew packages this month', 'باقات جديدة/تجديد هذا الشهر'), cnt, coachTargets(), 'count')}</div>`;
+  } else {
+    // Admin + reception: reception income target. Admin also sees every active coach's target.
+    const income = receptionIncome(ym);
+    const receptionCard = `<div style="max-width:420px;margin:0 auto 6px">${_targetCard('🧾', t('Reception — Income Target', 'الاستقبال — هدف الدخل'), t('Cash collected this month', 'النقد المُحصّل هذا الشهر'), income, receptionTargets(), 'QAR')}</div>`;
+    let coachesHtml = '';
+    if (role === 'admin') {
+      const coaches = (state.coaches || []).filter(_coachActive)
+        .map(c => ({ c, cnt: coachNewRenewCount(c.id, ym) }))
+        .sort((a, b) => b.cnt - a.cnt);
+      const cards = coaches.map(({ c, cnt }) => _targetCard('🥋', c.name, t('New / renew this month', 'جديد/تجديد هذا الشهر'), cnt, coachTargets(), 'count')).join('');
+      coachesHtml = `
+        <div style="margin:20px 0 8px;font-weight:800;font-size:15px">🥋 ${t('Coach Targets', 'أهداف المدربين')} <span class="text-mute" style="font-size:12px;font-weight:500">· ${coaches.length} ${t('coaches', 'مدرب')}</span></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px">${cards || `<div class="text-mute">${t('No active coaches', 'لا يوجد مدربون نشطون')}</div>`}</div>`;
+    }
+    bodyHtml = receptionCard + coachesHtml;
+  }
+
+  main.innerHTML = `
+    <div class="topbar">
+      <div>
+        <h1>🎯 ${t('Targets', 'الأهداف')}</h1>
+        <div class="subtitle">${t('Monthly bonus targets', 'أهداف المكافآت الشهرية')} · ${escapeHtml(monthLabel)}</div>
+      </div>
+      <div class="topbar-actions">
+        <select id="tgt-month" class="btn ghost" title="${t('Choose month', 'اختر الشهر')}">${monthOpts}</select>
+      </div>
+    </div>
+    ${bodyHtml}
+    <div class="text-mute" style="font-size:11px;margin-top:14px;text-align:center">${t('Coaches are notified automatically when they reach a target. Reception income = cash collected in the month.', 'يُخطَر المدربون تلقائياً عند بلوغ الهدف. دخل الاستقبال = النقد المُحصّل في الشهر.')}</div>
+  `;
+  const msel = $('#tgt-month');
+  if (msel) msel.addEventListener('change', () => { window._targetMonth = msel.value; PAGES.targets(main); });
+};
+
 // ─── DASHBOARD ──────────────────────────────────────────────────
 PAGES.dashboard = (main) => {
   const s = computeStats();
@@ -26583,6 +26696,16 @@ PAGES.expiring = (main) => {
   const _rv = m => (typeof memberRenewalValue === 'function' ? (Number(memberRenewalValue(m)) || 0) : 0);
   const _sumVal = arr => arr.reduce((s, x) => s + _rv(x.m), 0);
   const valExpired = _sumVal(expired), valSoon = _sumVal(expiringSoon), valWeek = _sumVal(week), valUpcoming = _sumVal(upcoming), valCompleted = _sumVal(completed);
+  // v6.631 — total OUTSTANDING DUE across all members, using the SAME member-netted basis as the Due
+  // Payment screen (memberOutstanding + non-membership invoice balances, sub-QAR residuals ignored) so
+  // the box matches that page exactly. The box links to the Due Payment screen.
+  let totalDueAll = 0;
+  for (const _dm of (state.members || [])) {
+    if (_dm.deleted) continue;
+    const _nonMemb = (state.invoices || []).filter(i => !i.deleted && i.customerId === _dm.id && !i.switchCredit && (i.category || 'Membership') !== 'Membership').reduce((s, i) => s + invoiceBalance(i), 0);
+    const _d = Math.round(((typeof memberOutstanding === 'function' ? memberOutstanding(_dm.id) : 0) + _nonMemb) * 100) / 100;
+    if (_d >= 0.5) totalDueAll += _d;
+  }
 
   function matchFilter({ m, days }) {
     // "Recently expired" bucket: only expired within the last N days.
@@ -26809,11 +26932,11 @@ PAGES.expiring = (main) => {
         <div class="kpi-delta" style="color:#0f9d58;font-weight:700">💰 ${fmt(valWeek + valUpcoming)} QAR</div>
         <div class="kpi-delta flat">On the horizon · click to filter</div>
       </div>
-      ${isViewerRole() ? '' : `<div class="kpi green">
+      ${isViewerRole() ? '' : `<div class="kpi green" style="cursor:pointer" onclick="navigate('duepayment')" title="${t('Total outstanding due — open the Due Payment screen', 'إجمالي المستحقات — افتح شاشة المدفوعات المستحقة')}">
         <div class="kpi-icon">💰</div>
-        <div class="kpi-label">Potential Revenue</div>
-        <div class="kpi-value num">${fmt(valExpired + valSoon)} <span style="font-size:12px;color:var(--text-dim)">QAR</span></div>
-        <div class="kpi-delta flat">Expired + due soon · at current membership price</div>
+        <div class="kpi-label">${t('Total Due', 'إجمالي المستحق')}</div>
+        <div class="kpi-value num">${fmt(totalDueAll)} <span style="font-size:12px;color:var(--text-dim)">QAR</span></div>
+        <div class="kpi-delta flat">${t('Outstanding balance · open Due Payment', 'رصيد مستحق · افتح المدفوعات المستحقة')} →</div>
       </div>`}
     </div>
 
