@@ -229,7 +229,7 @@ PAGES.targets = (main) => {
     // ACTIVE receptionists. v6.636 — the RECEPTION role sees the dial + THEIR (equal) share only; ADMIN
     // sees the full split (all receptionist staff) + every coach's dial ("all coaches and staff").
     const income = receptionIncome(ym);
-    const receptionCard = `<div style="max-width:420px;margin:0 auto 6px">${_targetCard('🧾', t('Reception — Income Target', 'الاستقبال — هدف الدخل'), t('Cash collected this month', 'النقد المُحصّل هذا الشهر'), income, receptionTargets(), 'QAR')}</div>`;
+    const receptionCard = `<div style="max-width:420px;margin:0 auto 6px">${_targetCard('🧾', t('Reception — Income Target', 'الاستقبال — هدف الدخل'), t('Income this month (membership + rentals + shop)', 'الدخل هذا الشهر (اشتراكات + إيجارات + متجر)'), income, receptionTargets(), 'QAR')}</div>`;
     const _recTT = targetTier(income, receptionTargets());
     const _recps = (state.coaches || []).filter(c => _coachActive(c) && isReceptionStaff(c));
     const _n = _recps.length;
@@ -279,7 +279,7 @@ PAGES.targets = (main) => {
       </div>
     </div>
     ${bodyHtml}
-    <div class="text-mute" style="font-size:11px;margin-top:14px;text-align:center">${t('Coaches are notified automatically when they reach a target. Reception income = cash collected in the month.', 'يُخطَر المدربون تلقائياً عند بلوغ الهدف. دخل الاستقبال = النقد المُحصّل في الشهر.')}</div>
+    <div class="text-mute" style="font-size:11px;margin-top:14px;text-align:center">${t('Coaches are notified automatically when they reach a target. Reception income = total invoiced this month (membership + rentals + shop, incl. amounts still due).', 'يُخطَر المدربون تلقائياً عند بلوغ الهدف. دخل الاستقبال = إجمالي المفوتر هذا الشهر (اشتراكات + إيجارات + متجر، شاملاً المستحق).')}</div>
   `;
   const msel = $('#tgt-month');
   if (msel) msel.addEventListener('change', () => { window._targetMonth = msel.value; PAGES.targets(main); });
@@ -22728,11 +22728,14 @@ PAGES.attendance = (main) => {
   const attOnly = () => (filter.atts.length === 1 ? filter.atts[0] : null);
   function visibleDays(rows, baseDays, mo) {
     const only = attOnly();
+    if (only !== 'attended' && only !== 'notattended') return baseDays;
+    // v6.638 (#15) — read the row's OWN cell: a per-coach split row lives under `sport <coachId>` (attKey)
+    // and a Mixed row under mixedAttendance — keying off the plain r.sport dropped those days from the
+    // narrowed column view even though the row + totals counted them.
+    const cellOf = (r) => (r.attKey === MIXED && typeof mixedDayMarks === 'function') ? mixedDayMarks(r.m, mo) : (r.m.dailyAttendance?.[mo]?.[r.attKey || r.sport] || {});
     if (only === 'attended')
-      return baseDays.filter(d => rows.some(r => (r.m.dailyAttendance?.[mo]?.[r.sport] || {})[String(d)] === 'Y'));
-    if (only === 'notattended')
-      return baseDays.filter(d => rows.some(r => (r.m.dailyAttendance?.[mo]?.[r.sport] || {})[String(d)] === 'N'));
-    return baseDays;
+      return baseDays.filter(d => rows.some(r => cellOf(r)[String(d)] === 'Y'));
+    return baseDays.filter(d => rows.some(r => cellOf(r)[String(d)] === 'N'));
   }
 
   function applyMark(memberId, sport, day, next) {
@@ -23619,14 +23622,25 @@ PAGES.attendance = (main) => {
     const monthHeads = months.map(mo => `<th class="mh">${fmtMonth(mo)}</th>`).join('');
     let grandY = 0;
     const monthTotals = {}; months.forEach(mo => monthTotals[mo] = 0);   // v6.623 — per-month column totals
+    // v6.638 (#9) — dedup a physical class across overlapping rows (a switched/renewed member emits a
+    // history row AND a live row, both on the plain attKey with overlapping windows). Key = member | cell |
+    // month | day, exactly like the grid's ATTENDED KPI, so the report total matches the on-screen figure.
+    const _seenAtt = new Set();
     const bodyRows = rows.map(({ m, sport, coachId, window: win, attKey }, ri) => {
       const _mix = attKey === MIXED;
       let rowY = 0;
       const cells = months.map(mo => {
         const dd = (attKey === MIXED) ? mixedDayMarks(m, mo) : (m.dailyAttendance?.[mo]?.[attKey || sport] || {});
         const _monShort = fmtMonth(mo).split(' ')[0];   // full date per attended day (e.g. "5 Jul")
+        const _key0 = m.id + '|' + (attKey || sport) + '|' + mo + '|';
         const days = [];
-        for (const k in dd) { if (dd[k] === 'Y' && inWin(win, mo, k)) days.push(parseInt(k, 10)); }
+        for (const k in dd) {
+          if (dd[k] !== 'Y' || !inWin(win, mo, k)) continue;
+          const _dk = _key0 + parseInt(k, 10);
+          if (_seenAtt.has(_dk)) continue;   // already counted on an earlier (overlapping) row
+          _seenAtt.add(_dk);
+          days.push(parseInt(k, 10));
+        }
         days.sort((a, b) => a - b); rowY += days.length; monthTotals[mo] += days.length;
         const dateList = days.map(d => d + ' ' + _monShort).join(' · ');
         return `<td class="dcell${days.length ? ' has' : ''}">${days.length ? `<div class="cnt">${days.length}</div><div class="dts">${dateList}</div>` : '<span class="none">—</span>'}</td>`;
@@ -30883,9 +30897,13 @@ PAGES.reports = (main) => {
 
   // ── Discover all months/years that have data so the selector is dynamic ──
   function discoverPeriods() {
-    const months = new Set();
-    state.invoices.forEach(i => { if (i.month) months.add(i.month); });
-    state.expenses.forEach(e => { if (e.date) months.add(e.date.slice(0, 7)); });
+    // v6.638 (#16) — build the picker on the SAME basis the figures use: allDataMonths() keys invoices by
+    // their revenue/start months (invoiceMonths) and expenses via expenseMonth (month||date), so a July-
+    // starting camp billed in June, or an expense with only a `month`, is offered as a selectable month
+    // and its revenue isn't invisible in month mode.
+    const months = new Set((typeof allDataMonths === 'function') ? allDataMonths() : []);
+    state.invoices.forEach(i => { if (i.month) months.add(i.month); });   // keep bill-month too (belt + braces)
+    state.expenses.forEach(e => { const mo = (typeof expenseMonth === 'function') ? expenseMonth(e) : (e.month || (e.date || '').slice(0, 7)); if (mo) months.add(mo); });
     state.salaries.forEach(x => { if (x.month) months.add(x.month); });
     return [...months].filter(plausibleMonthKey).sort();   // drop corrupt "0001"-style years (v6.621)
   }
