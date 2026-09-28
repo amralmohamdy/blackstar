@@ -225,36 +225,47 @@ PAGES.targets = (main) => {
       : (tt.next ? `<div class="card" style="text-align:center;padding:14px;margin-bottom:14px"><div style="font-size:13px">🎯 ${t('You need', 'تحتاج')} <b>${tt.next.at - cnt}</b> ${t('more new/renew to earn', 'المزيد من جديد/تجديد لتحصل على')} <b style="color:var(--green)">${fmt(tt.next.bonus)} QAR</b></div></div>` : '');
     bodyHtml = banner + `<div style="max-width:360px;margin:0 auto">${_targetCard('🥋', me ? me.name : t('My target', 'هدفي'), t('New / renew packages this month', 'باقات جديدة/تجديد هذا الشهر'), cnt, coachTargets(), 'count')}</div>`;
   } else {
-    // Admin + reception: reception income target. Admin also sees every active coach's target.
+    // Reception income target (club cash collected this month) → tiered bonus, split equally among the
+    // ACTIVE receptionists. v6.636 — the RECEPTION role sees the dial + THEIR (equal) share only; ADMIN
+    // sees the full split (all receptionist staff) + every coach's dial ("all coaches and staff").
     const income = receptionIncome(ym);
     const receptionCard = `<div style="max-width:420px;margin:0 auto 6px">${_targetCard('🧾', t('Reception — Income Target', 'الاستقبال — هدف الدخل'), t('Cash collected this month', 'النقد المُحصّل هذا الشهر'), income, receptionTargets(), 'QAR')}</div>`;
-    // v6.633 — the reception bonus is SPLIT equally between the ACTIVE receptionists (role = receptionist).
     const _recTT = targetTier(income, receptionTargets());
     const _recps = (state.coaches || []).filter(c => _coachActive(c) && isReceptionStaff(c));
     const _n = _recps.length;
-    let splitHtml = '';
-    if (_recTT.hit) {
-      const per = _n > 0 ? Math.round(_recTT.bonus / _n) : _recTT.bonus;
-      splitHtml = `<div class="card" style="max-width:420px;margin:6px auto 0;padding:12px 14px">
-        <div style="font-weight:700;font-size:13px;margin-bottom:6px">🏆 ${t('Bonus', 'المكافأة')}: ${fmt(_recTT.bonus)} QAR${_n > 1 ? ` · ${t('split between', 'مقسّمة بين')} ${_n} ${t('receptionists', 'موظفي استقبال')}` : ''}</div>
-        ${_n > 0
-          ? _recps.map(r => `<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0"><span>🧾 ${escapeHtml(r.name)}</span><span style="font-weight:700;color:var(--green)">${fmt(per)} QAR</span></div>`).join('')
-          : `<div class="text-mute" style="font-size:12px">${t('No active receptionist assigned — set a staff member’s role to Receptionist to split this bonus.', 'لا يوجد موظف استقبال نشط — عيّن دور «استقبال» لأحد الموظفين لتقسيم المكافأة.')}</div>`}
-      </div>`;
-    } else {
-      splitHtml = `<div class="text-mute" style="font-size:11px;text-align:center;margin-top:4px">${_n} ${t('active receptionist(s) — the bonus splits equally between them once a tier is reached.', 'موظف استقبال نشط — تُقسَّم المكافأة بالتساوي بينهم عند بلوغ الهدف.')}</div>`;
-    }
-    let coachesHtml = '';
+    const per = _n > 0 ? Math.round(_recTT.bonus / _n) : _recTT.bonus;
     if (role === 'admin') {
+      // Full split (staff) — one row per active receptionist.
+      let splitHtml;
+      if (_recTT.hit) {
+        splitHtml = `<div class="card" style="max-width:420px;margin:6px auto 0;padding:12px 14px">
+          <div style="font-weight:700;font-size:13px;margin-bottom:6px">🏆 ${t('Bonus', 'المكافأة')}: ${fmt(_recTT.bonus)} QAR${_n > 1 ? ` · ${t('split between', 'مقسّمة بين')} ${_n} ${t('receptionists', 'موظفي استقبال')}` : ''}</div>
+          ${_n > 0
+            ? _recps.map(r => `<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0"><span>🧾 ${escapeHtml(r.name)}</span><span style="font-weight:700;color:var(--green)">${fmt(per)} QAR</span></div>`).join('')
+            : `<div class="text-mute" style="font-size:12px">${t('No active receptionist assigned — set a staff member’s role to Receptionist to split this bonus.', 'لا يوجد موظف استقبال نشط — عيّن دور «استقبال» لأحد الموظفين لتقسيم المكافأة.')}</div>`}
+        </div>`;
+      } else {
+        splitHtml = `<div class="text-mute" style="font-size:11px;text-align:center;margin-top:4px">${_n} ${t('active receptionist(s) — the bonus splits equally between them once a tier is reached.', 'موظف استقبال نشط — تُقسَّم المكافأة بالتساوي بينهم عند بلوغ الهدف.')}</div>`;
+      }
       const coaches = (state.coaches || []).filter(c => isCoachRole(c) && _coachActive(c))
         .map(c => ({ c, cnt: coachNewRenewCount(c.id, ym) }))
         .sort((a, b) => b.cnt - a.cnt);
       const cards = coaches.map(({ c, cnt }) => _targetCard('🥋', c.name, t('New / renew this month', 'جديد/تجديد هذا الشهر'), cnt, coachTargets(), 'count')).join('');
-      coachesHtml = `
+      const coachesHtml = `
         <div style="margin:20px 0 8px;font-weight:800;font-size:15px">🥋 ${t('Coach Targets', 'أهداف المدربين')} <span class="text-mute" style="font-size:12px;font-weight:500">· ${coaches.length} ${t('coaches', 'مدرب')}</span></div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px">${cards || `<div class="text-mute">${t('No active coaches', 'لا يوجد مدربون نشطون')}</div>`}</div>`;
+      bodyHtml = receptionCard + splitHtml + coachesHtml;
+    } else {
+      // Receptionist: own details only — the dial + THEIR (equal) share, no peer list, no coach grid.
+      const mine = _recTT.hit
+        ? `<div class="card" style="max-width:420px;margin:6px auto 0;padding:14px;text-align:center;border:1px solid rgba(16,185,129,.35);background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(16,185,129,.02))">
+            <div style="font-size:26px">🏆</div>
+            <div style="font-weight:800;font-size:15px;color:var(--green)">${t('Your bonus', 'مكافأتك')}: ${fmt(per)} QAR</div>
+            <div class="text-mute" style="font-size:11px;margin-top:3px">${t('Reception bonus', 'مكافأة الاستقبال')} ${fmt(_recTT.bonus)} QAR${_n > 1 ? ` · ${t('split', 'مقسّمة')} ${_n} ${t('ways', 'حصص')}` : ''}</div>
+          </div>`
+        : `<div class="card" style="max-width:420px;margin:6px auto 0;padding:12px 14px;text-align:center"><div style="font-size:12px">${_recTT.next ? `🎯 ${fmt(_recTT.next.at - income)} QAR ${t('more to reach', 'للوصول إلى')} <b style="color:var(--green)">${fmt(_recTT.next.bonus)} QAR</b>${_n > 1 ? ` (${t('split', 'مقسّمة')} ${_n} ${t('ways', 'حصص')})` : ''}` : ''}</div></div>`;
+      bodyHtml = receptionCard + mine;
     }
-    bodyHtml = receptionCard + splitHtml + coachesHtml;
   }
 
   main.innerHTML = `
@@ -32316,12 +32327,15 @@ PAGES.rentals = (main) => {
     });
   }
 
+  // v6.635 — a rental's outstanding balance (0 unless it was created "Pay later" or edited down).
+  const rentalDue = (r) => { const inv = r.invoiceId ? (state.invoices || []).find(i => i.id === r.invoiceId) : null; return inv && typeof invoiceBalance === 'function' ? Math.round(invoiceBalance(inv) * 100) / 100 : 0; };
   function refresh() {
     const all = applyFilter().sort((a,b) => (b.date || '').localeCompare(a.date || ''));
     const totalAmt = all.reduce((s,r) => s + (r.amount || 0), 0);
     const totalHrs = all.reduce((s,r) => s + (r.hours || 0), 0);
+    const totalDue = Math.round(all.reduce((s,r) => s + rentalDue(r), 0) * 100) / 100;
     const rows = paginate(all, pg);
-    $('#rent-tbody').innerHTML = rows.length ? rows.map(r => `
+    $('#rent-tbody').innerHTML = rows.length ? rows.map(r => { const _due = rentalDue(r); return `
       <tr>
         <td class="text-dim" style="white-space:nowrap">${r.date ? fmtDate(r.date) : '—'}${r.startTime ? `<div class="text-mute" style="font-size:10px">${escapeHtml(r.startTime)}</div>` : ''}</td>
         <td><span class="badge ${r.facility==='Football Court'?'green':r.facility==='Swimming Pool'?'cyan':''}">${r.facility === 'Football Court' ? '⚽' : r.facility === 'Boxing Room' ? '🥊' : '🏊'} ${escapeHtml(r.facility)}</span></td>
@@ -32331,17 +32345,18 @@ PAGES.rentals = (main) => {
         </td>
         <td class="text-right num">${r.hours || 0}h</td>
         <td class="text-right num text-dim">${fmt(r.hourlyRate || 0)}/hr</td>
-        <td class="text-right num font-bold">${fmt(r.amount || 0)}</td>
-        <td><span class="badge ${r.method === 'card' ? 'blue' : ''}">${r.method || 'cash'}</span></td>
+        <td class="text-right num font-bold">${fmt(r.amount || 0)}${_due > 0.5 ? `<div style="font-size:10px;color:var(--red);font-weight:700">⏳ ${fmt(_due)} due</div>` : ''}</td>
+        <td>${_due > 0.5 ? `<span class="badge red" title="Unpaid — collect when the customer pays">⏳ DUE</span>` : `<span class="badge ${r.method === 'card' ? 'blue' : ''}">${r.method || 'cash'}</span>`}</td>
         <td class="text-mute" style="font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(r.notes || '')}</td>
         <td class="text-right" style="white-space:nowrap">
+          ${_due > 0.5 && !isViewerRole() ? `<button class="btn primary sm" onclick="collectRental(${r.id})" title="Record payment now (${fmt(_due)} QAR)">💵 Collect</button>` : ''}
           ${r.invoiceId && !isViewerRole() ? `<button class="btn ghost sm" onclick="printInvoicePDF(${r.invoiceId})" title="Linked invoice PDF">📄</button>` : ''}
           ${r.customerRentalId ? `<button class="btn ghost sm" onclick="viewRentalCustomerHistory(${r.customerRentalId})" title="See all bookings for this customer">📜</button>` : ''}
           <button class="btn ghost sm" onclick="editRental(${r.id})" title="Edit">✏️</button>
           ${isViewerRole() ? '' : `<button class="btn ghost sm" onclick="deleteRental(${r.id})" title="Delete">🗑</button>`}
         </td>
-      </tr>`).join('') : `<tr><td colspan="9" class="empty"><div class="empty-icon">🏟</div>No rentals match the filter</td></tr>`;
-    $('#rent-count').textContent = isViewerRole() ? `${all.length} booking${all.length===1?'':'s'} · ${totalHrs}h` : `${all.length} booking${all.length===1?'':'s'} · ${totalHrs}h · ${fmt(totalAmt)} QAR`;
+      </tr>`; }).join('') : `<tr><td colspan="9" class="empty"><div class="empty-icon">🏟</div>No rentals match the filter</td></tr>`;
+    $('#rent-count').textContent = (isViewerRole() ? `${all.length} booking${all.length===1?'':'s'} · ${totalHrs}h` : `${all.length} booking${all.length===1?'':'s'} · ${totalHrs}h · ${fmt(totalAmt)} QAR`) + (totalDue > 0.5 ? ` · ⏳ ${fmt(totalDue)} due` : '');
     renderPagination('rent-pagination', pg, all.length, () => refresh());
   }
 
@@ -32483,6 +32498,10 @@ function rentalFormHtml(r) {
 
     <div class="form-row">
       <div class="field"><label>Method</label><select id="r-method"><option value="cash" ${r.method==='cash'?'selected':''}>Cash</option><option value="card" ${r.method==='card'?'selected':''}>Card</option><option value="fawran" ${r.method==='fawran'?'selected':''}>Fawran</option></select></div>
+      ${!r.id ? `<div class="field"><label>Payment</label><select id="r-paystatus">
+        <option value="paid">💵 Paid in full now</option>
+        <option value="due">⏳ Pay later (mark as due)</option>
+      </select></div>` : ''}
       <div class="field" style="flex:2"><label>Notes</label><input type="text" id="r-notes" value="${escapeHtml(r.notes || '')}" placeholder="e.g. Birthday party, weekly booking, etc." /></div>
     </div>
     <div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.25);border-radius:8px;padding:10px;margin-top:8px;font-size:12px">
@@ -33022,6 +33041,11 @@ function saveRental(existingId, onDone) {
   // Create rental + linked invoice
   const rentalId = nextId(state.rentals || []);
   const ref = nextInvoiceRef();
+  // v6.635 — "Pay later (due)": create the rental invoice UNPAID (amountPaid 0, no ledger) so it carries a
+  // balance and shows up in Due Payment (member renter) / the Rentals due list (walk-in). Default = paid in
+  // full (a real payment row, so it never relies on the "legacy = fully paid" convention).
+  const payStatus = ($('#r-paystatus') || {}).value || 'paid';
+  const paidNow = payStatus === 'due' ? 0 : amount;
   const newInv = {
     id: nextId(state.invoices),
     date, description: desc, amount, method, month, ref,
@@ -33031,6 +33055,9 @@ function saveRental(existingId, onDone) {
     coach: null, coachId: null,
     customerId: matchedMember ? matchedMember.id : null,  // link to member if same phone
     customerName: name,
+    customerPhone: phone,              // so a walk-in renter's due keeps their phone
+    amountPaid: paidNow,
+    payments: paidNow > 0 ? [{ amount: paidNow, method, date, month }] : [],
     rentalId,                          // back-reference to the rental
   };
   stampUpdate(newInv); state.invoices.push(newInv);
@@ -33050,10 +33077,48 @@ function saveRental(existingId, onDone) {
   if (onDone) onDone(); else render();
   const linkBadge = matchedMember ? ` · linked to member ${matchedMember.name}` : '';
   // Write-through + SERVER read-back of the booking's invoice before confirming. (v6.332)
-  const _rtMsg = `Booking saved · invoice ${ref} created${linkBadge}`;
+  const _rtMsg = `Booking saved · invoice ${ref} created${linkBadge}${paidNow > 0 ? '' : ' · ⏳ marked DUE (' + fmt(amount) + ' QAR to collect)'}`;
   if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'invoices', id: newInv.id }], okMsg: _rtMsg });
   else { save(); toast(_rtMsg, 'success'); }
 }
+
+// v6.635 — collect a due rental's balance (works for walk-in renters too, right from the Rentals list).
+window.collectRental = function(rentalId) {
+  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast('Admins or receptionists only', 'error'); return; }
+  const r = (state.rentals || []).find(x => x.id === rentalId);
+  if (!r) { toast('Rental not found', 'error'); return; }
+  const inv = r.invoiceId ? (state.invoices || []).find(i => i.id === r.invoiceId) : null;
+  if (!inv) { toast('Linked invoice not found', 'error'); return; }
+  const bal = (typeof invoiceBalance === 'function') ? invoiceBalance(inv) : 0;
+  if (bal <= 0.5) { toast(t('Already paid', 'مدفوعة بالفعل')); return; }
+  showModal({
+    title: '💵 ' + t('Collect rental payment', 'تحصيل دفعة الحجز'),
+    body: `
+      <div class="text-mute" style="font-size:12px;margin-bottom:8px">${escapeHtml(r.customerName || '')} · ${escapeHtml(r.facility || '')} · ${r.date ? fmtDate(r.date) : ''}</div>
+      <div class="form-row">
+        <div class="field"><label>${t('Amount (QAR)', 'المبلغ')}</label><input id="cr-amt" type="number" min="0" step="0.01" value="${bal}" /></div>
+        <div class="field"><label>${t('Method', 'الطريقة')}</label><select id="cr-mth"><option value="cash">Cash</option><option value="card">Card</option><option value="fawran">Fawran</option><option value="transfer">Transfer</option></select></div>
+      </div>
+      <div class="field"><label>${t('Date', 'التاريخ')}</label><input id="cr-date" type="date" value="${TODAY}" /></div>
+    `,
+    actions: [
+      { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
+      { label: '💵 ' + t('Collect', 'تحصيل'), class: 'btn primary', onclick: () => {
+        const amt = Math.round((parseFloat(($('#cr-amt') || {}).value) || 0) * 100) / 100;
+        if (!(amt > 0)) { toast(t('Enter an amount', 'أدخل مبلغاً'), 'error'); return; }
+        if (amt > bal + 0.01 && !confirm(t(`This is more than the ${fmt(bal)} QAR due — record anyway?`, `أكثر من ${fmt(bal)} ر.ق المستحقة — تسجيل على أي حال؟`))) return;
+        const mth = ($('#cr-mth') || {}).value || 'cash';
+        const d = ($('#cr-date') || {}).value || TODAY;
+        if (typeof recordPayment === 'function') recordPayment(inv, { amount: amt, method: mth, date: d });
+        else { if (!Array.isArray(inv.payments)) inv.payments = []; inv.payments.push({ amount: amt, method: mth, date: d, month: String(d).slice(0, 7) }); inv.amountPaid = inv.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0); }
+        if (typeof audit === 'function') audit('rental.collect', 'rental:' + r.id, `collected ${fmt(amt)} · ${mth}`, { recordName: r.customerName || '' });
+        closeModal();
+        if (typeof confirmSaved === 'function') confirmSaved(t('Collected', 'تم التحصيل') + ' ' + fmt(amt)); else { save(); toast(t('Collected', 'تم التحصيل')); }
+        render();
+      } },
+    ],
+  });
+};
 
 // Edit default hourly rates per facility
 function editFacilityRates() {
