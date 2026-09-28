@@ -223,7 +223,7 @@ PAGES.targets = (main) => {
           <div class="text-mute" style="font-size:12px;margin-top:3px">${cnt} ${t('new/renew this month', 'جديد/تجديد هذا الشهر')} · <b style="color:var(--green)">${fmt(tt.bonus)} QAR</b></div>
         </div>`
       : (tt.next ? `<div class="card" style="text-align:center;padding:14px;margin-bottom:14px"><div style="font-size:13px">🎯 ${t('You need', 'تحتاج')} <b>${tt.next.at - cnt}</b> ${t('more new/renew to earn', 'المزيد من جديد/تجديد لتحصل على')} <b style="color:var(--green)">${fmt(tt.next.bonus)} QAR</b></div></div>` : '');
-    bodyHtml = banner + `<div style="max-width:360px;margin:0 auto">${_targetCard('🥋', me ? me.name : t('My target', 'هدفي'), t('New / renew packages this month', 'باقات جديدة/تجديد هذا الشهر'), cnt, coachTargets(), 'count')}</div>`;
+    bodyHtml = banner + `<div style="max-width:360px;margin:0 auto;cursor:pointer" onclick="coachTargetDetail(${JSON.stringify(cid)}, ${JSON.stringify(ym)})" title="${t('Show my transactions this month', 'عرض عملياتي هذا الشهر')}">${_targetCard('🥋', me ? me.name : t('My target', 'هدفي'), t('New / renew packages this month — tap for details', 'باقات جديدة/تجديد هذا الشهر — اضغط للتفاصيل'), cnt, coachTargets(), 'count')}</div>`;
   } else {
     // Reception income target (club cash collected this month) → tiered bonus, split equally among the
     // ACTIVE receptionists. v6.636 — the RECEPTION role sees the dial + THEIR (equal) share only; ADMIN
@@ -250,7 +250,7 @@ PAGES.targets = (main) => {
       const coaches = (state.coaches || []).filter(c => isCoachRole(c) && _coachActive(c))
         .map(c => ({ c, cnt: coachNewRenewCount(c.id, ym) }))
         .sort((a, b) => b.cnt - a.cnt);
-      const cards = coaches.map(({ c, cnt }) => _targetCard('🥋', c.name, t('New / renew this month', 'جديد/تجديد هذا الشهر'), cnt, coachTargets(), 'count')).join('');
+      const cards = coaches.map(({ c, cnt }) => `<div style="cursor:pointer" onclick="coachTargetDetail(${JSON.stringify(c.id)}, ${JSON.stringify(ym)})" title="${t('Show transactions for', 'عرض عمليات')} ${escapeHtml(c.name)}">${_targetCard('🥋', c.name, t('New / renew this month — tap for proof', 'جديد/تجديد هذا الشهر — اضغط للإثبات'), cnt, coachTargets(), 'count')}</div>`).join('');
       const coachesHtml = `
         <div style="margin:20px 0 8px;font-weight:800;font-size:15px">🥋 ${t('Coach Targets', 'أهداف المدربين')} <span class="text-mute" style="font-size:12px;font-weight:500">· ${coaches.length} ${t('coaches', 'مدرب')}</span></div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px">${cards || `<div class="text-mute">${t('No active coaches', 'لا يوجد مدربون نشطون')}</div>`}</div>`;
@@ -283,6 +283,41 @@ PAGES.targets = (main) => {
   `;
   const msel = $('#tgt-month');
   if (msel) msel.addEventListener('change', () => { window._targetMonth = msel.value; PAGES.targets(main); });
+};
+
+// v6.639 — drill-down PROOF for a coach card: every new/renew transaction (sub cycle started this month
+// under the coach), with member, sport, cycle window, status and value. The row count = the target count.
+window.coachTargetDetail = function(coachId, ym) {
+  const rows = (typeof coachNewRenewRows === 'function') ? coachNewRenewRows(coachId, ym) : [];
+  const name = (typeof coachName === 'function') ? (coachName(coachId) || '') : '';
+  const label = (typeof fmtMonth === 'function') ? fmtMonth(ym) : ym;
+  const total = Math.round(rows.reduce((s, r) => s + (Number(r.amount) || 0), 0) * 100) / 100;
+  const body = rows.length ? `
+    <div class="text-mute" style="font-size:12px;margin-bottom:8px">${rows.length} ${t('transactions (new + renew) this month', 'عملية (جديد + تجديد) هذا الشهر')} · <b>${fmt(total)} QAR</b></div>
+    <div class="table-wrap"><table style="width:100%;font-size:12.5px">
+      <thead><tr>
+        <th style="text-align:left">#</th><th style="text-align:left">${t('Member', 'العضو')}</th><th style="text-align:left">${t('Sport', 'الرياضة')}</th>
+        <th>${t('Start', 'البداية')}</th><th>${t('End', 'النهاية')}</th><th>${t('Status', 'الحالة')}</th><th class="text-right">${t('Amount', 'المبلغ')}</th>
+      </tr></thead>
+      <tbody>${rows.map((r, i) => `<tr>
+        <td class="text-mute">${i + 1}</td>
+        <td><div class="font-bold">${escapeHtml(r.memberName)}</div>${r.nameArabic ? `<div class="text-mute" dir="rtl" style="font-size:11px">${escapeHtml(r.nameArabic)}</div>` : ''}</td>
+        <td>${escapeHtml(r.sport)}</td>
+        <td style="text-align:center;white-space:nowrap">${r.start ? fmtDate(r.start) : '—'}</td>
+        <td style="text-align:center;white-space:nowrap">${r.end ? fmtDate(r.end) : '—'}</td>
+        <td style="text-align:center"><span class="badge">${escapeHtml(r.status)}</span></td>
+        <td class="text-right num">${fmt(r.amount)}</td>
+      </tr>`).join('')}</tbody>
+      <tfoot><tr><td colspan="6" class="text-right font-bold">${t('Total', 'الإجمالي')}</td><td class="text-right num font-bold">${fmt(total)}</td></tr></tfoot>
+    </table></div>
+    <div class="text-mute" style="font-size:11px;margin-top:8px">${t('Each row is one new enrolment or renewal that started this month under this coach — a member enrolling in 2 sports counts twice, a renewal counts once.', 'كل سطر هو تسجيل جديد أو تجديد بدأ هذا الشهر مع هذا المدرب — العضو الذي يسجل في رياضتين يُحتسب مرتين، والتجديد مرة واحدة.')}</div>`
+    : `<div class="text-mute" style="text-align:center;padding:20px">${t('No new/renew transactions this month.', 'لا توجد عمليات جديد/تجديد هذا الشهر.')}</div>`;
+  showModal({
+    title: `🥋 ${escapeHtml(name)} · ${escapeHtml(label)} · ${rows.length} ${t('new/renew', 'جديد/تجديد')}`,
+    size: 'xl',
+    body,
+    actions: [{ label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal }],
+  });
 };
 
 // ─── DASHBOARD ──────────────────────────────────────────────────
