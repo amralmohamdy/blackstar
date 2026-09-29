@@ -789,6 +789,34 @@ tbody td {
   vertical-align: middle;
 }
 
+/* Per-column search row inside the table header */
+thead tr.col-filter-row th {
+  padding: 6px 10px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  text-transform: none;
+  letter-spacing: 0;
+}
+input.col-filter {
+  width: 100%;
+  padding: 6px 9px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text);
+}
+input.col-filter:focus { outline: none; border-color: var(--accent); }
+
+/* Totals footer */
+tfoot tr.tfoot-total td {
+  padding: 12px 14px;
+  border-top: 2px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface-2));
+  font-size: 13px;
+}
+
 tbody tr {
   transition: background-color .12s ease;
 }

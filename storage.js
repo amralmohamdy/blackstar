@@ -83,7 +83,7 @@
     'members', 'coaches', 'invoices', 'expenses', 'salaries', 'sales', 'advices',
     'trials', 'rentals', 'rentalCustomers', 'schedule', 'swimGroups', 'auditLog',
     'membershipTransfers', 'cashCounts', 'families', 'notes', 'products', 'drivers',
-    'posts', 'loginLogs',
+    'posts', 'loginLogs', 'hallBookings',
   ];
   const isCollectionKey = k => COLLECTIONS.indexOf(k) !== -1;
   // LAZY collections (v6.453): the audit log is by far the biggest collection (append-only, grows

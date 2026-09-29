@@ -590,7 +590,7 @@ PAGES.dashboard = (main) => {
     <!-- Data & Cloud Sync — document count + server load/save confirmation -->
     ${_secHead('☁️', t('Data & storage', 'البيانات والتخزين'), true)}
     ${(() => {
-      const COLS = ['members','coaches','invoices','expenses','salaries','sales','advices','trials','rentals','rentalCustomers','schedule','swimGroups','auditLog','membershipTransfers','cashCounts','families','notes','products','drivers','posts'];
+      const COLS = ['members','coaches','invoices','expenses','salaries','sales','advices','trials','rentals','hallBookings','rentalCustomers','schedule','swimGroups','auditLog','membershipTransfers','cashCounts','families','notes','products','drivers','posts'];
       const counts = {}; let totalDocs = 1;   // + parent meta document
       for (const k of COLS) { const n = Array.isArray(state[k]) ? state[k].length : 0; counts[k] = n; totalDocs += n; }
       const paymentRows = (state.invoices || []).reduce((sm, i) => sm + (Array.isArray(i.payments) ? i.payments.length : 0), 0);
@@ -15048,7 +15048,7 @@ window.showDataHealthUI = function () {
 // reads/writes live in the Firebase Console (Firestore → Usage); no app can read those about itself.
 const _CLOUD_COLLECTIONS = [
   'members', 'coaches', 'invoices', 'expenses', 'salaries', 'sales', 'advices',
-  'trials', 'rentals', 'rentalCustomers', 'schedule', 'swimGroups', 'auditLog',
+  'trials', 'rentals', 'hallBookings', 'rentalCustomers', 'schedule', 'swimGroups', 'auditLog',
   'membershipTransfers', 'cashCounts', 'families', 'notes', 'products', 'drivers', 'posts',
 ];
 const _CLOUD_LABELS = {
@@ -20368,7 +20368,7 @@ function productCurrentStock(productId) {
 
 // ─── PRODUCTS PAGE ─────────────────────────────────────────────────────
 PAGES.products = (main) => {
-  let filter = { search: '', category: 'all', stock: 'all' };
+  let filter = { search: '', category: 'all', stock: 'all', fname: '', fcat: '' };
   const pg = makePager(15);
 
   function applyFilter() {
@@ -20378,6 +20378,11 @@ PAGES.products = (main) => {
         const hay = [p.name, p.category, p.sku].filter(Boolean).join(' ').toLowerCase();
         if (!hay.includes(q)) return false;
       }
+      if (filter.fname) {
+        const q = filter.fname.toLowerCase();
+        if (!`${p.name || ''} ${p.sku || ''}`.toLowerCase().includes(q)) return false;
+      }
+      if (filter.fcat && !`${p.category || ''}`.toLowerCase().includes(filter.fcat.toLowerCase())) return false;
       if (filter.category !== 'all' && p.category !== filter.category) return false;
       const stock = productCurrentStock(p.id);
       if (filter.stock === 'low' && stock > (p.lowStockThreshold || 3)) return false;
@@ -20414,16 +20419,25 @@ PAGES.products = (main) => {
         </tr>`;
     }).join('') : `<tr><td colspan="${isViewerRole() ? 7 : 9}" class="empty"><div class="empty-icon">📦</div>${t('No products match', 'لا توجد منتجات مطابقة')}</td></tr>`;
     $('#prod-count').textContent = `${all.length} ${t('products', 'منتج')}`;
+    // footer totals over the filtered set
+    const fUnits = all.reduce((s,p) => s + productCurrentStock(p.id), 0);
+    const fSell = all.reduce((s,p) => s + productCurrentStock(p.id) * (p.price || 0), 0);
+    const fCost = all.reduce((s,p) => s + productCurrentStock(p.id) * (p.cost || 0), 0);
+    $('#prod-tfoot').innerHTML = all.length ? `<tr class="tfoot-total">
+      <td colspan="3" class="font-bold">${t('Total', 'الإجمالي')} — ${all.length} ${t('products', 'منتج')}</td>
+      ${isViewerRole() ? '' : `<td class="text-right num font-bold">${fmt(fCost)}</td>`}
+      <td></td>
+      <td class="text-right font-bold">${fUnits}</td>
+      ${isViewerRole() ? '' : `<td class="text-right num font-bold">${fmt(fSell)}</td>`}
+      <td></td><td></td>
+    </tr>` : '';
     renderPagination('prod-pagination', pg, all.length, refresh);
   }
 
   const cats = [...new Set((state.products || []).map(p => p.category).filter(Boolean))].sort();
   const totalValue = (state.products || []).reduce((s,p) => s + productCurrentStock(p.id) * (p.price || 0), 0);
   const totalCost = (state.products || []).reduce((s,p) => s + productCurrentStock(p.id) * (p.cost || 0), 0);
-  const lowCount = (state.products || []).filter(p => {
-    const st = productCurrentStock(p.id);
-    return st > 0 && st <= (p.lowStockThreshold || 3);
-  }).length;
+  const totalUnits = (state.products || []).reduce((s,p) => s + productCurrentStock(p.id), 0);   // total stock items across catalog
   const outCount = (state.products || []).filter(p => productCurrentStock(p.id) === 0).length;
 
   main.innerHTML = `
@@ -20449,9 +20463,9 @@ PAGES.products = (main) => {
         <div class="kpi-sub">${t('amount paid for stock', 'المبلغ المدفوع للمخزون')}${totalCost > 0 ? ` · ${t('margin', 'هامش')} ${fmt(totalValue - totalCost)} ${t('QAR', 'ر.ق')}` : ''}</div>
       </div>`}
       <div class="kpi orange">
-        <div class="kpi-label">⚠️ ${t('Low stock', 'مخزون منخفض')}</div>
-        <div class="kpi-value">${lowCount}</div>
-        <div class="kpi-sub">${t('at or below threshold', 'عند الحد أو أقل')}</div>
+        <div class="kpi-label">🔢 ${t('Total items in stock', 'إجمالي القطع بالمخزون')}</div>
+        <div class="kpi-value">${totalUnits}</div>
+        <div class="kpi-sub">${t('units across all products', 'قطعة عبر كل المنتجات')}</div>
       </div>
       <div class="kpi red">
         <div class="kpi-label">⛔ ${t('Out of stock', 'نفد المخزون')}</div>
@@ -20476,8 +20490,17 @@ PAGES.products = (main) => {
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th class="text-right" style="width:34px">#</th><th>${t('Product', 'المنتج')}</th><th>${t('Category', 'الفئة')}</th>${isViewerRole() ? '' : `<th class="text-right">${t('Cost', 'التكلفة')}</th>`}<th class="text-right">${t('Sell price', 'سعر البيع')}</th><th class="text-right">${t('Stock', 'المخزون')}</th>${isViewerRole() ? '' : `<th class="text-right">${t('Stock value', 'قيمة المخزون')}</th>`}<th>${t('Status', 'الحالة')}</th><th></th></tr></thead>
+          <thead>
+            <tr><th class="text-right" style="width:34px">#</th><th>${t('Product', 'المنتج')}</th><th>${t('Category', 'الفئة')}</th>${isViewerRole() ? '' : `<th class="text-right">${t('Cost', 'التكلفة')}</th>`}<th class="text-right">${t('Sell price', 'سعر البيع')}</th><th class="text-right">${t('Stock', 'المخزون')}</th>${isViewerRole() ? '' : `<th class="text-right">${t('Stock value', 'قيمة المخزون')}</th>`}<th>${t('Status', 'الحالة')}</th><th></th></tr>
+            <tr class="col-filter-row">
+              <th></th>
+              <th><input id="prod-fname" type="text" class="col-filter" placeholder="🔍 ${t('name / SKU', 'الاسم / SKU')}" /></th>
+              <th><input id="prod-fcat" type="text" class="col-filter" placeholder="🔍 ${t('category', 'الفئة')}" /></th>
+              ${isViewerRole() ? '' : '<th></th>'}<th></th><th></th>${isViewerRole() ? '' : '<th></th>'}<th></th><th></th>
+            </tr>
+          </thead>
           <tbody id="prod-tbody"></tbody>
+          <tfoot id="prod-tfoot"></tfoot>
         </table>
       </div>
       <div id="prod-pagination"></div>
@@ -20485,6 +20508,8 @@ PAGES.products = (main) => {
   `;
 
   $('#prod-search').addEventListener('input', e => { filter.search = e.target.value; pg.page = 1; refresh(); });
+  $('#prod-fname')?.addEventListener('input', e => { filter.fname = e.target.value; pg.page = 1; refresh(); });
+  $('#prod-fcat')?.addEventListener('input', e => { filter.fcat = e.target.value; pg.page = 1; refresh(); });
   $('#prod-cat').addEventListener('change', e => { filter.category = e.target.value; pg.page = 1; refresh(); });
   $('#prod-stock').addEventListener('change', e => { filter.stock = e.target.value; pg.page = 1; refresh(); });
   $('#prod-add')?.addEventListener('click', addProduct);
@@ -32373,6 +32398,281 @@ PAGES.dataexport = (main) => {
 // Each rental: { id, facility, date, hours, hourlyRate, amount, method,
 //                customerName, customerPhone, customerId?, customerQid?,
 //                notes, invoiceId? (created automatically), createdAt }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LAMAA STARS — ground-floor hall booking module (v6.641). Its own section. Bookings are stored in
+// state.hallBookings; each creates a linked 'Hall Rental' invoice (activityType 'rental' → flows into
+// Finance / Due Payment / reception income). Pricing = a configurable package OR a flat custom price;
+// captures guests, occasion, a setup/cleanup buffer (overlap guard) and a deposit (rest = due, Collect).
+// ═══════════════════════════════════════════════════════════════════════════
+const HALL_NAME = 'Lamaa Stars';
+PAGES.lamaa = (main) => {
+  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { main.innerHTML = `<div class="empty"><div class="empty-icon">🔐</div>${t('Admins or reception only', 'المشرفون أو الاستقبال فقط')}</div>`; return; }
+  let filter = { search: '', status: 'all', months: [] };
+  const pg = makePager(10);
+  const bDue = (b) => (typeof hallBookingDue === 'function') ? hallBookingDue(b) : 0;
+
+  function applyFilter() {
+    return (state.hallBookings || []).filter(b => {
+      if (filter.search) { const q = filter.search.toLowerCase(); const hay = [b.customerName, b.customerPhone, b.occasion, b.notes, b.packageLabel].filter(Boolean).join(' ').toLowerCase(); if (!hay.includes(q)) return false; }
+      if (filter.months.length && !filter.months.includes((b.date || '').slice(0, 7))) return false;
+      if (filter.status === 'due' && !(bDue(b) > 0.5)) return false;
+      if (filter.status === 'paid' && bDue(b) > 0.5) return false;
+      return true;
+    });
+  }
+
+  function refresh() {
+    const all = applyFilter().sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.startTime || '').localeCompare(a.startTime || ''));
+    const totalAmt = all.reduce((s, b) => s + (Number(b.amount) || 0), 0);
+    const totalDue = Math.round(all.reduce((s, b) => s + bDue(b), 0) * 100) / 100;
+    const rows = paginate(all, pg);
+    $('#lam-tbody').innerHTML = rows.length ? rows.map(b => { const _due = bDue(b); return `
+      <tr>
+        <td class="text-dim" style="white-space:nowrap">${b.date ? fmtDate(b.date) : '—'}${(b.startTime || b.endTime) ? `<div class="text-mute" style="font-size:10px">${escapeHtml(b.startTime || '')}${b.endTime ? '–' + escapeHtml(b.endTime) : ''}</div>` : ''}</td>
+        <td><div class="font-bold">${escapeHtml(b.customerName || '—')}</div>${b.customerPhone ? `<div class="text-mute" style="font-size:11px">${phoneCell(b.customerPhone)}</div>` : ''}</td>
+        <td>${b.occasion ? `<span class="badge">${escapeHtml(b.occasion)}</span>` : '<span class="text-mute">—</span>'}${b.packageLabel ? `<div class="text-mute" style="font-size:10px">${escapeHtml(b.packageLabel)}</div>` : ''}</td>
+        <td class="text-right num">${b.guests ? b.guests : '—'}</td>
+        <td class="text-right num font-bold">${fmt(b.amount || 0)}${_due > 0.5 ? `<div style="font-size:10px;color:var(--red);font-weight:700">⏳ ${fmt(_due)} due</div>` : ''}</td>
+        <td>${_due > 0.5 ? `<span class="badge red" title="Unpaid balance">⏳ DUE</span>` : `<span class="badge green">✓ ${t('paid', 'مدفوع')}</span>`}</td>
+        <td class="text-mute" style="font-size:11px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(b.notes || '')}</td>
+        <td class="text-right" style="white-space:nowrap">
+          ${_due > 0.5 ? `<button class="btn primary sm" onclick="collectLamaaBooking(${b.id})" title="Record payment (${fmt(_due)})">💵 ${t('Collect', 'تحصيل')}</button>` : ''}
+          ${b.invoiceId ? `<button class="btn ghost sm" onclick="printInvoicePDF(${b.invoiceId})" title="Invoice PDF">📄</button>` : ''}
+          <button class="btn ghost sm" onclick="editLamaaBooking(${b.id})" title="Edit">✏️</button>
+          <button class="btn ghost sm" onclick="deleteLamaaBooking(${b.id})" title="Delete" style="color:var(--red)">🗑</button>
+        </td>
+      </tr>`; }).join('') : `<tr><td colspan="8" class="empty"><div class="empty-icon">✨</div>${t('No hall bookings match the filter', 'لا توجد حجوزات مطابقة')}</td></tr>`;
+    $('#lam-count').textContent = `${all.length} ${t('booking(s)', 'حجز')} · ${fmt(totalAmt)} QAR` + (totalDue > 0.5 ? ` · ⏳ ${fmt(totalDue)} ${t('due', 'مستحق')}` : '');
+    renderPagination('lam-pagination', pg, all.length, () => refresh());
+  }
+
+  const monthsIn = [...new Set((state.hallBookings || []).map(b => (b.date || '').slice(0, 7)).filter(Boolean))].sort().reverse();
+  const curMonth = currentMonth();
+  const thisMonth = (state.hallBookings || []).filter(b => (b.date || '').slice(0, 7) === curMonth);
+  const monthAmt = thisMonth.reduce((s, b) => s + (Number(b.amount) || 0), 0);
+  const monthDue = Math.round(thisMonth.reduce((s, b) => s + bDue(b), 0) * 100) / 100;
+  const monthShort = new Date(curMonth + '-01T00:00:00').toLocaleString('en', { month: 'short' });
+
+  main.innerHTML = `
+    <div class="topbar">
+      <div><h1>✨ ${escapeHtml(HALL_NAME)}</h1><div class="subtitle"><span id="lam-count">Loading…</span></div></div>
+      <div class="topbar-actions">
+        ${currentRole() === 'admin' ? `<button class="btn ghost" id="lam-packages" title="Edit hall packages + prices">⚙ ${t('Packages', 'الباقات')}</button>` : ''}
+        <button class="btn ghost" id="lam-export" title="Export to CSV">📥 ${t('Export', 'تصدير')}</button>
+        <button class="btn primary" id="lam-add">+ ${t('New Booking', 'حجز جديد')}</button>
+      </div>
+    </div>
+    <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
+      <div class="kpi purple"><div class="kpi-label">✨ ${escapeHtml(HALL_NAME)} — ${monthShort}</div><div class="kpi-value num">${fmt(monthAmt)}</div><div class="kpi-sub">${thisMonth.length} ${t('booking(s)', 'حجز')} · QAR</div></div>
+      <div class="kpi ${monthDue > 0.5 ? 'red' : 'green'}"><div class="kpi-label">⏳ ${t('Due this month', 'المستحق هذا الشهر')}</div><div class="kpi-value num">${fmt(monthDue)}</div><div class="kpi-sub">QAR</div></div>
+      <div class="kpi"><div class="kpi-label">📅 ${t('Total bookings', 'إجمالي الحجوزات')}</div><div class="kpi-value num">${(state.hallBookings || []).length}</div><div class="kpi-sub">${t('all time', 'كل الوقت')}</div></div>
+    </div>
+    <div class="card">
+      <div class="filter-bar">
+        <div class="search"><input id="lam-search" type="text" placeholder="${t('Search customer, occasion, notes…', 'ابحث بالعميل أو المناسبة…')}" /></div>
+        <select id="lam-status" class="btn ghost"><option value="all">${t('All', 'الكل')}</option><option value="due">⏳ ${t('Due only', 'المستحق فقط')}</option><option value="paid">✓ ${t('Paid only', 'المدفوع فقط')}</option></select>
+        ${monthMultiHTML('lam-month', monthsIn, filter.months)}
+      </div>
+      <div class="table-wrap"><table><thead><tr>
+        <th>${t('Date / Time', 'التاريخ / الوقت')}</th><th>${t('Customer', 'العميل')}</th><th>${t('Occasion', 'المناسبة')}</th>
+        <th class="text-right">${t('Guests', 'الضيوف')}</th><th class="text-right">${t('Amount', 'المبلغ')}</th><th>${t('Status', 'الحالة')}</th><th>${t('Notes', 'ملاحظات')}</th><th></th>
+      </tr></thead><tbody id="lam-tbody"></tbody></table></div>
+      <div id="lam-pagination"></div>
+    </div>`;
+  $('#lam-search').addEventListener('input', e => { filter.search = e.target.value; pg.page = 1; refresh(); });
+  $('#lam-status').addEventListener('change', e => { filter.status = e.target.value; pg.page = 1; refresh(); });
+  bindMonthMulti('lam-month', (months) => { filter.months = months; pg.page = 1; refresh(); });
+  $('#lam-add').addEventListener('click', () => addLamaaBooking(refresh));
+  $('#lam-packages')?.addEventListener('click', () => editLamaaPackages(refresh));
+  $('#lam-export')?.addEventListener('click', () => {
+    const all = applyFilter().sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    const head = ['Date', 'Start', 'End', 'Customer', 'Phone', 'Occasion', 'Package', 'Guests', 'Amount', 'Paid', 'Due', 'Notes'];
+    const body = all.map(b => { const due = bDue(b); return [b.date || '', b.startTime || '', b.endTime || '', b.customerName || '', b.customerPhone || '', b.occasion || '', b.packageLabel || '', b.guests || '', b.amount || 0, Math.round(((b.amount || 0) - due) * 100) / 100, due, (b.notes || '').replace(/\n/g, ' ')]; });
+    const csv = [head, ...body].map(r => r.map(v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`).join(',')).join('\n');
+    downloadFile(`lamaa-stars-bookings-${TODAY}.csv`, csv, 'text/csv');
+    toast(t('Exported', 'تم التصدير'));
+  });
+  refresh();
+};
+
+function _lamaaCustomerDatalist() {
+  const names = new Set();
+  for (const m of (state.members || [])) { if (!m.deleted && m.name) names.add(m.name + (m.phone ? ' · ' + m.phone : '')); }
+  for (const c of (state.rentalCustomers || [])) { if (c && c.name) names.add(c.name + (c.phone ? ' · ' + c.phone : '')); }
+  return `<datalist id="lam-cust-dl">${[...names].slice(0, 400).map(n => `<option value="${escapeHtml(n)}"></option>`).join('')}</datalist>`;
+}
+function renderLamaaForm(b) {
+  b = b || {};
+  const pkgs = lamaaPackages();
+  const isCustom = b.packageLabel === 'Custom' || (b.id && !pkgs.some(p => p.label === b.packageLabel));
+  const pkgOpts = pkgs.map(p => `<option value="${escapeHtml(p.label)}" data-price="${p.price}" ${b.packageLabel === p.label ? 'selected' : ''}>${escapeHtml(p.label)} · ${fmt(p.price)} QAR</option>`).join('')
+    + `<option value="Custom" ${isCustom ? 'selected' : ''}>${t('Custom (flat price)', 'مخصّص (سعر ثابت)')}</option>`;
+  return `
+    <div class="form-row">
+      <div class="field"><label>${t('Date', 'التاريخ')} <span style="color:var(--accent)">*</span></label><input type="date" id="lam-date" value="${b.date || TODAY}" /></div>
+      <div class="field"><label>${t('Start time', 'وقت البدء')}</label><input type="time" id="lam-start" value="${b.startTime || ''}" /></div>
+      <div class="field"><label>${t('End time', 'وقت الانتهاء')}</label><input type="time" id="lam-end" value="${b.endTime || ''}" /></div>
+    </div>
+    <div class="form-row">
+      <div class="field"><label>${t('Package', 'الباقة')}</label><select id="lam-package">${pkgOpts}</select></div>
+      <div class="field"><label>${t('Amount (QAR)', 'المبلغ')} <span style="color:var(--accent)">*</span></label><input type="number" id="lam-amount" min="0" step="1" value="${b.amount != null ? b.amount : ''}" placeholder="auto from package" /></div>
+      <div class="field"><label>${t('Setup buffer (min)', 'وقت التجهيز (دقيقة)')} <span class="text-mute" style="font-size:10px">${t('blocks before/after', 'يحجب قبل/بعد')}</span></label><input type="number" id="lam-buffer" min="0" step="15" value="${b.setupBuffer != null ? b.setupBuffer : 0}" /></div>
+    </div>
+    <div style="margin-top:6px;padding:12px;background:rgba(139,92,246,.06);border:1px solid rgba(139,92,246,.22);border-radius:8px">
+      <div style="font-size:11px;color:var(--purple);text-transform:uppercase;letter-spacing:.6px;font-weight:600;margin-bottom:8px">👤 ${t('Customer', 'العميل')}</div>
+      <div class="form-row">
+        <div class="field"><label>${t('Name', 'الاسم')} <span style="color:var(--accent)">*</span></label><input type="text" id="lam-name" list="lam-cust-dl" value="${escapeHtml(b.customerName || '')}" placeholder="${t('Type or pick a known customer', 'اكتب أو اختر عميلاً معروفاً')}" />${_lamaaCustomerDatalist()}</div>
+        ${phoneInputHtml('lam-phone', b.customerPhone, { label: t('Mobile', 'الجوال') })}
+      </div>
+      <div class="form-row">
+        <div class="field"><label>QID <span class="text-mute" style="font-size:10px">(${t('optional', 'اختياري')})</span></label><input type="text" id="lam-qid" value="${escapeHtml(b.customerQid || '')}" /></div>
+        <div class="field"><label>${t('Guests', 'عدد الضيوف')}</label><input type="number" id="lam-guests" min="0" step="1" value="${b.guests != null ? b.guests : ''}" /></div>
+        <div class="field"><label>${t('Occasion', 'المناسبة')}</label><input type="text" id="lam-occasion" value="${escapeHtml(b.occasion || '')}" placeholder="${t('Birthday, corporate…', 'عيد ميلاد، شركة…')}" /></div>
+      </div>
+    </div>
+    ${!b.id ? `<div class="form-row" style="margin-top:8px">
+      <div class="field"><label>${t('Paid now (QAR)', 'المدفوع الآن')} <span class="text-mute" style="font-size:10px">${t('deposit — rest becomes due', 'عربون — الباقي يصبح مستحقاً')}</span></label><input type="number" id="lam-paid" min="0" step="1" value="" placeholder="${t('= full amount', '= كامل المبلغ')}" /></div>
+      <div class="field"><label>${t('Method', 'الطريقة')}</label><select id="lam-method"><option value="cash">Cash</option><option value="card">Card</option><option value="fawran">Fawran</option><option value="transfer">Transfer</option></select></div>
+    </div>` : ''}
+    <div class="field" style="margin-top:6px"><label>${t('Notes', 'ملاحظات')}</label><input type="text" id="lam-notes" value="${escapeHtml(b.notes || '')}" /></div>
+    <div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.25);border-radius:8px;padding:10px;margin-top:8px;font-size:12px">💡 ${t('An invoice is created automatically. Leave “Paid now” blank for a fully-paid booking, or enter a deposit to leave the rest as due.', 'تُنشأ فاتورة تلقائياً. اترك «المدفوع الآن» فارغاً للحجز المدفوع بالكامل، أو أدخل عربوناً ليبقى الباقي مستحقاً.')}</div>`;
+}
+function wireLamaaForm() {
+  const pkg = document.getElementById('lam-package'), amt = document.getElementById('lam-amount');
+  if (pkg && amt) pkg.addEventListener('change', () => {
+    const opt = pkg.options[pkg.selectedIndex];
+    const price = opt ? opt.getAttribute('data-price') : null;
+    if (pkg.value !== 'Custom' && price != null) amt.value = price;
+    else if (pkg.value === 'Custom') { amt.value = ''; amt.focus(); }
+  });
+}
+window.addLamaaBooking = function(onDone) {
+  showModal({ title: '✨ ' + t('New Hall Booking', 'حجز قاعة جديد'), wide: true, body: renderLamaaForm({}),
+    actions: [{ label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal }, { label: t('Save', 'حفظ'), class: 'btn primary', onclick: () => saveLamaaBooking(null, onDone) }] });
+  setTimeout(wireLamaaForm, 0);
+};
+window.editLamaaBooking = function(id, onDone) {
+  const b = (state.hallBookings || []).find(x => x.id === id); if (!b) { toast('Booking not found', 'error'); return; }
+  showModal({ title: '✎ ' + t('Edit Hall Booking', 'تعديل حجز القاعة'), wide: true, body: renderLamaaForm(b),
+    actions: [{ label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal }, { label: t('Save', 'حفظ'), class: 'btn primary', onclick: () => saveLamaaBooking(id, onDone) }] });
+  setTimeout(wireLamaaForm, 0);
+};
+function saveLamaaBooking(existingId, onDone) {
+  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast('Admins or reception only', 'error'); return; }
+  const name = ($('#lam-name').value || '').trim().split(' · ')[0].trim();   // datalist may append " · phone"
+  if (!name) { toast(t('Customer name required', 'اسم العميل مطلوب'), 'error'); $('#lam-name')?.focus(); return; }
+  const phoneInput = readPhoneInput('lam-phone'); const phone = phoneInput.phone;
+  if (phoneInput.digits && !phoneInput.valid) { toast(phoneInput.error || 'Mobile invalid', 'error'); return; }
+  const date = $('#lam-date').value || TODAY;
+  const startTime = $('#lam-start').value || null, endTime = $('#lam-end').value || null;
+  const packageLabel = $('#lam-package').value || 'Custom';
+  const amount = parseFloat($('#lam-amount').value) || 0;
+  if (amount <= 0) { toast(t('Enter the amount', 'أدخل المبلغ'), 'error'); $('#lam-amount')?.focus(); return; }
+  const setupBuffer = parseInt($('#lam-buffer').value) || 0;
+  const guests = parseInt($('#lam-guests').value) || 0;
+  const occasion = ($('#lam-occasion').value || '').trim() || null;
+  const qid = ($('#lam-qid').value || '').trim() || null;
+  const notes = ($('#lam-notes').value || '').trim() || null;
+  // Overlap guard — one hall, same date, ranges (incl. setup buffer both sides) must not overlap.
+  if (startTime && endTime) {
+    const toMin = x => { const [h, mm] = String(x).split(':').map(Number); return (h || 0) * 60 + (mm || 0); };
+    const s = toMin(startTime) - setupBuffer, e = toMin(endTime) + setupBuffer;
+    const clash = (state.hallBookings || []).find(x => x.id !== existingId && x.date === date && x.startTime && x.endTime && (() => { const s2 = toMin(x.startTime) - (x.setupBuffer || 0), e2 = toMin(x.endTime) + (x.setupBuffer || 0); return s < e2 && s2 < e; })());
+    if (clash) { toast(`${HALL_NAME} ${t('is already booked at', 'محجوزة في')} ${clash.startTime} ${t('on', 'يوم')} ${fmtDate(date)}`, 'error'); return; }
+  }
+  // Link to a member if the phone matches; else track a rental customer (reused directory).
+  const matchedMember = (state.members || []).find(m => m.phone && m.phone === phone && !m.deleted);
+  let rcust = null;
+  if (!matchedMember && phone) {
+    rcust = (state.rentalCustomers || []).find(c => (c.phone || '') === phone) || null;
+    if (!rcust) { rcust = { id: nextId(state.rentalCustomers || []), name, phone, qid: qid || null, notes: null }; state.rentalCustomers.push(rcust); }
+    else { if (name && !rcust.name) rcust.name = name; if (qid && !rcust.qid) rcust.qid = qid; }
+  }
+  const desc = `✨ ${HALL_NAME} — ${occasion || t('booking', 'حجز')}${startTime ? ' @ ' + startTime : ''} — ${name}`;
+  const month = date.slice(0, 7);
+
+  if (existingId) {
+    const idx = state.hallBookings.findIndex(x => x.id === existingId); const old = state.hallBookings[idx];
+    state.hallBookings[idx] = { ...old, date, startTime, endTime, packageLabel, amount, setupBuffer, guests, occasion, customerName: name, customerPhone: phone, customerQid: qid, customerRentalId: rcust ? rcust.id : (old.customerRentalId ?? null), memberId: matchedMember ? matchedMember.id : (old.memberId ?? null), notes };
+    if (old.invoiceId) { const inv = (state.invoices || []).find(i => i.id === old.invoiceId); if (inv) { inv.date = date; inv.description = desc; inv.amount = amount; inv.month = month; inv.customerName = name; inv.customerPhone = phone; inv.customerId = matchedMember ? matchedMember.id : null; if (Array.isArray(inv.lineItems) && inv.lineItems[0]) inv.lineItems[0].price = amount; if (typeof stampUpdate === 'function') stampUpdate(inv); } }
+    if (typeof stampUpdate === 'function') stampUpdate(state.hallBookings[idx]);
+    closeModal(); if (onDone) onDone(); else render(); if (typeof confirmSaved === 'function') confirmSaved(t('Booking updated', 'تم تحديث الحجز')); else { save(); toast(t('Booking updated', 'تم تحديث الحجز')); }
+    return;
+  }
+  // New booking + invoice. Paid-now (deposit) → rest due.
+  const paidRaw = $('#lam-paid') ? $('#lam-paid').value : '';
+  const paidNow = paidRaw === '' ? amount : Math.max(0, Math.min(amount, parseFloat(paidRaw) || 0));
+  const method = ($('#lam-method') || {}).value || 'cash';
+  const bookingId = nextId(state.hallBookings || []);
+  const ref = nextInvoiceRef();
+  const newInv = {
+    id: nextId(state.invoices), date, description: desc, amount, method, month, ref,
+    category: 'Hall Rental', activityType: 'rental', sport: HALL_NAME, coach: null, coachId: null,
+    customerId: matchedMember ? matchedMember.id : null, customerName: name, customerPhone: phone,
+    amountPaid: paidNow, payments: paidNow > 0 ? [{ amount: paidNow, method, date, month }] : [],
+    hallBookingId: bookingId,
+  };
+  if (typeof stampUpdate === 'function') stampUpdate(newInv);
+  state.invoices.push(newInv);
+  state.hallBookings.push({ id: bookingId, date, startTime, endTime, packageLabel, amount, setupBuffer, guests, occasion, customerName: name, customerPhone: phone, customerQid: qid, customerRentalId: rcust ? rcust.id : null, memberId: matchedMember ? matchedMember.id : null, method, notes, invoiceId: newInv.id, createdAt: new Date().toISOString() });
+  closeModal(); if (onDone) onDone(); else render();
+  const dueMsg = paidNow < amount ? ` · ⏳ ${fmt(amount - paidNow)} ${t('due', 'مستحق')}` : '';
+  if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'invoices', id: newInv.id }], okMsg: `${t('Booking saved', 'تم حفظ الحجز')} · ${ref}${dueMsg}` });
+  else { save(); toast(`${t('Booking saved', 'تم حفظ الحجز')}${dueMsg}`); }
+}
+window.deleteLamaaBooking = function(id) {
+  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast('Admins or reception only', 'error'); return; }
+  const b = (state.hallBookings || []).find(x => x.id === id); if (!b) return;
+  if (!confirm(`${t('Delete this hall booking?', 'حذف هذا الحجز؟')}\n\n${b.customerName || ''} · ${b.date ? fmtDate(b.date) : ''} · ${fmt(b.amount || 0)} QAR\n\n${t('Its linked invoice is removed too (no refund record).', 'تُحذف فاتورته المرتبطة أيضاً.')}`)) return;
+  if (b.invoiceId) { const inv = (state.invoices || []).find(i => i.id === b.invoiceId); if (inv) inv.deleted = true; }
+  try { if (typeof window._tombstoneEl === 'function') window._tombstoneEl(b); } catch (_) {}
+  state.hallBookings = (state.hallBookings || []).filter(x => x.id !== id);
+  if (typeof audit === 'function') audit('hall.delete', 'hall:' + id, `Deleted ${HALL_NAME} booking · ${b.customerName || ''}`);
+  if (typeof confirmSaved === 'function') confirmSaved(t('Booking deleted', 'تم حذف الحجز')); else { save(); toast(t('Booking deleted', 'تم الحذف')); }
+  render();
+};
+window.collectLamaaBooking = function(id) {
+  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast('Admins or reception only', 'error'); return; }
+  const b = (state.hallBookings || []).find(x => x.id === id); if (!b) return;
+  const inv = b.invoiceId ? (state.invoices || []).find(i => i.id === b.invoiceId) : null;
+  if (!inv) { toast('Linked invoice not found', 'error'); return; }
+  const bal = (typeof invoiceBalance === 'function') ? invoiceBalance(inv) : 0;
+  if (bal <= 0.5) { toast(t('Already paid', 'مدفوعة بالفعل')); return; }
+  showModal({ title: '💵 ' + t('Collect hall payment', 'تحصيل دفعة القاعة'),
+    body: `<div class="text-mute" style="font-size:12px;margin-bottom:8px">${escapeHtml(b.customerName || '')} · ${escapeHtml(b.occasion || HALL_NAME)} · ${b.date ? fmtDate(b.date) : ''}</div>
+      <div class="form-row"><div class="field"><label>${t('Amount (QAR)', 'المبلغ')}</label><input id="lc-amt" type="number" min="0" step="0.01" value="${bal}" /></div>
+      <div class="field"><label>${t('Method', 'الطريقة')}</label><select id="lc-mth"><option value="cash">Cash</option><option value="card">Card</option><option value="fawran">Fawran</option><option value="transfer">Transfer</option></select></div></div>
+      <div class="field"><label>${t('Date', 'التاريخ')}</label><input id="lc-date" type="date" value="${TODAY}" /></div>`,
+    actions: [{ label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal }, { label: '💵 ' + t('Collect', 'تحصيل'), class: 'btn primary', onclick: () => {
+      const amt = Math.round((parseFloat(($('#lc-amt') || {}).value) || 0) * 100) / 100;
+      if (!(amt > 0)) { toast(t('Enter an amount', 'أدخل مبلغاً'), 'error'); return; }
+      if (amt > bal + 0.01 && !confirm(t(`More than the ${fmt(bal)} QAR due — record anyway?`, `أكثر من ${fmt(bal)} ر.ق المستحقة — تسجيل على أي حال؟`))) return;
+      const mth = ($('#lc-mth') || {}).value || 'cash'; const d = ($('#lc-date') || {}).value || TODAY;
+      if (typeof recordPayment === 'function') recordPayment(inv, { amount: amt, method: mth, date: d });
+      else { if (!Array.isArray(inv.payments)) inv.payments = []; inv.payments.push({ amount: amt, method: mth, date: d, month: String(d).slice(0, 7) }); inv.amountPaid = inv.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0); }
+      if (typeof audit === 'function') audit('hall.collect', 'hall:' + b.id, `collected ${fmt(amt)} · ${mth}`, { recordName: b.customerName || '' });
+      closeModal(); if (typeof confirmSaved === 'function') confirmSaved(t('Collected', 'تم التحصيل') + ' ' + fmt(amt)); else { save(); toast(t('Collected', 'تم التحصيل')); }
+      render();
+    } }] });
+};
+function editLamaaPackages(onDone) {
+  if (currentRole() !== 'admin') { toast(t('Admins only', 'للمشرفين فقط'), 'error'); return; }
+  const pkgs = lamaaPackages();
+  showModal({ title: '⚙ ' + t('Hall Packages', 'باقات القاعة'),
+    body: `<div class="text-mute" style="font-size:12px;margin-bottom:10px">${t('Preset packages shown when adding a booking. Edit names/prices; blank name = remove.', 'الباقات الجاهزة التي تظهر عند الحجز. عدّل الأسماء/الأسعار؛ اسم فارغ = حذف.')}</div>
+      <div id="lam-pkg-rows">${pkgs.concat([{ label: '', price: '' }]).map((p, i) => `<div class="form-row lam-pkg-row" style="margin-bottom:6px"><div class="field"><input class="lam-pkg-name" placeholder="${t('Package name', 'اسم الباقة')}" value="${escapeHtml(p.label || '')}" /></div><div class="field"><input class="lam-pkg-price" type="number" min="0" step="1" placeholder="${t('Price', 'السعر')}" value="${p.price === '' ? '' : (Number(p.price) || 0)}" /></div></div>`).join('')}</div>
+      <button class="btn ghost sm" id="lam-pkg-more">+ ${t('Add row', 'إضافة صف')}</button>`,
+    actions: [{ label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal }, { label: '💾 ' + t('Save', 'حفظ'), class: 'btn primary', onclick: () => {
+      const rows = [...document.querySelectorAll('.lam-pkg-row')];
+      const out = [];
+      rows.forEach(r => { const nm = (r.querySelector('.lam-pkg-name').value || '').trim(); const pr = parseFloat(r.querySelector('.lam-pkg-price').value) || 0; if (nm) out.push({ label: nm, price: pr }); });
+      if (!state.settings) state.settings = {}; state.settings.lamaaPackages = out.length ? out : undefined;
+      closeModal(); if (typeof confirmSaved === 'function') confirmSaved(t('Packages saved', 'تم حفظ الباقات')); else { save(); toast(t('Saved', 'تم الحفظ')); }
+      if (onDone) onDone();
+    } }] });
+  setTimeout(() => { const more = document.getElementById('lam-pkg-more'); if (more) more.addEventListener('click', () => { const wrap = document.getElementById('lam-pkg-rows'); const div = document.createElement('div'); div.className = 'form-row lam-pkg-row'; div.style.marginBottom = '6px'; div.innerHTML = `<div class="field"><input class="lam-pkg-name" placeholder="${t('Package name', 'اسم الباقة')}" /></div><div class="field"><input class="lam-pkg-price" type="number" min="0" step="1" placeholder="${t('Price', 'السعر')}" /></div>`; wrap.appendChild(div); }); }, 0);
+}
 
 PAGES.rentals = (main) => {
   let filter = { search: '', facility: 'all', months: [] };
