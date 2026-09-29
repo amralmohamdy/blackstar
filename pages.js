@@ -313,7 +313,7 @@ window.coachTargetDetail = function(coachId, ym) {
       </tr>`).join('')}</tbody>
       <tfoot><tr><td colspan="6" class="text-right font-bold">${t('Total', 'الإجمالي')}</td><td class="text-right num font-bold">${fmt(total)}</td></tr></tfoot>
     </table></div>
-    <div class="text-mute" style="font-size:11px;margin-top:8px">${t('Each row is one new enrolment or renewal that started this month under this coach — a member enrolling in 2 sports counts twice, a renewal counts once.', 'كل سطر هو تسجيل جديد أو تجديد بدأ هذا الشهر مع هذا المدرب — العضو الذي يسجل في رياضتين يُحتسب مرتين، والتجديد مرة واحدة.')}</div>`
+    <div class="text-mute" style="font-size:11px;margin-top:8px">${t('Each row is one payment transaction this month under this coach. A member counts once — even across a mid-month switch — unless they paid on two separate invoices, then it counts twice.', 'كل سطر هو عملية دفع واحدة هذا الشهر مع هذا المدرب. العضو يُحتسب مرة واحدة — حتى مع التبديل خلال الشهر — إلا إذا دفع على فاتورتين منفصلتين فيُحتسب مرتين.')}</div>`
     : `<div class="text-mute" style="text-align:center;padding:20px">${t('No new/renew transactions this month.', 'لا توجد عمليات جديد/تجديد هذا الشهر.')}</div>`;
   showModal({
     title: `🥋 ${escapeHtml(name)} · ${escapeHtml(label)} · ${rows.length} ${t('new/renew', 'جديد/تجديد')}`,
@@ -2099,7 +2099,7 @@ window.exportMemberAttendanceImage = function(id, lang) {
       }).join('');
       sections.push(`
         <div style="margin-bottom:18px">
-          <div style="font-size:14px;font-weight:700;color:#f26060;margin-bottom:6px">${escapeHtml(sp)}${sp === SUMMER_CAMP ? '' : ' · ' + L.coach + ' ' + escapeHtml(coachName(cid))} · <span style="color:#666;font-weight:500">${fmtMonth(mo)} · ${y}/${enrolled || (y + n)} · ${denom ? sRate + '%' : '—'}</span></div>
+          <div style="font-size:14px;font-weight:700;color:#f26060;margin-bottom:6px">${escapeHtml(sp)}${isCampSport(sp) ? '' : ' · ' + L.coach + ' ' + escapeHtml(coachName(cid))} · <span style="color:#666;font-weight:500">${fmtMonth(mo)} · ${y}/${enrolled || (y + n)} · ${denom ? sRate + '%' : '—'}</span></div>
           <table style="width:100%;border-collapse:collapse">
             <thead><tr>
               <th style="border:1px solid #e5e5ea;padding:6px 10px;font-size:10px;color:#777;background:#fafafa;text-align:${ar ? 'right' : 'left'};text-transform:uppercase;letter-spacing:.5px">${L.date}</th>
@@ -2245,7 +2245,7 @@ function viewMember(id) {
     if (!e || !e.sport || _subSports.has(e.sport)) continue;
     const st = e.start || m.startDate || m.joinDate || null;
     const val = parseInt(e.validity) || 30;
-    const end = st ? ((e.sport === SUMMER_CAMP && typeof campEndDate === 'function') ? campEndDate(st, val)
+    const end = st ? ((isCampSport(e.sport) && typeof campEndDate === 'function') ? campEndDate(st, val)
                      : (typeof addDays === 'function' ? addDays(st, val) : null)) : null;
     allSubs.push({ activity: e.sport, coachId: e.coachId, start: st, end,
       totalClasses: parseInt(e.classes) || 0, attendedClasses: 0, _synthFromEnrollment: true });
@@ -2312,8 +2312,8 @@ function viewMember(id) {
           }
           return (s.month || '').toUpperCase();
         })()}</span></td>
-        <td>${escapeHtml(s.activity || '—')}${s.activity === SUMMER_CAMP && s.durationLabel ? ` <span class="badge" style="background:rgba(245,158,11,.15);color:var(--accent-2);font-size:9px;padding:1px 6px">🌞 ${escapeHtml(s.durationLabel)}</span>` : ''}${s.activity === MIXED ? ` <span class="badge" style="background:rgba(59,130,246,.15);color:var(--blue);font-size:9px;padding:1px 6px">🎯 ${t('Mixed', 'مختلط')}</span>${_mixBreak && _mixBreak.length ? `<div class="text-mute" style="font-size:10px;margin-top:3px">${_mixBreak.map(x => escapeHtml(x)).join(' · ')}</div>` : ''}` : ''}</td>
-        <td>${(s.activity === SUMMER_CAMP || s.activity === MIXED) ? `<span class="text-mute" style="font-size:11px;font-style:italic">${s.activity === MIXED ? escapeHtml(t('multi-coach', 'عدة مدربين')) : 'no coach'}</span>` : escapeHtml(s.coach || '—')}</td>
+        <td>${escapeHtml(s.activity || '—')}${isCampSport(s.activity) && s.durationLabel ? ` <span class="badge" style="background:rgba(245,158,11,.15);color:var(--accent-2);font-size:9px;padding:1px 6px">🌞 ${escapeHtml(s.durationLabel)}</span>` : ''}${s.activity === MIXED ? ` <span class="badge" style="background:rgba(59,130,246,.15);color:var(--blue);font-size:9px;padding:1px 6px">🎯 ${t('Mixed', 'مختلط')}</span>${_mixBreak && _mixBreak.length ? `<div class="text-mute" style="font-size:10px;margin-top:3px">${_mixBreak.map(x => escapeHtml(x)).join(' · ')}</div>` : ''}` : ''}</td>
+        <td>${(isCampSport(s.activity) || s.activity === MIXED) ? `<span class="text-mute" style="font-size:11px;font-style:italic">${s.activity === MIXED ? escapeHtml(t('multi-coach', 'عدة مدربين')) : 'no coach'}</span>` : escapeHtml(s.coach || '—')}</td>
         <td>${s.start ? fmtDate(s.start) : '—'}</td>
         <td>${s.end ? fmtDate(s.end) : '—'}</td>
         <td>${attCell}</td>
@@ -3032,11 +3032,11 @@ function enrollRowHtml(row, idx) {
   // Summer Camp special handling: replace the Classes input with a Duration
   // dropdown. The selected duration maps to a number of days (stored in
   // `classes`) AND a default price. Admin can still override the price.
-  const isCamp = row.sport === SUMMER_CAMP;
+  const isCamp = isCampSport(row.sport);
   // v6.570 — Mixed: a "try many sports" package. Class-based like a normal sport, but NO single coach
   // (the coach is chosen per class at attendance time), so the coach field is a placeholder like camp.
   const isMixed = row.sport === MIXED;
-  const campPrices = (state.settings?.summerCampPrices) || DEFAULT_SUMMER_CAMP_PRICES;
+  const campPrices = campPricesFor(row.sport);
   // For existing camp rows, infer the matching label from days OR durationLabel
   const matchedLabel = isCamp
     ? (row.durationLabel || campLabelForClasses(classesNum) || '')
@@ -3172,8 +3172,8 @@ function renderEnrollRows() {
       if (key === 'coachId') {
         row.coachId = val ? parseInt(val) : null;
       } else if (key === 'sport') {
-        const wasCamp = row.sport === SUMMER_CAMP;
-        const isNowCamp = val === SUMMER_CAMP;
+        const wasCamp = isCampSport(row.sport);
+        const isNowCamp = isCampSport(val);
         row.sport = val;
         // If the currently-picked coach doesn't teach the new sport, clear it so
         // the admin must re-pick from the (now correctly filtered) coach list.
@@ -3204,7 +3204,7 @@ function renderEnrollRows() {
           return;
         }
         row._campCustom = false;
-        const prices = (state.settings?.summerCampPrices) || DEFAULT_SUMMER_CAMP_PRICES;
+        const prices = campPricesFor(row.sport);
         const match = prices.find(p => p.label === val);
         if (match) {
           row.durationLabel = match.label;
@@ -3718,7 +3718,7 @@ function showMemberForm(m) {
           if (!r.sport) return false;
           if ((parseInt(r.classes) || 0) <= 0) return false;
           if ((parseFloat(r.price) || 0) <= 0) return false;
-          if (r.sport !== SUMMER_CAMP && r.sport !== MIXED && !state.coaches.some(c => String(c.id) === String(r.coachId))) return false;   // v6.570: Mixed has no single coach
+          if (!isCampSport(r.sport) && r.sport !== MIXED && !state.coaches.some(c => String(c.id) === String(r.coachId))) return false;   // v6.570: Mixed has no single coach
           return true;
         };
         const completeRows = allRows.filter(rowComplete);
@@ -3744,7 +3744,7 @@ function showMemberForm(m) {
             toast('Add at least one sport enrollment', 'error');
           } else {
             const p = partialRows[0] || allRows[0];
-            const isCamp = p.sport === SUMMER_CAMP;
+            const isCamp = isCampSport(p.sport);
             const missing = [];
             if (!p.sport) missing.push('sport');
             if (!isCamp && p.sport !== MIXED && !state.coaches.some(c => String(c.id) === String(p.coachId))) missing.push('coach');
@@ -3763,15 +3763,15 @@ function showMemberForm(m) {
         const enrollments = completeRows.map(r => ({
           sport: r.sport,
           // Summer Camp and Mixed have no single coach — store null. Other sports parse the int.
-          coachId: (r.sport === SUMMER_CAMP || r.sport === MIXED) ? null : parseInt(r.coachId),
+          coachId: (isCampSport(r.sport) || r.sport === MIXED) ? null : parseInt(r.coachId),
           classes: parseInt(r.classes) || 0,
           price: parseFloat(r.price) || 0,
           // Summer Camp keeps its duration label for display in invoices + member detail
-          durationLabel: r.sport === SUMMER_CAMP ? (r.durationLabel || null) : null,
+          durationLabel: isCampSport(r.sport) ? (r.durationLabel || null) : null,
           // Each sport carries its OWN start date + validity (its own expiry).
           // Camp: validity is the time window (calendar days), class limit is classes.
           start: r.start || null,
-          validity: r.sport === SUMMER_CAMP ? (parseInt(r.validity) || parseInt(r.classes) || DEFAULT_VALIDITY) : (parseInt(r.validity) || DEFAULT_VALIDITY),
+          validity: isCampSport(r.sport) ? (parseInt(r.validity) || parseInt(r.classes) || DEFAULT_VALIDITY) : (parseInt(r.validity) || DEFAULT_VALIDITY),
           _originalSport: r.originalSport || null,   // for paid-but-unattended sport rename
           _originalCoachId: (r.originalCoachId != null ? r.originalCoachId : null),  // v6.504: change-coach vs add-coach
           _paid: !!r.paid,
@@ -3888,7 +3888,7 @@ function showMemberForm(m) {
             // the transaction-level validity, but Summer Camp uses its own
             // duration (stored in e.classes as days).
             enrollments.forEach((e, i) => {
-              const isCamp = e.sport === SUMMER_CAMP;
+              const isCamp = isCampSport(e.sport);
               const eStart = enrollmentStartDate(e, data);   // per-sport start (defaults to member start)
               // Camp: the time WINDOW is the validity (calendar days, e.g. 1 month),
               // independent of the class limit (e.classes). The class limit caps how
@@ -4173,7 +4173,7 @@ function showMemberForm(m) {
           // Push subscription rows for each new sport. Summer Camp uses
           // its own duration; others share the form's validity.
           newSubs.forEach((e, i) => {
-            const isCamp = e.sport === SUMMER_CAMP;
+            const isCamp = isCampSport(e.sport);
             const eStart = startOf(e);                          // this sport's own start date
             // Camp: window is the validity (calendar days), class limit is e.classes.
             const subValidity = isCamp ? (e.validity || e.classes || DEFAULT_VALIDITY) : (e.validity || DEFAULT_VALIDITY);
@@ -4433,7 +4433,7 @@ function coachOffboardPayout(coachId) {
     if (m.deleted) continue;
     for (const s of (m.subscriptions || [])) {
       if (s.coachId !== coachId) continue;
-      if ((s.activity || '') === SUMMER_CAMP) continue;   // camp has no coach commission
+      if (isCampSport((s.activity || ''))) continue;   // camp has no coach commission
       const sport = s.activity || m.sport || '';
       sportsSet.add(sport);
       // Class limit (handles camp/validity conversion; non-camp = totalClasses).
@@ -5095,8 +5095,11 @@ window.editCoach = function(id, defaultRole) {
 // SCHEDULE — visual weekly class grid with drag-and-drop editing + PNG export
 // ═══════════════════════════════════════════════════════════════════
 PAGES.campschedule = (main) => {
-  if (!state.campSchedule || !state.campSchedule.days) state.campSchedule = defaultCampSchedule();
-  const cs = state.campSchedule;
+  const CAMP = activeCampSport();
+  const SKEY = (CAMP === WINTER_CAMP) ? 'winterCampSchedule' : 'campSchedule';
+  const SROUTE = (CAMP === WINTER_CAMP) ? 'winterschedule' : 'campschedule';
+  if (!state[SKEY] || !state[SKEY].days) state[SKEY] = defaultCampSchedule(CAMP);
+  const cs = state[SKEY];
   const groups = CAMP_GROUPS;
 
   const dayNum = (k) => CAMP_DAYS.indexOf(k) + 1;
@@ -5157,7 +5160,7 @@ PAGES.campschedule = (main) => {
   main.innerHTML = `
     <div class="topbar">
       <div>
-        <h1>☀️ Summer Camp Schedule</h1>
+        <h1>${CAMP === WINTER_CAMP ? '❄️' : '☀️'} ${escapeHtml(CAMP)} Schedule</h1>
         <div class="subtitle">Black Stars Academy · Sun–Thu · ${escapeHtml(fmtDate(cs.startDate))} – ${escapeHtml(fmtDate(cs.endDate))}</div>
       </div>
       <div class="topbar-actions">
@@ -5285,7 +5288,7 @@ PAGES.campschedule = (main) => {
     const dateLabel = `${CAMP_DAY_LABELS[selDay]} · Day ${dayNum(selDay)}${window.__campDate ? ' · ' + fmtDate(window.__campDate) : ''} · Camp ${fmtDate(cs.startDate)} – ${fmtDate(cs.endDate)}`;
     const w = window.open('', '_blank');
     if (!w) { toast('Allow pop-ups to print', 'error'); return; }
-    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Summer Camp — ${escapeHtml(CAMP_DAY_LABELS[selDay])}</title><style>@page{size:landscape;margin:12mm}body{font-family:Arial,sans-serif;padding:10px;color:#111}</style></head><body onload="window.print()">${buildPrintHtml(selDay, dateLabel)}</body></html>`);
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(CAMP)} — ${escapeHtml(CAMP_DAY_LABELS[selDay])}</title><style>@page{size:landscape;margin:12mm}body{font-family:Arial,sans-serif;padding:10px;color:#111}</style></head><body onload="window.print()">${buildPrintHtml(selDay, dateLabel)}</body></html>`);
     w.document.close();
   }
 
@@ -5363,9 +5366,9 @@ PAGES.campschedule = (main) => {
 
   const resetBtn = $('#camp-reset');
   if (resetBtn) resetBtn.addEventListener('click', () => {
-    if (!confirm('Reset the Summer Camp schedule for all five days back to the original?')) return;
-    state.campSchedule = defaultCampSchedule();
-    confirmSaved('Summer Camp schedule reset'); navigate('campschedule');
+    if (!confirm(`Reset the ${CAMP} schedule for all five days back to the original?`)) return;
+    state[SKEY] = defaultCampSchedule(CAMP);
+    confirmSaved(`${CAMP} schedule reset`); navigate(SROUTE);
   });
   wireCells();
   updateDateLabel();
@@ -7205,16 +7208,17 @@ window.editInvoicePayments = function(invoiceId) {
 window.editCampMember = function(id) {
   const m = state.members.find(x => x.id === id);
   if (!m) return;
-  const campPrices = (state.settings && state.settings.summerCampPrices) || DEFAULT_SUMMER_CAMP_PRICES;
-  const campEnr = (m.enrollments || []).find(e => e.sport === SUMMER_CAMP);
-  const campSub = (m.subscriptions || []).filter(s => s.activity === SUMMER_CAMP).slice(-1)[0];
+  const campEnr = (m.enrollments || []).find(e => isCampSport(e.sport));
+  const campSub = (m.subscriptions || []).filter(s => isCampSport(s.activity)).slice(-1)[0];
+  const campSport = (campEnr && campEnr.sport) || (campSub && campSub.activity) || activeCampSport();
+  const campPrices = campPricesFor(campSport);
   const days = (campEnr && (campEnr.classes || campEnr.days)) || (campSub && campSub.totalClasses) || null;
   const curLabel = (campEnr && campEnr.durationLabel) || (campSub && campSub.durationLabel)
     || (days && (campPrices.find(p => p.days === days) || {}).label) || '';
   // Latest Summer-Camp invoice for this member — that is where price/paid live,
   // so editing them here keeps the books and the outstanding balance in sync.
   const campInv = (state.invoices || [])
-    .filter(i => i.customerId === m.id && !i.deleted && ((i.sport === SUMMER_CAMP) || (i.lineItems || []).some(li => li.sport === SUMMER_CAMP)))
+    .filter(i => i.customerId === m.id && !i.deleted && ((isCampSport(i.sport)) || (i.lineItems || []).some(li => isCampSport(li.sport))))
     .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
   const driverList = (state.drivers || []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   const curDiscount = campInv ? (campInv.discount || 0) : 0;
@@ -7315,7 +7319,7 @@ window.editCampMember = function(id) {
           const campPayMonth = campPayDate.slice(0, 7);
           if (campEnr) { campEnr.durationLabel = picked.label; campEnr.classes = campClassCount(picked.days); campEnr.price = price; campEnr.start = campEnr.start || start; }
           if (campSub) { campSub.durationLabel = picked.label; campSub.totalClasses = campClassCount(picked.days); campSub.start = campSub.start || start; campSub.end = campEndDate(start, picked.days); }
-          if (m.sport === SUMMER_CAMP) { m.expiryDate = campEndDate(start, picked.days); m.price = price; }
+          if (isCampSport(m.sport)) { m.expiryDate = campEndDate(start, picked.days); m.price = price; }
         }
         // Update or create the camp invoice so the outstanding balance reflects.
         let inv = campInv;
@@ -7348,7 +7352,7 @@ window.editCampMember = function(id) {
           if (Math.abs(delta) > 0.001) inv.payments.push({ amount: delta, date: campPayDate, month: campPayMonth, method: 'cash', note: 'Adjusted via Camp edit' });
           // Keep the matching camp line item priced + duration in sync.
           if (Array.isArray(inv.lineItems)) {
-            const li = inv.lineItems.find(x => x.sport === SUMMER_CAMP) || inv.lineItems[0];
+            const li = inv.lineItems.find(x => isCampSport(x.sport)) || inv.lineItems[0];
             if (li) {
               li.price = net;
               if (picked) { li.classes = campClassCount(picked.days); li.durationLabel = picked.label; }
@@ -7437,7 +7441,7 @@ PAGES.renewaldetail = (main) => {
       const sub = subFor(m, e.sport);
       const start = (sub && sub.start) || e.start || m.startDate || null;
       let end = (sub && sub.end) || null;
-      if (!end && start) { const _v = parseInt(e.validity || DEFAULT_VALIDITY); end = (e.sport === SUMMER_CAMP && typeof campEndDate === 'function') ? campEndDate(start, _v) : addDays(start, _v); }
+      if (!end && start) { const _v = parseInt(e.validity || DEFAULT_VALIDITY); end = (isCampSport(e.sport) && typeof campEndDate === 'function') ? campEndDate(start, _v) : addDays(start, _v); }
       if (!end) end = m.expiryDate || null;
       rows.push({ m, sport: e.sport || '—', start, end, price: parseFloat(e.price) || 0 });
     }
@@ -8543,7 +8547,7 @@ PAGES.reminders = (main) => {
     if (digits.startsWith('00')) digits = digits.slice(2);
     if (digits.length === 8) digits = '974' + digits;
     const sports = [m.sport, ...(m.enrollments || []).map(e => e.sport)].filter(Boolean);
-    const sport = [...new Set(sports)].filter(s => s !== SUMMER_CAMP)[0] || sports[0] || '';
+    const sport = [...new Set(sports)].filter(s => !isCampSport(s))[0] || sports[0] || '';
     const exp = m.expiryDate ? fmtDate(m.expiryDate) : '';
     const msg = `مرحباً، نودّ تذكيركم بأن اشتراك ${m.nameArabic || m.name}${sport ? ' في ' + sport : ''} ${memberStatus(m) === 'Expired' ? 'قد انتهى' : 'سينتهي بتاريخ ' + exp}. نسعد بتجديده في نادي بلاك ستارز 🖤⭐\n\nHello! A friendly reminder that ${m.name}'s ${sport ? sport + ' ' : ''}membership ${memberStatus(m) === 'Expired' ? 'has expired' : 'expires on ' + exp}. We'd love to renew it at Black Stars Sports Club.`;
     return `https://wa.me/${digits}?text=${encodeURIComponent(msg)}`;
@@ -8656,7 +8660,7 @@ window.campRemindAll = function() {
     const d = m.expiryDate ? daysUntil(m.expiryDate) : null;
     return d != null && d >= 0 && d <= 7;
   };
-  const isCampM = m => m && !m.deleted && (m.sport === SUMMER_CAMP || (m.enrollments || []).some(e => e.sport === SUMMER_CAMP));
+  const isCampM = m => m && !m.deleted && (isCampSport(m.sport) || (m.enrollments || []).some(e => isCampSport(e.sport)));
   let list = (state.members || []).filter(m => isCampM(m) && isSoon(m))
     .sort((a, b) => (a.expiryDate || '').localeCompare(b.expiryDate || ''));
   if (!list.length) { toast(t('No expiring camp members to remind', 'لا يوجد أعضاء معسكر منتهون'), 'info'); return; }
@@ -8728,7 +8732,7 @@ function _campValidityFixes() {
   for (const m of (state.members || [])) {
     if (!m || m.deleted) continue;
     for (const s of (m.subscriptions || [])) {
-      if ((s.activity || '') !== SUMMER_CAMP || !s.start) continue;
+      if (!isCampSport((s.activity || '')) || !s.start) continue;
       const classes = (typeof subClassLimit === 'function') ? subClassLimit(s) : (parseInt(s.totalClasses) || 0);
       if (!(classes > 0)) continue;
       const correct = (typeof campEndDateFromClasses === 'function') ? campEndDateFromClasses(s.start, classes) : null;
@@ -8785,15 +8789,17 @@ window.fixCampValidity = function () {
 };
 
 PAGES.campmembers = (main) => {
-  const isCamp = m => m && !m.deleted && (m.sport === SUMMER_CAMP || (m.enrollments || []).some(e => e.sport === SUMMER_CAMP));
+  const CAMP = activeCampSport();
+  const campAr = CAMP === WINTER_CAMP ? 'المعسكر الشتوي' : 'المعسكر الصيفي';
+  const isCamp = m => m && !m.deleted && (m.sport === CAMP || (m.enrollments || []).some(e => e.sport === CAMP) || (m.subscriptions || []).some(s => s.activity === CAMP));
   const allCamp = state.members.filter(isCamp).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   const drivers = (state.drivers || []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   const driverOptions = sel => `<option value="">${t('— no driver —', '— بدون سائق —')}</option>` +
     drivers.map(d => `<option value="${d.id}" ${sel === d.id ? 'selected' : ''}>${escapeHtml(d.name)}</option>`).join('');
-  const campPrices = (state.settings && state.settings.summerCampPrices) || DEFAULT_SUMMER_CAMP_PRICES;
+  const campPrices = campPricesFor(CAMP);
   const campDurationLabel = m => {
-    const e = (m.enrollments || []).find(x => x.sport === SUMMER_CAMP);
-    const s = (m.subscriptions || []).filter(x => x.activity === SUMMER_CAMP).slice(-1)[0];
+    const e = (m.enrollments || []).find(x => x.sport === CAMP);
+    const s = (m.subscriptions || []).filter(x => x.activity === CAMP).slice(-1)[0];
     const days = (e && (e.classes || e.days)) || (s && s.totalClasses) || null;
     return (e && e.durationLabel) || (s && s.durationLabel)
       || (days && (campPrices.find(p => p.days === days) || {}).label) || (days ? days + ' ' + t('days', 'يوم') : '—');
@@ -8896,13 +8902,13 @@ PAGES.campmembers = (main) => {
         <button class="btn ghost sm" onclick="viewMember(${m.id})">👁 ${t('View', 'عرض')}</button>
       </td>
     </tr>`;
-  }).join('') : `<tr><td colspan="11" style="padding:20px;text-align:center" class="text-mute">${filtersOn ? t('No members match the filters', 'لا يوجد أعضاء يطابقون المرشحات') : 'No members are enrolled in Summer Camp yet.'}</td></tr>`;
+  }).join('') : `<tr><td colspan="11" style="padding:20px;text-align:center" class="text-mute">${filtersOn ? t('No members match the filters', 'لا يوجد أعضاء يطابقون المرشحات') : ('No members are enrolled in ' + CAMP + ' yet.')}</td></tr>`;
 
   main.innerHTML = `
     <div class="topbar">
       <div>
         <h1>🚌 ${t('Camp Members', 'أعضاء المعسكر')}</h1>
-        <div class="subtitle">${list.length} ${t('of', 'من')} ${allCamp.length} ${t('Everyone enrolled in Summer Camp', 'كل المسجّلين في المعسكر الصيفي')}</div>
+        <div class="subtitle">${list.length} ${t('of', 'من')} ${allCamp.length} ${t('Everyone enrolled in ' + CAMP, 'كل المسجّلين في ' + campAr)}</div>
       </div>
       <div class="topbar-actions">
         ${!isViewerRole() && expiringSoonCount > 0 ? `<button class="btn ghost" id="campmem-remind-all" style="color:var(--accent-2);border-color:var(--accent-2)">📱 ${t('Remind all expiring', 'تذكير كل المنتهين')} (${expiringSoonCount})</button>` : ''}
@@ -9074,7 +9080,8 @@ window.assignDriver = function(memberId, driverId) {
 
 PAGES.campdrivers = (main) => {
   if (!Array.isArray(state.drivers)) state.drivers = [];
-  const isCamp = m => m && !m.deleted && (m.sport === SUMMER_CAMP || (m.enrollments || []).some(e => e.sport === SUMMER_CAMP));
+  const CAMP = activeCampSport();
+  const isCamp = m => m && !m.deleted && (m.sport === CAMP || (m.enrollments || []).some(e => e.sport === CAMP) || (m.subscriptions || []).some(s => s.activity === CAMP));
   const campStudents = state.members.filter(isCamp);
   const drivers = state.drivers.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   // A campDriverId left pointing at a REMOVED driver counts as unassigned — otherwise this
@@ -9124,7 +9131,8 @@ PAGES.campdrivers = (main) => {
 // One screen showing each driver and the students assigned to them (pickup roster).
 PAGES.camproutes = (main) => {
   if (!Array.isArray(state.drivers)) state.drivers = [];
-  const isCamp = m => m && !m.deleted && (m.sport === SUMMER_CAMP || (m.enrollments || []).some(e => e.sport === SUMMER_CAMP));
+  const CAMP = activeCampSport();
+  const isCamp = m => m && !m.deleted && (m.sport === CAMP || (m.enrollments || []).some(e => e.sport === CAMP) || (m.subscriptions || []).some(s => s.activity === CAMP));
   const campStudents = state.members.filter(isCamp).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   const drivers = state.drivers.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   // A stale campDriverId (the driver was removed) matched no bucket, so the child vanished
@@ -9178,6 +9186,12 @@ PAGES.camproutes = (main) => {
       ${unassigned.map(studentRow).join('')}
     </div>` : ''}`;
 };
+
+// v6.644 — Winter Camp reuses the Summer Camp screens; each resolves activeCampSport() from the route.
+PAGES.winterschedule = (main) => PAGES.campschedule(main);
+PAGES.wintermembers  = (main) => PAGES.campmembers(main);
+PAGES.winterdrivers  = (main) => PAGES.campdrivers(main);
+PAGES.winterroutes   = (main) => PAGES.camproutes(main);
 
 // ─── SWIMMING GROUPS ────────────────────────────────────────────────
 // Organise swimming members into small groups (3–7 each). Admin can build
@@ -9828,7 +9842,8 @@ PAGES.payanalysis = (main) => {
     const ref = i.ref || ('INV' + i.id);
     const mkActivity = (sport) => {
       const a = sport || baseActivity;
-      const group = (a === SUMMER_CAMP || String(a).indexOf(SUMMER_CAMP) === 0) ? SUMMER_CAMP : a;
+      const group = (String(a).indexOf(WINTER_CAMP) === 0 || a === WINTER_CAMP) ? WINTER_CAMP
+        : (isCampSport(a) || String(a).indexOf(SUMMER_CAMP) === 0) ? SUMMER_CAMP : a;
       return { activity: a, activityGroup: group };
     };
     const pays = (Array.isArray(i.payments) && i.payments.length) ? i.payments.filter(p => (Number(p.amount) || 0) !== 0) : null;
@@ -11326,7 +11341,7 @@ PAGES.schedule = (main) => {
   // newly-added sports show up and disabled sports can't be booked. Summer Camp
   // has its own page, so it's excluded here. Falls back to the themed list.
   const scheduleSports = (state.settings && Array.isArray(state.settings.sports) && state.settings.sports.length)
-    ? state.settings.sports.filter(s => s.enabled !== false && s.name !== SUMMER_CAMP)
+    ? state.settings.sports.filter(s => s.enabled !== false && !isCampSport(s.name))
         .slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map(s => s.name)
     : Object.keys(SPORT_THEME);
   // Sport palette (draggable tiles) — admins only
@@ -12119,7 +12134,7 @@ function invoiceProductSummaryHtml(inv) {
 // ─── INVOICES ──────────────────────────────────────────────────
 PAGES.invoices = (main) => {
   // Treat every "Summer Camp · <duration>" variant as Summer Camp for filtering.
-  const _isCampActivity = s => typeof s === 'string' && (s === SUMMER_CAMP || s.indexOf(SUMMER_CAMP) === 0);
+  const _isCampActivity = s => typeof s === 'string' && (isCampSport(s) || s.indexOf(SUMMER_CAMP) === 0 || s.indexOf(WINTER_CAMP) === 0);
   let filter = loadFilter('invoices', { search: '', months: [(TODAY || '').slice(0, 7)].filter(Boolean), day: '', from: '', to: '', method: 'all', sport: 'all', coach: 'all', category: 'all' });
   // Migrate any legacy single-month filter ({month:'YYYY-MM'|'all'}) to the array form.
   if (!Array.isArray(filter.months)) filter.months = (filter.month && filter.month !== 'all') ? [filter.month] : [];
@@ -12187,7 +12202,7 @@ PAGES.invoices = (main) => {
       if (filter.sports.length) {
         const _matchSport = (_sp) => {
           // "Summer Camp" matches every camp duration variant (Summer Camp · 1 week, …).
-          if (_sp === SUMMER_CAMP) {
+          if (isCampSport(_sp)) {
             return _isCampActivity(i.sport) || (i.lineItems || []).some(li => _isCampActivity(li.sport));
           }
           // Match if the invoice INVOLVES the selected sport — its (possibly combined)
@@ -15815,7 +15830,7 @@ window.regenerateInvoice = function(id) {
         // Ensure each rebuilt line carries a durationLabel for Summer Camp so the
         // receipt and reports show "Summer Camp · 1 month" etc.
         for (const li of newLineItems) {
-          if (li.sport === SUMMER_CAMP && !li.durationLabel && li.classes && typeof DEFAULT_SUMMER_CAMP_PRICES !== 'undefined') {
+          if (isCampSport(li.sport) && !li.durationLabel && li.classes && typeof DEFAULT_SUMMER_CAMP_PRICES !== 'undefined') {
             const match = DEFAULT_SUMMER_CAMP_PRICES.find(p => p.label === campLabelForClasses(li.classes));
             if (match) li.durationLabel = match.label;
           }
@@ -16701,7 +16716,7 @@ window.printInvoicePDF = function(id) {
     </thead>
     <tbody>
       ${(inv.lineItems && inv.lineItems.length) ? inv.lineItems.map(li => {
-        const isCamp = li.sport === SUMMER_CAMP;
+        const isCamp = isCampSport(li.sport);
         // Find the matching subscription period (start → expiry) for this line, by
         // invoice ref + activity, so the customer sees exactly what they paid for.
         let period = null, count = null;
@@ -16784,7 +16799,7 @@ window.printInvoicePDF = function(id) {
             const sub = matchedMember.subscriptions.filter(s => !s.activity || itemLabel.toLowerCase().includes((s.activity || '').toLowerCase())).slice(-1)[0]
                       || matchedMember.subscriptions.slice(-1)[0];
             if (!sub) return '';
-            const isCamp = (sub.activity || '') === SUMMER_CAMP;
+            const isCamp = isCampSport((sub.activity || ''));
             const count = parseInt(sub.totalClasses) || 0;
             const unitEn = isCamp ? (count === 1 ? 'day' : 'days') : (count === 1 ? 'class' : 'classes');
             const unitAr = isCamp ? 'يوم' : 'حصة';
@@ -19213,7 +19228,7 @@ window._salUndoSettlePending = function (coachId, monthKey) {
     if (!mem || mem.deleted) continue;
     const lines = (typeof commissionLineItems === 'function') ? commissionLineItems(inv, mem) : (inv.lineItems || []);
     for (const li of lines) {
-      if (String(li.coachId) !== String(coachId) || li.sport === SUMMER_CAMP) continue;
+      if (String(li.coachId) !== String(coachId) || isCampSport(li.sport)) continue;
       const sub = (typeof findSubForLine === 'function') ? findSubForLine(mem, inv, li) : null;
       if (sub && sub.commissionSettled === monthKey) { delete sub.commissionSettled; reopened++; }
     }
@@ -19592,7 +19607,7 @@ function _coachAttrMismatches() {
     // legacy line has no single sport to move).
     if (!(Array.isArray(inv.lineItems) && inv.lineItems.length)) continue;
     inv.lineItems.forEach((li, idx) => {
-      if (!li || !li.sport || li.sport === SUMMER_CAMP) return;
+      if (!li || !li.sport || isCampSport(li.sport)) return;
       const expected = coachIdForSport(mem, li.sport);
       if (expected == null) return;              // no current enrollment coach → can't judge
       if (li.coachId == null) return;            // unattributed line → a separate concern
@@ -19866,7 +19881,7 @@ window.showRevenueDetail = function(coachId, monthKey) {
       if (String(li.coachId) !== String(coachId)) continue;
       if (lineBillMonth(li, inv) !== monthKey) continue;   // per-line month (sport added later shows in its own month)
       // Summer Camp doesn't generate coach commission — skip it
-      if (li.sport === SUMMER_CAMP) continue;
+      if (isCampSport(li.sport)) continue;
       const elig = lineCommissionEligibility(mem, inv, li, null);
       // "By payment" pays the FULL line fee (attendance irrelevant); only EXCLUDED lines
       // (Summer Camp — already skipped — or an expired 0-attendance no-show) earn nothing.
@@ -19917,7 +19932,7 @@ window.showRevenueDetail = function(coachId, monthKey) {
       if (_billM !== monthKey) continue;
       const lis = (Array.isArray(inv.lineItems) && inv.lineItems.length) ? inv.lineItems : [{ sport: inv.sport, coachId: inv.coachId, price: inv.amount || 0 }];
       let coachFee = 0, totalFee = 0;
-      for (const li of lis) { const pr = parseFloat(li.price) || 0; totalFee += pr; if (li.sport === SUMMER_CAMP) continue; if (typeof isExcludedFromCoachSalary === 'function' && isExcludedFromCoachSalary(coachId, inv.customerId)) continue; /* v6.572: match computeMonthlyPay — an excluded member earns this coach nothing */ if (li.sport === MIXED) { coachFee += mixedCoachFeeShare(mem, inv, li, coachId, null); continue; } if (String(li.coachId) !== String(coachId)) continue; const elig = lineCommissionEligibility(mem, inv, li, null); if (!elig.excluded) coachFee += pr; }
+      for (const li of lis) { const pr = parseFloat(li.price) || 0; totalFee += pr; if (isCampSport(li.sport)) continue; if (typeof isExcludedFromCoachSalary === 'function' && isExcludedFromCoachSalary(coachId, inv.customerId)) continue; /* v6.572: match computeMonthlyPay — an excluded member earns this coach nothing */ if (li.sport === MIXED) { coachFee += mixedCoachFeeShare(mem, inv, li, coachId, null); continue; } if (String(li.coachId) !== String(coachId)) continue; const elig = lineCommissionEligibility(mem, inv, li, null); if (!elig.excluded) coachFee += pr; }
       if (coachFee <= 0 || totalFee <= 0) continue;
       const ratio = coachFee / totalFee;
       // sum ALL positive payments on this (billing-month) invoice — the whole paid amount is credited in
@@ -19931,7 +19946,7 @@ window.showRevenueDetail = function(coachId, monthKey) {
       if (Math.abs(share) < 0.005) continue;
       rebuilt.push({
         memberName: mem ? mem.name : (inv.customerName || '— deleted member —'), memberId: mem ? mem.id : null,
-        sport: lis.filter(li => String(li.coachId) === String(coachId) && li.sport !== SUMMER_CAMP).map(li => li.sport).join(', ') || inv.sport,
+        sport: lis.filter(li => String(li.coachId) === String(coachId) && !isCampSport(li.sport)).map(li => li.sport).join(', ') || inv.sport,
         price: share, fee: Math.round(coachFee * 100) / 100, isSwitch: !!inv.switchCredit, invoiceRef: inv.ref || `INV${inv.id}`, invoiceDate: inv.date,
       });
     }
@@ -20029,7 +20044,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
       if (String(li.coachId) !== String(coachId)) continue;
       if (lineBillMonth(li, inv) !== monthKey) continue;   // per-line month (sport added later shows in its own month)
       // Summer Camp generates no coach commission — skip
-      if (li.sport === SUMMER_CAMP) continue;
+      if (isCampSport(li.sport)) continue;
       // Link this invoice line to its subscription row (for period / attendance / status)
       let sub = null;
       if (mem) {
@@ -20087,7 +20102,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
       if (_billM !== monthKey) continue;
       const lis = (Array.isArray(inv.lineItems) && inv.lineItems.length) ? inv.lineItems : [{ sport: inv.sport, coachId: inv.coachId, price: inv.amount || 0 }];
       let coachFee = 0, totalFee = 0;
-      for (const li of lis) { const pr = parseFloat(li.price) || 0; totalFee += pr; if (li.sport === SUMMER_CAMP) continue; if (typeof isExcludedFromCoachSalary === 'function' && isExcludedFromCoachSalary(coachId, inv.customerId)) continue; /* v6.572: match computeMonthlyPay — an excluded member earns this coach nothing */ if (li.sport === MIXED) { coachFee += mixedCoachFeeShare(mem, inv, li, coachId, null); continue; } if (String(li.coachId) !== String(coachId)) continue; const elig = lineCommissionEligibility(mem, inv, li, null); if (!elig.excluded) coachFee += pr; }
+      for (const li of lis) { const pr = parseFloat(li.price) || 0; totalFee += pr; if (isCampSport(li.sport)) continue; if (typeof isExcludedFromCoachSalary === 'function' && isExcludedFromCoachSalary(coachId, inv.customerId)) continue; /* v6.572: match computeMonthlyPay — an excluded member earns this coach nothing */ if (li.sport === MIXED) { coachFee += mixedCoachFeeShare(mem, inv, li, coachId, null); continue; } if (String(li.coachId) !== String(coachId)) continue; const elig = lineCommissionEligibility(mem, inv, li, null); if (!elig.excluded) coachFee += pr; }
       if (coachFee <= 0 || totalFee <= 0) continue;
       const ratio = coachFee / totalFee;
       // sum ALL positive payments on this (billing-month) invoice — the whole paid amount is credited in
@@ -20101,7 +20116,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
       if (Math.abs(share) < 0.005) continue;
       rebuilt.push({
         memberName: mem ? mem.name : (inv.customerName || '— deleted member —'),
-        sport: lis.filter(li => String(li.coachId) === String(coachId) && li.sport !== SUMMER_CAMP).map(li => li.sport).join(', ') || inv.sport,
+        sport: lis.filter(li => String(li.coachId) === String(coachId) && !isCampSport(li.sport)).map(li => li.sport).join(', ') || inv.sport,
         price: share, fee: Math.round(coachFee * 100) / 100, isSwitch: !!inv.switchCredit, invoiceRef: inv.ref || `INV${inv.id}`, invoiceDate: inv.date,
         start: null, end: null, attended: null, total: null, status: 'paid',
       });
@@ -21186,7 +21201,7 @@ PAGES.sports = (main) => {
             <button class="btn ghost sm" onclick="moveSport('${escapeHtml(s.name)}', -1)" title="Move up" ${idx === 0 ? 'disabled' : ''}>↑</button>
             <button class="btn ghost sm" onclick="moveSport('${escapeHtml(s.name)}', 1)" title="Move down" ${idx === sports.length - 1 ? 'disabled' : ''}>↓</button>
             <button class="btn ghost sm" onclick="editSport('${escapeHtml(s.name)}')" title="Rename">✏️</button>
-            ${(!isPrivateSport(s.name) && s.name !== SUMMER_CAMP) ? `<button class="btn ghost sm" onclick="makePrivateVariant('${escapeHtml(s.name)}')" title="Create a private (1:1) variant of this sport">🔒+</button>` : ''}
+            ${(!isPrivateSport(s.name) && !isCampSport(s.name)) ? `<button class="btn ghost sm" onclick="makePrivateVariant('${escapeHtml(s.name)}')" title="Create a private (1:1) variant of this sport">🔒+</button>` : ''}
             <button class="btn ghost sm" onclick="toggleSport('${escapeHtml(s.name)}')" title="${isEnabled ? 'Disable (hide from new registrations)' : 'Re-enable'}">${isEnabled ? '🚫' : '✅'}</button>
             ${(usage === 0 && !hasHistory) ? `<button class="btn ghost sm" onclick="deleteSport('${escapeHtml(s.name)}')" title="Delete (only allowed when no one is registered)" style="color:var(--red)">🗑</button>` : `<button class="btn ghost sm" disabled title="Cannot delete — ${usage > 0 ? usage + ' members registered' : 'historical records reference this sport'}" style="opacity:.4">🔒</button>`}
           </td>
@@ -21235,14 +21250,27 @@ PAGES.sports = (main) => {
       </div>
       <div id="camp-prices-body" style="padding:14px"></div>
     </div>
+
+    <div class="card" style="margin-top:14px">
+      <div class="card-header">
+        <div>
+          <div class="card-title">❄️ Winter Camp Pricing</div>
+          <div class="card-subtitle">Separate price table for the Winter Camp. Same durations, its own prices.</div>
+        </div>
+      </div>
+      <div id="winter-prices-body" style="padding:14px"></div>
+    </div>
   `;
   refresh();
-  refreshCampPrices();
+  refreshCampPrices('summerCampPrices', 'camp-prices-body', 'Summer Camp');
+  refreshCampPrices('winterCampPrices', 'winter-prices-body', 'Winter Camp');
 
-  function refreshCampPrices() {
-    const body = $('#camp-prices-body');
+  function refreshCampPrices(KEY, BODY_ID, CAMP_NAME) {
+    const body = $('#' + BODY_ID);
     if (!body) return;
-    const prices = state.settings.summerCampPrices || [];
+    if (!Array.isArray(state.settings[KEY])) state.settings[KEY] = [];
+    const prices = state.settings[KEY];
+    const P = BODY_ID + '-';   // unique control ids per table
     body.innerHTML = `
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px;font-size:10px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600">
         <div>Duration label</div>
@@ -21257,9 +21285,9 @@ PAGES.sports = (main) => {
         </div>
       `).join('')}
       <div style="display:flex;gap:8px;margin-top:10px">
-        <button type="button" class="btn ghost sm" id="camp-add-row">+ Add tier</button>
-        <button type="button" class="btn primary sm" id="camp-save">Save prices</button>
-        <button type="button" class="btn ghost sm" id="camp-reset" style="color:var(--text-mute);margin-left:auto">Reset to defaults</button>
+        <button type="button" class="btn ghost sm" id="${P}add-row">+ Add tier</button>
+        <button type="button" class="btn primary sm" id="${P}save">Save prices</button>
+        <button type="button" class="btn ghost sm" id="${P}reset" style="color:var(--text-mute);margin-left:auto">Reset to defaults</button>
       </div>
     `;
     body.querySelectorAll('[data-camp-i]').forEach(inp => {
@@ -21267,34 +21295,31 @@ PAGES.sports = (main) => {
         const i = parseInt(e.target.dataset.campI);
         const k = e.target.dataset.campK;
         const v = e.target.value;
-        if (!state.settings.summerCampPrices[i]) return;
-        state.settings.summerCampPrices[i][k] = (k === 'label') ? v : (parseFloat(v) || 0);
+        if (!state.settings[KEY][i]) return;
+        state.settings[KEY][i][k] = (k === 'label') ? v : (parseFloat(v) || 0);
       });
     });
-    $('#camp-add-row').addEventListener('click', () => {
-      state.settings.summerCampPrices.push({ label: '', days: 0, price: 0 });
-      refreshCampPrices();
+    $('#' + P + 'add-row').addEventListener('click', () => {
+      state.settings[KEY].push({ label: '', days: 0, price: 0 });
+      refreshCampPrices(KEY, BODY_ID, CAMP_NAME);
     });
-    $('#camp-save').addEventListener('click', () => {
+    $('#' + P + 'save').addEventListener('click', () => {
       // Clean: drop rows with empty label or 0 days
-      state.settings.summerCampPrices = state.settings.summerCampPrices.filter(p =>
-        p.label && p.label.trim() && p.days > 0
-      );
-      
-      confirmSaved(`Saved ${state.settings.summerCampPrices.length} Summer Camp tiers`);
-      refreshCampPrices();
+      state.settings[KEY] = state.settings[KEY].filter(p => p.label && p.label.trim() && p.days > 0);
+      confirmSaved(`Saved ${state.settings[KEY].length} ${CAMP_NAME} tiers`);
+      refreshCampPrices(KEY, BODY_ID, CAMP_NAME);
     });
-    $('#camp-reset').addEventListener('click', () => {
-      if (!confirm('Reset Summer Camp prices to the original defaults (1d=175, 1w=650, 1m=1750, 2m=3000)?')) return;
-      state.settings.summerCampPrices = [
+    $('#' + P + 'reset').addEventListener('click', () => {
+      if (!confirm(`Reset ${CAMP_NAME} prices to the original defaults?`)) return;
+      state.settings[KEY] = [
         { label: '1 day',    days: 1,  price: 175  },
         { label: '1 week',   days: 7,  price: 650  },
         { label: '1 month',  days: 30, price: 1750 },
         { label: '2 months', days: 60, price: 3000 },
       ];
       save();
-      refreshCampPrices();
-      toast('Summer Camp prices reset to defaults');
+      refreshCampPrices(KEY, BODY_ID, CAMP_NAME);
+      toast(`${CAMP_NAME} prices reset to defaults`);
     });
   }
 };
@@ -22621,7 +22646,7 @@ PAGES.attendance = (main) => {
         // boundaries salary uses, so the attendance view and the pay agree.
         const spSubs = (m.subscriptions || []).filter(s => s.activity === sp && s.coachId != null);
         const coachIds = [...new Set(spSubs.map(s => String(s.coachId)))];
-        if (sp !== SUMMER_CAMP && coachIds.length > 1) {
+        if (!isCampSport(sp) && coachIds.length > 1) {
           // v6.516: UNION each coach's windows. A null bound means "open" (no limit) — an ongoing
           // sub (to=null) or one with no start makes the whole union open on that side.
           const _cw = {};
@@ -23046,7 +23071,7 @@ PAGES.attendance = (main) => {
     const m = state.members.find(x => x.id === memberId); if (!m) return;
     const mo = gridMonth();
     const rec = (m.mixedAttendance && m.mixedAttendance[mo] && m.mixedAttendance[mo][String(day)]) || null;
-    const sportChoices = ((typeof SPORTS !== 'undefined' && SPORTS) ? SPORTS : DEFAULT_SPORTS).filter(s => s !== MIXED && s !== SUMMER_CAMP);
+    const sportChoices = ((typeof SPORTS !== 'undefined' && SPORTS) ? SPORTS : DEFAULT_SPORTS).filter(s => s !== MIXED && !isCampSport(s));
     const coaches = (state.coaches || []).filter(c => (typeof isCoachRole !== 'function' || isCoachRole(c)) && (typeof isCoachActive !== 'function' || isCoachActive(c) || (rec && String(rec.coachId) === String(c.id))));
     // v6.598 — when a COACH is logging the class, pre-select THEIR OWN name (they taught it), so they
     // only pick the sport and hit Save. Without this the coach dropdown defaulted to blank and Save
@@ -23175,7 +23200,7 @@ PAGES.attendance = (main) => {
             <td class="att-name-cell" title="${escapeHtml(m.name)} · ${escapeHtml(sport)}${_due2 > 0.5 ? ' · ' + fmt(_due2) + ' QAR due' : ''}">
               <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isExpired || hist ? 'color:var(--text-mute)' : ''}">${escapeHtml(m.name)}${statusBadge}${histBadge}${renewBadge2}${unpaidBadge2}</div>
               ${m.nameArabic ? `<div dir="rtl" style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isExpired ? 'color:var(--text-mute)' : ''}">${escapeHtml(m.nameArabic)}</div>` : ''}
-              <div class="text-mute" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(sport)}${_isMixedRow ? ' · ' + escapeHtml(t('multi-coach', 'عدة مدربين')) : (sport !== SUMMER_CAMP ? ' · ' + escapeHtml(coachName(coachId)) : '')}</div>
+              <div class="text-mute" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(sport)}${_isMixedRow ? ' · ' + escapeHtml(t('multi-coach', 'عدة مدربين')) : (!isCampSport(sport) ? ' · ' + escapeHtml(coachName(coachId)) : '')}</div>
             </td>
             ${cells}
             <td class="att-total"><span style="color:var(--green);font-weight:700">${grandY}</span></td>
@@ -23235,13 +23260,13 @@ PAGES.attendance = (main) => {
       // reached (or passed) their enrolled day count. They've finished their days —
       // flag the row red and surface the "Completed" status so it's obvious.
       let campOver = false, campLimit = 0, campMarked = 0;
-      if (sport === SUMMER_CAMP) {
+      if (isCampSport(sport)) {
         // Use the CURRENT camp cycle (the one active this month) and count only its
         // window, so a renewed camp member isn't flagged "over limit" by a previous
         // cycle's days.
         const sub = (typeof subForAttendanceDate === 'function')
           ? subForAttendanceDate(m, SUMMER_CAMP, `${gMonth}-15`)
-          : (m.subscriptions || []).filter(s => (s.activity || '') === SUMMER_CAMP).slice(-1)[0];
+          : (m.subscriptions || []).filter(s => isCampSport((s.activity || ''))).slice(-1)[0];
         campLimit = sub ? (parseInt(sub.totalClasses) || 0) : 0;
         if (campLimit > 0 && typeof liveAttendanceCount === 'function') {
           // v6.399: corrected window, so the camp over-cap agrees with the popup + member card.
@@ -23255,7 +23280,7 @@ PAGES.attendance = (main) => {
       // surfaces the over-limit / expired-package state on the row so the desk sees a renewal is due
       // without any blocking prompt. (Camp uses its own campOver flag above.)
       let sportOver = false, sportPlanned = 0, sportMarked = 0;
-      if (sport !== SUMMER_CAMP && sport !== MIXED && !isExpired && !hist) {   // v6.568/6.570: history + Mixed rows aren't a single-coach package — no EXPIRED/renewal flag
+      if (!isCampSport(sport) && sport !== MIXED && !isExpired && !hist) {   // v6.568/6.570: history + Mixed rows aren't a single-coach package — no EXPIRED/renewal flag
         // v6.540: pick the CURRENT sub, not the last array element. A renewed member keeps several subs
         // for the same sport+coach; the subscriptions array is NOT date-ordered (a renewal can sit before
         // an older short period), so the old `.slice(-1)[0]` grabbed whichever happened to be last —
@@ -23316,10 +23341,10 @@ PAGES.attendance = (main) => {
           : '');
       return `
         <tr style="${rowStyle}">
-          <td class="att-name-cell" title="${escapeHtml(m.name)} · ${escapeHtml(sport)}${_isMixedRow ? ' · ' + escapeHtml(t('multi-coach', 'عدة مدربين')) : (sport !== SUMMER_CAMP ? ' · ' + escapeHtml(coachName(coachId)) : '')}${isExpired ? ' · expired ' + fmtDate(m.expiryDate) : ''}${_due > 0.5 ? ' · ' + fmt(_due) + ' QAR due' : ''}">
+          <td class="att-name-cell" title="${escapeHtml(m.name)} · ${escapeHtml(sport)}${_isMixedRow ? ' · ' + escapeHtml(t('multi-coach', 'عدة مدربين')) : (!isCampSport(sport) ? ' · ' + escapeHtml(coachName(coachId)) : '')}${isExpired ? ' · expired ' + fmtDate(m.expiryDate) : ''}${_due > 0.5 ? ' · ' + fmt(_due) + ' QAR due' : ''}">
             <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isExpired || hist ? 'color:var(--text-mute)' : ''}">${escapeHtml(m.name)}${_isMixedRow ? ' <span class="badge" style="font-size:9px;padding:1px 6px;background:rgba(59,130,246,.15);color:var(--blue)">🎯 ' + t('Mixed', 'مختلط') + '</span>' : ''}${statusBadge}${histBadge}${campOverBadge}${sportOverBadge}${renewBadge}${unpaidBadge}</div>
             ${m.nameArabic ? `<div dir="rtl" style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isExpired ? 'color:var(--text-mute)' : ''}">${escapeHtml(m.nameArabic)}</div>` : ''}
-            <div class="text-mute" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(sport)}${_isMixedRow ? ' · ' + escapeHtml(t('pick sport + coach per class', 'اختر الرياضة والمدرب لكل حصة')) : (sport !== SUMMER_CAMP ? ' · ' + escapeHtml(coachName(coachId)) : '')}</div>
+            <div class="text-mute" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(sport)}${_isMixedRow ? ' · ' + escapeHtml(t('pick sport + coach per class', 'اختر الرياضة والمدرب لكل حصة')) : (!isCampSport(sport) ? ' · ' + escapeHtml(coachName(coachId)) : '')}</div>
           </td>
           ${cells}
           <td class="att-total"><span style="color:var(--green);font-weight:600">${y}</span><span class="text-mute"> / ${total || '—'}</span></td>
@@ -23642,7 +23667,7 @@ PAGES.attendance = (main) => {
       }).join('');
       grandY += rowY;
       return `<tr>
-        <td style="border:1px solid #e5e5ea;padding:4px 6px;font-size:9px;font-weight:600"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(m.name)}</div><div style="font-size:7.5px;color:#999;font-weight:400">${escapeHtml(sport)}${sport !== SUMMER_CAMP ? ' · ' + escapeHtml(coachName(coachId)) : ''}</div></td>
+        <td style="border:1px solid #e5e5ea;padding:4px 6px;font-size:9px;font-weight:600"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(m.name)}</div><div style="font-size:7.5px;color:#999;font-weight:400">${escapeHtml(sport)}${!isCampSport(sport) ? ' · ' + escapeHtml(coachName(coachId)) : ''}</div></td>
         ${cells}
         <td style="border:1px solid #e5e5ea;text-align:center;font-size:9px;font-weight:700;color:#059669">${rowY}</td>
       </tr>`;
@@ -23724,7 +23749,7 @@ PAGES.attendance = (main) => {
       const _start = (_sub && _sub.start) || (win && win.from) || null;
       const _exp = (_sub && _sub.end) || (win && win.to) || null;
       const _period = (_start || _exp) ? `<div class="period">📅 ${t('Membership', 'الاشتراك')}: <b>${_start ? fmtDate(_start) : '—'}</b> → <b>${_exp ? fmtDate(_exp) : '—'}</b></div>` : '';
-      const _coachLine = _mix ? t('multi-coach', 'عدة مدربين') : (sport !== SUMMER_CAMP ? coachName(coachId) : '');
+      const _coachLine = _mix ? t('multi-coach', 'عدة مدربين') : (!isCampSport(sport) ? coachName(coachId) : '');
       return `<tr class="${ri % 2 ? 'odd' : ''}">
         <td class="scell"><div class="sname">${escapeHtml(m.name)}</div><div class="ssport">${escapeHtml(sport)}${_coachLine ? ' · ' + escapeHtml(_coachLine) : ''}</div>${_period}</td>
         ${cells}
@@ -23824,7 +23849,7 @@ PAGES.attendance = (main) => {
       grandY += y; grandSlots += tot;
       const rcol = rate>=75?'#059669':rate>=40?'#d97706':rate>0?'#dc2626':'#999';
       return `<tr>
-        <td style="border:1px solid #e5e5ea;padding:4px 6px;font-size:9px;font-weight:600;overflow:hidden;text-overflow:ellipsis"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(m.name)}</div><div style="font-size:7.5px;color:#999;font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(sport)}${sport !== SUMMER_CAMP ? ' · ' + escapeHtml(coachName(coachId)) : ''}</div></td>
+        <td style="border:1px solid #e5e5ea;padding:4px 6px;font-size:9px;font-weight:600;overflow:hidden;text-overflow:ellipsis"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(m.name)}</div><div style="font-size:7.5px;color:#999;font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(sport)}${!isCampSport(sport) ? ' · ' + escapeHtml(coachName(coachId)) : ''}</div></td>
         ${cells}
         <td style="border:1px solid #e5e5ea;text-align:center;font-size:9px;font-weight:700">${y}/${tot||'—'}</td>
         <td style="border:1px solid #e5e5ea;text-align:center;font-size:9px;font-weight:700;color:${rcol}">${tot?rate+'%':'—'}</td>
@@ -23927,7 +23952,7 @@ PAGES.attendance = (main) => {
       const tot = y + n; const rate = tot ? Math.round(y / tot * 100) : 0;
       grandY += y; grandSlots += tot;
       const rcol = rate >= 75 ? '#059669' : rate >= 40 ? '#d97706' : rate > 0 ? '#dc2626' : '#999';
-      const sportCoach = escapeHtml(sport) + (sport !== SUMMER_CAMP ? ' · ' + escapeHtml(coachName(coachId)) : '');
+      const sportCoach = escapeHtml(sport) + (!isCampSport(sport) ? ' · ' + escapeHtml(coachName(coachId)) : '');
       return `<tr>
         <td style="border:1px solid #e5e5ea;padding:4px 6px;font-size:9px;font-weight:600;text-align:${align}"><div style="white-space:nowrap">${escapeHtml(ar && m.nameArabic ? m.nameArabic : m.name)}</div><div style="font-size:7.5px;color:#999;font-weight:400;white-space:nowrap">${sportCoach}</div></td>
         ${cells}
@@ -24008,7 +24033,7 @@ PAGES.attendance = (main) => {
           let y = 0; for (const k in dd) if (dd[k] === 'Y') y++;
           grand += y; return y;
         });
-        csvRows.push([m.name, sport, sport === SUMMER_CAMP ? '' : coachName(coachId), ...cells, grand]);
+        csvRows.push([m.name, sport, isCampSport(sport) ? '' : coachName(coachId), ...cells, grand]);
       }
       const csv = csvRows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
       downloadFile('attendance-all-months.csv', csv, 'text/csv');
@@ -24026,7 +24051,7 @@ PAGES.attendance = (main) => {
       let y = 0, n = 0;
       baseDays.forEach(d => { const v = dd[String(d)]; if (v === 'Y') y++; if (v === 'N') n++; });
       const cells = dayCols.map(d => dd[String(d)] || '');
-      csvRows.push([m.name, sport, sport === SUMMER_CAMP ? '' : coachName(coachId), ...cells, y, n, y+n ? Math.round(y/(y+n)*100)+'%' : '']);
+      csvRows.push([m.name, sport, isCampSport(sport) ? '' : coachName(coachId), ...cells, y, n, y+n ? Math.round(y/(y+n)*100)+'%' : '']);
     }
     const csv = csvRows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
     downloadFile(`attendance-${gM}.csv`, csv, 'text/csv');
@@ -24105,7 +24130,7 @@ window._attPdf = function(memberId, month, sport) {
     }).join('') : `<tr><td colspan="2" style="border:1px solid #e5e5ea;padding:10px;text-align:center;color:#999;font-size:12px">No days marked this month</td></tr>`;
     return `
       <div style="margin-bottom:20px">
-        <div style="font-size:14px;font-weight:700;color:#f26060;margin-bottom:8px">${escapeHtml(sp)}${(sp === SUMMER_CAMP || sp === MIXED) ? (sp === MIXED ? ' · multi-coach' : '') : ' · Coach ' + escapeHtml(coachName(cid))} · <span style="color:#666;font-weight:500">${y}/${sTot} · ${sTot ? sRate + '%' : '—'}</span></div>
+        <div style="font-size:14px;font-weight:700;color:#f26060;margin-bottom:8px">${escapeHtml(sp)}${(isCampSport(sp) || sp === MIXED) ? (sp === MIXED ? ' · multi-coach' : '') : ' · Coach ' + escapeHtml(coachName(cid))} · <span style="color:#666;font-weight:500">${y}/${sTot} · ${sTot ? sRate + '%' : '—'}</span></div>
         <table style="width:100%;border-collapse:collapse"><thead><tr>
           <th style="border:1px solid #e5e5ea;padding:6px 10px;font-size:10px;color:#777;background:#fafafa;text-align:left;text-transform:uppercase;letter-spacing:.5px">Date</th>
           <th style="border:1px solid #e5e5ea;padding:6px 10px;font-size:10px;color:#777;background:#fafafa;text-align:center;text-transform:uppercase;letter-spacing:.5px">Attendance</th>
@@ -24222,7 +24247,7 @@ window._attPdfSubscription = function(memberId) {
       }).join('');
       return `
         <div style="margin-bottom:14px">
-          <div style="font-size:13px;font-weight:700;color:#f26060;margin-bottom:6px">${escapeHtml(sp)}${(sp === SUMMER_CAMP || sp === MIXED) ? (sp === MIXED ? ' · multi-coach' : '') : ' · Coach ' + escapeHtml(coachName(cid))} · <span style="color:#666;font-weight:500">${y}/${sTot} · ${sTot ? sRate + '%' : '—'}</span></div>
+          <div style="font-size:13px;font-weight:700;color:#f26060;margin-bottom:6px">${escapeHtml(sp)}${(isCampSport(sp) || sp === MIXED) ? (sp === MIXED ? ' · multi-coach' : '') : ' · Coach ' + escapeHtml(coachName(cid))} · <span style="color:#666;font-weight:500">${y}/${sTot} · ${sTot ? sRate + '%' : '—'}</span></div>
           <table style="width:100%;border-collapse:collapse"><thead><tr>
             <th style="border:1px solid #e5e5ea;padding:6px 10px;font-size:10px;color:#777;background:#fafafa;text-align:left;text-transform:uppercase;letter-spacing:.5px">Date</th>
             <th style="border:1px solid #e5e5ea;padding:6px 10px;font-size:10px;color:#777;background:#fafafa;text-align:center;text-transform:uppercase;letter-spacing:.5px">Attendance</th>
@@ -24518,7 +24543,7 @@ PAGES.history = (main) => {
                 <tr>
                   <td>${fmtDate(w.date)}</td>
                   <td><span class="badge">${escapeHtml(w.sport)}</span></td>
-                  <td class="text-mute" style="font-size:12px">${w.sport === SUMMER_CAMP ? '<span style="font-style:italic">no coach</span>' : escapeHtml(w.coachName || coachName(w.coachId) || '—')}</td>
+                  <td class="text-mute" style="font-size:12px">${isCampSport(w.sport) ? '<span style="font-style:italic">no coach</span>' : escapeHtml(w.coachName || coachName(w.coachId) || '—')}</td>
                   <td class="text-right num">${fmt(w.originalPrice)}</td>
                   <td class="text-right num">${w.attendedClasses}/${w.totalClasses}</td>
                   <td class="text-right num" style="color:var(--green)">${fmt(w.usedAmount)}</td>
@@ -24705,7 +24730,7 @@ window.withdrawSport = function(memberId, sport) {
     }
   }
 
-  const isCamp = sport === SUMMER_CAMP;
+  const isCamp = isCampSport(sport);
   // This sport's start date (from its latest subscription, else member start).
   let sportStart = null;
   for (const s of (m.subscriptions || [])) if (s.activity === sport && s.start) sportStart = s.start;
@@ -25084,11 +25109,11 @@ window.switchSport = function(memberId) {
           const switchMonth = switchDate.slice(0, 7);
           for (const tg of tgs) {
             if (!tg.sport) { toast('Pick a sport for each new row', 'error'); return; }
-            if (tg.sport === SUMMER_CAMP) { toast('Summer Camp can\'t be a distribution target — remove it.', 'error'); return; }
+            if (isCampSport(tg.sport)) { toast('Summer Camp can\'t be a distribution target — remove it.', 'error'); return; }
             if (!tg.coachId) { toast('Pick a coach for each new row', 'error'); return; }
           }
           if (new Set(tgs.map(t => t.sport)).size !== tgs.length) { toast('Each new sport must be different', 'error'); return; }
-          if (from.sport === SUMMER_CAMP) { toast('Distribution isn\'t available when switching FROM Summer Camp.', 'error'); return; }
+          if (isCampSport(from.sport)) { toast('Distribution isn\'t available when switching FROM Summer Camp.', 'error'); return; }
           const sumClasses = tgs.reduce((s, t) => s + (t.classes || 0), 0);
           if (sumClasses <= 0) { toast('Allocate the remaining classes across the new sports', 'error'); return; }
           if (sumClasses !== remaining) { toast('Allocated ' + sumClasses + ' but ' + remaining + ' classes remain — they must match.', 'error'); return; }
@@ -25148,7 +25173,7 @@ window.switchSport = function(memberId) {
         const toSport = tgs[0].sport;
         const toCoachId = tgs[0].coachId;
         if (!toSport) { toast('Pick the new sport', 'error'); return; }
-        if (toSport !== SUMMER_CAMP && !toCoachId) { toast('Pick the new coach', 'error'); return; }
+        if (!isCampSport(toSport) && !toCoachId) { toast('Pick the new coach', 'error'); return; }
         if (from.sport === toSport && from.coachId === toCoachId) {
           toast('No change — same sport and coach', 'error');
           return;
@@ -25157,8 +25182,8 @@ window.switchSport = function(memberId) {
         // ─── COMPUTE THE SPLIT ─────────────────────────────────────
         // Summer Camp has no coach commission — if EITHER side is Summer Camp,
         // skip the reconciliation entirely. Just update the enrollment record.
-        const fromIsCamp = from.sport === SUMMER_CAMP;
-        const toIsCamp = toSport === SUMMER_CAMP;
+        const fromIsCamp = isCampSport(from.sport);
+        const toIsCamp = isCampSport(toSport);
         const skipReconciliation = fromIsCamp || toIsCamp;
 
         const attendedA = countAttendedUpTo(from.sport, switchDate, from.coachId);
@@ -25426,7 +25451,7 @@ window.switchSport = function(memberId) {
   // this field to the real new-sport package price when it differs.
   function destPriceDefault() {
     const from = enrolled[parseInt($('#sw-from')?.value || 0)] || defaultFrom;
-    if (from.sport === SUMMER_CAMP) return parseFloat(from.price) || 0;
+    if (isCampSport(from.sport)) return parseFloat(from.price) || 0;
     const attended = countAttendedUpTo(from.sport, $('#sw-date')?.value || TODAY, from.coachId);
     const total = parseInt(from.classes) || 0;
     const creditedBase = coachBaseForSport(m, from.sport, from.coachId);
@@ -25442,7 +25467,7 @@ window.switchSport = function(memberId) {
     const sportSel = $('#sw-sport-' + i), coachSel = $('#sw-coach-' + i);
     if (!sportSel || !coachSel) return;
     const sport = sportSel.value;
-    if (sport === SUMMER_CAMP) { coachSel.innerHTML = '<option value="">— none (camp) —</option>'; targets[i].coachId = null; return; }
+    if (isCampSport(sport)) { coachSel.innerHTML = '<option value="">— none (camp) —</option>'; targets[i].coachId = null; return; }
     const prev = targets[i].coachId || null;
     const list = coachesForSport(sport, prev);
     coachSel.innerHTML = list.length
@@ -25496,11 +25521,11 @@ window.switchSport = function(memberId) {
   function addTarget() {
     const rem = remainingClasses();
     const from = enrolled[parseInt($('#sw-from')?.value || 0)] || defaultFrom;
-    if (from.sport === SUMMER_CAMP) { toast('Distribution isn\'t available from Summer Camp', 'error'); return; }
+    if (isCampSport(from.sport)) { toast('Distribution isn\'t available from Summer Camp', 'error'); return; }
     // Seed class counts: first row gets all remaining the first time we go multi.
     if (targets.length === 1 && targets[0].classes == null) targets[0].classes = rem;
     const taken = new Set(targets.map(t => t.sport));
-    const newSport = sportsList.find(s => s !== SUMMER_CAMP && s !== from.sport && !taken.has(s)) || sportsList.find(s => !taken.has(s)) || sportsList[0];
+    const newSport = sportsList.find(s => !isCampSport(s) && s !== from.sport && !taken.has(s)) || sportsList.find(s => !taken.has(s)) || sportsList[0];
     targets.push({ sport: newSport, coachId: null, classes: 0 });
     renderTargets();
   }
@@ -25545,8 +25570,8 @@ window.switchSport = function(memberId) {
     else if (totalClasses > 0) { aShare = (attended / totalClasses) * price; bShare = price - aShare; }
     let body;
     const toSport = $('#sw-sport-0')?.value || '';
-    const fromIsCamp = from.sport === SUMMER_CAMP;
-    const toIsCamp = toSport === SUMMER_CAMP;
+    const fromIsCamp = isCampSport(from.sport);
+    const toIsCamp = isCampSport(toSport);
     if (fromIsCamp || toIsCamp) {
       body = `<div style="font-weight:700;color:var(--accent-2);margin-bottom:6px">🌞 Summer Camp · no commission reconciliation</div>
         <div style="color:var(--text-dim)">${fromIsCamp ? 'Switching FROM Summer Camp — no commission was earned to split.' : 'Switching TO Summer Camp — new sport generates no commission.'}</div>`;
@@ -25686,7 +25711,7 @@ window.addRenewalMulti = function(m, picks) {
             if (r.carry > 0 && classes > 0) { carried = r.carry; classes += carried; }
             if (r.deduct > 0 && classes > 0) { deducted = Math.min(r.deduct, classes); classes -= deducted; }
           }
-          const isCamp = r.sport === SUMMER_CAMP;
+          const isCamp = isCampSport(r.sport);
           // Camp renewal expires on the Nth camp-day (its class-day count) — same rule as booking a
           // Custom pass; for a preset the class count already equals the window. Business-day fallback
           // (campEndDate) when no class count is known. (v6.458)
@@ -25823,7 +25848,7 @@ window.addRenewal = function(memberId) {
       </div>` : ''}
       <div class="form-row">
         <div class="field"><label>Activity</label><select id="rn-act">${[...new Set([...enrolledUnique.map(e => e.sport), m.sport, ...sports].filter(Boolean))].map(s => `<option ${s===(enrolledUnique[0]?.sport||m.sport)?'selected':''}>${escapeHtml(s)}</option>`).join('')}</select></div>
-        <div class="field" id="rn-coach-field" style="${(enrolledUnique[0]?.sport || m.sport) === SUMMER_CAMP ? 'display:none' : ''}"><label>Coach</label><select id="rn-coach">${coachOpts(enrolledUnique[0]?.coachId || m.coachId)}</select></div>
+        <div class="field" id="rn-coach-field" style="${isCampSport((enrolledUnique[0]?.sport || m.sport)) ? 'display:none' : ''}"><label>Coach</label><select id="rn-coach">${coachOpts(enrolledUnique[0]?.coachId || m.coachId)}</select></div>
       </div>
       <div class="form-row">
         <div class="field"><label>Classes</label><input id="rn-classes" type="number" min="0" step="1" value="${enrolledUnique[0]?.classes || ''}" /></div>
@@ -25860,7 +25885,7 @@ window.addRenewal = function(memberId) {
         const validity = parseInt($('#rn-validity').value) || DEFAULT_VALIDITY;
         const renewedSport = $('#rn-act').value;
         // Camp has no coach; for camp renewals a missing/NaN coach is fine (null).
-        const coachId = renewedSport === SUMMER_CAMP ? null : (parseInt($('#rn-coach').value) || null);
+        const coachId = isCampSport(renewedSport) ? null : (parseInt($('#rn-coach').value) || null);
         if (!start) { toast('Start date required', 'error'); return; }
         // Guard against creating a DUPLICATE identical period (same sport / coach /
         // start) — the usual cause of two identical rows (renewing twice or a double
@@ -25935,7 +25960,7 @@ window.addRenewal = function(memberId) {
         if (amount > 0) {
           // Build a duration-aware label so the receipt reads e.g.
           // "Summer Camp · 1 month renewal" instead of plain "Summer Camp renewal".
-          const dl = (renewedSport === SUMMER_CAMP && classes)
+          const dl = (isCampSport(renewedSport) && classes)
             ? (campLabelForClasses(classes) || '')
             : '';
           const sportLabel = dl ? `${renewedSport} · ${dl}` : renewedSport;
@@ -25958,7 +25983,7 @@ window.addRenewal = function(memberId) {
           state.invoices.push({
             id: (_rnInvId = nextId(state.invoices)),
             date: start,
-            description: `${sportLabel} renewal — ${m.name}${classes && renewedSport !== SUMMER_CAMP ? ` · ${classes} classes` : ''}`,
+            description: `${sportLabel} renewal — ${m.name}${classes && !isCampSport(renewedSport) ? ` · ${classes} classes` : ''}`,
             amount,
             amountPaid: _paidNow,
             payments: _paidNow > 0 ? _payRows : [],
@@ -26023,7 +26048,7 @@ window.addRenewal = function(memberId) {
         if (actSel) actSel.value = e2.sport;
         if (coachSel) coachSel.value = e2.coachId;
         const coachField2 = document.getElementById('rn-coach-field');
-        if (coachField2) coachField2.style.display = (e2.sport === SUMMER_CAMP) ? 'none' : '';
+        if (coachField2) coachField2.style.display = (isCampSport(e2.sport)) ? 'none' : '';
         const cl = document.getElementById('rn-classes'); if (cl) cl.value = e2.classes || '';
         const am = document.getElementById('rn-amount'); if (am) am.value = e2.price || '';
         if (e2.validity) {
@@ -26044,7 +26069,7 @@ window.addRenewal = function(memberId) {
     const hintEl = document.getElementById('rn-end-hint');
     const actEl3 = document.getElementById('rn-act');
     if (!startEl || !vEl || !endEl) return;
-    const isCampRenew = actEl3 && actEl3.value === SUMMER_CAMP;
+    const isCampRenew = actEl3 && isCampSport(actEl3.value);
     const v = parseInt(vEl.value) || DEFAULT_VALIDITY;
     // Camp expiry follows business days (a week = 5 Sun–Thu days), driven by the
     // class count; regular sports use calendar days.
@@ -26194,7 +26219,7 @@ window.addRenewal = function(memberId) {
   const syncRnCoachVisibility = () => {
     const actEl2 = document.getElementById('rn-act');
     const coachField = document.getElementById('rn-coach-field');
-    if (actEl2 && coachField) coachField.style.display = (actEl2.value === SUMMER_CAMP) ? 'none' : '';
+    if (actEl2 && coachField) coachField.style.display = (isCampSport(actEl2.value)) ? 'none' : '';
   };
   document.getElementById('rn-act')?.addEventListener('change', () => { syncRnCoachVisibility(); recalcRnDeduction(); recalcRnCarry(); });
   syncRnCoachVisibility();
@@ -26277,7 +26302,7 @@ window.editSubscription = function(memberId, sid) {
         // it stayed 5/5 and wrongly read "completed". When the edited count no longer matches
         // the preset label's class-days, mark the camp CUSTOM so the edited count is what
         // subClassLimit — and therefore the denominator + status — actually use (5/7 → active).
-        if ((sub.activity || '') === SUMMER_CAMP) {
+        if (isCampSport((sub.activity || ''))) {
           const labelClasses = (sub.durationLabel && sub.durationLabel !== 'Custom'
             && typeof campDaysForLabel === 'function' && typeof campClassCount === 'function')
             ? campClassCount(campDaysForLabel(sub.durationLabel)) : null;
@@ -26311,7 +26336,7 @@ window.editSubscription = function(memberId, sid) {
             if (!isNaN(price)) enr.price = price;
             if (newCoachId !== undefined) enr.coachId = newCoachId;
             // v6.490: keep the camp duration in sync so the enrollment-driven invoice agrees.
-            if ((sub.activity || '') === SUMMER_CAMP && sub.durationLabel === 'Custom') enr.durationLabel = 'Custom';
+            if (isCampSport((sub.activity || '')) && sub.durationLabel === 'Custom') enr.durationLabel = 'Custom';
           } else if (st !== 'completed' && st !== 'expired' && st !== 'withdrawn') {
             m.enrollments.push({ sport: sub.activity, coachId: (newCoachId !== undefined ? newCoachId : (sub.coachId != null ? sub.coachId : null)), classes: cls, price: isNaN(price) ? linePrice : price, start: sub.start || m.startDate || TODAY });
           }
@@ -26551,7 +26576,7 @@ window.applyCarryForwardToActive = function(memberId) {
     }
     // Mirror onto the matching enrollment classes too (so edit dialogs agree).
     const enr = (m.enrollments || []).find(e => e.sport === p.sp);
-    if (enr && p.sp !== SUMMER_CAMP) enr.classes = (parseInt(enr.classes) || before) + p.credit;
+    if (enr && !isCampSport(p.sp)) enr.classes = (parseInt(enr.classes) || before) + p.credit;
   }
   if (typeof audit === 'function') audit('member.carry.apply', `member:${m.id}`, `Applied ${applied} carry-forward class(es) to ${m.name}`);
   closeModal();
@@ -27813,7 +27838,7 @@ PAGES.mymembership = (main) => {
         <div style="width:60px;height:60px;border-radius:16px;background:${meta.c}26;display:flex;align-items:center;justify-content:center;font-size:32px;flex-shrink:0">${meta.e}</div>
         <div style="flex:1;min-width:140px">
           <div style="font-size:22px;font-weight:800;line-height:1.1">${escapeHtml(e.sport)}${meta.priv ? ` <span class="badge" style="background:#6b728022;color:#6b7280;font-size:10px;vertical-align:middle">🔒 ${t('Private', 'خاص')}</span>` : ''}</div>
-          <div style="font-size:14px;color:var(--text-mute);margin-top:3px">👤 ${e.sport === SUMMER_CAMP ? t('No coach (camp)', 'بدون مدرب (معسكر)') : t('Coach', 'المدرب') + ': ' + escapeHtml(coachName(e.coachId))}</div>
+          <div style="font-size:14px;color:var(--text-mute);margin-top:3px">👤 ${isCampSport(e.sport) ? t('No coach (camp)', 'بدون مدرب (معسكر)') : t('Coach', 'المدرب') + ': ' + escapeHtml(coachName(e.coachId))}</div>
         </div>
         <div style="display:flex;gap:22px;text-align:center">
           <div><div style="font-size:30px;font-weight:800;color:var(--blue);line-height:1">${planned}</div><div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;margin-top:2px">${t('Planned', 'المخطط')}</div></div>
@@ -27875,7 +27900,7 @@ PAGES.mymembership = (main) => {
   const histHtml = histSubs.length
     ? histSubs.map(s => `<tr style="border-top:1px solid var(--border)">
         <td style="padding:7px 8px">${escapeHtml(s.activity || '—')}</td>
-        <td style="padding:7px 8px">${s.activity === SUMMER_CAMP ? '—' : escapeHtml(s.coach || (s.coachId != null ? coachName(s.coachId) : '—'))}</td>
+        <td style="padding:7px 8px">${isCampSport(s.activity) ? '—' : escapeHtml(s.coach || (s.coachId != null ? coachName(s.coachId) : '—'))}</td>
         <td style="padding:7px 8px">${s.start ? fmtDate(s.start) : '—'}</td>
         <td style="padding:7px 8px">${s.end ? fmtDate(s.end) : '—'}</td>
         <td style="padding:7px 8px;text-align:center">${s.totalClasses || '—'}</td>
@@ -27923,7 +27948,7 @@ PAGES.mymembership = (main) => {
     const slotLabel = SLOT_LABEL[nextClass.hour] || (nextClass.hour + ':00');
     return `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
       <div><div style="font-size:20px;font-weight:700">${escapeHtml(c.sport)}</div>
-        <div class="text-mute" style="font-size:12px">${c.sport === SUMMER_CAMP ? '' : escapeHtml(coachName(c.coachId))}</div></div>
+        <div class="text-mute" style="font-size:12px">${isCampSport(c.sport) ? '' : escapeHtml(coachName(c.coachId))}</div></div>
       <div style="text-align:right"><div style="font-size:16px;font-weight:700;color:var(--blue)">${whenWord} · ${slotLabel}</div>
         <div class="text-mute" style="font-size:11px">${t('See the Schedule tab for the full week', 'راجع تبويب الجدول للأسبوع كامل')}</div></div>
     </div>`;
@@ -28104,7 +28129,7 @@ window._myScheduleICS = function(memberId) {
       `DTSTART:${fmtDT(d, hour)}`,
       `DTEND:${fmtDT(d, hour + 1)}`,
       'RRULE:FREQ=WEEKLY',
-      `SUMMARY:${c.sport}${c.sport !== SUMMER_CAMP ? ' - ' + (coachName(c.coachId) || '') : ''}`,
+      `SUMMARY:${c.sport}${!isCampSport(c.sport) ? ' - ' + (coachName(c.coachId) || '') : ''}`,
       'LOCATION:Black Stars Sports Club',
       'END:VEVENT');
   });
@@ -29910,7 +29935,7 @@ window.convertTrialToMember = function(id) {
         if (price <= 0) { toast('Price must be > 0', 'error'); return; }
 
         // Camp end = the Nth camp-day (its class-day count, Sun–Thu); trials have no preset window. (v6.458)
-        const end = sport === SUMMER_CAMP
+        const end = isCampSport(sport)
           ? ((typeof campEndDateFromClasses === 'function' && classes > 0) ? campEndDateFromClasses(start, classes)
              : (typeof campEndDate === 'function' ? campEndDate(start, validity) : addDays(start, validity)))
           : addDays(start, validity);
@@ -30282,7 +30307,7 @@ PAGES.enrolled = (main) => {
       for (const sport of enrolledSports) {
         const enr = (m.enrollments || []).find(e => e.sport === sport);
         const sub = subsBySport.get(sport);
-        const coachId = enr?.coachId ?? (sport === SUMMER_CAMP ? null : (sub?.coachId ?? m.coachId));
+        const coachId = enr?.coachId ?? (isCampSport(sport) ? null : (sub?.coachId ?? m.coachId));
 
         // Total paid for this (member, sport): sum positive line items
         // across invoices (scoped to the selected month if one is chosen).
@@ -30393,7 +30418,7 @@ PAGES.enrolled = (main) => {
       const period = r.startDate && r.endDate
         ? `${fmtDate(r.startDate)} → ${fmtDate(r.endDate)}`
         : r.startDate ? `from ${fmtDate(r.startDate)}` : '—';
-      const isCamp = r.sport === SUMMER_CAMP;
+      const isCamp = isCampSport(r.sport);
       return `
         <tr style="cursor:pointer" onclick="viewMember(${r.m.id})">
           <td>
@@ -30506,7 +30531,7 @@ PAGES.enrolled = (main) => {
         r.m.phone || '',
         r.m.qid || '',
         r.sport,
-        r.sport === SUMMER_CAMP ? '' : coachName(r.coachId),
+        isCampSport(r.sport) ? '' : coachName(r.coachId),
         r.paid,
         r.attended,
         r.totalClasses,
@@ -30892,6 +30917,13 @@ PAGES.charts = (main) => {
   // Category / sport revenue + coach pay now follow the SAME scoped period as the bars.
   const revByCat = billedByCategoryInPeriod(m => scopedSet.has(m));
   const revBySport = billedBySportInPeriod(m => scopedSet.has(m));
+  // v6.644 — split Membership → Camp vs other Sports for the donut too.
+  const _memSplitCh = billedMembershipSplitInPeriod(m => scopedSet.has(m));
+  if ('Membership' in revByCat && (_memSplitCh.camp > 0.5 || _memSplitCh.other > 0.5)) {
+    delete revByCat['Membership'];
+    if (_memSplitCh.other > 0.005) revByCat['Membership · Sports'] = _memSplitCh.other;
+    if (_memSplitCh.camp > 0.005) revByCat['Membership · Camp'] = _memSplitCh.camp;
+  }
   // Expenses by category over the scoped period (excludes salaries — payroll has its own chart). (v6.462)
   const expByCat = {};
   for (const e of (state.expenses || [])) { if (e.deleted) continue; const em = e.month || (e.date || '').slice(0, 7); if (!scopedSet.has(em) || isSalaryCategory(e.category) || isCashMovementExpense(e.category)) continue; const c = e.category || t('Other', 'أخرى'); expByCat[c] = (expByCat[c] || 0) + (Number(e.amount) || 0); }
@@ -31025,6 +31057,7 @@ PAGES.reports = (main) => {
     // Revenue by category + by sport — billed, line-aware (re-sums to revenue).
     const revByCat = billedByCategoryInPeriod(inPeriod);
     const sportRev = billedBySportInPeriod(inPeriod);
+    const memSplit = billedMembershipSplitInPeriod(inPeriod);   // v6.644 — Membership → Camp vs other sports
 
     // Expense by category + top expenses — exclude salary settlements (match P&L).
     const expByCat = {};
@@ -31040,7 +31073,7 @@ PAGES.reports = (main) => {
     const newMembers = state.members.filter(m => !m.deleted && inPeriodDate(m.firstRegistration)).length;   // v6.634 — exclude archived (was diverging from the Dashboard)
 
     return { invs, exps, sals: [], revenue, expensesTotal, salariesTotal, profit, profitMargin,
-             avgInvoice, prevRev, revByCat, sportRev, expByCat, topExp,
+             avgInvoice, prevRev, revByCat, sportRev, memSplit, expByCat, topExp,
              activeMembers: activeMembers_, totalMembers, expiredInPeriod, newMembers, invCount: invs.length };
   }
 
@@ -31053,11 +31086,18 @@ PAGES.reports = (main) => {
     return `${ms.length} months (${fmtMonth(ms[0])} – ${fmtMonth(ms[ms.length - 1])})`;
   }
 
-  const REVCAT_COLORS = { 'Membership':'#10b981','Court Rental':'#f2a33c','Boxing Room':'#5b8def','Product':'#8b5cf6','Other':'#888' };
+  const REVCAT_COLORS = { 'Membership':'#10b981','Membership · Camp':'#0ea5a5','Membership · Sports':'#10b981','Court Rental':'#f2a33c','Boxing Room':'#5b8def','Product':'#8b5cf6','Other':'#888' };
 
   function renderBody() {
     const d = compute();
-    const allRevCats = Object.entries(d.revByCat).sort((a, b) => b[1] - a[1]);
+    // v6.644 — split the Membership category into Camp (Summer+Winter) and other Sports.
+    const _cats = { ...d.revByCat };
+    if ('Membership' in _cats && d.memSplit && (d.memSplit.camp > 0.5 || d.memSplit.other > 0.5)) {
+      delete _cats['Membership'];
+      if (d.memSplit.other > 0.005) _cats['Membership · Sports'] = d.memSplit.other;
+      if (d.memSplit.camp > 0.005) _cats['Membership · Camp'] = d.memSplit.camp;
+    }
+    const allRevCats = Object.entries(_cats).sort((a, b) => b[1] - a[1]);
     const revTotal = d.revenue || 1;
     const sortedSports = Object.entries(d.sportRev).sort((a, b) => b[1] - a[1]);
     const sortedExpCats = Object.entries(d.expByCat).sort((a, b) => b[1] - a[1]);
@@ -32427,10 +32467,10 @@ PAGES.lamaa = (main) => {
     const totalAmt = all.reduce((s, b) => s + (Number(b.amount) || 0), 0);
     const totalDue = Math.round(all.reduce((s, b) => s + bDue(b), 0) * 100) / 100;
     const rows = paginate(all, pg);
-    $('#lam-tbody').innerHTML = rows.length ? rows.map(b => { const _due = bDue(b); return `
+    $('#lam-tbody').innerHTML = rows.length ? rows.map(b => { const _due = bDue(b); const _ref = (typeof hallReferralAmount === 'function') ? hallReferralAmount(b) : 0; return `
       <tr>
         <td class="text-dim" style="white-space:nowrap">${b.date ? fmtDate(b.date) : '—'}${(b.startTime || b.endTime) ? `<div class="text-mute" style="font-size:10px">${escapeHtml(b.startTime || '')}${b.endTime ? '–' + escapeHtml(b.endTime) : ''}</div>` : ''}</td>
-        <td><div class="font-bold">${escapeHtml(b.customerName || '—')}</div>${b.customerPhone ? `<div class="text-mute" style="font-size:11px">${phoneCell(b.customerPhone)}</div>` : ''}</td>
+        <td><div class="font-bold">${escapeHtml(b.customerName || '—')}</div>${b.customerPhone ? `<div class="text-mute" style="font-size:11px">${phoneCell(b.customerPhone)}</div>` : ''}${b.referrer ? `<div style="font-size:10px;color:var(--accent-2);margin-top:2px" title="${t('Referral payout', 'مستحق الإحالة')}">🤝 ${escapeHtml(b.referrer)} · ${fmt(_ref)} (${b.referralPct != null ? b.referralPct : 10}%)</div>` : ''}</td>
         <td>${b.occasion ? `<span class="badge">${escapeHtml(b.occasion)}</span>` : '<span class="text-mute">—</span>'}${b.packageLabel ? `<div class="text-mute" style="font-size:10px">${escapeHtml(b.packageLabel)}</div>` : ''}</td>
         <td class="text-right num">${b.guests ? b.guests : '—'}</td>
         <td class="text-right num font-bold">${fmt(b.amount || 0)}${_due > 0.5 ? `<div style="font-size:10px;color:var(--red);font-weight:700">⏳ ${fmt(_due)} due</div>` : ''}</td>
@@ -32452,6 +32492,7 @@ PAGES.lamaa = (main) => {
   const thisMonth = (state.hallBookings || []).filter(b => (b.date || '').slice(0, 7) === curMonth);
   const monthAmt = thisMonth.reduce((s, b) => s + (Number(b.amount) || 0), 0);
   const monthDue = Math.round(thisMonth.reduce((s, b) => s + bDue(b), 0) * 100) / 100;
+  const monthRef = Math.round(thisMonth.reduce((s, b) => s + ((typeof hallReferralAmount === 'function') ? hallReferralAmount(b) : 0), 0) * 100) / 100;
   const monthShort = new Date(curMonth + '-01T00:00:00').toLocaleString('en', { month: 'short' });
 
   main.innerHTML = `
@@ -32463,9 +32504,10 @@ PAGES.lamaa = (main) => {
         <button class="btn primary" id="lam-add">+ ${t('New Booking', 'حجز جديد')}</button>
       </div>
     </div>
-    <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
+    <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
       <div class="kpi purple"><div class="kpi-label">✨ ${escapeHtml(HALL_NAME)} — ${monthShort}</div><div class="kpi-value num">${fmt(monthAmt)}</div><div class="kpi-sub">${thisMonth.length} ${t('booking(s)', 'حجز')} · QAR</div></div>
       <div class="kpi ${monthDue > 0.5 ? 'red' : 'green'}"><div class="kpi-label">⏳ ${t('Due this month', 'المستحق هذا الشهر')}</div><div class="kpi-value num">${fmt(monthDue)}</div><div class="kpi-sub">QAR</div></div>
+      <div class="kpi orange"><div class="kpi-label">🤝 ${t('Referral payouts', 'مستحقات الإحالة')} — ${monthShort}</div><div class="kpi-value num">${fmt(monthRef)}</div><div class="kpi-sub">${t('to whoever brought the customer', 'لمن أحضر العميل')} · QAR</div></div>
       <div class="kpi"><div class="kpi-label">📅 ${t('Total bookings', 'إجمالي الحجوزات')}</div><div class="kpi-value num">${(state.hallBookings || []).length}</div><div class="kpi-sub">${t('all time', 'كل الوقت')}</div></div>
     </div>
     <div class="card">
@@ -32487,8 +32529,8 @@ PAGES.lamaa = (main) => {
   $('#lam-packages')?.addEventListener('click', () => editLamaaPackages(refresh));
   $('#lam-export')?.addEventListener('click', () => {
     const all = applyFilter().sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-    const head = ['Date', 'Start', 'End', 'Customer', 'Phone', 'Occasion', 'Package', 'Guests', 'Amount', 'Paid', 'Due', 'Notes'];
-    const body = all.map(b => { const due = bDue(b); return [b.date || '', b.startTime || '', b.endTime || '', b.customerName || '', b.customerPhone || '', b.occasion || '', b.packageLabel || '', b.guests || '', b.amount || 0, Math.round(((b.amount || 0) - due) * 100) / 100, due, (b.notes || '').replace(/\n/g, ' ')]; });
+    const head = ['Date', 'Start', 'End', 'Customer', 'Phone', 'Occasion', 'Package', 'Guests', 'Amount', 'Paid', 'Due', 'Referred by', 'Referral %', 'Referral payout', 'Notes'];
+    const body = all.map(b => { const due = bDue(b); const ref = (typeof hallReferralAmount === 'function') ? hallReferralAmount(b) : 0; return [b.date || '', b.startTime || '', b.endTime || '', b.customerName || '', b.customerPhone || '', b.occasion || '', b.packageLabel || '', b.guests || '', b.amount || 0, Math.round(((b.amount || 0) - due) * 100) / 100, due, b.referrer || '', b.referrer ? (b.referralPct != null ? b.referralPct : 10) : '', ref, (b.notes || '').replace(/\n/g, ' ')]; });
     const csv = [head, ...body].map(r => r.map(v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`).join(',')).join('\n');
     downloadFile(`lamaa-stars-bookings-${TODAY}.csv`, csv, 'text/csv');
     toast(t('Exported', 'تم التصدير'));
@@ -32531,6 +32573,14 @@ function renderLamaaForm(b) {
         <div class="field"><label>${t('Occasion', 'المناسبة')}</label><input type="text" id="lam-occasion" value="${escapeHtml(b.occasion || '')}" placeholder="${t('Birthday, corporate…', 'عيد ميلاد، شركة…')}" /></div>
       </div>
     </div>
+    <div style="margin-top:6px;padding:12px;background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.22);border-radius:8px">
+      <div style="font-size:11px;color:var(--accent-2);text-transform:uppercase;letter-spacing:.6px;font-weight:600;margin-bottom:8px">🤝 ${t('Referral', 'الإحالة')} <span class="text-mute" style="text-transform:none;letter-spacing:0;font-weight:400">${t('who brought the customer — earns a % of the booking', 'من أحضر العميل — يكسب نسبة من الحجز')}</span></div>
+      <div class="form-row">
+        <div class="field" style="flex:2"><label>${t('Referred by', 'أحضره')}</label><input type="text" id="lam-referrer" value="${escapeHtml(b.referrer || '')}" placeholder="${t('name (leave blank if none)', 'الاسم (اتركه فارغاً إن لا يوجد)')}" /></div>
+        <div class="field"><label>${t('Referral %', 'نسبة الإحالة')}</label><input type="number" id="lam-refpct" min="0" max="100" step="1" value="${b.referralPct != null ? b.referralPct : 10}" /></div>
+        <div class="field"><label>${t('Payout', 'المستحق')}</label><input type="text" id="lam-refout" disabled value="" style="background:var(--surface-2)" /></div>
+      </div>
+    </div>
     ${!b.id ? `<div class="form-row" style="margin-top:8px">
       <div class="field"><label>${t('Paid now (QAR)', 'المدفوع الآن')} <span class="text-mute" style="font-size:10px">${t('deposit — rest becomes due', 'عربون — الباقي يصبح مستحقاً')}</span></label><input type="number" id="lam-paid" min="0" step="1" value="" placeholder="${t('= full amount', '= كامل المبلغ')}" /></div>
       <div class="field"><label>${t('Method', 'الطريقة')}</label><select id="lam-method"><option value="cash">Cash</option><option value="card">Card</option><option value="fawran">Fawran</option><option value="transfer">Transfer</option></select></div>
@@ -32540,12 +32590,21 @@ function renderLamaaForm(b) {
 }
 function wireLamaaForm() {
   const pkg = document.getElementById('lam-package'), amt = document.getElementById('lam-amount');
+  const refpct = document.getElementById('lam-refpct'), refout = document.getElementById('lam-refout'), refby = document.getElementById('lam-referrer');
+  const syncRef = () => { if (!refout) return;
+    const a = parseFloat(amt && amt.value) || 0, p = parseFloat(refpct && refpct.value) || 0;
+    const has = (refby && refby.value.trim()) ? 1 : 0;
+    refout.value = has ? (fmt(a * p / 100) + ' QAR') : '—';
+  };
   if (pkg && amt) pkg.addEventListener('change', () => {
     const opt = pkg.options[pkg.selectedIndex];
     const price = opt ? opt.getAttribute('data-price') : null;
     if (pkg.value !== 'Custom' && price != null) amt.value = price;
     else if (pkg.value === 'Custom') { amt.value = ''; amt.focus(); }
+    syncRef();
   });
+  [amt, refpct, refby].forEach(elm => elm && elm.addEventListener('input', syncRef));
+  syncRef();
 }
 window.addLamaaBooking = function(onDone) {
   showModal({ title: '✨ ' + t('New Hall Booking', 'حجز قاعة جديد'), wide: true, body: renderLamaaForm({}),
@@ -32574,6 +32633,8 @@ function saveLamaaBooking(existingId, onDone) {
   const occasion = ($('#lam-occasion').value || '').trim() || null;
   const qid = ($('#lam-qid').value || '').trim() || null;
   const notes = ($('#lam-notes').value || '').trim() || null;
+  const referrer = (($('#lam-referrer') || {}).value || '').trim() || null;   // who brought the customer
+  const referralPct = referrer ? (parseFloat(($('#lam-refpct') || {}).value) || 0) : 0;
   // Overlap guard — one hall, same date, ranges (incl. setup buffer both sides) must not overlap.
   if (startTime && endTime) {
     const toMin = x => { const [h, mm] = String(x).split(':').map(Number); return (h || 0) * 60 + (mm || 0); };
@@ -32594,7 +32655,7 @@ function saveLamaaBooking(existingId, onDone) {
 
   if (existingId) {
     const idx = state.hallBookings.findIndex(x => x.id === existingId); const old = state.hallBookings[idx];
-    state.hallBookings[idx] = { ...old, date, startTime, endTime, packageLabel, amount, setupBuffer, guests, occasion, customerName: name, customerPhone: phone, customerQid: qid, customerRentalId: rcust ? rcust.id : (old.customerRentalId ?? null), memberId: matchedMember ? matchedMember.id : (old.memberId ?? null), notes };
+    state.hallBookings[idx] = { ...old, date, startTime, endTime, packageLabel, amount, setupBuffer, guests, occasion, customerName: name, customerPhone: phone, customerQid: qid, customerRentalId: rcust ? rcust.id : (old.customerRentalId ?? null), memberId: matchedMember ? matchedMember.id : (old.memberId ?? null), notes, referrer, referralPct };
     if (old.invoiceId) { const inv = (state.invoices || []).find(i => i.id === old.invoiceId); if (inv) { inv.date = date; inv.description = desc; inv.amount = amount; inv.month = month; inv.customerName = name; inv.customerPhone = phone; inv.customerId = matchedMember ? matchedMember.id : null; if (Array.isArray(inv.lineItems) && inv.lineItems[0]) inv.lineItems[0].price = amount; if (typeof stampUpdate === 'function') stampUpdate(inv); } }
     if (typeof stampUpdate === 'function') stampUpdate(state.hallBookings[idx]);
     closeModal(); if (onDone) onDone(); else render(); if (typeof confirmSaved === 'function') confirmSaved(t('Booking updated', 'تم تحديث الحجز')); else { save(); toast(t('Booking updated', 'تم تحديث الحجز')); }
@@ -32615,7 +32676,7 @@ function saveLamaaBooking(existingId, onDone) {
   };
   if (typeof stampUpdate === 'function') stampUpdate(newInv);
   state.invoices.push(newInv);
-  state.hallBookings.push({ id: bookingId, date, startTime, endTime, packageLabel, amount, setupBuffer, guests, occasion, customerName: name, customerPhone: phone, customerQid: qid, customerRentalId: rcust ? rcust.id : null, memberId: matchedMember ? matchedMember.id : null, method, notes, invoiceId: newInv.id, createdAt: new Date().toISOString() });
+  state.hallBookings.push({ id: bookingId, date, startTime, endTime, packageLabel, amount, setupBuffer, guests, occasion, customerName: name, customerPhone: phone, customerQid: qid, customerRentalId: rcust ? rcust.id : null, memberId: matchedMember ? matchedMember.id : null, method, notes, referrer, referralPct, invoiceId: newInv.id, createdAt: new Date().toISOString() });
   closeModal(); if (onDone) onDone(); else render();
   const dueMsg = paidNow < amount ? ` · ⏳ ${fmt(amount - paidNow)} ${t('due', 'مستحق')}` : '';
   if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'invoices', id: newInv.id }], okMsg: `${t('Booking saved', 'تم حفظ الحجز')} · ${ref}${dueMsg}` });
@@ -33531,7 +33592,7 @@ function editFacilityRates() {
 function transferableEnrollments(m) {
   if (!m || !Array.isArray(m.enrollments)) return [];
   return m.enrollments
-    .filter(e => e.sport && e.sport !== SUMMER_CAMP && !e.transferLocked)
+    .filter(e => e.sport && !isCampSport(e.sport) && !e.transferLocked)
     .map(e => ({ sport: e.sport, coachId: e.coachId, classes: e.classes, price: e.price, validity: e.validity }));
 }
 
@@ -33561,7 +33622,7 @@ window.transferMembership = function(fromId, sport, toId) {
   if (!enr) { toast(`${A.name} has no active "${sport}" enrollment`, 'error'); return false; }
   if (memberStatus(A) === 'Withdrawn') { toast(`${A.name} is withdrawn — their membership can't be transferred.`, 'error'); return false; }
   if (enr.transferLocked) { toast(`This ${sport} membership was already transferred once — it can't be transferred again.`, 'error'); return false; }
-  if (sport === SUMMER_CAMP) { toast('Summer Camp memberships can\'t be transferred.', 'error'); return false; }
+  if (isCampSport(sport)) { toast('Summer Camp memberships can\'t be transferred.', 'error'); return false; }
   const found = _membershipInvoiceForSport(fromId, sport);
   const coachId = enr.coachId;
   const fullClasses = enr.classes || (found && found.li && found.li.classes) || 0;
@@ -33795,7 +33856,7 @@ window.transferMembership = function(fromId, sport, toId) {
 // the coach's already-earned commission untouched. Every write backs up first
 // + audits, and is reversible (delete the Refund expense + re-open the package).
 function _campClosureRow(m) {
-  const camps = (m.subscriptions || []).filter(s => s.activity === SUMMER_CAMP)
+  const camps = (m.subscriptions || []).filter(s => isCampSport(s.activity))
     .slice().sort((a, b) => String(a.start || '').localeCompare(String(b.start || '')));
   const sub = camps[camps.length - 1];
   if (!sub) return null;
@@ -34507,7 +34568,7 @@ PAGES.transactions = (main) => {
       if (!inRange(inv)) continue;
       const allItems = (inv.lineItems && inv.lineItems.length) ? inv.lineItems : [{ sport: inv.sport || null, coachId: inv.coachId || null, price: inv.amount || 0 }];
       const cat = inv.category || 'Membership';
-      const isCampItem = (li) => (li.sport || '') === SUMMER_CAMP;
+      const isCampItem = (li) => isCampSport((li.sport || ''));
       // Normalised filter arrays (empty = no filter / show all).
       const catSel = st.categories || [];
       const actSel = st.activities || [];
@@ -34753,7 +34814,7 @@ PAGES.transactions = (main) => {
             for (const i of (state.invoices || [])) {
               if (i.deleted) continue;
               const items = (i.lineItems && i.lineItems.length) ? i.lineItems : [{ sport: i.sport }];
-              items.forEach(li => { if (li.sport && li.sport !== SUMMER_CAMP) sportSet.add(li.sport); });
+              items.forEach(li => { if (li.sport && !isCampSport(li.sport)) sportSet.add(li.sport); });
             }
             [...sportSet].sort().forEach(sp => opts.push({ value: sp, label: sp }));
             return opts;
