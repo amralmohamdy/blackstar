@@ -223,7 +223,7 @@ PAGES.targets = (main) => {
           <div class="text-mute" style="font-size:12px;margin-top:3px">${cnt} ${t('new/renew this month', 'جديد/تجديد هذا الشهر')} · <b style="color:var(--green)">${fmt(tt.bonus)} QAR</b></div>
         </div>`
       : (tt.next ? `<div class="card" style="text-align:center;padding:14px;margin-bottom:14px"><div style="font-size:13px">🎯 ${t('You need', 'تحتاج')} <b>${tt.next.at - cnt}</b> ${t('more new/renew to earn', 'المزيد من جديد/تجديد لتحصل على')} <b style="color:var(--green)">${fmt(tt.next.bonus)} QAR</b></div></div>` : '');
-    bodyHtml = banner + `<div style="max-width:360px;margin:0 auto;cursor:pointer" onclick="coachTargetDetail(${JSON.stringify(cid)}, ${JSON.stringify(ym)})" title="${t('Show my transactions this month', 'عرض عملياتي هذا الشهر')}">${_targetCard('🥋', me ? me.name : t('My target', 'هدفي'), t('New / renew packages this month — tap for details', 'باقات جديدة/تجديد هذا الشهر — اضغط للتفاصيل'), cnt, coachTargets(), 'count')}</div>`;
+    bodyHtml = banner + `<div style="max-width:360px;margin:0 auto;cursor:pointer" onclick="coachTargetDetail('${String(cid)}', '${ym}')" title="${t('Show my transactions this month', 'عرض عملياتي هذا الشهر')}">${_targetCard('🥋', me ? me.name : t('My target', 'هدفي'), t('New / renew packages this month — tap for details', 'باقات جديدة/تجديد هذا الشهر — اضغط للتفاصيل'), cnt, coachTargets(), 'count')}</div>`;
   } else {
     // Reception income target (club cash collected this month) → tiered bonus, split equally among the
     // ACTIVE receptionists. v6.636 — the RECEPTION role sees the dial + THEIR (equal) share only; ADMIN
@@ -250,7 +250,7 @@ PAGES.targets = (main) => {
       const coaches = (state.coaches || []).filter(c => isCoachRole(c) && _coachActive(c))
         .map(c => ({ c, cnt: coachNewRenewCount(c.id, ym) }))
         .sort((a, b) => b.cnt - a.cnt);
-      const cards = coaches.map(({ c, cnt }) => `<div style="cursor:pointer" onclick="coachTargetDetail(${JSON.stringify(c.id)}, ${JSON.stringify(ym)})" title="${t('Show transactions for', 'عرض عمليات')} ${escapeHtml(c.name)}">${_targetCard('🥋', c.name, t('New / renew this month — tap for proof', 'جديد/تجديد هذا الشهر — اضغط للإثبات'), cnt, coachTargets(), 'count')}</div>`).join('');
+      const cards = coaches.map(({ c, cnt }) => `<div style="cursor:pointer" onclick="coachTargetDetail('${String(c.id)}', '${ym}')" title="${t('Show transactions for', 'عرض عمليات')} ${escapeHtml(c.name)}">${_targetCard('🥋', c.name, t('New / renew this month — tap for proof', 'جديد/تجديد هذا الشهر — اضغط للإثبات'), cnt, coachTargets(), 'count')}</div>`).join('');
       const coachesHtml = `
         <div style="margin:20px 0 8px;font-weight:800;font-size:15px">🥋 ${t('Coach Targets', 'أهداف المدربين')} <span class="text-mute" style="font-size:12px;font-weight:500">· ${coaches.length} ${t('coaches', 'مدرب')}</span></div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px">${cards || `<div class="text-mute">${t('No active coaches', 'لا يوجد مدربون نشطون')}</div>`}</div>`;
@@ -289,7 +289,10 @@ PAGES.targets = (main) => {
 // under the coach), with member, sport, cycle window, status and value. The row count = the target count.
 window.coachTargetDetail = function(coachId, ym) {
   const rows = (typeof coachNewRenewRows === 'function') ? coachNewRenewRows(coachId, ym) : [];
-  const name = (typeof coachName === 'function') ? (coachName(coachId) || '') : '';
+  // v6.640 — resolve the coach by string-compare (the id arrives as a string from the click handler, and
+  // coachName uses a strict === so it would miss a numeric id).
+  const _c = (state.coaches || []).find(c => String(c.id) === String(coachId));
+  const name = _c ? (_c.name || '') : ((typeof coachName === 'function') ? (coachName(coachId) || '') : '');
   const label = (typeof fmtMonth === 'function') ? fmtMonth(ym) : ym;
   const total = Math.round(rows.reduce((s, r) => s + (Number(r.amount) || 0), 0) * 100) / 100;
   const body = rows.length ? `
@@ -342,6 +345,13 @@ PAGES.dashboard = (main) => {
   for (const _inv of (state.invoices || [])) {
     if (_inv.deleted) continue;
     for (const _p of (_inv.payments || [])) if ((_p.date || '') === TODAY) todayRevenue += Number(_p.amount) || 0;
+  }
+  // v6.640 — court + boxing-room rental counts for the period (shown in the New / Renewals box).
+  let courtRentals = 0, boxRentals = 0;
+  for (const _r of (state.rentals || [])) {
+    const _mo = String(_r.date || '').slice(0, 7);
+    if (!_mo || !_dashMonthsSet.has(_mo)) continue;
+    if (_r.facility === 'Boxing Room') boxRentals++; else courtRentals++;
   }
 
   // ─── "Needs attention today" — consolidated action items ───
@@ -524,6 +534,7 @@ PAGES.dashboard = (main) => {
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="font-size:18px">🆕</span><div style="font-weight:600;font-size:13px">${t('New / Renewals', 'جديد / تجديدات')} (${s.periodShort})</div></div>
         <div style="font-size:20px;font-weight:800;line-height:1">${newThisPeriod} <span style="font-size:12px;color:var(--text-dim);font-weight:500">${t('new', 'جديد')}</span> <span style="color:var(--text-dim);margin:0 2px">·</span> ${renewalsThisPeriod} <span style="font-size:13px">🔄</span></div>
         <div class="text-mute" style="font-size:11px;margin-top:3px">${t('new members + renewals', 'أعضاء جدد + تجديدات')}</div>
+        <div style="font-size:11px;margin-top:5px;color:var(--text-dim);border-top:1px solid var(--border);padding-top:5px">🏟 ${courtRentals} ${t('court', 'ملعب')} <span style="margin:0 3px">·</span> 🥊 ${boxRentals} ${t('box room', 'غرفة ملاكمة')} <span class="text-mute">${t('rentals', 'إيجارات')}</span></div>
       </div>
       <div class="card" style="padding:12px 14px;border:1px solid rgba(242,163,60,.25);background:rgba(242,163,60,.05);cursor:pointer" onclick="navigate('expiring')" title="Open Expiring page">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
