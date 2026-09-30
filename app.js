@@ -14,7 +14,7 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.644.0';   // 6.644.0 "Winter Camp module (reuses camp screens, own price table) + camp/facility separator group + Reports: Membership split Camp vs Sports + Lamaa referral 10% payout" || 6.643.0 coach new/renew = payment transactions per member
+const APP_VERSION = '6.644.1';   // 6.644.0 "Winter Camp module (reuses camp screens, own price table) + camp/facility separator group + Reports: Membership split Camp vs Sports + Lamaa referral 10% payout" || 6.643.0 coach new/renew = payment transactions per member
 // prior: 6.402.0 attendance credit bound + no auto-repaint on big grids.
 // prior: 6.400.0 Classes screen (derived rosters from the weekly schedule).
 // prior: 6.399.0 attendance popup Sessions-remaining now uses the corrected window.
@@ -9663,8 +9663,8 @@ function renderSidebar() {
       if (!entries.length) continue;
       // A divider precedes each SEP_SECTIONS group (facility/camp modules, then the "more" set).
       if (SEP_SECTIONS.has(section) && !_placedSep.has(section) && nav.childNodes.length) {
-        const div = el('div', { className: 'nav-divider' });
-        div.style.cssText = 'height:1px;background:var(--border);margin:12px 14px;opacity:.7';
+        const div = el('div', { className: 'nav-divider nav-divider-strong' });
+        div.style.cssText = 'height:3px;margin:18px 12px;border-radius:3px;background:color-mix(in srgb, var(--accent) 45%, var(--border));box-shadow:0 1px 3px color-mix(in srgb, var(--accent) 25%, transparent)';
         nav.append(div);
         _placedSep.add(section);
       }
