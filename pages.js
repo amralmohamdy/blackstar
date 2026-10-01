@@ -42,6 +42,10 @@ function dashPeriodLabel(period) {
 // expenses via expenseMonth() excluding salary-settlement rows; salaries via the payroll single-source;
 // collected/due via the per-month billed-attribution (billed = collected + due).
 function financeAgg(months) {
+  if (typeof _calcScope !== 'undefined' && _calcScope) { const k = months.join('|'); const hit = _calcScope.fin.get(k); if (hit) return Object.assign({}, hit); const r = _financeAggRaw(months); _calcScope.fin.set(k, r); return Object.assign({}, r); }
+  return _financeAggRaw(months);
+}
+function _financeAggRaw(months) {
   const mset = new Set(months);
   const sum = (invPred) => months.reduce((tt, m) => tt + billedInMonth(m, invPred), 0);
   const revenue = sum();
@@ -22912,7 +22916,28 @@ PAGES.attendance = (main) => {
         _announceAttendanceFromCloud(_cell, next);
       });
     } else save();
-    refresh();
+    _attCellNow(memberId, sport, day, next);
+    _attRefreshSoon();
+  }
+  // v6.651 — a roll-call is many quick clicks; redrawing the whole 800 KB grid after EACH one made a click cost 150-600 ms on a
+  // reception PC. Paint just the clicked cell immediately (so the click feels instant and a second click on it toggles correctly),
+  // then redraw everything once, shortly after the last click.
+  function _attCellNow(memberId, sport, day, mark) {
+    try {
+      const td = document.querySelector('td[data-am="' + memberId + '|' + encodeURIComponent(sport) + '|' + day + '"]');
+      if (!td) return;
+      td.className = 'att-cell ' + (mark === 'Y' ? 'att-y' : mark === 'N' ? 'att-n' : 'att-empty') + (/\batt-outside\b/.test(td.className) ? ' att-outside' : '');
+      td.textContent = mark || '·';
+      td.setAttribute('onclick', _attOnclick(memberId, sport, day, mark));
+    } catch (_) {}
+  }
+  let _attRefreshTimer = null;
+  function _attRefreshSoon() {
+    clearTimeout(_attRefreshTimer);
+    _attRefreshTimer = setTimeout(() => {
+      _attRefreshTimer = null;
+      try { if (state.route === 'attendance' && document.querySelector('.att-cell')) refresh(); } catch (_) {}
+    }, 350);
   }
   // Sessions left on the subscription that COVERS the marked day, computed from the server
   // copy of the member. Returns null when the subscription doesn't track a class count.
@@ -23137,13 +23162,16 @@ PAGES.attendance = (main) => {
   // explaining why the day looks off (e.g. outside this coach's computed period). We NEVER render a
   // dead, non-clickable cell: the desk must always be able to log a class and see the reason, not be
   // silently blocked. Marking still writes THIS row's own cell key, so no double-count.
+  const _attOnclick = (memberId, sport, day, mark) => {
+    const sportEsc = sport.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    return `window._attMark(${memberId}, '${sportEsc}', ${day}, ${mark ? `'${mark}'` : 'null'})`;
+  };
   function cellRender(memberId, sport, day, mark, warn) {
     const cls = mark === 'Y' ? 'att-y' : mark === 'N' ? 'att-n' : 'att-empty';
     const txt = mark || '·';
-    const sportEsc = sport.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
     const style = warn ? ' style="opacity:.55;background:rgba(245,158,11,.10)"' : '';
     const title = warn ? ` title="${escapeHtml(warn)}"` : '';
-    return `<td class="att-cell ${cls}${warn ? ' att-outside' : ''}"${style}${title} onclick="window._attMark(${memberId}, '${sportEsc}', ${day}, ${mark ? `'${mark}'` : 'null'})">${txt}</td>`;
+    return `<td class="att-cell ${cls}${warn ? ' att-outside' : ''}" data-am="${memberId}|${encodeURIComponent(sport)}|${day}"${style}${title} onclick="${_attOnclick(memberId, sport, day, mark)}">${txt}</td>`;
   }
   // v6.570 — a Mixed day cell: green Y when a class was logged (tooltip = the sport + coach tried that
   // day), blank otherwise. Clicking opens the sport+coach chooser (never a plain toggle).
@@ -23159,7 +23187,8 @@ PAGES.attendance = (main) => {
     return o;
   }
 
-  function refresh() {
+  function refresh() { return withCalcScope(_refreshScoped); }
+  function _refreshScoped() {
     const gMonth = gridMonth();
     window._attCurrentMonth = gMonth;
     let rows = getRows();
