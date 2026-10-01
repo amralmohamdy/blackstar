@@ -760,6 +760,7 @@ function drawCoachLeaderboard() {
     counts[m.coachId] = (counts[m.coachId] || 0) + 1;
   }
   const sorted = state.coaches
+    .filter(isCoachRole)
     .map(c => ({ ...c, count: counts[c.id] || 0 }))
     .sort((a, b) => b.count - a.count)
     .slice(0, 8);
@@ -30750,7 +30751,7 @@ PAGES.coachperf = (main) => {
   // v6.646: runs inside a calc scope (repeated pure calculations are computed once per call)
   function refresh() { return withCalcScope(_refreshScoped); }
   function _refreshScoped() {
-    const data = state.coaches.map((c, i) => {
+    const data = state.coaches.filter(isCoachRole).map((c, i) => {
       const st = statsFor(c.id, month);
       // v6.529: for a specific month, take commission straight from computeMonthlyPay so Charts matches
       // the Salaries screen exactly (resolved per-coach basis; paid-amount on the payment basis). For an
@@ -30981,7 +30982,7 @@ PAGES.charts = (main) => {
   for (const e of (state.expenses || [])) { if (e.deleted) continue; const em = e.month || (e.date || '').slice(0, 7); if (!scopedSet.has(em) || isSalaryCategory(e.category) || isCashMovementExpense(e.category)) continue; const c = e.category || t('Other', 'أخرى'); expByCat[c] = (expByCat[c] || 0) + (Number(e.amount) || 0); }
   const totExpenses = Object.values(expByCat).reduce((s, v) => s + v, 0);
   const latestMk = scoped[scoped.length - 1] || months[months.length - 1];
-  const coachPerf = (state.coaches || []).filter(c => typeof isCoachActive !== 'function' || isCoachActive(c)).map(c => {
+  const coachPerf = (state.coaches || []).filter(c => isCoachRole(c) && (typeof isCoachActive !== 'function' || isCoachActive(c))).map(c => {
     let gross = 0;
     for (const mk of scoped) { const p = (typeof computeMonthlyPay === 'function') ? computeMonthlyPay(c.id, mk) : null; if (p) gross += p.gross || 0; }
     return { label: c.name, value: Math.round(gross) };
@@ -31167,7 +31168,7 @@ PAGES.reports = (main) => {
       revenue: fa.revenue, cost: fa.expenses + fa.salaries, profit: fa.profit, expenses: fa.expenses,
       newMembers: state.members.filter(m => String(m.firstRegistration || '').slice(0, 7) === mk).length };
     });
-    const _coachPerf = state.coaches.map(c => ({ label: c.name, value: _scoped.reduce((s, mk) => s + ((typeof computeMonthlyPay === 'function') ? (computeMonthlyPay(c.id, mk).gross || 0) : 0), 0) }))
+    const _coachPerf = state.coaches.filter(isCoachRole).map(c => ({ label: c.name, value: _scoped.reduce((s, mk) => s + ((typeof computeMonthlyPay === 'function') ? (computeMonthlyPay(c.id, mk).gross || 0) : 0), 0) }))
       .filter(r => r.value > 0).sort((a, b) => b.value - a.value).slice(0, 10);
     // v6.605 — trimmed per owner: removed Revenue vs Cost, Net Profit trend, Expenses by Category
     // (donut), Expenses by month, and New Members. Kept Revenue by Category + Coach Performance.
@@ -31341,7 +31342,7 @@ PAGES.reports = (main) => {
     // honours the commission basis, start-date, camp/Mixed rules and exclusions — NOT the old hand-rolled
     // "line revenue × rate", which ignored all of that and disagreed with the Salaries screen.
     const _scopedMonths = (typeof allDataMonths === 'function' ? allDataMonths() : []).filter(inPeriod);
-    const coachRows = state.coaches.map(c => {
+    const coachRows = state.coaches.filter(isCoachRole).map(c => {
       const rev = d.invs.reduce((a, i) => {
         const lis = (Array.isArray(i.lineItems) && i.lineItems.length) ? i.lineItems : [{ coachId: i.coachId, price: i.amount || 0 }];
         return a + lis.filter(li => String(li.coachId) === String(c.id)).reduce((s, li) => s + (li.price || 0), 0);
