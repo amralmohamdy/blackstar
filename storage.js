@@ -953,7 +953,20 @@
       onRemoteUpdate(callback) {
         remoteUpdateCallback = callback;
         while (_unsubs.length) { try { _unsubs.pop()(); } catch (_) {} }
-        const deliver = () => { if (!callback) return; try { callback(assembleLive()); } catch (e) { console.warn('[Storage:firebase] deliver failed:', e); } };
+        // v6.646 — INCREMENTAL DELIVERY. Remember every document that changed since the last delivery (including our own echoed
+        // writes, which return early below but still advance the cloud copy) and hand the list to the app, so the merge only has
+        // to examine those records instead of re-comparing the whole club on every remote change. The first delivery after a
+        // listener starts, and every 40th, are flagged full (the app then runs the original whole-snapshot merge as a safety net).
+        let _pending = {}, _pendingMeta = false, _fullNext = true, _evCount = 0;
+        const deliver = () => {
+          if (!callback) return;
+          try {
+            const delta = { full: _fullNext || (++_evCount % 40 === 0), changed: {}, meta: _pendingMeta };
+            for (const k of Object.keys(_pending)) delta.changed[k] = Array.from(_pending[k]);
+            _pending = {}; _pendingMeta = false; _fullNext = false;
+            callback(assembleLive(), delta);
+          } catch (e) { console.warn('[Storage:firebase] deliver failed:', e); }
+        };
         // HOT collections only — auditLog gets NO live listener (it would keep a real-time query
         // over thousands of append-only rows open for the whole session). It is fetched on demand.
         for (const name of HOT_COLLECTIONS) {
@@ -961,6 +974,7 @@
           const unsub = colRef(name).onSnapshot(qs => {
             qs.docChanges().forEach(ch => {
               const id = String(ch.doc.id);
+              if (_seeded[name]) (_pending[name] = _pending[name] || new Set()).add(id);   // v6.646: track what changed (not the initial seed)
               if (ch.type === 'removed') _live[name].delete(id);
               else {
                 _live[name].set(id, ch.doc.data());
@@ -980,6 +994,7 @@
           _unsubs.push(unsub);
         }
         const metaUnsub = parentRef().onSnapshot(snap => {
+          if (_metaSeeded) _pendingMeta = true;   // v6.646
           if (snap.exists) { const d = snap.data() || {}; _liveMeta = {}; for (const k of Object.keys(d)) if (!isCollectionKey(k)) _liveMeta[k] = d[k]; }
           const fromLocalWrite = snap.metadata && snap.metadata.hasPendingWrites;
           if (!_metaSeeded) { _metaSeeded = true; return; }
@@ -1087,16 +1102,22 @@
     function put(rec) { return _tx('readwrite').then(os => new Promise((res, rej) => { const rq = os.put(rec); rq.onsuccess = () => res(); rq.onerror = () => rej(rq.error); })); }
     function getAll() { return _tx('readonly').then(os => new Promise((res, rej) => { const rq = os.getAll(); rq.onsuccess = () => res(rq.result || []); rq.onerror = () => rej(rq.error); })); }
     function del(ts) { return _tx('readwrite').then(os => new Promise((res) => { const rq = os.delete(ts); rq.onsuccess = () => res(); rq.onerror = () => res(); })); }
+    // v6.646 — cleanup used to getAll() EVERY snapshot (each a ~2 MB copy of all data) into memory after every
+    // snapshot, and kept everything from the last 48 h — after a day of tab switching that was hundreds of MB read on
+    // the main thread each time. The store is keyed by ts, so decide from the KEYS alone (nothing is loaded) and keep:
+    // the newest 6, then one per hour for 48 h, then one per day for 21 days.
+    function allKeys() { return _tx('readonly').then(os => new Promise((res) => { const rq = os.getAllKeys(); rq.onsuccess = () => res(rq.result || []); rq.onerror = () => res([]); })); }
     async function prune() {
       try {
-        const all = (await getAll()).sort((a, b) => b.ts - a.ts);
-        const now = Date.now(); const keep = new Set(); const seenDay = new Set();
-        for (const s of all) {
-          const ageH = (now - s.ts) / 3600000, day = new Date(s.ts).toISOString().slice(0, 10);
-          if (ageH <= 48) keep.add(s.ts);                                   // everything from the last 48h
-          else if (!seenDay.has(day) && (now - s.ts) / 86400000 <= 21) { seenDay.add(day); keep.add(s.ts); }  // then 1/day for 21 days
-        }
-        for (const s of all) if (!keep.has(s.ts)) await del(s.ts);
+        const keys = (await allKeys()).map(Number).sort((a, b) => b - a);   // newest first
+        const now = Date.now(); const keep = new Set(); const seenHour = new Set(), seenDay = new Set();
+        keys.forEach((ts, i) => {
+          if (i < 6) { keep.add(ts); return; }                               // always the newest 6
+          const iso = new Date(ts).toISOString(), hour = iso.slice(0, 13), day = iso.slice(0, 10);
+          if ((now - ts) / 3600000 <= 48) { if (!seenHour.has(hour)) { seenHour.add(hour); keep.add(ts); } }          // 1/hour for 48 h
+          else if ((now - ts) / 86400000 <= 21) { if (!seenDay.has(day)) { seenDay.add(day); keep.add(ts); } }        // then 1/day for 21 days
+        });
+        for (const ts of keys) if (!keep.has(ts)) await del(ts);
       } catch (_) {}
     }
     return {
@@ -1106,13 +1127,16 @@
         if (!available() || !state) return null;
         try {
           const now = Date.now();
-          if (!force && now - _lastSnapAt < SNAP_THROTTLE_MS) return null;
+          // v6.646: "exit" (tab hidden / page closing) is forced but fires 3× per tab switch (visibilitychange, pagehide,
+          // beforeunload) — each a full 43–142 ms stringify + a 2 MB write. Allow one per 3 min and skip when nothing changed.
+          const minGap = force ? (reason === 'exit' ? 3 * 60 * 1000 : 0) : SNAP_THROTTLE_MS;
+          if (now - _lastSnapAt < minGap) return null;
           const json = JSON.stringify(state);
           if (!json || json.length < 2) return null;
           // Skip if identical to the last snapshot (no churn when nothing changed).
           let hash = 0; for (let i = 0; i < json.length; i += 997) hash = (hash * 31 + json.charCodeAt(i)) | 0;
           const sig = json.length + ':' + hash;
-          if (!force && sig === _lastHash) return null;
+          if ((!force || reason === 'exit') && sig === _lastHash) return null;
           _lastSnapAt = now; _lastHash = sig;
           const counts = {};
           for (const k of COLLECTIONS) counts[k] = Array.isArray(state[k]) ? state[k].length : 0;

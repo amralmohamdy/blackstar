@@ -341,10 +341,11 @@ PAGES.dashboard = (main) => {
     if (typeof memberStatus === 'function' && memberStatus(_m) === 'Withdrawn') withdrawnCount++;
   }
   // v6.617 — money physically collected TODAY (payments dated today across all invoices).
-  let todayRevenue = 0;
+  let todayRevenue = 0, yesterdayRevenue = 0;
+  const _yday = addDays(TODAY, -1);
   for (const _inv of (state.invoices || [])) {
     if (_inv.deleted) continue;
-    for (const _p of (_inv.payments || [])) if ((_p.date || '') === TODAY) todayRevenue += Number(_p.amount) || 0;
+    for (const _p of (_inv.payments || [])) { const _d = _p.date || ''; if (_d === TODAY) todayRevenue += Number(_p.amount) || 0; else if (_d === _yday) yesterdayRevenue += Number(_p.amount) || 0; }
   }
   // v6.640 — court + boxing-room rental counts for the period (shown in the New / Renewals box).
   let courtRentals = 0, boxRentals = 0;
@@ -529,6 +530,7 @@ PAGES.dashboard = (main) => {
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="font-size:18px">💵</span><div style="font-weight:600;font-size:13px">${t("Today's revenue", 'إيراد اليوم')}</div></div>
         <div style="font-size:20px;font-weight:800;color:var(--green);line-height:1">${fmt(todayRevenue)} <span style="font-size:12px;color:var(--text-dim);font-weight:500">QAR</span></div>
         <div class="text-mute" style="font-size:11px;margin-top:3px">${t('collected today', 'المُحصّل اليوم')}</div>
+        <div style="margin-top:8px;padding-top:6px;border-top:1px dashed var(--border,rgba(128,128,128,.3));display:flex;align-items:baseline;justify-content:space-between;gap:8px"><span class="text-mute" style="font-size:11px">${t('Yesterday', 'أمس')}</span><span style="font-size:14px;font-weight:700">${fmt(yesterdayRevenue)} <span style="font-size:11px;color:var(--text-dim);font-weight:500">QAR</span></span></div>
       </div>
       <div class="card" style="padding:12px 14px;border:1px solid rgba(139,92,246,.25);background:rgba(139,92,246,.05);cursor:pointer" onclick="navigate('members')" title="${t('New registrations + renewals this period', 'التسجيلات الجديدة + التجديدات هذه الفترة')}">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="font-size:18px">🆕</span><div style="font-weight:600;font-size:13px">${t('New / Renewals', 'جديد / تجديدات')} (${s.periodShort})</div></div>
@@ -2263,7 +2265,7 @@ function viewMember(id) {
     // the NEXT period of the same activity (the boundary day belongs to the later
     // period). Falls back to the static field.
     const win = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, s) : { from: s.start || null, to: s.end || null };
-    const liveForSport = liveAttendanceCount(m, s.activity, win.from, win.to);
+    const liveForSport = subLiveAttendance(m, s, win);   // v6.645: coach-aware, agrees with the commission engine
     let attended = liveForSport.total > 0 ? liveForSport.y : s.attendedClasses;
     let isLive = liveForSport.total > 0;
     // v6.570 — a Mixed package's attendance lives in m.mixedAttendance (per-day sport+coach), not the
@@ -2400,11 +2402,13 @@ function viewMember(id) {
     const movedAway = !!x.switchedAwayTo || x.transferredToCoachId != null;
     return !ended && !withdrawn && !movedAway;
   });
-  const curSubs = activeSubs.length ? activeSubs : allSubs.slice(-1);   // fallback: latest period
+  // v6.645: allSubs is sorted NEWEST-first, so the latest period is [0] — slice(-1) picked the OLDEST, so an
+  // expired member with renewals showed the first package's "8/8 · 100%" instead of the latest one.
+  const curSubs = activeSubs.length ? activeSubs : allSubs.slice(0, 1);   // fallback: latest period
   const curTotalClasses = curSubs.reduce((s, x) => s + (typeof subClassLimit === 'function' ? subClassLimit(x) : (x.totalClasses || 0)), 0);
   const curAttended = curSubs.reduce((acc, x) => {
     const win = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, x) : { from: x.start || null, to: x.end || null };
-    const lw = liveAttendanceCount(m, x.activity, win.from, win.to);
+    const lw = subLiveAttendance(m, x, win);
     return acc + (lw.total > 0 ? lw.y : (x.attendedClasses || 0));
   }, 0);
   const paidSum = allSubs.reduce((s,x) => s + (x.amountPaid || 0), 0);
@@ -2423,7 +2427,7 @@ function viewMember(id) {
   // Total = Paid + Due always reconciles with the member-level netted due.
   const totalPaid = (typeof memberMembershipPaid === 'function') ? memberMembershipPaid(m.id) : chargeInvs.reduce((s, i) => s + invoicePaid(i), 0);
   const balanceDue = (typeof memberOutstanding === 'function') ? memberOutstanding(m.id) : Math.max(0, totalCharged - totalPaid);
-  const anyLiveMarks = allSubs.some(x => { const _w = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, x) : { from: x.start || null, to: x.end || null }; return liveAttendanceCount(m, x.activity, _w.from, _w.to).total > 0; });   // v6.399: corrected window
+  const anyLiveMarks = allSubs.some(x => { const _w = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, x) : { from: x.start || null, to: x.end || null }; return subLiveAttendance(m, x, _w).total > 0; });   // v6.399: corrected window
   const liveCount = { total: anyLiveMarks ? 1 : 0 };   // flag for the "· live" label
   const attRatePct = curTotalClasses ? Math.min(100, Math.round(curAttended / curTotalClasses * 100)) : 0;
 
@@ -2938,7 +2942,15 @@ window.deleteMember = function(id) {
   const linkedMsg = linked.length
     ? `\n\nPRESERVED (history stays intact):\n• ${linked.join('\n• ')}\n• Coach commission already earned\n• Member ID, name, all data`
     : '\n\nNo linked records.';
-  const reason = prompt(`Archive ${m.name}?\n\nThis is a SOFT delete — no data is destroyed:${linkedMsg}\n\n` +
+  // v6.645: archiving removes the member from the commission engine for EVERY month, so a coach's pay for
+  // classes already taught silently drops (180 → 0 in the test). Show what will change before confirming.
+  let _impactMsg = '';
+  try {
+    const imp = (typeof memberCommissionImpact === 'function') ? memberCommissionImpact(m) : [];
+    if (imp.length) _impactMsg = '\n\n⚠ COACH PAY: archiving removes this member from salary reports in ALL months — about ' +
+      imp.map(x => fmt(x.pay) + ' QAR (' + x.coach + ')').join(', ') + ' of commission already earned will disappear. (Restoring the member brings it back.)';
+  } catch (_) {}
+  const reason = prompt(`Archive ${m.name}?\n\nThis is a SOFT delete — no data is destroyed:${linkedMsg}${_impactMsg}\n\n` +
     `${m.name} will be hidden from active lists but can be restored anytime\n` +
     `from the Members page → status filter "Archived".\n\nReason (optional):`, '');
   if (reason === null) return;  // user pressed Cancel
@@ -11682,7 +11694,9 @@ PAGES.coaches = (main) => {
     });
   }
 
-  function refresh() {
+  // v6.646: runs inside a calc scope (repeated pure calculations are computed once per call)
+  function refresh() { return withCalcScope(_refreshScoped); }
+  function _refreshScoped() {
     const coaches = visibleCoaches();
     const activeCount = state.coaches.filter(c => (c.active || 'Y') === 'Y').length;
     const inactiveCount = state.coaches.length - activeCount;
@@ -18489,9 +18503,13 @@ PAGES.salaries = (main) => {
   // Persist the chosen month + settle date on `window` so paying someone (which triggers a global
   // render() → re-runs this page) KEEPS the month the user was viewing instead of snapping back to
   // the latest/current month. (v6.363)
-  let filter = { month: window._salMonth || latestDataMonth() || currentMonth(), settleDate: window._salSettleDate || null };
+  // v6.645: 'active' (default) | 'inactive' (deactivated coaches — so their salaries can be viewed/printed) | 'all'
+  let filter = { month: window._salMonth || latestDataMonth() || currentMonth(), settleDate: window._salSettleDate || null, coachSet: window._salCoachSet || 'active' };
+  const _coachInSet = (c, set) => set === 'all' ? true : (set === 'inactive' ? !isCoachActive(c) : isCoachActive(c));
 
-  function refresh() {
+  // v6.646: runs inside a calc scope (repeated pure calculations are computed once per call)
+  function refresh() { return withCalcScope(_refreshScoped); }
+  function _refreshScoped() {
     // Compute pay rows for every active coach/staff — either for the selected
     // month, or (if a settlement date is set) up to and including that date.
     const upto = filter.settleDate || null;
@@ -18504,7 +18522,7 @@ PAGES.salaries = (main) => {
       return upto ? (String(jd) <= String(upto)) : (String(jd).slice(0, 7) <= filter.month);
     };
     const people = (state.coaches || [])
-      .filter(c => isCoachActive(c) && joinedBy(c))
+      .filter(c => _coachInSet(c, filter.coachSet) && joinedBy(c))
       .map(c => upto ? computeMonthlyPay(c.id, null, upto) : computeMonthlyPay(c.id, filter.month))
       .filter(p => p) // skip any null
       // Sort: unpaid (pending, then partial) first, then paid; each by amount desc
@@ -18637,9 +18655,10 @@ PAGES.salaries = (main) => {
     // on Recalculate (v6.436) — stamp the time so the user knows the figures are fresh, not cached.
     let _recStamp = '';
     try { const d = new Date(); _recStamp = ` · 🔄 recalculated ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; } catch (_) {}
+    const _setWord = filter.coachSet === 'inactive' ? t('inactive', 'غير نشط') : (filter.coachSet === 'all' ? t('coaches', 'مدربين') : t('active', 'نشط'));
     $('#sal-count').textContent = (filter.settleDate
-      ? `${people.length} active · ${fmtMoney(totalNet)} net · settlement up to ${fmtDate(filter.settleDate)} · ${paidCount} paid`
-      : `${people.length} active · ${fmtMoney(totalNet)} net payroll for ${fmtMonth(filter.month)} · ${paidCount} paid`) + _recStamp;
+      ? `${people.length} ${_setWord} · ${fmtMoney(totalNet)} net · settlement up to ${fmtDate(filter.settleDate)} · ${paidCount} paid`
+      : `${people.length} ${_setWord} · ${fmtMoney(totalNet)} net payroll for ${fmtMonth(filter.month)} · ${paidCount} paid`) + _recStamp;
 
     // Ad-hoc / external coach payments (free-text name on a Salary expense). These
     // people have no auto-calculated pay, so the amount paid IS their salary cost.
@@ -18693,7 +18712,7 @@ PAGES.salaries = (main) => {
         <button class="btn ghost" onclick="window._salRecalc && window._salRecalc()" title="${t('Re-run each coach commission from the latest attendance, invoices and payments', 'أعد حساب عمولة كل مدرب من أحدث الحضور والفواتير والمدفوعات')}">🔄 ${t('Recalculate', 'إعادة الحساب')}</button>
         ${currentRole() === 'admin' ? `<button class="btn ghost" onclick="coachAttributionCheck()" title="${t('Find invoice lines credited to a coach who is no longer the current coach for that sport, and re-credit them', 'ابحث عن بنود منسوبة لمدرب لم يعد مدرب العضو لتلك الرياضة، وأعد إسنادها')}">🧭 ${t('Coach check', 'فحص المدرب')}</button>` : ''}
         ${currentRole() === 'admin' && (typeof _switchedUnreconciled === 'function' && _switchedUnreconciled().length) ? `<button class="btn ghost" style="border-color:var(--accent-2);color:var(--accent-2)" onclick="switchReconcileCheck()" title="${t('A sport was switched before the fix — complete the old sport, split the payment, remove the phantom pending', 'رياضة بُدّلت قبل الإصلاح — أكمل القديمة وقسّم الدفعة وأزل المعلّق الوهمي')}">🔀 ${t('Switch check', 'فحص التبديل')} · ${_switchedUnreconciled().length}</button>` : ''}
-        <button class="btn primary" onclick="downloadPayrollCSV('${filter.month}')">📥 Export payroll</button>
+        <button class="btn primary" onclick="downloadPayrollCSV('${filter.month}', window._salCoachSet || 'active')">📥 Export payroll</button>
       </div>
     </div>
     <div style="background:rgba(91,141,239,.06);border:1px solid rgba(91,141,239,.2);border-radius:8px;padding:12px;margin-bottom:14px;display:flex;gap:10px;align-items:flex-start">
@@ -18719,6 +18738,11 @@ PAGES.salaries = (main) => {
           <input type="checkbox" id="sal-attended-only-cb" ${state.settings?.payAttendedOnly ? 'checked' : ''} /> ${t('Exclude carried-forward for expired (pay attended only)', 'استبعاد المُرحّل للمنتهية (دفع المحضور فقط)')}
         </label>
         <span style="opacity:.35">|</span>
+        <select id="sal-coachset" class="btn ghost" title="${t('Show active coaches, deactivated coaches (to view and print their salaries), or everyone', 'اعرض المدربين النشطين أو المعطّلين (لعرض وطباعة رواتبهم) أو الجميع')}">
+          <option value="active" ${filter.coachSet === 'active' ? 'selected' : ''}>${t('Active coaches', 'المدربون النشطون')}</option>
+          <option value="inactive" ${filter.coachSet === 'inactive' ? 'selected' : ''}>${t('Inactive (deactivated) coaches', 'المدربون المعطّلون')}</option>
+          <option value="all" ${filter.coachSet === 'all' ? 'selected' : ''}>${t('All coaches', 'كل المدربين')}</option>
+        </select>
         <select id="sal-month" class="btn ghost" ${filter.settleDate ? 'disabled style="opacity:.5"' : ''}>
           ${months.map(m => `<option value="${m}" ${filter.month === m ? 'selected' : ''}>${fmtMonth(m)}</option>`).join('')}
         </select>
@@ -18752,6 +18776,7 @@ PAGES.salaries = (main) => {
   `;
   window._salRecalc = refresh;   // v6.436 — the 🔄 Recalculate button re-runs the live commission compute
   $('#sal-month').addEventListener('change', e => { filter.month = e.target.value; window._salMonth = filter.month; refresh(); });
+  $('#sal-coachset').addEventListener('change', e => { filter.coachSet = e.target.value; window._salCoachSet = filter.coachSet; refresh(); });
   const salBasisChange = $('#sal-basis-change');
   if (salBasisChange) salBasisChange.addEventListener('click', () => {
     if (currentRole() !== 'admin') { toast('Only an admin can change the commission basis.'); return; }
@@ -20336,9 +20361,10 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
 };
 
 // Export the current month's payroll as CSV
-window.downloadPayrollCSV = function(monthKey) {
+window.downloadPayrollCSV = function(monthKey, coachSet) {
+  const set = coachSet || 'active';   // v6.645: follows the Salaries coach filter (active / inactive / all)
   const people = (state.coaches || [])
-    .filter(c => isCoachActive(c))
+    .filter(c => set === 'all' ? true : (set === 'inactive' ? !isCoachActive(c) : isCoachActive(c)))
     .map(c => computeMonthlyPay(c.id, monthKey))
     .filter(p => p);
   const rows = [
@@ -25160,7 +25186,8 @@ window.switchSport = function(memberId) {
             const _dSrc = _dCands.find(s => (s.start || '') <= switchDate && (!s.end || switchDate <= s.end)) || _dCands.slice().sort((a, b) => (a.start || '').localeCompare(b.start || '')).slice(-1)[0] || null;
             const _dEnd = _dSrc ? _dSrc.end : null;
             if (_dSrc) { _dSrc.status = 'completed'; _dSrc.switchedAwayTo = tgs.map(t => t.sport).join(', '); _dSrc.switchedAt = switchDate; _dSrc.totalClasses = attendedA; _dSrc.amountPaid = aShare; }
-            const _dEndSafe = (_dEnd && String(_dEnd) > String(switchDate)) ? _dEnd : null;   // v6.571: don't inherit an expired/last-day end (backwards window → rollback)
+            // v6.571: don't inherit an expired/last-day end (backwards window → rollback). v6.645: use a fresh window instead of leaving it open.
+            const _dEndSafe = (_dEnd && String(_dEnd) > String(switchDate)) ? _dEnd : addDays(switchDate, (_dSrc && parseInt(_dSrc.validity)) || DEFAULT_VALIDITY);
             resolved.forEach((tr, i) => m.subscriptions.push({ activity: tr.sport, coachId: tr.coachId, totalClasses: tr.classes, start: switchDate, end: _dEndSafe, status: 'active', switchFunded: true, amountPaid: tr.value, _sid: 's' + Date.now() + '_swd' + i }));
           }
           audit('sport.switch', 'member:' + m.id, 'Distributed ' + from.sport + ' → ' + tgs.map(t => t.sport).join(', ') + ' for ' + (m.name || m.nameArabic), { memberId: m.id });
@@ -25402,7 +25429,10 @@ window.switchSport = function(memberId) {
             // date the destination window would be backwards (start>end) or zero-day, which the v6.567
             // safety net rejects → the whole switch silently rolls back (an expired member could never be
             // switched). Leave the end OPEN (null) in that case; a later renewal sets a real end.
-            const _destEnd = (srcSub.end && String(srcSub.end) > String(switchDate)) ? srcSub.end : null;
+            // v6.645: …but never leave it open-ended (it would never expire): give it a fresh window from the
+            // switch date (the source's validity), exactly like a renewal.
+            const _destEnd = (srcSub.end && String(srcSub.end) > String(switchDate)) ? srcSub.end
+              : addDays(switchDate, parseInt(srcSub.validity) || DEFAULT_VALIDITY);
             m.subscriptions.push({ activity: toSport, coachId: finalToCoachId, totalClasses: _remainingCls,
               start: switchDate, end: _destEnd, status: 'active', switchFunded: true, amountPaid: _destPrice,
               _sid: 's' + Date.now() + '_sw' });
@@ -25879,11 +25909,14 @@ window.addRenewal = function(memberId) {
       { label: 'Cancel', class: 'btn ghost', onclick: closeModal },
       { label: 'Save Renewal', class: 'btn primary', onclick: () => {
         const start = $('#rn-start').value;
-        const end = $('#rn-end').value;
+        let end = $('#rn-end').value;
         const amount = parseFloat($('#rn-amount').value) || 0;
         const classesRaw = parseInt($('#rn-classes').value) || 0;
         const validity = parseInt($('#rn-validity').value) || DEFAULT_VALIDITY;
         const renewedSport = $('#rn-act').value;
+        // v6.645: never save a renewal with NO expiry date (the member would stay "Expired" and the package
+        // would never end). The box is pre-filled; if it was cleared, derive it from start + validity.
+        if (!end && start) end = rowEndDate(renewedSport, start, validity, classesRaw, null, false) || '';
         // Camp has no coach; for camp renewals a missing/NaN coach is fine (null).
         const coachId = isCampSport(renewedSport) ? null : (parseInt($('#rn-coach').value) || null);
         if (!start) { toast('Start date required', 'error'); return; }
@@ -26293,6 +26326,18 @@ window.editSubscription = function(memberId, sid) {
         const st = ($('#es-status') || {}).value || 'active';
         const coEl = $('#es-coach');
         const newCoachId = coEl ? (coEl.value === '' ? null : (parseInt(coEl.value, 10) || coEl.value)) : undefined;
+        // v6.645: lowering the class count WITHOUT lowering the price makes every class worth more, and the
+        // coach's commission on the classes ALREADY attended jumps with it (12→2 classes at 600 turned 15 into
+        // 90 for one class). Say so before saving, with the before/after value per class.
+        const _prevCls = parseInt(sub.totalClasses) || 0;
+        const _newPriceCk = isNaN(price) ? linePrice : price;
+        if (_prevCls > 0 && cls > 0 && cls < _prevCls && linePrice > 0) {
+          const _oldPC = linePrice / _prevCls, _newPC = _newPriceCk / cls;
+          if (_newPC > _oldPC * 1.2) {
+            if (!confirm(t(`⚠ You are changing ${_prevCls} classes → ${cls} classes at ${fmt(_newPriceCk)} QAR.\n\nEach class would be worth ${fmt(_newPC)} instead of ${fmt(_oldPC)}, so the coach's commission for every class ALREADY attended rises by ${(_newPC / _oldPC).toFixed(1)}×.\n\nIf the member simply left early, use Withdraw / Switch instead. Continue anyway?`,
+              `⚠ ستغيّر ${_prevCls} حصة ← ${cls} حصة بسعر ${fmt(_newPriceCk)} ر.ق.\n\nستصبح قيمة الحصة ${fmt(_newPC)} بدل ${fmt(_oldPC)}، فترتفع عمولة المدرب عن كل حصة حضرها العضو بمقدار ${(_newPC / _oldPC).toFixed(1)} مرة.\n\nإن غادر العضو مبكراً فاستخدم الانسحاب/التبديل. هل تتابع؟`))) return;
+          }
+        }
         sub.totalClasses = cls;
         sub.status = st;
         // v6.490: For a Summer Camp the class-day LIMIT comes from the duration LABEL
@@ -27153,7 +27198,9 @@ PAGES.expiring = (main) => {
     </div>
   `;
 
-  function renderSections() {
+  // v6.646: runs inside a calc scope (repeated pure calculations are computed once per call)
+  function renderSections() { return withCalcScope(_renderSectionsScoped); }
+  function _renderSectionsScoped() {
     // Sort within each section. Default keeps the expiry-proximity order computed
     // above; the other options re-order by last-renewal date (asc/desc).
     const applySort = (arr) => {
@@ -30697,7 +30744,9 @@ PAGES.coachperf = (main) => {
 
   const PALETTE = ['#f26060','#5b8def','#10b981','#f2a33c','#8b5cf6','#06b6d4','#ec4899','#d4af37','#22c55e','#eab308','#f97316','#a855f7'];
 
-  function refresh() {
+  // v6.646: runs inside a calc scope (repeated pure calculations are computed once per call)
+  function refresh() { return withCalcScope(_refreshScoped); }
+  function _refreshScoped() {
     const data = state.coaches.map((c, i) => {
       const st = statsFor(c.id, month);
       // v6.529: for a specific month, take commission straight from computeMonthlyPay so Charts matches
@@ -31088,7 +31137,9 @@ PAGES.reports = (main) => {
 
   const REVCAT_COLORS = { 'Membership':'#10b981','Membership · Camp':'#0ea5a5','Membership · Sports':'#10b981','Court Rental':'#f2a33c','Boxing Room':'#5b8def','Product':'#8b5cf6','Other':'#888' };
 
-  function renderBody() {
+  // v6.646: runs inside a calc scope (repeated pure calculations are computed once per call)
+  function renderBody() { return withCalcScope(_renderBodyScoped); }
+  function _renderBodyScoped() {
     const d = compute();
     // v6.644 — split the Membership category into Camp (Summer+Winter) and other Sports.
     const _cats = { ...d.revByCat };
