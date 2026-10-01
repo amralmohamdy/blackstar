@@ -471,6 +471,19 @@
       // Freezing each record's serialization HERE makes the base immune to later mutation.
       const sentBase = {};
       for (const name of COLLECTIONS) {
+        // v6.652 — AUDIT LOG: create-only, and ONLY for entries this session created (app.js audit() registers them in
+        // window.__auditCreated). It used to index and compare EVERY audit row in memory (7,500+) on every save and try to
+        // re-create the ones it did not recognise — thousands of doomed writes (the server rejects re-creating an existing row),
+        // repeated on every save.
+        if (name === 'auditLog') {
+          sentBase[name] = new Map();
+          const created = (typeof window !== 'undefined') ? window.__auditCreated : null;
+          if (created) for (const [cid, crec] of created) {
+            if (_auditKnown.has(String(cid))) { created.delete(cid); continue; }
+            ops.push({ kind: 'set', name, id: String(cid), data: crec, _audit: true });
+          }
+          continue;
+        }
         const baseMap = _base[name] || new Map();
         const curIdx = indexById(state[name], name.slice(0, 3));
         const snap = new Map();
@@ -619,7 +632,7 @@
           // create-only: no merge, so this is a CREATE and never trips the immutability rule.
           for (const op of auditOps) ab.set(colRef(op.name).doc(op.id), op.data);
           commits.push(ab.commit()
-            .then(() => { for (const op of auditOps) _auditKnown.add(String(op.id)); })
+            .then(() => { for (const op of auditOps) { _auditKnown.add(String(op.id)); try { if (window.__auditCreated) window.__auditCreated.delete(op.id); } catch (_) {} } })
             .catch(e => { console.warn('[Storage] audit entry not written (non-fatal):', (e && e.code) || e); }));
         }
         return Promise.all(commits);
