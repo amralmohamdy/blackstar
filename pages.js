@@ -31227,10 +31227,11 @@ PAGES.reports = (main) => {
 
       <div class="card mb-3">
         <div class="card-header"><div><div class="card-title">Revenue by Sport</div><div class="card-subtitle">From linked invoices · ${escapeHtml(periodLabel())}</div></div></div>
-        ${sortedSports.length ? sortedSports.map(([sport, rev]) => `
-          <div style="margin-bottom:10px">
+        ${(() => { window._repSportRows = sortedSports.map(x => x[0]); window._repSportMonths = allMonths.filter(inPeriod); return ''; })()}
+        ${sortedSports.length ? sortedSports.map(([sport, rev], _si) => `
+          <div class="rep-sport-row" style="margin-bottom:10px;cursor:pointer;padding:4px 6px;margin-left:-6px;margin-right:-6px;border-radius:8px" onclick="_repSportToTxn(${_si})" title="${t('Open the transactions behind this figure', 'افتح العمليات وراء هذا الرقم')}" onmouseover="this.style.background='var(--surface-2)'" onmouseout="this.style.background=''">
             <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
-              <span>${escapeHtml(sport)}</span><span class="font-bold">${fmt(rev)} QAR</span>
+              <span>${escapeHtml(sport)} <span class="text-mute" style="font-size:10px">↗</span></span><span class="font-bold">${fmt(rev)} QAR</span>
             </div>
             <div style="height:8px;background:var(--surface-2);border-radius:4px;overflow:hidden">
               <div style="height:100%;width:${(rev/sortedSports[0][1]*100).toFixed(1)}%;background:linear-gradient(90deg,var(--blue),var(--purple));border-radius:4px"></div>
@@ -34557,6 +34558,13 @@ function bindMultiSelect(id, onChange) {
   }
 }
 
+// Reports → Revenue by Sport row click: open Transactions scoped to that sport and the report's selected months.
+window._repSportToTxn = (idx) => {
+  const sport = (window._repSportRows || [])[idx];
+  if (sport == null) return;
+  window._txnLinkFilter = { sport, months: (window._repSportMonths || []).slice() };
+  navigate('transactions');
+};
 PAGES.transactions = (main) => {
   const isoOf = x => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;   // v6.634 — LOCAL date parts (toISOString shifted UTC+3 → "yesterday"/"this week" off by one)
   if (!window._txnState) window._txnState = { preset: 'this_month', from: '', to: '', months: [], years: [], categories: [], activities: [], methods: [], coachIds: [], hasDue: false, dueMode: 'gross', amountField: 'due', amountPreset: 'any', amountMin: '', amountMax: '', search: '' };
@@ -34572,6 +34580,16 @@ PAGES.transactions = (main) => {
   })();
   const st = window._txnState;
   const pg = (window._txnPager = window._txnPager || makePager(25));
+  if (window._txnLinkFilter) {
+    const lf = window._txnLinkFilter; window._txnLinkFilter = null;
+    Object.assign(st, { categories: [], activities: [], methods: [], coachIds: [], hasDue: false, dueMode: 'gross', amountField: 'due', amountPreset: 'any', amountMin: '', amountMax: '', search: '' });
+    st.preset = lf.months.length ? 'monthyear' : 'all';
+    st.monthKeys = lf.months.slice();
+    st.sportKey = lf.sport;
+    st.years = [...new Set(lf.months.map(m => m.slice(0, 4)))];
+    st.months = [...new Set(lf.months.map(m => String(parseInt(m.slice(5, 7), 10))))];
+    pg.page = 1;
+  }
 
   function resolveRange(preset, fromIn, toIn) {
     const today = TODAY;
@@ -34601,6 +34619,7 @@ PAGES.transactions = (main) => {
     let monthScopes = [];
     if (st.preset === 'this_month') monthScopes = [TODAY.slice(0, 7)];
     else if (st.preset === 'last_month') monthScopes = [String(range.from || '').slice(0, 7)];
+    else if (st.preset === 'monthyear' && st.monthKeys && st.monthKeys.length) monthScopes = st.monthKeys.slice();   // exact months handed over from Reports
     else if (st.preset === 'monthyear') {
       const yrs = (st.years && st.years.length) ? st.years.map(Number) : [parseInt(TODAY.slice(0, 4))];
       const mos = (st.months && st.months.length) ? st.months.map(Number) : [];
@@ -34660,13 +34679,26 @@ PAGES.transactions = (main) => {
       const _liAll = allItems.reduce((s, li) => s + (Number(li.price) || 0), 0);
       const _liKept = items.reduce((s, li) => s + (Number(li.price) || 0), 0);
       const _invValue = _liAll || (Number(inv.amount) || 0);   // === invoiceTotal(inv)
-      const _narrowed = (actSel.length > 0) || coachFiltered;
+      // Reports → Revenue by Sport drill-down: keep only the lines the report counted for that sport, in the selected months
+      // (same sport key + same revenue-month rule as billedBySportInPeriod, so the total ties out with the report).
+      let _sportAmount = null;
+      if (st.sportKey) {
+        const kept = items.filter(li => (li.sport || inv.sport || inv.activity || inv.category || 'Other') === st.sportKey
+          && (!scoped || monthScopes.includes(lineRevenueMonth(li, inv))));
+        if (!kept.length) continue;
+        items = kept;
+        const _lineSum = allItems.reduce((a, li) => a + (Number(li.price) || 0), 0);
+        const _tot = (typeof invoiceTotal === 'function') ? invoiceTotal(inv) : (Number(inv.amount) || 0);
+        _sportAmount = kept.reduce((a, li) => a + (Number(li.price) || 0), 0) * (_lineSum > 0 ? _tot / _lineSum : 1);
+        if (_lineSum <= 0) _sportAmount = _tot / (allItems.length || 1) * kept.length;
+      }
+      const _narrowed = (actSel.length > 0) || coachFiltered || _sportAmount != null;
       const _baseAmount = !_narrowed ? _invValue
         : (_liAll > 0 ? (_liKept / _liAll) * _invValue : _invValue);
       // Whole-month scope: show only THIS month's billed portion. A sport that starts
       // in another month bills there, so a cross-month invoice contributes its share
       // to each month — and the month total matches Club Revenue (billedInMonth).
-      const invAmount = _baseAmount * (scoped ? monthScopes.reduce((s, ym) => s + invoiceMonthShare(inv, ym), 0) : 1);
+      const invAmount = _sportAmount != null ? _sportAmount : _baseAmount * (scoped ? monthScopes.reduce((s, ym) => s + invoiceMonthShare(inv, ym), 0) : 1);
       // Summer Camp is standalone — never attribute it to a coach.
       const allCamp = items.length && items.every(isCampItem);
       const coachId = allCamp ? null : (inv.coachId || (allItems.find(li => li.coachId)?.coachId) || null);
@@ -34801,6 +34833,12 @@ PAGES.transactions = (main) => {
       countText = `${txns.length} ${t('transactions', 'عملية')} · ${fmt(grand)} QAR${dueShown > 0 ? ` · ${dueLabel} ${fmt(dueShown)}` : ''}${(st.dueMode === 'net' && grandDue !== grandNetDue) ? ` (${t('gross', 'إجمالي')} ${fmt(grandDue)})` : ''}`;
     }
     $('#txn-count').textContent = countText;
+    { const lb = $('#txn-linkbanner'); if (lb) {
+      const mk = (st.preset === 'monthyear' && st.monthKeys && st.monthKeys.length) ? st.monthKeys : [];
+      lb.innerHTML = st.sportKey ? `<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:8px 12px;margin:0 2px 10px;border:1px solid rgba(139,92,246,.35);background:rgba(139,92,246,.07);border-radius:8px;font-size:12px">
+        <span>🏆 <b>${t('Revenue by sport', 'الإيراد حسب الرياضة')}:</b> ${escapeHtml(st.sportKey)}${mk.length ? ' · ' + mk.map(m => escapeHtml(fmtMonth(m))).join(', ') : ''}</span>
+        <button class="btn ghost" style="margin-left:auto;padding:2px 10px;font-size:11px" onclick="_txnClearSport()">✕ ${t('Clear', 'مسح')}</button></div>` : '';
+    } }
     $('#txn-pagination').innerHTML = paginationBar(pg, txns.length, 'txn');
     bindPagination('txn', pg, txns.length, refresh);
     // custom range + month/year picker visibility
@@ -34810,6 +34848,7 @@ PAGES.transactions = (main) => {
     if (my) my.style.display = st.preset === 'monthyear' ? 'inline-flex' : 'none';
   }
 
+  window._txnClearSport = () => { st.sportKey = null; pg.page = 1; refresh(); };
   window._txnExportCSV = () => {
     const { txns, grand, grandPaid, grandDue } = build();
     const head = ['Date', 'Category', 'Customer', 'Sport', 'Coach', 'Method', 'Ref', 'Amount', 'Paid', 'Due'];
@@ -34905,6 +34944,7 @@ PAGES.transactions = (main) => {
         </div>
         <div class="search"><input id="txn-search" type="text" placeholder="${t('Search customer / ref / sport…', 'بحث عميل / مرجع / رياضة…')}" value="${escapeHtml(st.search)}" /></div>
       </div>
+      <div id="txn-linkbanner"></div>
       <div id="txn-summary" style="display:flex;flex-wrap:wrap;gap:6px;padding:0 2px 12px"></div>
       <div class="table-wrap">
         <table>
@@ -34916,7 +34956,7 @@ PAGES.transactions = (main) => {
       <div id="txn-pagination"></div>
     </div>
   `;
-  $('#txn-preset').addEventListener('change', e => { st.preset = e.target.value; pg.page = 1; refresh(); });
+  $('#txn-preset').addEventListener('change', e => { st.preset = e.target.value; st.monthKeys = []; pg.page = 1; refresh(); });
   $('#txn-from')?.addEventListener('change', e => { st.from = e.target.value; pg.page = 1; refresh(); });
   $('#txn-to')?.addEventListener('change', e => { st.to = e.target.value; pg.page = 1; refresh(); });
   bindMultiSelect('txn-cat', (vals) => { st.categories = vals; pg.page = 1; refresh(); });
@@ -34929,8 +34969,8 @@ PAGES.transactions = (main) => {
   $('#txn-amtmax')?.addEventListener('input', e => { st.amountMax = e.target.value; pg.page = 1; refresh(); });
   bindMultiSelect('txn-method', (vals) => { st.methods = vals; pg.page = 1; refresh(); });
   bindMultiSelect('txn-coach', (vals) => { st.coachIds = vals; pg.page = 1; refresh(); });
-  bindMultiSelect('txn-months', (vals) => { st.months = vals; pg.page = 1; refresh(); });   // req #7: multi-month
-  bindMultiSelect('txn-years', (vals) => { st.years = vals; pg.page = 1; refresh(); });      // req #7: multi-year
+  bindMultiSelect('txn-months', (vals) => { st.months = vals; st.monthKeys = []; pg.page = 1; refresh(); });   // req #7: multi-month
+  bindMultiSelect('txn-years', (vals) => { st.years = vals; st.monthKeys = []; pg.page = 1; refresh(); });      // req #7: multi-year
   $('#txn-search').addEventListener('input', e => { st.search = e.target.value; pg.page = 1; refresh(); });
   refresh();
 };
