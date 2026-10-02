@@ -210,12 +210,19 @@ function _privTagHtml(priv, plain) {
     ? `<div style="margin-top:2px"><span style="display:inline-block;background:#f3e8ff;color:#7c3aed;border:1px solid #d8b4fe;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700;line-height:1.4">🔒 ${txt}</span></div>`
     : `<div style="margin-top:2px"><span class="badge" style="font-size:9px;padding:1px 6px;background:rgba(139,92,246,.14);color:#7c3aed;font-weight:700">🔒 ${txt}</span></div>`;
 }
-function _privBonusNote(l, plain) {
+function _privBonusNote(l, plain, coachPct) {
   if (!l || l._dupIgnored || !(Number(l.price) > 0)) return '';
   const pct = (typeof privateBonusPct === 'function') ? privateBonusPct() : 10;
-  if (l.priv === 'coach') return `<div style="font-size:9px;font-weight:600;color:#7c3aed">+${fmt(l.price * pct / 100)} private bonus</div>`;
+  if (l.priv === 'coach') return `<div style="font-size:9px;font-weight:600;color:#7c3aed">+${fmt(l.price * (coachPct != null ? coachPct : pct) / 100)} private bonus</div>`;
   if (l.priv === 'reception') return `<div style="font-size:9px;font-weight:600;color:#7c3aed">${pct}% to reception (${fmt(l.price * pct / 100)})</div>`;
   return '';
+}
+// Pending (paid, not yet attended) row: the private bonus is earned as the classes are attended, so say so.
+function _privPendingNote(pl, plain, coachPct) {
+  if (!pl || (pl.priv !== 'coach' && pl.priv !== 'reception') || !(Number(pl.amountBase) > 0)) return '';
+  const pct = (typeof privateBonusPct === 'function') ? privateBonusPct() : 10;
+  const amt = fmt(pl.amountBase * (pl.priv === 'coach' && coachPct != null ? coachPct : pct) / 100);
+  return '<div style="font-size:9px;font-weight:600;color:#7c3aed">' + (pl.priv === 'coach' ? '+' + amt + ' private bonus once attended' : pct + '% to reception (' + amt + ') · paid in full next month') + '</div>';
 }
 PAGES.targets = (main) => {
   const role = currentRole();
@@ -4699,6 +4706,7 @@ window.viewCoach = function(id) {
             <span class="badge">${staffRoleEmoji(c.role)} ${staffRoleLabel(c.role)}</span>
             ${isViewerRole() ? '' : `${c.fixedSalary > 0 ? `<span class="badge blue">Fixed ${fmt(c.fixedSalary)} QAR</span>` : ''}
             ${c.rate > 0 ? `<span class="badge blue">${c.rate}% commission</span>` : ''}`}
+            ${isCoachRole(c) ? `<span class="badge" style="background:rgba(139,92,246,.14);color:#7c3aed;font-weight:700" title="${t('Bonus the coach earns on private training he brought in', 'البونس الذي يكسبه المدرب على التدريب الخاص الذي أحضره')}">🔒 ${t('Private', 'خاص')} +${coachPrivatePct(c)}%${isFinite(parseFloat(c.privateBonusPct)) ? '' : ' (' + t('default', 'افتراضي') + ')'}</span>` : ''}
           </div>
         </div>
       </div>
@@ -4739,6 +4747,7 @@ window.viewCoach = function(id) {
       </div>
     `,
     actions: [
+      ...((isCoachRole(c) && ['admin', 'receptionist'].includes(currentRole())) ? [{ label: '🔒 ' + t('Private bonus %', 'نسبة بونس الخاص'), class: 'btn ghost', onclick: () => { closeModal(); editCoachPrivatePct(id); } }] : []),
       ...(isViewerRole() ? [] : [
         { label: active ? '🚫 Deactivate' : '✅ Activate', class: 'btn ghost', onclick: () => { toggleCoachActive(id); closeModal(); viewCoach(id); } },
         { label: '👋 Coach left (offboard)', class: 'btn ghost', onclick: () => { closeModal(); offboardCoach(id); } },
@@ -4968,6 +4977,33 @@ window.transferCoachStudents = function(fromId) {
   });
 };
 
+// v6.665 — the coach's private-training bonus %. Default 10 (club setting); admin AND receptionist can raise or lower it for ONE coach.
+window.editCoachPrivatePct = function (id) {
+  if (!['admin', 'receptionist'].includes(currentRole())) { toast(t('Admins or receptionists only', 'للمسؤولين أو موظفي الاستقبال فقط'), 'error'); return; }
+  const c = state.coaches.find(x => x.id === id); if (!c) return;
+  const def = privateBonusPct(), cur = isFinite(parseFloat(c.privateBonusPct)) ? parseFloat(c.privateBonusPct) : '';
+  showModal({
+    title: '🔒 ' + t('Private training bonus', 'بونس التدريب الخاص') + ' · ' + escapeHtml(c.name),
+    body: `<div class="text-mute" style="font-size:12px;line-height:1.6;margin-bottom:10px">${t('When a customer comes to a PRIVATE package through THIS coach, he earns this % of the package base on top of his normal commission. Leave it empty to use the club default (' + def + '%). It applies to the pay of the months you open from now on, including past months that are re-opened.', 'عندما يأتي عميل لباقة خاصة عن طريق هذا المدرب يكسب هذه النسبة من أساس الباقة فوق عمولته المعتادة. اتركها فارغة لاستخدام الافتراضي (' + def + '%). تنطبق على رواتب الأشهر التي تفتحها من الآن، بما فيها الأشهر السابقة عند إعادة فتحها.')}</div>
+      <div class="field"><label>${t('Private bonus (%)', 'بونس الخاص (%)')}</label><input id="c-privpct" type="number" min="0" max="100" step="0.5" value="${cur}" placeholder="${def}" /></div>`,
+    actions: [
+      { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
+      { label: t('Use default', 'استخدام الافتراضي') + ' (' + def + '%)', class: 'btn ghost', onclick: () => saveCoachPrivatePct(id, null) },
+      { label: t('Save', 'حفظ'), class: 'btn primary', onclick: () => { const raw = String(($('#c-privpct') || {}).value || '').trim(); saveCoachPrivatePct(id, raw === '' ? null : raw); } },
+    ],
+  });
+};
+window.saveCoachPrivatePct = function (id, raw) {
+  if (!['admin', 'receptionist'].includes(currentRole())) return;
+  const c = state.coaches.find(x => x.id === id); if (!c) return;
+  let v = null;
+  if (raw != null) { v = parseFloat(raw); if (!isFinite(v) || v < 0 || v > 100) { toast(t('Enter a percentage between 0 and 100', 'أدخل نسبة بين 0 و100'), 'error'); return; } }
+  const before = isFinite(parseFloat(c.privateBonusPct)) ? parseFloat(c.privateBonusPct) : null;
+  if (v == null) delete c.privateBonusPct; else c.privateBonusPct = v;
+  try { if (typeof audit === 'function') audit('coach.private_pct', 'coach:' + id, c.name + ' private bonus ' + (before == null ? 'default' : before + '%') + ' → ' + (v == null ? 'default' : v + '%'), { coachId: id, from: before, to: v }); } catch (_) {}
+  closeModal();
+  withCloudConfirm({ verify: [{ collection: 'coaches', id }], okMsg: t('Private bonus saved', 'تم حفظ بونس الخاص'), afterOk: () => render() });
+};
 // Add or edit a coach/staff. Second arg is the default role for NEW people:
 // 'coach' (default) → presets commission=30, fixed=0, sports panel shown
 // 'staff'           → presets commission=0,  fixed=3000, sports panel hidden
@@ -5037,6 +5073,9 @@ window.editCoach = function(id, defaultRole) {
           </select>
         </div>
       </div>
+      <div class="form-row">
+        <div class="field"><label>🔒 ${t('Private training bonus (%)', 'بونس التدريب الخاص (%)')} <span class="text-mute" style="font-size:10px">${t('empty = club default', 'فارغ = الافتراضي')} (${privateBonusPct()}%)</span></label><input id="c-privpct" type="number" min="0" max="100" step="0.5" value="${isFinite(parseFloat(c.privateBonusPct)) ? parseFloat(c.privateBonusPct) : ''}" placeholder="${privateBonusPct()}" /></div>
+      </div>
       <div class="field" style="margin-top:2px">
         <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-weight:400">
           <input type="checkbox" id="c-attended-only" ${c.payAttendedOnly ? 'checked' : ''} />
@@ -5099,6 +5138,8 @@ window.editCoach = function(id, defaultRole) {
         const fixedSalary = parseFloat($('#c-fixed').value) || 0;
         const commissionBasis = (($('#c-basis') || {}).value) || '';   // '' = use club default; else 'attendance' | 'payment'
         const payAttendedOnly = !!(($('#c-attended-only') || {}).checked);   // v6.535: skip expiry true-up for this coach
+        const _ppRaw = String((($('#c-privpct') || {}).value) || '').trim(), _pp = _ppRaw === '' ? null : parseFloat(_ppRaw);   // v6.665: per-coach private bonus % (empty = club default)
+        if (_pp != null && (!isFinite(_pp) || _pp < 0 || _pp > 100)) { toast(t('Private bonus must be between 0 and 100', 'بونس الخاص بين 0 و100'), 'error'); return; }
         const roleVal = $('#c-role').value || 'coach';
         const sports = $$('.coach-sport').filter(x => x.checked).map(x => x.value);
         const activeVal = $('#c-active').value;
@@ -5116,6 +5157,7 @@ window.editCoach = function(id, defaultRole) {
             name, rate, fixedSalary, commissionBasis, payAttendedOnly, role: roleVal, sports, active: activeVal,
             phone, email: email || null, qid, birthdate: birthdate || null, gender, joinedDate,
           };
+          if (_pp != null) _nc.privateBonusPct = _pp;
           state.coaches.push(_nc);
           _savedCoachId = _nc.id;
         } else {
@@ -5123,6 +5165,7 @@ window.editCoach = function(id, defaultRole) {
             name, rate, fixedSalary, commissionBasis, payAttendedOnly, role: roleVal, sports, active: activeVal,
             phone, email: email || null, qid, birthdate: birthdate || null, gender, joinedDate,
           });
+          if (_pp == null) delete c.privateBonusPct; else c.privateBonusPct = _pp;
           _savedCoachId = c.id;
         }
         closeModal();
@@ -18757,12 +18800,14 @@ PAGES.salaries = (main) => {
         breakdown.push(`${p.commissionRate}% × ${fmt(p.commissionBase)} = ${fmt(p.commissionAmount)}`);
       }
       if (p.privateBonus > 0) breakdown.push(`🔒 private +${p.privateBonusPct}% × ${fmt(p.privateBonusBase)} = ${fmt(p.privateBonus)}`);   // v6.653
-      if (p.receptionBonus > 0) breakdown.push(`🔒 reception share ${p.privateBonusPct}% × ${fmt(p.receptionPoolBase)} ÷ ${p.receptionStaffCount} = ${fmt(p.receptionBonus)}`);
+      if (p.receptionBonus > 0) breakdown.push(`🔒 reception share ${p.receptionSharePct}% × ${fmt(p.receptionPoolBase)} ÷ ${p.receptionStaffCount} = ${fmt(p.receptionBonus)}`);
       if (p.targetBonus > 0) breakdown.push(`🎯 target bonus ${fmt(p.targetBonus)}${p.targetKind === 'reception' ? ` (${fmt(p.targetTierBonus)} ÷ ${p.targetStaff})` : ` (${p.targetValue} new/renew)`}`);   // v6.655
       const breakdownStr = breakdown.join(' + ') || '—';
-      const pendingNote = (p.basis === 'attendance' && p.commissionPending > 0)
+      const _pvPend = (p.privateBonusPending || 0) + (p.receptionBonusPending || 0);   // v6.664
+      const pendingNote = ((p.basis === 'attendance' && p.commissionPending > 0)
         ? `<div style="color:var(--accent-2);margin-top:2px">⏳ ${fmt(p.commissionPending)} pending — paid as attended, or stays with the club if they leave</div>`
-        : '';
+        : '')
+        + (_pvPend > 0.005 ? `<div style="color:#7c3aed;margin-top:2px">🔒 ⏳ ${fmt(_pvPend)} private ${p.receptionBonusPending > 0 ? 'share' : 'bonus'} pending — ${p.receptionBonusPending > 0 ? 'paid in full next month' : 'earned as the private member attends'}</div>` : '');
       const netNegative = p.net < 0;
       const grossNegative = p.gross < 0;
       const netColor = netNegative ? 'var(--red)' : 'var(--green)';
@@ -19785,7 +19830,8 @@ window.downloadPayslipPDF = function(coachId, monthKey) {
         ${pay.basis === 'attendance' && pay.commissionPending > 0 ? `<div class="row" style="color:#b45309"><span>Pending (not yet earned — see rule below)</span><span>${fmt(pay.commissionPending)} QAR</span></div>` : ''}
       ` : ''}
       ${pay.privateBonus > 0 ? `<div class="row"><span>Private bonus (+${pay.privateBonusPct}% on ${fmt(pay.privateBonusBase)} QAR of private packages you brought in)</span><span>${fmt(pay.privateBonus)} QAR</span></div>` : ''}
-      ${pay.receptionBonus > 0 ? `<div class="row"><span>Reception private share (${pay.privateBonusPct}% of ${fmt(pay.receptionPoolBase)} QAR ÷ ${pay.receptionStaffCount} staff)</span><span>${fmt(pay.receptionBonus)} QAR</span></div>` : ''}
+      ${pay.receptionBonus > 0 ? `<div class="row"><span>Reception private share (${pay.receptionSharePct}% of ${fmt(pay.receptionPoolBase)} QAR ÷ ${pay.receptionStaffCount} staff)</span><span>${fmt(pay.receptionBonus)} QAR</span></div>` : ''}
+      ${(pay.privateBonusPending || 0) + (pay.receptionBonusPending || 0) > 0.005 ? `<div class="row" style="color:#7c3aed"><span>⏳ Pending private ${pay.receptionBonusPending > 0 ? 'share' : 'bonus'} (not in gross — ${pay.receptionBonusPending > 0 ? 'paid in full next month' : 'earned as the private member attends'})</span><span>${fmt((pay.privateBonusPending || 0) + (pay.receptionBonusPending || 0))} QAR</span></div>` : ''}
       ${pay.targetBonus > 0 ? `<div class="row"><span>Target bonus (${pay.targetKind === 'reception' ? 'reception income target ' + fmt(pay.targetTierBonus) + ' ÷ ' + pay.targetStaff + ' staff' : pay.targetValue + ' new/renew this month'})</span><span>${fmt(pay.targetBonus)} QAR</span></div>` : ''}
       <div class="row bold"><span>Gross pay</span><span>${fmt(pay.gross)} QAR</span></div>
 
@@ -20224,7 +20270,7 @@ window.showRevenueDetail = function(coachId, monthKey) {
                 <td style="padding:6px 8px;border-top:1px solid var(--border)">${escapeHtml(l.sport || '—')}${_privTagHtml(l.priv)}</td>
                 <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace;color:var(--text-dim)">${(l.fee != null && isFinite(l.fee)) ? fmt(l.fee) : '—'}</td>
                 <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace;color:${l.price < 0 ? 'var(--red)' : 'var(--text)'}">${fmt(l.price)}</td>
-                <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace;font-weight:600;color:${l.price < 0 ? 'var(--red)' : 'var(--text)'}">${fmt(l.price * pay.commissionRate / 100)}${_privBonusNote(l)}</td>
+                <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace;font-weight:600;color:${l.price < 0 ? 'var(--red)' : 'var(--text)'}">${fmt(l.price * pay.commissionRate / 100)}${_privBonusNote(l, false, pay.privateBonusPct)}</td>
               </tr>
             `).join('') : '<tr><td colspan="5" style="padding:18px;text-align:center;color:var(--text-mute)">No commission-generating revenue this month</td></tr>'}
           </tbody>
@@ -20249,7 +20295,7 @@ window.showRevenueDetail = function(coachId, monthKey) {
                 ${pendingLines.map((p, _pn) => `<tr>
                   <td style="padding:6px 8px;border-top:1px solid var(--border);color:var(--text-mute)">${_pn + 1}</td>
                   <td style="padding:6px 8px;border-top:1px solid var(--border)">${escapeHtml(p.memberName)}${p.status === 'Frozen' ? ' <span class="badge blue" style="font-size:9px">❄️ Frozen</span>' : ''}</td>
-                  <td style="padding:6px 8px;border-top:1px solid var(--border)">${escapeHtml(p.sport || '—')}</td>
+                  <td style="padding:6px 8px;border-top:1px solid var(--border)">${escapeHtml(p.sport || '—')}${_privTagHtml(p.priv)}${_privPendingNote(p, false, pay.privateBonusPct)}</td>
                   <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right">${p.classes != null ? p.classes + (p.total ? ' / ' + p.total : '') : (p.status === 'Frozen' ? '❄️ frozen' : '—')}</td>
                   <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace">${fmt(p.amountBase * pay.commissionRate / 100)}</td>
                 </tr>`).join('')}
@@ -20267,6 +20313,17 @@ window.showRevenueDetail = function(coachId, monthKey) {
   });
 };
 
+// v6.662 — the package behind a payment-basis row: start / end / classes (attended of total) of the coach's own line on this invoice.
+function _pkgInfo(mem, inv, lis, coachId) {
+  const li = lis.find(x => String(x.coachId) === String(coachId) && !isCampSport(x.sport));
+  const sub = (mem && li) ? findSubForLine(mem, inv, li) : null;
+  const total = sub ? (((typeof subClassLimit === 'function') ? subClassLimit(sub) : 0) || parseInt(sub.totalClasses) || 0) : 0;
+  return {
+    start: sub ? (sub.start || null) : null, end: sub ? (sub.end || null) : null,
+    total: total || (li && parseInt(li.classes)) || null,
+    attended: (mem && sub) ? attendedYForSub(mem, sub) : null,
+  };
+}
 window.downloadRevenueDetailPDF = function(coachId, monthKey) {
   const c = state.coaches.find(x => x.id === coachId);
   const pay = computeMonthlyPay(coachId, monthKey);
@@ -20364,7 +20421,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
         sport: lis.filter(li => String(li.coachId) === String(coachId) && !isCampSport(li.sport)).map(li => li.sport).join(', ') || inv.sport,
         priv: (() => { for (const li of lis) { if (String(li.coachId) === String(coachId) && !isCampSport(li.sport)) { const tg = (typeof _privTag === 'function') ? _privTag(mem ? findSubForLine(mem, inv, li) : null, li) : ''; if (tg) return tg; } } return ''; })(),
         price: share, fee: Math.round(coachFee * 100) / 100, isSwitch: !!inv.switchCredit, invoiceRef: inv.ref || `INV${inv.id}`, invoiceDate: inv.date,
-        start: null, end: null, attended: null, total: null, status: 'paid',
+        ..._pkgInfo(mem, inv, lis, coachId), status: 'paid',
       });
     }
     lines = rebuilt;
@@ -20502,7 +20559,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
               <td style="font-size:11px">${escapeHtml(l.status || '—')}</td>
               ${ctCell(l)}
               <td class="num ${l.price < 0 ? 'neg' : ''}">${l._dupIgnored ? `<span style="text-decoration:line-through;color:#c0c0c0">${fmt(l._origAmount || 0)}</span> → <b>0</b>` : fmt(l.price)}${l.prorated ? `<div style="color:#999;font-size:9px">of ${fmt(l.fee)} · ${l.attended}/${l.total} attended</div>` : ''}</td>
-              <td class="num ${l.price < 0 ? 'neg' : ''}" style="font-weight:700">${l._dupIgnored ? '<b>0</b>' : fmt(l.price * rate / 100)}${_privBonusNote(l, true)}</td>
+              <td class="num ${l.price < 0 ? 'neg' : ''}" style="font-weight:700">${l._dupIgnored ? '<b>0</b>' : fmt(l.price * rate / 100)}${_privBonusNote(l, true, pay.privateBonusPct)}</td>
             </tr>`;
             const grand = lines.reduce((s, l) => s + l.price, 0);
             const grandRow = (label) => `<tr style="background:#f5f5f7;font-weight:700"><td colspan="7">${label}</td><td class="num">${fmt(grandCourse)}</td><td class="num">${fmt(grand)}</td><td class="num">${fmt(grand * rate / 100)}</td></tr>`;
@@ -20535,7 +20592,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
           ${pendingLines.map((p, _pn) => `<tr>
             <td style="color:#999">${_pn + 1}</td>
             <td>${escapeHtml(p.memberName)}${p.status === 'Frozen' ? ' <span style="font-size:10px;color:#2563eb;font-weight:700">❄️ Frozen</span>' : ''}</td>
-            <td>${escapeHtml(p.sport || '—')}</td>
+            <td>${escapeHtml(p.sport || '—')}${_privTagHtml(p.priv, true)}${_privPendingNote(p, true, pay.privateBonusPct)}</td>
             <td style="font-size:11px">${p.start ? fmtDate(p.start) : '—'}</td>
             <td style="font-size:11px">${p.end ? fmtDate(p.end) : (p.status === 'Frozen' ? '<span style="color:#2563eb">paused</span>' : '—')}</td>
             <td>${p.classes != null ? p.classes + (p.total ? ' / ' + p.total : '') : (p.status === 'Frozen' ? '❄️ frozen' : '—')}</td>
@@ -20554,7 +20611,8 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
         <div class="row"><span>Commission earned</span><span style="font-family:monospace">${fmt(pay.commissionAmount)} QAR</span></div>
       ` : ''}
       ${pay.privateBonus > 0 ? `<div class="row"><span>Private bonus (+${pay.privateBonusPct}% on ${fmt(pay.privateBonusBase)} QAR of private packages)</span><span style="font-family:monospace">${fmt(pay.privateBonus)} QAR</span></div>` : ''}
-      ${pay.receptionBonus > 0 ? `<div class="row"><span>Reception private share (${pay.privateBonusPct}% of ${fmt(pay.receptionPoolBase)} QAR ÷ ${pay.receptionStaffCount} staff)</span><span style="font-family:monospace">${fmt(pay.receptionBonus)} QAR</span></div>` : ''}
+      ${pay.receptionBonus > 0 ? `<div class="row"><span>Reception private share (${pay.receptionSharePct}% of ${fmt(pay.receptionPoolBase)} QAR ÷ ${pay.receptionStaffCount} staff)</span><span style="font-family:monospace">${fmt(pay.receptionBonus)} QAR</span></div>` : ''}
+      ${(pay.privateBonusPending || 0) + (pay.receptionBonusPending || 0) > 0.005 ? `<div class="row" style="color:#7c3aed"><span>⏳ Pending private ${pay.receptionBonusPending > 0 ? 'share' : 'bonus'} (not in gross — ${pay.receptionBonusPending > 0 ? 'paid in full next month' : 'earned as the private member attends'})</span><span style="font-family:monospace">${fmt((pay.privateBonusPending || 0) + (pay.receptionBonusPending || 0))} QAR</span></div>` : ''}
       ${pay.targetBonus > 0 ? `<div class="row"><span>Target bonus (${pay.targetKind === 'reception' ? 'reception income target ' + fmt(pay.targetTierBonus) + ' ÷ ' + pay.targetStaff + ' staff' : pay.targetValue + ' new/renew this month'})</span><span style="font-family:monospace">${fmt(pay.targetBonus)} QAR</span></div>` : ''}
       <div class="row bold"><span>Gross pay</span><span style="font-family:monospace">${fmt(pay.gross)} QAR</span></div>
 
