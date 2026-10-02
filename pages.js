@@ -2378,7 +2378,11 @@ function viewMember(id) {
           const invBtn = (!isViewerRole() && sid)
             ? ` <button onclick="event.stopPropagation();printMemberSubInvoicePDF(${m.id}, '${sid}')" title="${t('Export an invoice for this sport only', 'تصدير فاتورة لهذه الرياضة فقط')}" style="background:transparent;border:0;color:var(--green);opacity:.85;cursor:pointer;padding:0 3px;font-size:12px">📄</button>`
             : '';
-          return `${badge}${invBtn}${editBtn}${delBtn}`;
+          // v6.653 — Private package: who approached the customer decides who earns the private bonus.
+          const privBadge = (s.private && (s.approach === 'coach' || s.approach === 'reception'))
+            ? ` <span class="badge" style="background:rgba(139,92,246,.14);color:#7c3aed;font-weight:700;font-size:10px" title="${t('Private package', 'باقة خاصة')} · ${s.approach === 'coach' ? t('approached by the coach', 'عن طريق المدرب') : t('approached by reception', 'عن طريق الاستقبال')}">🔒 ${s.approach === 'coach' ? t('Private · coach', 'خاص · مدرب') : t('Private · reception', 'خاص · استقبال')}</span>`
+            : '';
+          return `${badge}${privBadge}${invBtn}${editBtn}${delBtn}`;
         })()}</td>
       </tr>
     `;
@@ -3126,6 +3130,14 @@ function enrollRowHtml(row, idx) {
         ${validityField}
       </div>
       ${expiryHint ? `<div style="font-size:10px;color:var(--blue);margin-top:7px;padding-left:2px">${expiryHint}</div>` : ''}${isCamp ? `<div style="font-size:10px;color:var(--blue);margin-top:5px;padding-left:2px">🌞 Summer Camp · revenue goes to club, no coach commission</div>` : ''}${isMixed ? `<div style="font-size:10px;color:var(--blue);margin-top:5px;padding-left:2px">🎯 ${t('Mixed · one package to try many sports · pick the sport + coach for each class in Attendance · commission splits to the coach who taught each class', 'مختلط · باقة واحدة لتجربة عدة رياضات · اختر الرياضة والمدرب لكل حصة في الحضور · تُقسَّم العمولة على المدرب الذي درّب كل حصة')}</div>` : ''}${row.paid ? `<div style="font-size:10px;color:var(--text-mute);margin-top:5px;padding-left:2px">🔒 Paid — editing the <b>price</b> adjusts the linked invoice (revenue + commission update too); editing start/validity adjusts this sport's window. ${(row.attended || 0) > 0 ? `The sport is <b>locked</b> because the member already attended <b>${row.attended}</b> class${(row.attended) === 1 ? '' : 's'} — use <b style="color:var(--accent-2)">↩ Withdraw</b> or <b style="color:var(--blue)">Switch Sport</b> to change it.` : `No classes attended yet, so you can still <b>change the sport directly</b> here — the linked invoice and commission move with it.`} <b style="color:var(--red)">🗑</b> deletes a mistake (no refund).</div>` : ''}
+      ${(isCamp || isMixed) ? '' : `<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:8px;padding-top:8px;border-top:1px dashed var(--border)">
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;cursor:pointer"><input type="checkbox" data-en="private" data-i="${idx}" ${row.private ? 'checked' : ''} /> 🔒 ${t('Private', 'خاص')}</label>
+        ${row.private ? `<div class="field" style="margin:0;min-width:230px"><select data-en="approach" data-i="${idx}" style="${(row.approach === 'coach' || row.approach === 'reception') ? '' : 'border-color:var(--accent)'}">
+            <option value="">${t('— Approached by… —', '— تم التواصل عن طريق… —')}</option>
+            <option value="coach" ${row.approach === 'coach' ? 'selected' : ''}>${t('Approached by the coach', 'عن طريق المدرب')}</option>
+            <option value="reception" ${row.approach === 'reception' ? 'selected' : ''}>${t('Approached by reception', 'عن طريق الاستقبال')}</option></select></div>
+          <span class="text-mute" style="font-size:11px">${row.approach === 'coach' ? t('The coach earns +' + privateBonusPct() + '% on top of his commission.', 'يحصل المدرب على +' + privateBonusPct() + '% فوق عمولته.') : row.approach === 'reception' ? t(privateBonusPct() + '% goes to the reception staff, shared equally.', privateBonusPct() + '% لموظفي الاستقبال بالتساوي.') : t('Required: who brought this customer?', 'مطلوب: من أحضر هذا العميل؟')}</span>` : ''}
+      </div>`}
     </div>`;
 }
 
@@ -3189,12 +3201,15 @@ function renderEnrollRows() {
       const key = e.target.dataset.en;
       const row = window._enrollRows[i];
       const val = e.target.value;
+      if (key === 'private') { row.private = !!e.target.checked; if (!row.private) row.approach = ''; renderEnrollRows(); return; }   // v6.653
+      if (key === 'approach') { row.approach = val; renderEnrollRows(); return; }
       if (key === 'coachId') {
         row.coachId = val ? parseInt(val) : null;
       } else if (key === 'sport') {
         const wasCamp = isCampSport(row.sport);
         const isNowCamp = isCampSport(val);
         row.sport = val;
+        if (isPrivateSport(val)) row.private = true;   // v6.653: a "(Private)" sport starts ticked; who approached still has to be chosen
         // If the currently-picked coach doesn't teach the new sport, clear it so
         // the admin must re-pick from the (now correctly filtered) coach list.
         if (!isNowCamp && row.coachId) {
@@ -3263,6 +3278,7 @@ function renderEnrollRows() {
     inp.addEventListener('input', (e) => {
       // For text inputs only — selects fire 'change' instead
       if (e.target.tagName === 'INPUT') {
+        if (e.target.type === 'checkbox') return;   // handled by 'change'
         const i = parseInt(e.target.dataset.i);
         const key = e.target.dataset.en;
         if (key === 'campDays') {
@@ -3447,6 +3463,7 @@ function showMemberForm(m) {
         // refund invoice + coach commission deduction (see withdrawSport()).
         paid: isEnrollmentPaid(m.id, e.sport),
         attended: (typeof liveAttendanceCount === 'function' ? (liveAttendanceCount(m, e.sport).y || 0) : 0),
+        private: !!((sub && sub.private) || e.private), approach: (sub && sub.approach) || e.approach || '',   // v6.653
         originalSport: e.sport,  // remember original sport for paid-row lookup if user edits
         originalCoachId: e.coachId,  // v6.504: remember original coach → change-coach vs add-coach at save
       };
@@ -3473,6 +3490,7 @@ function showMemberForm(m) {
         paid: isEnrollmentPaid(m.id, s.activity),
         attended: (typeof liveAttendanceCount === 'function' ? (liveAttendanceCount(m, s.activity).y || 0) : 0),
         originalSport: s.activity, originalCoachId: s.coachId,
+        private: !!s.private, approach: s.approach || '',
       });
     }
   } else if (m.subscriptions && m.subscriptions.length) {
@@ -3742,6 +3760,8 @@ function showMemberForm(m) {
           return true;
         };
         const completeRows = allRows.filter(rowComplete);
+        const _noApproach = completeRows.find(r => r.private && !(r.approach === 'coach' || r.approach === 'reception'));
+        if (_noApproach) { toast(t('"' + _noApproach.sport + '" is private — choose who approached the customer (coach or reception)', '"' + _noApproach.sport + '" خاص — اختر من أحضر العميل (المدرب أو الاستقبال)'), 'error'); return; }   // v6.653
         // Guard against fat-finger Classes entries (e.g. "2026"). Hard-reject
         // anything absurd; ask for confirmation on merely-unusual counts.
         const badRow = completeRows.find(r => (parseInt(r.classes) || 0) > MAX_CLASSES_HARD);
@@ -3796,6 +3816,8 @@ function showMemberForm(m) {
           _originalCoachId: (r.originalCoachId != null ? r.originalCoachId : null),  // v6.504: change-coach vs add-coach
           _paid: !!r.paid,
           _attended: r.attended || 0,
+          private: !!r.private && !isCampSport(r.sport) && r.sport !== MIXED,   // v6.653
+          approach: (r.private && (r.approach === 'coach' || r.approach === 'reception')) ? r.approach : null,
         }));
         // Block duplicate sports — a member can hold only one active enrollment per sport.
         const dupSport = duplicateEnrollmentSport(enrollments);
@@ -3900,6 +3922,7 @@ function showMemberForm(m) {
                 classes: e.classes,
                 price: e.price,
                 durationLabel: e.durationLabel || null,
+                ...(e.private ? { private: true, approach: e.approach } : {}),
               })),
             };
             stampUpdate(newInv); state.invoices.push(newInv);
@@ -3931,6 +3954,7 @@ function showMemberForm(m) {
                 amountPaid: e.price,
                 invoiceNumber: ref,
                 durationLabel: e.durationLabel || null,
+                ...(e.private ? { private: true, approach: e.approach } : {}),
                 _sid: 's' + Date.now() + '_' + i,
               });
             });
@@ -4124,6 +4148,7 @@ function showMemberForm(m) {
             classes: e.classes,
             price: e.price,
             durationLabel: e.durationLabel || null,
+            ...(e.private ? { private: true, approach: e.approach } : {}),
           }));
 
           // ONE invoice per member: merge the added sport(s) into the member's
@@ -4215,6 +4240,7 @@ function showMemberForm(m) {
               amountPaid: e.price,
               invoiceNumber: ref,
               durationLabel: e.durationLabel || null,
+              ...(e.private ? { private: true, approach: e.approach } : {}),
             });
           });
           // Update member's expiry to the LATEST end across all sports
@@ -18553,6 +18579,8 @@ PAGES.salaries = (main) => {
       if (p.commissionRate > 0) {
         breakdown.push(`${p.commissionRate}% × ${fmt(p.commissionBase)} = ${fmt(p.commissionAmount)}`);
       }
+      if (p.privateBonus > 0) breakdown.push(`🔒 private +${p.privateBonusPct}% × ${fmt(p.privateBonusBase)} = ${fmt(p.privateBonus)}`);   // v6.653
+      if (p.receptionBonus > 0) breakdown.push(`🔒 reception share ${p.privateBonusPct}% × ${fmt(p.receptionPoolBase)} ÷ ${p.receptionStaffCount} = ${fmt(p.receptionBonus)}`);
       const breakdownStr = breakdown.join(' + ') || '—';
       const pendingNote = (p.basis === 'attendance' && p.commissionPending > 0)
         ? `<div style="color:var(--accent-2);margin-top:2px">⏳ ${fmt(p.commissionPending)} pending — paid as attended, or stays with the club if they leave</div>`
@@ -19577,6 +19605,8 @@ window.downloadPayslipPDF = function(coachId, monthKey) {
         <div class="row"><span>Commission earned</span><span>${fmt(pay.commissionAmount)} QAR</span></div>
         ${pay.basis === 'attendance' && pay.commissionPending > 0 ? `<div class="row" style="color:#b45309"><span>Pending (not yet earned — see rule below)</span><span>${fmt(pay.commissionPending)} QAR</span></div>` : ''}
       ` : ''}
+      ${pay.privateBonus > 0 ? `<div class="row"><span>Private bonus (+${pay.privateBonusPct}% on ${fmt(pay.privateBonusBase)} QAR of private packages you brought in)</span><span>${fmt(pay.privateBonus)} QAR</span></div>` : ''}
+      ${pay.receptionBonus > 0 ? `<div class="row"><span>Reception private share (${pay.privateBonusPct}% of ${fmt(pay.receptionPoolBase)} QAR ÷ ${pay.receptionStaffCount} staff)</span><span>${fmt(pay.receptionBonus)} QAR</span></div>` : ''}
       <div class="row bold"><span>Gross pay</span><span>${fmt(pay.gross)} QAR</span></div>
 
       ${pay.basis === 'attendance' ? `
@@ -20340,6 +20370,8 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
         <div class="row"><span>Commission rate</span><span style="font-family:monospace">× ${pay.commissionRate}%</span></div>
         <div class="row"><span>Commission earned</span><span style="font-family:monospace">${fmt(pay.commissionAmount)} QAR</span></div>
       ` : ''}
+      ${pay.privateBonus > 0 ? `<div class="row"><span>Private bonus (+${pay.privateBonusPct}% on ${fmt(pay.privateBonusBase)} QAR of private packages)</span><span style="font-family:monospace">${fmt(pay.privateBonus)} QAR</span></div>` : ''}
+      ${pay.receptionBonus > 0 ? `<div class="row"><span>Reception private share (${pay.privateBonusPct}% of ${fmt(pay.receptionPoolBase)} QAR ÷ ${pay.receptionStaffCount} staff)</span><span style="font-family:monospace">${fmt(pay.receptionBonus)} QAR</span></div>` : ''}
       <div class="row bold"><span>Gross pay</span><span style="font-family:monospace">${fmt(pay.gross)} QAR</span></div>
 
       ${pay.advance > 0 ? `
@@ -25341,7 +25373,7 @@ window.switchSport = function(memberId) {
               ? _cands.slice().sort((a, b) => Math.abs((Number(a.price) || 0) - price) - Math.abs((Number(b.price) || 0) - price))[0]
               : _cands[0];
             if (_fl) { _fl.price = aShare; _fl.classes = attendedA; }
-            _inv.lineItems.push({ sport: toSport, coach: coachName(toCoachId), coachId: toCoachId, classes: moved, price: bPrice, issueDate: switchDate });
+            _inv.lineItems.push({ sport: toSport, coach: coachName(toCoachId), coachId: toCoachId, classes: moved, price: bPrice, issueDate: switchDate, ...privateCarryOnSwitch(_srcSubCycle, toSport, toCoachId) });
             _inv.amount = _inv.lineItems.reduce((s, li) => s + (Number(li.price) || 0), 0);
             _inv.sport = (typeof sportListWithDuration === 'function' && sportListWithDuration(_inv.lineItems)) || _inv.lineItems.map(li => li.sport).join(', ');
             _inv.description = `${m.name} — ${_inv.sport} subscription`;
@@ -25467,7 +25499,7 @@ window.switchSport = function(memberId) {
             const _destEnd = (srcSub.end && String(srcSub.end) > String(switchDate)) ? srcSub.end
               : addDays(switchDate, parseInt(srcSub.validity) || DEFAULT_VALIDITY);
             m.subscriptions.push({ activity: toSport, coachId: finalToCoachId, totalClasses: _remainingCls,
-              start: switchDate, end: _destEnd, status: 'active', switchFunded: true, amountPaid: _destPrice,
+              start: switchDate, end: _destEnd, status: 'active', switchFunded: true, amountPaid: _destPrice, ...privateCarryOnSwitch(srcSub, toSport, finalToCoachId),
               _sid: 's' + Date.now() + '_sw' });
           }
         }
@@ -25789,12 +25821,12 @@ window.addRenewalMulti = function(m, picks) {
           if (!m.renewals) m.renewals = [];
           m.renewals.push({ _rid, activity: r.sport, coach: coachName(r.coachId), coachId: r.coachId, start, end: end || null, validity, totalClasses: classes || null, amountPaid: amount, status, manual: true, createdAt: new Date().toISOString() });
           if (!m.subscriptions) m.subscriptions = [];
-          m.subscriptions.push({ _sid: 's' + _stamp + '_' + r.i, _rid, month: ymToShort(start.slice(0, 7)) || start.slice(0, 7), activity: r.sport, coach: coachName(r.coachId), coachId: r.coachId, firstRegistration: m.firstRegistration || null, start, end: end || null, validity, status, totalClasses: classes || null, attendedClasses: 0, priceCompleted: null, amountPaid: amount, invoiceNumber: ref, manual: true });
+          m.subscriptions.push({ _sid: 's' + _stamp + '_' + r.i, _rid, ...inheritPrivate(m, r.sport, r.coachId), month: ymToShort(start.slice(0, 7)) || start.slice(0, 7), activity: r.sport, coach: coachName(r.coachId), coachId: r.coachId, firstRegistration: m.firstRegistration || null, start, end: end || null, validity, status, totalClasses: classes || null, attendedClasses: 0, priceCompleted: null, amountPaid: amount, invoiceNumber: ref, manual: true });
           m.renewalsBySport = m.renewalsBySport || {}; m.renewalsBySport[r.sport] = (m.renewalsBySport[r.sport] || 0) + 1;
           m.renewalCount = (m.renewalCount || 0) + 1;
           if (amount > 0) {
             const dl = (isCamp && classes && typeof campLabelForClasses === 'function') ? (campLabelForClasses(classes) || '') : '';
-            invLines.push({ sport: r.sport, coach: coachName(r.coachId), coachId: r.coachId, classes, price: amount, durationLabel: dl || null, billMonth: start.slice(0, 7) });
+            invLines.push({ sport: r.sport, coach: coachName(r.coachId), coachId: r.coachId, classes, price: amount, ...inheritPrivate(m, r.sport, r.coachId), durationLabel: dl || null, billMonth: start.slice(0, 7) });
             invAmount += amount;
           }
           if (!maxEnd || (end && end > maxEnd)) maxEnd = end;
@@ -26006,6 +26038,7 @@ window.addRenewal = function(memberId) {
         m.subscriptions.push({
           _sid: 's' + Date.now(),
           _rid,                                    // back-ref to the renewal entry
+          ...inheritPrivate(m, renewedSport, coachId),   // v6.653
           month: ymToShort(start.slice(0,7)) || start.slice(0,7),
           activity: renewedSport,
           coach: coachName(coachId),
@@ -26070,6 +26103,7 @@ window.addRenewal = function(memberId) {
               classes,
               price: amount,
               durationLabel: dl || null,
+              ...inheritPrivate(m, renewedSport, coachId),   // v6.653
               billMonth: start.slice(0, 7),   // renewal revenue lands in the RENEWAL month, unambiguously
             }],
           });
@@ -26346,6 +26380,15 @@ window.editSubscription = function(memberId, sid) {
           <input id="es-price" type="number" min="0" step="0.01" value="${linePrice}" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)"></label>
         <label style="display:grid;gap:4px">${t('Coach', 'المدرب')} <span class="text-mute" style="font-size:10px">${t('commission for this sport follows the coach', 'عمولة هذه الرياضة تتبع المدرب')}</span>
           <select id="es-coach" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)">${coachOpts}</select></label>
+        ${(isCampSport(sub.activity || '') || sub.activity === MIXED) ? '' : `<div style="display:grid;gap:6px;padding:8px 10px;border:1px dashed var(--border);border-radius:8px">
+          <label style="display:flex;align-items:center;gap:6px;font-weight:600;cursor:pointer"><input type="checkbox" id="es-private" ${sub.private ? 'checked' : ''} onchange="var w=document.getElementById('es-approach-wrap');if(w)w.style.display=this.checked?'grid':'none'" /> 🔒 ${t('Private', 'خاص')}</label>
+          <div id="es-approach-wrap" style="display:${sub.private ? 'grid' : 'none'};gap:4px">
+            <select id="es-approach" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)">
+              <option value="">${t('— Approached by… —', '— تم التواصل عن طريق… —')}</option>
+              <option value="coach" ${sub.approach === 'coach' ? 'selected' : ''}>${t('Approached by the coach (coach +' + privateBonusPct() + '%)', 'عن طريق المدرب (المدرب +' + privateBonusPct() + '%)')}</option>
+              <option value="reception" ${sub.approach === 'reception' ? 'selected' : ''}>${t('Approached by reception (' + privateBonusPct() + '% shared by reception)', 'عن طريق الاستقبال (' + privateBonusPct() + '% للاستقبال)')}</option>
+            </select>
+          </div></div>`}
         <label style="display:grid;gap:4px">${t('Status', 'الحالة')}
           <select id="es-status" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)">
             ${statuses.map(o => `<option value="${o}" ${(sub.status || 'active') === o ? 'selected' : ''}>${t(o.charAt(0).toUpperCase() + o.slice(1), o)}</option>`).join('')}</select></label>
@@ -26359,6 +26402,11 @@ window.editSubscription = function(memberId, sid) {
         const st = ($('#es-status') || {}).value || 'active';
         const coEl = $('#es-coach');
         const newCoachId = coEl ? (coEl.value === '' ? null : (parseInt(coEl.value, 10) || coEl.value)) : undefined;
+        // v6.653 — Private flag + who approached the customer
+        const _pvEl = $('#es-private'), _apEl = $('#es-approach');
+        const newPrivate = _pvEl ? !!_pvEl.checked : undefined;
+        const newApproach = _apEl ? _apEl.value : '';
+        if (newPrivate && !(newApproach === 'coach' || newApproach === 'reception')) { toast(t('Private: choose who approached the customer (coach or reception)', 'خاص: اختر من أحضر العميل (المدرب أو الاستقبال)'), 'error'); return; }
         // v6.645: lowering the class count WITHOUT lowering the price makes every class worth more, and the
         // coach's commission on the classes ALREADY attended jumps with it (12→2 classes at 600 turned 15 into
         // 90 for one class). Say so before saving, with the before/after value per class.
@@ -26388,6 +26436,8 @@ window.editSubscription = function(memberId, sid) {
         }
         if (newCoachId !== undefined) { sub.coachId = newCoachId; sub.coach = newCoachId != null ? coachName(newCoachId) : ''; }
         if (!isNaN(price)) sub.amountPaid = price;
+        const _applyPriv = (o) => { if (newPrivate) { o.private = true; o.approach = newApproach; } else { delete o.private; delete o.approach; } };
+        if (newPrivate !== undefined) { _applyPriv(sub); if (line && !_lineShared) _applyPriv(line); }   // v6.653
         // Keep the invoice LINE (price + coach → commission + total) in sync with this profile edit —
         // but ONLY when the line is uniquely this period's. A line shared with another period (v6.626
         // _lineShared) is left untouched so editing one period can never rewrite another.
@@ -26413,6 +26463,7 @@ window.editSubscription = function(memberId, sid) {
             enr.classes = cls;
             if (!isNaN(price)) enr.price = price;
             if (newCoachId !== undefined) enr.coachId = newCoachId;
+            if (newPrivate !== undefined) { enr.private = !!newPrivate; enr.approach = newPrivate ? newApproach : null; }   // v6.653
             // v6.490: keep the camp duration in sync so the enrollment-driven invoice agrees.
             if (isCampSport((sub.activity || '')) && sub.durationLabel === 'Custom') enr.durationLabel = 'Custom';
           } else if (st !== 'completed' && st !== 'expired' && st !== 'withdrawn') {
