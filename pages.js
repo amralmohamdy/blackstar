@@ -24,18 +24,35 @@ function dashPeriodMonths(period) {
   const all = (typeof allDataMonths === 'function' ? allDataMonths() : []).slice().filter(Boolean).sort();
   if (!period || period.type === 'all') return all.length ? all : [(typeof currentMonth === 'function' ? currentMonth() : '')];
   if (period.type === 'year') return all.filter(m => m.slice(0, 4) === String(period.value));
+  if (period.type === 'months') return [...new Set((period.values || []).filter(v => /^\d{4}-\d{2}$/.test(String(v))))].sort();   // v6.667 — several hand-picked months
   return [period.value];   // single month
 }
+// Build a period from a list of month keys: none → null (no change), one → a plain month, 2+ → a multi-month period.
+function dashPeriodFromMonths(list) {
+  const v = [...new Set((list || []).filter(x => /^\d{4}-\d{2}$/.test(String(x))))].sort();
+  if (!v.length) return null;
+  return v.length === 1 ? { type: 'month', value: v[0] } : { type: 'months', values: v };
+}
+function _monthShift(ym, n) { const y = parseInt(ym.slice(0, 4), 10), m = parseInt(ym.slice(5, 7), 10) - 1 + n; const d = new Date(y, m, 1); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
 function dashPrevPeriod(period) {
   if (!period) return null;
   if (period.type === 'month') { const d = new Date(period.value + '-01T00:00:00'); d.setDate(0); return { type: 'month', value: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` }; }
   if (period.type === 'year') return { type: 'year', value: String(Number(period.value) - 1) };
+  if (period.type === 'months') { const v = dashPeriodMonths(period); if (!v.length) return null; return dashPeriodFromMonths(v.map((_, i) => _monthShift(v[0], -(v.length - i)))); }   // the same number of months right before the first one picked
   return null;   // all-time has no "previous"
 }
 function dashPeriodLabel(period) {
   if (!period || period.type === 'all') return t('All time', 'كل الوقت');
   if (period.type === 'year') return String(period.value);
+  if (period.type === 'months') { const v = dashPeriodMonths(period), f = x => (typeof fmtMonth === 'function') ? fmtMonth(x) : x; const contiguous = v.every((x, i) => i === 0 || _monthShift(v[i - 1], 1) === x); return v.length <= 3 ? v.map(f).join(' + ') : (contiguous ? f(v[0]) + ' – ' + f(v[v.length - 1]) : v.length + ' ' + t('months', 'أشهر')); }
   return (typeof fmtMonth === 'function') ? fmtMonth(period.value) : period.value;
+}
+function dashPeriodShort(period) {
+  if (!period) return '—';
+  if (period.type === 'all') return t('All', 'الكل');
+  if (period.type === 'year') return String(period.value);
+  if (period.type === 'months') { const v = dashPeriodMonths(period), f = x => ((typeof fmtMonth === 'function' ? fmtMonth(x) : x).split(' ')[0]); return v.length <= 3 ? v.map(f).join('+') : v.length + ' ' + t('mo', 'أش'); }
+  return ((typeof fmtMonth === 'function' ? fmtMonth(period.value) : period.value).split(' ')[0]);
 }
 // The SINGLE canonical money aggregate for a set of months — every Dashboard/Report figure derives from
 // this so the two screens can never disagree. Revenue = BILLED in each sport's START month (accrual);
@@ -77,11 +94,11 @@ function computeStats(arg) {
   const _mc = memberCounts();
   return {
     period, months,
-    currMonth: period.type === 'month' ? period.value : (period.type === 'year' ? period.value : 'all'),
-    prevMonth: pp ? pp.value : '',
+    currMonth: period.type === 'month' ? period.value : (period.type === 'year' ? period.value : (period.type === 'months' ? 'multi' : 'all')),
+    prevMonth: pp ? (pp.value || '') : '',
     periodLabel: dashPeriodLabel(period), prevLabel: pp ? dashPeriodLabel(pp) : '',
-    periodShort: period.type === 'month' ? ((typeof fmtMonth === 'function' ? fmtMonth(period.value) : period.value).split(' ')[0]) : (period.type === 'year' ? String(period.value) : t('All', 'الكل')),
-    prevShort: pp ? (pp.type === 'month' ? ((typeof fmtMonth === 'function' ? fmtMonth(pp.value) : pp.value).split(' ')[0]) : String(pp.value)) : '—',
+    periodShort: dashPeriodShort(period),
+    prevShort: pp ? dashPeriodShort(pp) : '—',
     currRevenue: cur.revenue, prevRevenue: prev.revenue,
     currCoachingRevenue: cur.coachingRevenue, prevCoachingRevenue: prev.coachingRevenue,
     currCashCollected: cur.cashCollected, prevCashCollected: prev.cashCollected,
@@ -472,18 +489,40 @@ PAGES.dashboard = (main) => {
         <select id="dash-period" title="${t('Show figures for this period', 'عرض الأرقام لهذه الفترة')}" style="padding:8px 12px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
           ${(() => {
             const per = normalizeDashPeriod();
-            const selVal = per.type === 'all' ? 'all' : (per.type === 'year' ? 'Y:' + per.value : per.value);
+            const selVal = per.type === 'all' ? 'all' : (per.type === 'year' ? 'Y:' + per.value : (per.type === 'months' ? 'multi' : per.value));
             const set = new Set([currentMonth()]);
             for (const i of state.invoices) if (i.month) set.add(i.month);
             for (const e of (state.expenses || [])) { const mo = expenseMonth(e); if (mo) set.add(mo); }
             const months = [...set].filter(plausibleMonthKey).sort().reverse();   // drop corrupt years (v6.621)
             const years = [...new Set(months.map(m => m.slice(0, 4)))].sort().reverse();
             const opt = (v, lab) => `<option value="${v}" ${v === selVal ? 'selected' : ''}>${lab}</option>`;
-            return opt('all', t('All time', 'كل الوقت'))
+            return (per.type === 'months' ? `<option value="multi" selected>🗓 ${escapeHtml(dashPeriodLabel(per))}</option>` : '')
+              + opt('all', t('All time', 'كل الوقت'))
               + `<optgroup label="${t('Year', 'سنة')}">` + years.map(y => opt('Y:' + y, y)).join('') + `</optgroup>`
               + `<optgroup label="${t('Month', 'شهر')}">` + months.map(mk => opt(mk, fmtMonth(mk))).join('') + `</optgroup>`;
           })()}
         </select>
+        ${(() => {
+          const per = normalizeDashPeriod(), cur = new Set(dashPeriodMonths(per));
+          const set = new Set([currentMonth()]);
+          for (const i of state.invoices) if (i.month) set.add(i.month);
+          for (const e of (state.expenses || [])) { const mo = expenseMonth(e); if (mo) set.add(mo); }
+          const months = [...set].filter(plausibleMonthKey).sort().reverse();
+          return `<div style="position:relative;display:inline-block" id="dash-multi-wrap">
+          <button type="button" class="btn ghost" id="dash-multi-btn" title="${t('Pick several months to add up', 'اختر عدة أشهر لجمعها')}">☑ ${t('Months', 'أشهر')}${per.type === 'months' ? ' (' + cur.size + ')' : ''} ▾</button>
+          <div id="dash-multi-panel" style="display:none;position:absolute;top:calc(100% + 4px);inset-inline-end:0;z-index:200;min-width:230px;max-height:360px;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.18);padding:8px">
+            <div style="display:flex;flex-wrap:wrap;gap:6px;padding-bottom:8px;border-bottom:1px solid var(--border);margin-bottom:6px">
+              <button type="button" class="btn ghost sm" data-last="3">${t('Last 3', 'آخر 3')}</button>
+              <button type="button" class="btn ghost sm" data-last="6">${t('Last 6', 'آخر 6')}</button>
+              <button type="button" class="btn ghost sm" id="dash-multi-clear">${t('Clear', 'مسح')}</button>
+            </div>
+            ${months.map(mk => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:6px;cursor:pointer;font-size:13px"><input type="checkbox" class="dash-multi-cb" value="${mk}" ${cur.has(mk) && per.type !== 'all' && per.type !== 'year' ? 'checked' : ''} /> <span>${fmtMonth(mk)}</span></label>`).join('')}
+            <div style="display:flex;gap:8px;justify-content:flex-end;padding-top:8px;border-top:1px solid var(--border);margin-top:6px">
+              <button type="button" class="btn ghost sm" id="dash-multi-cancel">${t('Cancel', 'إلغاء')}</button>
+              <button type="button" class="btn primary sm" id="dash-multi-apply">${t('Apply', 'تطبيق')}</button>
+            </div>
+          </div></div>`;
+        })()}
         <button class="btn ghost" id="export-btn">📥 ${t('Export','تصدير')}</button>
         <button class="btn ghost" id="dash-backup-top" title="Download a JSON backup of all your data">💾 ${t('Backup','نسخة احتياطية')}</button>
         ${currentRole() === 'admin' ? `<button class="btn ghost" id="dash-cloud-storage" title="${t('See how much data is stored in the cloud, by collection','اطّلع على حجم البيانات المخزّنة في السحابة حسب المجموعة')}">☁ ${t('Storage','التخزين')}</button>` : ''}
@@ -676,9 +715,33 @@ PAGES.dashboard = (main) => {
   const dashPeriodSel = $('#dash-period');
   if (dashPeriodSel) dashPeriodSel.addEventListener('change', () => {
     const v = dashPeriodSel.value;
+    if (v === 'multi') return;   // already showing the picked months
     window._dashPeriod = v === 'all' ? { type: 'all' } : (v.startsWith('Y:') ? { type: 'year', value: v.slice(2) } : { type: 'month', value: v });
     render();
   });
+
+  // v6.667 — several months at once: tick months, Apply (one repaint). Last 3 / 6 are shortcuts, one month = the normal single month.
+  { const mBtn = $('#dash-multi-btn'), mPanel = $('#dash-multi-panel');
+    if (mBtn && mPanel) {
+      const cbs = () => Array.from(mPanel.querySelectorAll('.dash-multi-cb'));
+      mBtn.addEventListener('click', e => { e.stopPropagation(); mPanel.style.display = mPanel.style.display === 'block' ? 'none' : 'block'; });
+      mPanel.addEventListener('click', e => e.stopPropagation());
+      if (!window._dashMultiOutside) { window._dashMultiOutside = true; document.addEventListener('click', () => { const pn = document.getElementById('dash-multi-panel'); if (pn && pn.style.display === 'block') pn.style.display = 'none'; }); }
+      Array.from(mPanel.querySelectorAll('[data-last]')).forEach(b => b.addEventListener('click', () => {
+        const n = parseInt(b.getAttribute('data-last'), 10) || 3, all = cbs().map(c => c.value);   // newest first
+        cbs().forEach(c => { c.checked = all.indexOf(c.value) < n; });
+      }));
+      const clr = $('#dash-multi-clear'); if (clr) clr.addEventListener('click', () => cbs().forEach(c => { c.checked = false; }));
+      const cancel = $('#dash-multi-cancel'); if (cancel) cancel.addEventListener('click', () => { mPanel.style.display = 'none'; });
+      const apply = $('#dash-multi-apply');
+      if (apply) apply.addEventListener('click', () => {
+        const per = dashPeriodFromMonths(cbs().filter(c => c.checked).map(c => c.value));
+        if (!per) { toast(t('Tick at least one month', 'اختر شهراً واحداً على الأقل'), 'error'); return; }
+        window._dashPeriod = per;
+        render();
+      });
+    }
+  }
 
   // v6.605 — these four cards were removed from the brief dashboard; the draw fns no-op when their
   // container is absent (guarded), so these calls stay harmless and the fns remain for reuse.
@@ -26669,6 +26732,10 @@ window.editSubscription = function(memberId, sid) {
     && (o.invoiceNumber || '') === (sub.invoiceNumber || '')
     && String(o.coachId) === String(sub.coachId));
   const linePrice = line ? (Number(line.price) || 0) : (Number(sub.amountPaid) || 0);
+  // v6.668 — "Paid so far" is editable when this invoice holds ONLY this line (so what is paid is unambiguous)
+  const _canAdjPaid = !!(inv && line && !_lineShared && Array.isArray(inv.lineItems) && inv.lineItems.length === 1);
+  const _curPaid = _canAdjPaid ? Math.round(invoicePaid(inv) * 100) / 100 : 0;
+  const _wasFullyPaid = _canAdjPaid && linePrice > 0 && Math.abs(_curPaid - linePrice) < 0.01;
   const hasSwitchCredit = (state.invoices || []).some(v => !v.deleted && v.switchCredit && v.customerId === m.id && Array.isArray(v.lineItems) && v.lineItems.some(l => l.sport === sub.activity));
   const statuses = ['active', 'completed', 'expired', 'frozen'];
   // Coach picker (v6.482): the PROFILE is the single place to set a sport's price / classes / coach.
@@ -26687,6 +26754,9 @@ window.editSubscription = function(memberId, sid) {
           <input id="es-classes" type="number" min="0" value="${sub.totalClasses != null ? sub.totalClasses : 0}" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)"></label>
         <label style="display:grid;gap:4px">${t('Price (QAR)', 'السعر')} <span class="text-mute" style="font-size:10px">${t('updates the invoice line + commission + profile', 'يحدّث بند الفاتورة والعمولة والملف')}</span>
           <input id="es-price" type="number" min="0" step="0.01" value="${linePrice}" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)"></label>
+        ${_canAdjPaid ? `<label style="display:grid;gap:4px">${t('Paid so far (QAR)', 'المدفوع حتى الآن')} <span class="text-mute" style="font-size:10px">${t('what is recorded as paid on this invoice — saved with the edit, so the profile shows it', 'المسجَّل كمدفوع على هذه الفاتورة — يُحفظ مع التعديل ليظهر في الملف')}</span>
+          <div style="display:flex;gap:6px;align-items:center"><input id="es-paid" type="number" min="0" step="0.01" value="${_curPaid}" style="flex:1;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)"><button type="button" class="btn ghost sm" id="es-paid-full" title="${t('Set paid = price (fully paid)', 'اجعل المدفوع = السعر (مدفوع بالكامل)')}">= ${t('price', 'السعر')}</button></div>
+          <span id="es-paid-hint" class="text-mute" style="font-size:11px;font-weight:600"></span></label>` : `<div class="text-mute" style="font-size:11px">${t('This invoice has several sports (or its line is shared), so what is paid is changed per payment: use 💳 Installments.', 'هذه الفاتورة تضم عدة رياضات (أو بندها مشترك) لذا يُعدَّل المدفوع من 💳 الأقساط.')}</div>`}
         <label style="display:grid;gap:4px">${t('Coach', 'المدرب')} <span class="text-mute" style="font-size:10px">${t('commission for this sport follows the coach', 'عمولة هذه الرياضة تتبع المدرب')}</span>
           <select id="es-coach" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)">${coachOpts}</select></label>
         ${(isCampSport(sub.activity || '') || sub.activity === MIXED) ? '' : `<div style="display:grid;gap:6px;padding:8px 10px;border:1px dashed var(--border);border-radius:8px">
@@ -26727,6 +26797,17 @@ window.editSubscription = function(memberId, sid) {
           if (_newPC > _oldPC * 1.2) {
             if (!confirm(t(`⚠ You are changing ${_prevCls} classes → ${cls} classes at ${fmt(_newPriceCk)} QAR.\n\nEach class would be worth ${fmt(_newPC)} instead of ${fmt(_oldPC)}, so the coach's commission for every class ALREADY attended rises by ${(_newPC / _oldPC).toFixed(1)}×.\n\nIf the member simply left early, use Withdraw / Switch instead. Continue anyway?`,
               `⚠ ستغيّر ${_prevCls} حصة ← ${cls} حصة بسعر ${fmt(_newPriceCk)} ر.ق.\n\nستصبح قيمة الحصة ${fmt(_newPC)} بدل ${fmt(_oldPC)}، فترتفع عمولة المدرب عن كل حصة حضرها العضو بمقدار ${(_newPC / _oldPC).toFixed(1)} مرة.\n\nإن غادر العضو مبكراً فاستخدم الانسحاب/التبديل. هل تتابع؟`))) return;
+          }
+        }
+        // v6.668 — record the "Paid so far" the admin set. BEFORE the price changes (a legacy no-ledger invoice reads as paid at its OLD total).
+        const _pdEl = $('#es-paid');
+        if (_canAdjPaid && _pdEl && String(_pdEl.value).trim() !== '') {
+          const _np = parseFloat(_pdEl.value);
+          if (isNaN(_np) || _np < 0) { toast(t('Paid must be 0 or more', 'المدفوع يجب أن يكون 0 أو أكثر'), 'error'); return; }
+          const _d = adjustInvoicePaid(inv, _np, (sub.activity || '') + ' price ' + fmt(linePrice) + ' → ' + fmt(isNaN(price) ? linePrice : price));
+          if (_d) {
+            if (typeof stampUpdate === 'function') stampUpdate(inv);
+            if (typeof audit === 'function') audit('invoice.paid_adjust', 'invoice:' + inv.id, 'Paid on ' + (inv.ref || '#' + inv.id) + ' ' + fmt(_curPaid) + ' → ' + fmt(_np) + ' (' + (_d > 0 ? '+' : '') + fmt(_d) + ') from the profile edit of ' + (sub.activity || ''), { invoiceId: inv.id, from: _curPaid, to: _np });
           }
         }
         sub.totalClasses = cls;
@@ -26791,6 +26872,25 @@ window.editSubscription = function(memberId, sid) {
       } },
     ],
   });
+  // v6.668 — "Paid so far": keeps a fully-paid package fully paid while the price is edited (the club's convention), shows due / overpaid live.
+  { const pEl = $('#es-paid'), prEl = $('#es-price'), hint = $('#es-paid-hint'), fullBtn = $('#es-paid-full');
+    if (pEl && prEl && typeof pEl.addEventListener === 'function' && typeof prEl.addEventListener === 'function') {
+      let _sync = _wasFullyPaid;
+      const num = el => { const v = parseFloat(el.value); return isNaN(v) ? 0 : v; };
+      const refresh = () => {
+        if (!hint) return;
+        const price = num(prEl), paid = num(pEl), gap = Math.round((price - paid) * 100) / 100;
+        const shift = Math.round((paid - _curPaid) * 100) / 100;
+        hint.textContent = (Math.abs(gap) < 0.005 ? t('Fully paid', 'مدفوع بالكامل') : (gap > 0 ? fmt(gap) + ' ' + t('due', 'متبقي') : fmt(-gap) + ' ' + t('overpaid', 'زيادة')))
+          + (Math.abs(shift) >= 0.005 ? ' · ' + t('will record ' + (shift > 0 ? '+' : '') + fmt(shift) + ' on the invoice', 'سيُسجَّل ' + (shift > 0 ? '+' : '') + fmt(shift) + ' على الفاتورة') : '');
+        hint.style.color = Math.abs(gap) < 0.005 ? 'var(--green)' : (gap > 0 ? 'var(--accent-2)' : 'var(--red)');
+      };
+      prEl.addEventListener('input', () => { if (_sync) pEl.value = prEl.value; refresh(); });
+      pEl.addEventListener('input', () => { _sync = false; refresh(); });
+      if (fullBtn) fullBtn.addEventListener('click', () => { pEl.value = prEl.value; _sync = true; refresh(); });
+      refresh();
+    }
+  }
 };
 window.deleteSubscription = function(memberId, sid) {
   if (currentRole() !== 'admin') { toast('Only admins can delete a subscription', 'error'); return; }
