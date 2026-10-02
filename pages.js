@@ -2287,7 +2287,8 @@ function viewMember(id) {
 
   // v6.585 — per-row PAID from the invoice lines (source of truth), so the rows reconcile with the
   // invoice-based header even after a switch left a sub.amountPaid stale. Falls back to sub.amountPaid.
-  const _rowPaid = (typeof memberSubPaidMap === 'function') ? memberSubPaidMap(m, allSubs) : new Map();
+  const _rowPrice = new Map();   // v6.666 — the invoice-line price each row is matched to
+  const _rowPaid = (typeof memberSubPaidMap === 'function') ? memberSubPaidMap(m, allSubs, _rowPrice) : new Map();
 
   const subs = allSubs.map(s => {
     const total = (typeof subClassLimit === 'function') ? subClassLimit(s) : s.totalClasses;
@@ -2349,7 +2350,7 @@ function viewMember(id) {
         <td>${s.start ? fmtDate(s.start) : '—'}</td>
         <td>${s.end ? fmtDate(s.end) : '—'}</td>
         <td>${attCell}</td>
-        ${isViewerRole() ? '' : (() => { const rp = _rowPaid.has(s) ? _rowPaid.get(s) : (Number(s.amountPaid) || 0); return `<td class="text-right num">${rp ? fmt(rp) : '—'}</td>`; })()}
+        ${isViewerRole() ? '' : (() => { const rp = _rowPaid.has(s) ? _rowPaid.get(s) : (Number(s.amountPaid) || 0); const pr = _rowPrice.has(s) ? _rowPrice.get(s) : null; const gap = (pr != null) ? Math.round((pr - rp) * 100) / 100 : 0; return `<td class="text-right num">${rp ? fmt(rp) : '—'}${Math.abs(gap) > 0.5 ? `<div style="font-size:9px;font-weight:700;color:${gap > 0 ? 'var(--accent-2)' : 'var(--red)'}" title="${t('Price on the invoice line vs money actually paid', 'سعر بند الفاتورة مقابل المدفوع فعلاً')}">${t('of', 'من')} ${fmt(pr)} · ${gap > 0 ? fmt(gap) + ' ' + t('due', 'متبقي') : fmt(-gap) + ' ' + t('overpaid', 'زيادة')}</div>` : ''}</td>`; })()}
         <td>${(() => {
           // Derive this subscription's own status from its END date + attendance,
           // rather than a stored 'status' that was set once and never updated. So
@@ -26752,6 +26753,7 @@ window.editSubscription = function(memberId, sid) {
         // _lineShared) is left untouched so editing one period can never rewrite another.
         if (line && !_lineShared) {
           if (!isNaN(price)) line.price = price;
+          if (!isCampSport(sub.activity || '') && cls > 0) line.classes = cls;   // v6.666: the invoice shows the edited class count too (it kept the old one)
           if (newCoachId !== undefined) { line.coachId = newCoachId; line.coach = newCoachId != null ? coachName(newCoachId) : ''; }
           if (Array.isArray(inv.lineItems)) { inv.amount = (typeof invoiceTotal === 'function') ? invoiceTotal(inv) : inv.lineItems.reduce((s, l) => s + (Number(l.price) || 0), 0); if (typeof stampUpdate === 'function') stampUpdate(inv); }
         }
@@ -26782,9 +26784,10 @@ window.editSubscription = function(memberId, sid) {
         if (typeof stampUpdate === 'function') stampUpdate(m);
         if (typeof audit === 'function') audit('subscription.edit', 'member:' + m.id, `Edited ${sub.activity}: ${cls} classes · ${fmt(isNaN(price) ? linePrice : price)} · ${st}${newCoachId !== undefined ? ' · coach ' + (coachName(newCoachId) || '—') : ''} (profile+invoice synced)`, { memberId: m.id, sport: sub.activity });
         closeModal();
+        const _balNow = (inv && !_lineShared && typeof invoiceBalance === 'function') ? invoiceBalance(inv) : 0;   // v6.666: a raised price leaves a balance — say so
         confirmSaved(_lineShared
           ? t('Sport updated (this period only). Its invoice line is SHARED with another period, so it was left unchanged to protect the other period — split them into separate invoices to edit the price here.', 'تم تحديث هذه الفترة فقط. بند فاتورتها مشترك مع فترة أخرى، لذا تُرك دون تغيير لحماية الفترة الأخرى — افصلهما في فاتورتين منفصلتين لتعديل السعر هنا.')
-          : t('Sport updated (profile + invoice)', 'تم تحديث الرياضة (الملف والفاتورة)'), { onOk: () => viewMember(m.id) });
+          : t('Sport updated (profile + invoice)', 'تم تحديث الرياضة (الملف والفاتورة)') + (_balNow > 0.5 ? ' · ' + t(fmt(_balNow) + ' QAR now due on ' + (inv.ref || 'the invoice'), 'المتبقي الآن ' + fmt(_balNow) + ' على ' + (inv.ref || 'الفاتورة')) : ''), { onOk: () => viewMember(m.id) });
       } },
     ],
   });
