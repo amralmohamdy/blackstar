@@ -202,6 +202,21 @@ function _targetCard(emoji, title, subtitle, value, tiers, unit) {
     <div style="margin-top:8px;display:grid;gap:2px;text-align:left">${legend}</div>
   </div>`;
 }
+// v6.656 — "Private" tag + the bonus a private line carries, for the coach salary report (screen + PDF).
+function _privTagHtml(priv, plain) {
+  if (priv !== 'coach' && priv !== 'reception') return '';
+  const txt = priv === 'coach' ? 'Private · coach' : 'Private · reception';
+  return plain
+    ? ` <span style="display:inline-block;background:#f3e8ff;color:#7c3aed;border:1px solid #d8b4fe;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700;line-height:1.4">🔒 ${txt}</span>`
+    : ` <span class="badge" style="font-size:9px;padding:1px 6px;background:rgba(139,92,246,.14);color:#7c3aed;font-weight:700">🔒 ${txt}</span>`;
+}
+function _privBonusNote(l, plain) {
+  if (!l || l._dupIgnored || !(Number(l.price) > 0)) return '';
+  const pct = (typeof privateBonusPct === 'function') ? privateBonusPct() : 10;
+  if (l.priv === 'coach') return `<div style="font-size:9px;font-weight:600;color:#7c3aed">+${fmt(l.price * pct / 100)} private bonus</div>`;
+  if (l.priv === 'reception') return `<div style="font-size:9px;font-weight:600;color:#7c3aed">${pct}% to reception (${fmt(l.price * pct / 100)})</div>`;
+  return '';
+}
 PAGES.targets = (main) => {
   const role = currentRole();
   const isCoach = role === 'coach';
@@ -1180,7 +1195,7 @@ PAGES.members = (main) => {
         opts: () => (typeof SPORTS !== 'undefined' && SPORTS.length) ? SPORTS.slice() : distinct(state.members.map(x => x.sport)),
         sortVal: m => (m.sport || '').toLowerCase(),
         getVal: m => [m.sport, ...((m.enrollments || []).map(e => e.sport))].filter(Boolean).join(' '),
-        cell: m => `${escapeHtml(m.sport)}${(m.enrollments && m.enrollments.length > 1) ? ` <span class="badge blue" style="font-size:9px;padding:1px 5px" title="${m.enrollments.map(e => escapeHtml(e.sport)).join(', ')}">+${m.enrollments.length - 1}</span>` : ''}` },
+        cell: m => `${escapeHtml(m.sport)}${(() => { const pv = memberPrivateInfo(m); return pv.length ? ` <span class="badge" style="font-size:9px;padding:1px 5px;background:rgba(139,92,246,.14);color:#7c3aed;font-weight:700" title="${escapeHtml(pv.map(x => x.sport + ' — ' + (x.approach === 'coach' ? t('approached by the coach', 'عن طريق المدرب') : t('approached by reception', 'عن طريق الاستقبال'))).join('; '))}">🔒 ${t('Private', 'خاص')}</span>` : ''; })()}${(m.enrollments && m.enrollments.length > 1) ? ` <span class="badge blue" style="font-size:9px;padding:1px 5px" title="${m.enrollments.map(e => escapeHtml(e.sport)).join(', ')}">+${m.enrollments.length - 1}</span>` : ''}` },
       // Show EVERY coach the member trains with, not just the headline one — a member whose
       // coach sits on an enrollment (or a camp member with no headline coach) used to read "—"
       // even though the coach filter right below correctly returned them.
@@ -19972,7 +19987,7 @@ window.showRevenueDetail = function(coachId, monthKey) {
   let pendingLines = [];
   if (pay && pay.basis === 'attendance' && pay.attendanceLines) {
     lines = (pay.attendanceLines.lines || []).map(l => ({
-      memberName: l.memberName, sport: l.sport, price: l.amountBase,
+      memberName: l.memberName, sport: l.sport, price: l.amountBase, priv: l.priv || '',
       // Full course price = per-class fee × total classes. (v6.576)
       fee: (l.perClass != null && l.total) ? Math.round(l.perClass * l.total * 100) / 100 : null,
       isSwitch: l.kind === 'switch', kind: l.kind, classes: l.classes,
@@ -20012,6 +20027,7 @@ window.showRevenueDetail = function(coachId, monthKey) {
       rebuilt.push({
         memberName: mem ? mem.name : (inv.customerName || '— deleted member —'), memberId: mem ? mem.id : null,
         sport: lis.filter(li => String(li.coachId) === String(coachId) && !isCampSport(li.sport)).map(li => li.sport).join(', ') || inv.sport,
+        priv: (() => { for (const li of lis) { if (String(li.coachId) === String(coachId) && !isCampSport(li.sport)) { const tg = (typeof _privTag === 'function') ? _privTag(mem ? findSubForLine(mem, inv, li) : null, li) : ''; if (tg) return tg; } } return ''; })(),
         price: share, fee: Math.round(coachFee * 100) / 100, isSwitch: !!inv.switchCredit, invoiceRef: inv.ref || `INV${inv.id}`, invoiceDate: inv.date,
       });
     }
@@ -20042,10 +20058,10 @@ window.showRevenueDetail = function(coachId, monthKey) {
                   ${escapeHtml(l.memberName)}
                   ${l.isSwitch ? '<span class="badge" style="font-size:9px;padding:1px 6px;background:rgba(245,158,11,.15);color:var(--accent-2);margin-left:6px">SWITCH</span>' : ''}
                 </td>
-                <td style="padding:6px 8px;border-top:1px solid var(--border)">${escapeHtml(l.sport || '—')}</td>
+                <td style="padding:6px 8px;border-top:1px solid var(--border)">${escapeHtml(l.sport || '—')}${_privTagHtml(l.priv)}</td>
                 <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace;color:var(--text-dim)">${(l.fee != null && isFinite(l.fee)) ? fmt(l.fee) : '—'}</td>
                 <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace;color:${l.price < 0 ? 'var(--red)' : 'var(--text)'}">${fmt(l.price)}</td>
-                <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace;font-weight:600;color:${l.price < 0 ? 'var(--red)' : 'var(--text)'}">${fmt(l.price * pay.commissionRate / 100)}</td>
+                <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace;font-weight:600;color:${l.price < 0 ? 'var(--red)' : 'var(--text)'}">${fmt(l.price * pay.commissionRate / 100)}${_privBonusNote(l)}</td>
               </tr>
             `).join('') : '<tr><td colspan="5" style="padding:18px;text-align:center;color:var(--text-mute)">No commission-generating revenue this month</td></tr>'}
           </tbody>
@@ -20131,6 +20147,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
         attended: elig.attended,
         total: elig.total || (sub?.totalClasses || null),
         status: elig.status,
+        priv: (typeof _privTag === 'function') ? _privTag(sub, li) : '',
         prorated: elig.mode === 'prorated' && elig.ratio < 1,
       });
     }
@@ -20140,7 +20157,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
   let pendingLines = [];
   if (pay && pay.basis === 'attendance' && pay.attendanceLines) {
     lines = (pay.attendanceLines.lines || []).map(l => ({
-      memberName: l.memberName, sport: l.sport, price: l.amountBase,
+      memberName: l.memberName, sport: l.sport, price: l.amountBase, priv: l.priv || '',
       isSwitch: l.kind === 'switch', invoiceRef: l.kind === 'trueup' ? 'expiry true-up' : (l.kind === 'attended' ? (l.classes + ' class' + (l.classes === 1 ? '' : 'es')) : ''),
       invoiceDate: null, start: l.start, end: l.end, attended: l.attended, total: l.total, status: l.status,
       perClass: l.perClass,
@@ -20182,6 +20199,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
       rebuilt.push({
         memberName: mem ? mem.name : (inv.customerName || '— deleted member —'),
         sport: lis.filter(li => String(li.coachId) === String(coachId) && !isCampSport(li.sport)).map(li => li.sport).join(', ') || inv.sport,
+        priv: (() => { for (const li of lis) { if (String(li.coachId) === String(coachId) && !isCampSport(li.sport)) { const tg = (typeof _privTag === 'function') ? _privTag(mem ? findSubForLine(mem, inv, li) : null, li) : ''; if (tg) return tg; } } return ''; })(),
         price: share, fee: Math.round(coachFee * 100) / 100, isSwitch: !!inv.switchCredit, invoiceRef: inv.ref || `INV${inv.id}`, invoiceDate: inv.date,
         start: null, end: null, attended: null, total: null, status: 'paid',
       });
@@ -20314,14 +20332,14 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
               <td>${l._dupIgnored ? `<span style="text-decoration:line-through">${escapeHtml(l.memberName)}</span> <span class="badge" style="background:#fee2e2;color:#b91c1c">DUPLICATE — NOT PAID</span>` : escapeHtml(l.memberName)}${l.isSwitch ? '<span class="badge">SWITCH</span>' : ''}${l._kind === 'trueup'
                 ? `<div style="margin-top:3px"><span style="display:inline-block;background:#fff7ed;color:#9a3412;border:1px solid #fdba74;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700;line-height:1.4">⏳ EXPIRED — ${l._trueupClasses} paid class${l._trueupClasses === 1 ? '' : 'es'} not attended, paid in full</span></div>`
                 : `<div style="color:#999;font-size:10px">${escapeHtml(l.invoiceRef || '')}${l.invoiceDate ? ' · ' + fmtDate(l.invoiceDate) : ''}</div>`}</td>
-              <td>${escapeHtml(l.sport || '—')}</td>
+              <td>${escapeHtml(l.sport || '—')}${_privTagHtml(l.priv, true)}</td>
               <td style="font-size:11px">${l.start ? fmtDate(l.start) : '—'}</td>
               <td style="font-size:11px">${l.end ? fmtDate(l.end) : '—'}</td>
               <td style="font-size:11px">${l._kind === 'trueup' ? (l._trueupClasses != null ? l._trueupClasses : 0) : (l.attended != null ? l.attended : 0)}${l.total ? ' / ' + l.total : ''}</td>
               <td style="font-size:11px">${escapeHtml(l.status || '—')}</td>
               ${ctCell(l)}
               <td class="num ${l.price < 0 ? 'neg' : ''}">${l._dupIgnored ? `<span style="text-decoration:line-through;color:#c0c0c0">${fmt(l._origAmount || 0)}</span> → <b>0</b>` : fmt(l.price)}${l.prorated ? `<div style="color:#999;font-size:9px">of ${fmt(l.fee)} · ${l.attended}/${l.total} attended</div>` : ''}</td>
-              <td class="num ${l.price < 0 ? 'neg' : ''}" style="font-weight:700">${l._dupIgnored ? '<b>0</b>' : fmt(l.price * rate / 100)}</td>
+              <td class="num ${l.price < 0 ? 'neg' : ''}" style="font-weight:700">${l._dupIgnored ? '<b>0</b>' : fmt(l.price * rate / 100)}${_privBonusNote(l, true)}</td>
             </tr>`;
             const grand = lines.reduce((s, l) => s + l.price, 0);
             const grandRow = (label) => `<tr style="background:#f5f5f7;font-weight:700"><td colspan="7">${label}</td><td class="num">${fmt(grandCourse)}</td><td class="num">${fmt(grand)}</td><td class="num">${fmt(grand * rate / 100)}</td></tr>`;
