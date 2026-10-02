@@ -207,8 +207,8 @@ function _privTagHtml(priv, plain) {
   if (priv !== 'coach' && priv !== 'reception') return '';
   const txt = priv === 'coach' ? 'Private · coach' : 'Private · reception';
   return plain
-    ? ` <span style="display:inline-block;background:#f3e8ff;color:#7c3aed;border:1px solid #d8b4fe;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700;line-height:1.4">🔒 ${txt}</span>`
-    : ` <span class="badge" style="font-size:9px;padding:1px 6px;background:rgba(139,92,246,.14);color:#7c3aed;font-weight:700">🔒 ${txt}</span>`;
+    ? `<div style="margin-top:2px"><span style="display:inline-block;background:#f3e8ff;color:#7c3aed;border:1px solid #d8b4fe;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700;line-height:1.4">🔒 ${txt}</span></div>`
+    : `<div style="margin-top:2px"><span class="badge" style="font-size:9px;padding:1px 6px;background:rgba(139,92,246,.14);color:#7c3aed;font-weight:700">🔒 ${txt}</span></div>`;
 }
 function _privBonusNote(l, plain) {
   if (!l || l._dupIgnored || !(Number(l.price) > 0)) return '';
@@ -1195,7 +1195,7 @@ PAGES.members = (main) => {
         opts: () => (typeof SPORTS !== 'undefined' && SPORTS.length) ? SPORTS.slice() : distinct(state.members.map(x => x.sport)),
         sortVal: m => (m.sport || '').toLowerCase(),
         getVal: m => [m.sport, ...((m.enrollments || []).map(e => e.sport))].filter(Boolean).join(' '),
-        cell: m => `${escapeHtml(m.sport)}${(() => { const pv = memberPrivateInfo(m); return pv.length ? ` <span class="badge" style="font-size:9px;padding:1px 5px;background:rgba(139,92,246,.14);color:#7c3aed;font-weight:700" title="${escapeHtml(pv.map(x => x.sport + ' — ' + (x.approach === 'coach' ? t('approached by the coach', 'عن طريق المدرب') : t('approached by reception', 'عن طريق الاستقبال'))).join('; '))}">🔒 ${t('Private', 'خاص')}</span>` : ''; })()}${(m.enrollments && m.enrollments.length > 1) ? ` <span class="badge blue" style="font-size:9px;padding:1px 5px" title="${m.enrollments.map(e => escapeHtml(e.sport)).join(', ')}">+${m.enrollments.length - 1}</span>` : ''}` },
+        cell: m => `${escapeHtml(m.sport)}${(m.enrollments && m.enrollments.length > 1) ? ` <span class="badge blue" style="font-size:9px;padding:1px 5px" title="${m.enrollments.map(e => escapeHtml(e.sport)).join(', ')}">+${m.enrollments.length - 1}</span>` : ''}${(() => { const pv = memberPrivateInfo(m); return pv.length ? `<div style="margin-top:3px"><span class="badge" style="font-size:9px;padding:1px 5px;background:rgba(139,92,246,.14);color:#7c3aed;font-weight:700" title="${escapeHtml(pv.map(x => x.sport + ' — ' + (x.approach === 'coach' ? t('approached by the coach', 'عن طريق المدرب') : t('approached by reception', 'عن طريق الاستقبال'))).join('; '))}">🔒 ${t('Private', 'خاص')}</span></div>` : ''; })()}` },
       // Show EVERY coach the member trains with, not just the headline one — a member whose
       // coach sits on an enrollment (or a camp member with no headline coach) used to read "—"
       // even though the coach filter right below correctly returned them.
@@ -2337,7 +2337,7 @@ function viewMember(id) {
           }
           return (s.month || '').toUpperCase();
         })()}</span></td>
-        <td>${escapeHtml(s.activity || '—')}${isCampSport(s.activity) && s.durationLabel ? ` <span class="badge" style="background:rgba(245,158,11,.15);color:var(--accent-2);font-size:9px;padding:1px 6px">🌞 ${escapeHtml(s.durationLabel)}</span>` : ''}${s.activity === MIXED ? ` <span class="badge" style="background:rgba(59,130,246,.15);color:var(--blue);font-size:9px;padding:1px 6px">🎯 ${t('Mixed', 'مختلط')}</span>${_mixBreak && _mixBreak.length ? `<div class="text-mute" style="font-size:10px;margin-top:3px">${_mixBreak.map(x => escapeHtml(x)).join(' · ')}</div>` : ''}` : ''}</td>
+        <td>${escapeHtml(s.activity || '—')}${(s.private && (s.approach === 'coach' || s.approach === 'reception')) ? `<div style="margin-top:3px"><span class="badge" style="background:rgba(139,92,246,.14);color:#7c3aed;font-weight:700;font-size:10px" title="${t('Private package', 'باقة خاصة')} · ${s.approach === 'coach' ? t('approached by the coach', 'عن طريق المدرب') : t('approached by reception', 'عن طريق الاستقبال')}">🔒 ${s.approach === 'coach' ? t('Private · coach', 'خاص · مدرب') : t('Private · reception', 'خاص · استقبال')}</span></div>` : ''}${isCampSport(s.activity) && s.durationLabel ? ` <span class="badge" style="background:rgba(245,158,11,.15);color:var(--accent-2);font-size:9px;padding:1px 6px">🌞 ${escapeHtml(s.durationLabel)}</span>` : ''}${s.activity === MIXED ? ` <span class="badge" style="background:rgba(59,130,246,.15);color:var(--blue);font-size:9px;padding:1px 6px">🎯 ${t('Mixed', 'مختلط')}</span>${_mixBreak && _mixBreak.length ? `<div class="text-mute" style="font-size:10px;margin-top:3px">${_mixBreak.map(x => escapeHtml(x)).join(' · ')}</div>` : ''}` : ''}</td>
         <td>${(isCampSport(s.activity) || s.activity === MIXED) ? `<span class="text-mute" style="font-size:11px;font-style:italic">${s.activity === MIXED ? escapeHtml(t('multi-coach', 'عدة مدربين')) : 'no coach'}</span>` : escapeHtml(s.coach || '—')}</td>
         <td>${s.start ? fmtDate(s.start) : '—'}</td>
         <td>${s.end ? fmtDate(s.end) : '—'}</td>
@@ -2393,11 +2393,7 @@ function viewMember(id) {
           const invBtn = (!isViewerRole() && sid)
             ? ` <button onclick="event.stopPropagation();printMemberSubInvoicePDF(${m.id}, '${sid}')" title="${t('Export an invoice for this sport only', 'تصدير فاتورة لهذه الرياضة فقط')}" style="background:transparent;border:0;color:var(--green);opacity:.85;cursor:pointer;padding:0 3px;font-size:12px">📄</button>`
             : '';
-          // v6.653 — Private package: who approached the customer decides who earns the private bonus.
-          const privBadge = (s.private && (s.approach === 'coach' || s.approach === 'reception'))
-            ? ` <span class="badge" style="background:rgba(139,92,246,.14);color:#7c3aed;font-weight:700;font-size:10px" title="${t('Private package', 'باقة خاصة')} · ${s.approach === 'coach' ? t('approached by the coach', 'عن طريق المدرب') : t('approached by reception', 'عن طريق الاستقبال')}">🔒 ${s.approach === 'coach' ? t('Private · coach', 'خاص · مدرب') : t('Private · reception', 'خاص · استقبال')}</span>`
-            : '';
-          return `${badge}${privBadge}${invBtn}${editBtn}${delBtn}`;
+          return `${badge}${invBtn}${editBtn}${delBtn}`;
         })()}</td>
       </tr>
     `;
@@ -3147,6 +3143,7 @@ function enrollRowHtml(row, idx) {
       ${expiryHint ? `<div style="font-size:10px;color:var(--blue);margin-top:7px;padding-left:2px">${expiryHint}</div>` : ''}${isCamp ? `<div style="font-size:10px;color:var(--blue);margin-top:5px;padding-left:2px">🌞 Summer Camp · revenue goes to club, no coach commission</div>` : ''}${isMixed ? `<div style="font-size:10px;color:var(--blue);margin-top:5px;padding-left:2px">🎯 ${t('Mixed · one package to try many sports · pick the sport + coach for each class in Attendance · commission splits to the coach who taught each class', 'مختلط · باقة واحدة لتجربة عدة رياضات · اختر الرياضة والمدرب لكل حصة في الحضور · تُقسَّم العمولة على المدرب الذي درّب كل حصة')}</div>` : ''}${row.paid ? `<div style="font-size:10px;color:var(--text-mute);margin-top:5px;padding-left:2px">🔒 Paid — editing the <b>price</b> adjusts the linked invoice (revenue + commission update too); editing start/validity adjusts this sport's window. ${(row.attended || 0) > 0 ? `The sport is <b>locked</b> because the member already attended <b>${row.attended}</b> class${(row.attended) === 1 ? '' : 's'} — use <b style="color:var(--accent-2)">↩ Withdraw</b> or <b style="color:var(--blue)">Switch Sport</b> to change it.` : `No classes attended yet, so you can still <b>change the sport directly</b> here — the linked invoice and commission move with it.`} <b style="color:var(--red)">🗑</b> deletes a mistake (no refund).</div>` : ''}
       ${(isCamp || isMixed) ? '' : `<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:8px;padding-top:8px;border-top:1px dashed var(--border)">
         <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;cursor:pointer"><input type="checkbox" data-en="private" data-i="${idx}" ${row.private ? 'checked' : ''} /> 🔒 ${t('Private', 'خاص')}</label>
+        ${(!row.private && (() => { const rc = (state.coaches || []).find(c => String(c.id) === String(row.coachId)); return !!(rc && isPrivateSport(rc.name || '')); })()) ? `<span style="font-size:11px;font-weight:600;color:var(--accent-2)">⚠ ${t('This is a private coach — tick Private so the 10% bonus is paid.', 'هذا مدرب خاص — فعّل «خاص» ليُدفع بونس 10%.')}</span>` : ''}
         ${row.private ? `<div class="field" style="margin:0;min-width:230px"><select data-en="approach" data-i="${idx}" style="${(row.approach === 'coach' || row.approach === 'reception') ? '' : 'border-color:var(--accent)'}">
             <option value="">${t('— Approached by… —', '— تم التواصل عن طريق… —')}</option>
             <option value="coach" ${row.approach === 'coach' ? 'selected' : ''}>${t('Approached by the coach', 'عن طريق المدرب')}</option>
@@ -3220,6 +3217,8 @@ function renderEnrollRows() {
       if (key === 'approach') { row.approach = val; renderEnrollRows(); return; }
       if (key === 'coachId') {
         row.coachId = val ? parseInt(val) : null;
+        const _pc = (state.coaches || []).find(c => String(c.id) === String(row.coachId));   // v6.659
+        if (_pc && isPrivateSport(_pc.name || '') && !row.private) { row.private = true; renderEnrollRows(); return; }
       } else if (key === 'sport') {
         const wasCamp = isCampSport(row.sport);
         const isNowCamp = isCampSport(val);
@@ -18082,6 +18081,95 @@ function syncCitadelShare() {
   return changed;
 }
 
+// v6.657 — the card payments behind a month's Bank Commission: SAME inclusion rule as cardPaidForMonth (so the rows add up to its total).
+function bankCardPaymentsForMonth(ym) {
+  const isCard = (mRaw) => { const x = String(mRaw || '').toLowerCase(); return x.indexOf('card') >= 0 || x.indexOf('visa') >= 0 || x.indexOf('credit') >= 0; };
+  const rows = [];
+  for (const i of (state.invoices || [])) {
+    if (i.deleted) continue;
+    const ci = (typeof customerInfo === 'function') ? customerInfo(i) : null;
+    const cust = (ci && ci.name) || i.customerName || (() => { const mm = (state.members || []).find(x => x.id === i.customerId); return mm ? (mm.name || mm.nameArabic || '') : ''; })() || '—';
+    const base = { ref: i.ref || ('#' + i.id), customer: cust, category: i.category || 'Membership', sport: i.sport || '' };
+    const pays = Array.isArray(i.payments) && i.payments.length ? i.payments : null;
+    if (pays) {
+      for (const pm of pays) {
+        if (isCard(pm.method || i.method) && String(pm.date || i.date).slice(0, 7) === ym) rows.push({ ...base, date: String(pm.date || i.date).slice(0, 10), amount: Number(pm.amount) || 0, method: pm.method || i.method || 'card' });
+      }
+    } else if (isCard(i.method) && String(i.date).slice(0, 7) === ym) {
+      rows.push({ ...base, date: String(i.date).slice(0, 10), amount: (typeof invoicePaid === 'function') ? invoicePaid(i) : (Number(i.amount) || 0), method: i.method || 'card' });
+    }
+  }
+  rows.sort((x, y) => String(x.date).localeCompare(String(y.date)) || String(x.ref).localeCompare(String(y.ref)));
+  return rows;
+}
+// Open the report behind an automatic expense row.
+window.openExpenseReport = function (kind, ym) { window._expRep = { kind, ym }; navigate('expensereport'); };
+PAGES.expensereport = (main) => {
+  if (currentRole() !== 'admin') { main.innerHTML = `<div class="card"><div class="empty">${t('Admins only.', 'المسؤولون فقط.')}</div></div>`; return; }
+  const rep = window._expRep || {};
+  const kind = rep.kind === 'citadel' ? 'citadel' : 'bank';
+  const ym = rep.ym || (TODAY || '').slice(0, 7);
+  const monthLabel = (typeof fmtMonth === 'function') ? fmtMonth(ym) : ym;
+  const row = (state.expenses || []).find(e => !e.deleted && e.month === ym && (kind === 'bank' ? e.autoBankCommission : e.autoCitadelShare));
+  // whole riyals stay plain; anything with cents shows both decimals (the 2.25% bank rate produces 24.75, not 25)
+  const num = (v) => { const r = Math.round((Number(v) || 0) * 100) / 100; return Number.isInteger(r) ? fmt(r) : r.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+  const kpi = (label, value, sub, color) => `<div class="kpi"${color ? ` style="border-color:${color}"` : ''}><div class="kpi-label">${label}</div><div class="kpi-value num"${color ? ` style="color:${color}"` : ''}>${value}</div>${sub ? `<div class="text-mute" style="font-size:11px;margin-top:2px">${sub}</div>` : ''}</div>`;
+  const th = (s, right) => `<th${right ? ' class="text-right"' : ''}>${s}</th>`;
+  let title, intro, kpis, body, calc;
+
+  if (kind === 'bank') {
+    const rate = BANK_COMMISSION_RATE;
+    const rows = bankCardPaymentsForMonth(ym);
+    const cardPaid = cardPaidForMonth(ym);
+    calc = Math.round(cardPaid * rate) / 100;
+    title = '🏦 ' + t('Bank commission', 'عمولة البنك');
+    intro = t(`Every card payment received in ${monthLabel} (by payment date) costs the bank ${rate}%. This expense is posted automatically on the 1st of the month and follows the card payments until someone edits the amount.`,
+              `كل دفعة بالبطاقة مستلمة في ${monthLabel} (حسب تاريخ الدفع) تكلّف ${rate}% للبنك. يُسجَّل هذا المصروف تلقائياً في أول الشهر ويتبع الدفعات بالبطاقة حتى يعدّله أحد.`);
+    kpis = kpi(t('Card payments', 'الدفعات بالبطاقة'), num(cardPaid) + ' QAR', rows.length + ' ' + t('payments', 'دفعة')) + kpi(t('Bank rate', 'نسبة البنك'), rate + '%', '') + kpi(t('Calculated commission', 'العمولة المحسوبة'), num(calc) + ' QAR', num(cardPaid) + ' × ' + rate + '%', 'var(--accent-2)');
+    body = `<div class="table-wrap"><table><thead><tr>${th('#')}${th(t('Date', 'التاريخ'))}${th(t('Invoice', 'الفاتورة'))}${th(t('Customer', 'العميل'))}${th(t('Category', 'الفئة'))}${th(t('Card payment', 'الدفعة'), true)}${th(t('Commission', 'العمولة') + ' (' + rate + '%)', true)}</tr></thead><tbody>${
+      rows.length ? rows.map((r, i) => `<tr><td class="text-mute">${i + 1}</td><td class="text-dim" style="white-space:nowrap">${fmtDate(r.date)}</td><td class="font-mono" style="font-size:11px">${escapeHtml(r.ref)}</td><td>${escapeHtml(r.customer)}</td><td><span class="badge" style="font-size:9px">${escapeHtml(r.category)}</span>${r.sport ? ` <span class="text-mute" style="font-size:11px">${escapeHtml(r.sport)}</span>` : ''}</td><td class="text-right num">${num(r.amount)}</td><td class="text-right num">${num(r.amount * rate / 100)}</td></tr>`).join('')
+        : `<tr><td colspan="7" class="empty">${t('No card payments in this month.', 'لا توجد دفعات بالبطاقة في هذا الشهر.')}</td></tr>`}</tbody>
+      <tfoot><tr style="font-weight:800;border-top:2px solid var(--border)"><td colspan="5">${t('Total', 'الإجمالي')} · ${rows.length} ${t('payments', 'دفعة')}</td><td class="text-right num">${num(rows.reduce((s, r) => s + r.amount, 0))}</td><td class="text-right num">${num(calc)}</td></tr></tfoot></table></div>`;
+  } else {
+    const rawRate = Number(state.settings && state.settings.citadelRate);
+    const RATE = (isNaN(rawRate) || rawRate < 0) ? 30 : rawRate;
+    const { agg, details, grand, paid } = citadelCompute([ym]);
+    calc = Math.round(grand * RATE / 100 * 100) / 100;
+    const paidToCompany = citadelPaidToCompany([ym]);
+    title = '🏛 ' + t('Citadel company share', 'حصة شركة سيتاديل');
+    intro = t(`The facility company (Citadel) receives ${RATE}% of the Football and Swimming revenue billed in ${monthLabel}: memberships plus Football Court and Swimming Pool rentals (and the Football/Swimming classes used under Mixed packages). The expense is posted automatically on the 1st of the month and follows the revenue until someone edits the amount.`,
+              `تحصل شركة المرفق (سيتاديل) على ${RATE}% من إيراد كرة القدم والسباحة المفوتر في ${monthLabel}: الاشتراكات إضافة إلى إيجار ملعب كرة القدم والمسبح (وحصص كرة القدم/السباحة المستخدمة ضمن باقات مختلط). يُسجَّل المصروف تلقائياً في أول الشهر ويتبع الإيراد حتى يعدّله أحد.`);
+    kpis = kpi(t('Football + Swimming revenue', 'إيراد كرة القدم + السباحة'), num(grand) + ' QAR', details.length + ' ' + t('lines', 'بند')) + kpi(t('Share rate', 'نسبة الحصة'), RATE + '%', '') + kpi(t('Calculated share', 'الحصة المحسوبة'), num(calc) + ' QAR', num(grand) + ' × ' + RATE + '%', 'var(--accent-2)') + kpi(t('Collected from members', 'المحصّل من الأعضاء'), num(paid) + ' QAR', t('of that revenue', 'من هذا الإيراد'));
+    const groupRows = citadelGroups().map(g => `<tr><td>${g.icon} ${escapeHtml(g.label)}</td><td class="text-right num">${num(agg[g.key].membership)}</td><td class="text-right num">${num(agg[g.key].rent)}</td><td class="text-right num font-bold">${num(agg[g.key].membership + agg[g.key].rent)}</td><td class="text-right num">${num((agg[g.key].membership + agg[g.key].rent) * RATE / 100)}</td></tr>`).join('');
+    body = `<div class="table-wrap" style="margin-bottom:14px"><table><thead><tr>${th(t('Group', 'المجموعة'))}${th(t('Memberships', 'الاشتراكات'), true)}${th(t('Rentals', 'الإيجارات'), true)}${th(t('Revenue', 'الإيراد'), true)}${th(t('Share', 'الحصة') + ' (' + RATE + '%)', true)}</tr></thead><tbody>${groupRows}</tbody>
+      <tfoot><tr style="font-weight:800;border-top:2px solid var(--border)"><td>${t('Total', 'الإجمالي')}</td><td></td><td></td><td class="text-right num">${num(grand)}</td><td class="text-right num">${num(calc)}</td></tr></tfoot></table></div>
+      <div class="table-wrap"><table><thead><tr>${th('#')}${th(t('Date', 'التاريخ'))}${th(t('Invoice', 'الفاتورة'))}${th(t('Customer', 'العميل'))}${th(t('Group', 'المجموعة'))}${th(t('Type', 'النوع'))}${th(t('Sport', 'الرياضة'))}${th(t('Revenue', 'الإيراد'), true)}${th(t('Share', 'الحصة') + ' (' + RATE + '%)', true)}</tr></thead><tbody>${
+      details.length ? details.map((d, i) => `<tr><td class="text-mute">${i + 1}</td><td class="text-dim" style="white-space:nowrap">${d.date ? fmtDate(d.date) : '—'}</td><td class="font-mono" style="font-size:11px">${escapeHtml(d.ref)}</td><td>${escapeHtml(d.customer)}</td><td>${d.group.icon} ${escapeHtml(d.group.label)}</td><td><span class="badge" style="font-size:9px">${d.type === 'rent' ? t('Rental', 'إيجار') : t('Membership', 'اشتراك')}</span></td><td>${escapeHtml(d.sport)}</td><td class="text-right num">${num(d.amount)}</td><td class="text-right num">${num(d.amount * RATE / 100)}</td></tr>`).join('')
+        : `<tr><td colspan="9" class="empty">${t('No Football / Swimming revenue in this month.', 'لا يوجد إيراد كرة قدم / سباحة في هذا الشهر.')}</td></tr>`}</tbody>
+      <tfoot><tr style="font-weight:800;border-top:2px solid var(--border)"><td colspan="7">${t('Total', 'الإجمالي')} · ${details.length} ${t('lines', 'بند')}</td><td class="text-right num">${num(details.reduce((s, d) => s + d.amount, 0))}</td><td class="text-right num">${num(calc)}</td></tr></tfoot></table></div>
+      <div class="text-mute" style="font-size:12px;margin-top:10px">${t('Paid to the company so far this month', 'المدفوع للشركة هذا الشهر حتى الآن')}: <b>${num(paidToCompany)} QAR</b> · ${t('Balance', 'المتبقي')}: <b>${num(calc - paidToCompany)} QAR</b> · <a href="javascript:void(0)" onclick="window._citMonths=['${ym}'];navigate('citadel')">${t('Open the full Citadel screen', 'فتح شاشة سيتاديل كاملة')} →</a></div>`;
+  }
+
+  const rec = row ? Number(row.amount) || 0 : null;
+  const diff = rec == null ? null : Math.round((rec - calc) * 100) / 100;
+  const status = !row
+    ? `<div class="note" style="margin-top:12px;padding:10px 14px;border-radius:8px;background:rgba(245,158,11,.10);font-size:13px">${t('No automatic expense row exists for this month yet. It is created the next time the Expenses screen opens.', 'لا يوجد مصروف تلقائي لهذا الشهر بعد. يُنشأ عند فتح شاشة المصروفات.')}</div>`
+    : (row.edited
+      ? `<div style="margin-top:12px;padding:10px 14px;border-radius:8px;background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.35);font-size:13px">✏️ <b>${t('Overridden by hand', 'معدّل يدوياً')}</b> — ${t('recorded', 'المسجّل')} <b>${num(rec)}</b> ${t('vs calculated', 'مقابل المحسوب')} <b>${num(calc)}</b>${Math.abs(diff) > 0.005 ? ` (${t('difference', 'الفرق')} ${diff > 0 ? '+' : ''}${num(diff)})` : ''}. ${t('Use ↻ on the Expenses screen to go back to the calculated amount.', 'استخدم ↻ في شاشة المصروفات للعودة إلى المبلغ المحسوب.')}</div>`
+      : `<div style="margin-top:12px;padding:10px 14px;border-radius:8px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.3);font-size:13px">⚙️ <b>${t('Automatic', 'تلقائي')}</b> — ${t('recorded expense', 'المصروف المسجّل')} <b>${num(rec)}</b> ${Math.abs(diff) <= 0.005 ? t('matches the calculation above.', 'يطابق الحساب أعلاه.') : t('is refreshed to the calculation when the Expenses screen opens.', 'يُحدَّث إلى الحساب عند فتح شاشة المصروفات.')}</div>`);
+
+  main.innerHTML = `
+    <div class="topbar">
+      <div><h1>${title} · ${escapeHtml(monthLabel)}</h1><div class="subtitle">${t('Expense report', 'تقرير المصروف')}</div></div>
+      <div class="topbar-actions"><button class="btn ghost" onclick="navigate('expenses')">← ${t('Back to Expenses', 'العودة إلى المصروفات')}</button></div>
+    </div>
+    <div class="card"><div style="font-size:13px;line-height:1.6;max-width:90ch">${intro}</div>
+      <div class="kpi-row" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin:14px 0">${kpis}</div>
+      ${status}
+    </div>
+    <div class="card" style="margin-top:12px">${body}</div>`;
+};
+
 PAGES.expenses = (main) => {
   let filter = loadFilter('expenses', { search: '', months: [(TODAY || '').slice(0, 7)].filter(Boolean), categories: [], methods: [], coaches: [] });
   if (!Array.isArray(filter.months)) filter.months = (filter.month && filter.month !== 'all') ? [filter.month] : [];
@@ -18166,11 +18254,11 @@ PAGES.expenses = (main) => {
       <tr ${e.autoBankCommission ? 'style="background:rgba(91,141,239,.05)"' : ''}>
         <td class="text-mute" style="text-align:center;font-size:12px">${i + 1}</td>
         <td class="text-dim" style="white-space:nowrap">${fmtDate(e.date)}</td>
-        <td>${escapeHtml(e.description)}${e.autoBankCommission ? ` <span class="badge blue" style="font-size:9px" title="Auto-calculated from card payments × ${BANK_COMMISSION_RATE}%. Edit to override.">${e.edited ? '✏️ overridden' : '⚙️ auto'}</span>${e.cardBase ? `<div class="text-mute" style="font-size:10px">${fmt(e.cardBase)} card × ${BANK_COMMISSION_RATE}%</div>` : ''}` : ''}${e.notes ? `<div class="text-mute" style="font-size:10px" title="${escapeHtml(e.notes)}">💬 ${escapeHtml(e.notes)}</div>` : ''}</td>
+        <td>${(e.autoBankCommission || e.autoCitadelShare) ? `<a href="javascript:void(0)" onclick="openExpenseReport('${e.autoBankCommission ? 'bank' : 'citadel'}', '${e.month || String(e.date || '').slice(0, 7)}')" style="color:inherit;text-decoration:underline dotted" title="${t('Open the report behind this amount', 'افتح التقرير وراء هذا المبلغ')}">${escapeHtml(e.description)} 🔎</a>` : escapeHtml(e.description)}${e.autoCitadelShare ? ` <span class="badge blue" style="font-size:9px" title="Auto-calculated from Football + Swimming revenue.">${e.edited ? '✏️ overridden' : '⚙️ auto'}</span>` : ''}${e.autoBankCommission ? ` <span class="badge blue" style="font-size:9px" title="Auto-calculated from card payments × ${BANK_COMMISSION_RATE}%. Edit to override.">${e.edited ? '✏️ overridden' : '⚙️ auto'}</span>${e.cardBase ? `<div class="text-mute" style="font-size:10px">${fmt(e.cardBase)} card × ${BANK_COMMISSION_RATE}%</div>` : ''}` : ''}${e.notes ? `<div class="text-mute" style="font-size:10px" title="${escapeHtml(e.notes)}">💬 ${escapeHtml(e.notes)}</div>` : ''}</td>
         <td><span class="badge">${escapeHtml(e.category || 'Others')}</span></td>
         <td><span class="badge ${e.method === 'card' ? 'blue' : e.method === 'transfer' ? 'cyan' : ''}">${escapeHtml(e.method === 'fawran' ? 'Fawran' : (e.method || '—'))}</span>${e.payMobile ? `<div class="text-mute" style="font-size:10px" dir="ltr">📱 ${escapeHtml(e.payMobile)}</div>` : ''}</td>
         <td class="text-right num font-bold">${fmt(e.amount)}</td>
-        <td class="text-right" style="white-space:nowrap"><button class="btn ghost sm" onclick="editExpense(${e.id})" title="Edit">✏️</button> ${e.autoBankCommission ? `<button class="btn ghost sm" onclick="resetBankCommission(${e.id})" title="Reset to auto-calculated value">↻</button>` : `<button class="btn ghost sm" onclick="deleteExpense(${e.id})" title="Delete">🗑</button>`}</td>
+        <td class="text-right" style="white-space:nowrap">${(e.autoBankCommission || e.autoCitadelShare) ? `<button class="btn ghost sm" onclick="openExpenseReport('${e.autoBankCommission ? 'bank' : 'citadel'}', '${e.month || String(e.date || '').slice(0, 7)}')" title="${t('Open the report behind this amount', 'افتح التقرير وراء هذا المبلغ')}">🔎</button> ` : ''}<button class="btn ghost sm" onclick="editExpense(${e.id})" title="Edit">✏️</button> ${e.autoBankCommission ? `<button class="btn ghost sm" onclick="resetBankCommission(${e.id})" title="Reset to auto-calculated value">↻</button>` : `<button class="btn ghost sm" onclick="deleteExpense(${e.id})" title="Delete">🗑</button>`}</td>
       </tr>
     `).join('') : `<tr><td colspan="7" class="empty"><div class="empty-icon">💸</div>No expenses match</td></tr>`;
     const footEl = $('#exp-tfoot');
@@ -26403,6 +26491,7 @@ window.editSubscription = function(memberId, sid) {
           <select id="es-coach" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)">${coachOpts}</select></label>
         ${(isCampSport(sub.activity || '') || sub.activity === MIXED) ? '' : `<div style="display:grid;gap:6px;padding:8px 10px;border:1px dashed var(--border);border-radius:8px">
           <label style="display:flex;align-items:center;gap:6px;font-weight:600;cursor:pointer"><input type="checkbox" id="es-private" ${sub.private ? 'checked' : ''} onchange="var w=document.getElementById('es-approach-wrap');if(w)w.style.display=this.checked?'grid':'none'" /> 🔒 ${t('Private', 'خاص')}</label>
+          ${(!sub.private && isPrivateSport(((state.coaches || []).find(c => String(c.id) === String(sub.coachId)) || {}).name || '')) ? `<div style="font-size:11px;font-weight:600;color:var(--accent-2)">⚠ ${t('This is a private coach — tick Private so the 10% bonus is paid.', 'هذا مدرب خاص — فعّل «خاص» ليُدفع بونس 10%.')}</div>` : ''}
           <div id="es-approach-wrap" style="display:${sub.private ? 'grid' : 'none'};gap:4px">
             <select id="es-approach" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)">
               <option value="">${t('— Approached by… —', '— تم التواصل عن طريق… —')}</option>
