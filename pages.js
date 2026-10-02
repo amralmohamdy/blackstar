@@ -367,6 +367,52 @@ window.coachTargetDetail = function(coachId, ym) {
 };
 
 // ─── DASHBOARD ──────────────────────────────────────────────────
+// v6.670 — every payment dated one of `days`, split across the invoice lines by price share, each part tagged with the month its line is
+// BILLED in (lineBillMonth) — "which month does this money belong to". Rows: { day, inv, p, amt, bill }.
+function paymentsByBillMonth(days) {
+  const rows = [];
+  for (const inv of (state.invoices || [])) {
+    if (!inv || inv.deleted) continue;
+    const lis = (Array.isArray(inv.lineItems) && inv.lineItems.length) ? inv.lineItems : null;
+    const total = lis ? lis.reduce((s, l) => s + Math.max(0, Number(l && l.price) || 0), 0) : 0;
+    for (const p of (inv.payments || [])) {
+      const day = String(p && p.date || '').slice(0, 10);
+      if (days.indexOf(day) < 0) continue;
+      const amt = Number(p.amount) || 0; if (!amt) continue;
+      if (lis && total > 0) {
+        const parts = {};
+        for (const l of lis) { const pr = Math.max(0, Number(l && l.price) || 0); if (!pr) continue; const bm = String(lineBillMonth(l, inv) || invoiceBillMonth(inv)).slice(0, 7); parts[bm] = (parts[bm] || 0) + amt * pr / total; }
+        for (const bm of Object.keys(parts)) rows.push({ day, inv, p, amt: Math.round(parts[bm] * 100) / 100, bill: bm });
+      } else rows.push({ day, inv, p, amt, bill: String(invoiceBillMonth(inv) || '').slice(0, 7) });
+    }
+  }
+  return rows;
+}
+// The 💵 Today's revenue box: every payment of today / yesterday against the month it belongs to; a month badge jumps to that month.
+window.showDayCollections = function () {
+  const yday = addDays(TODAY, -1);
+  const rows = paymentsByBillMonth([TODAY, yday]);
+  const mLabel = mk => (typeof fmtMonth === 'function') ? fmtMonth(mk) : mk;
+  const section = (day, title) => {
+    const mine = rows.filter(r => r.day === day).sort((a, b) => ((b.bill === day.slice(0, 7)) - (a.bill === day.slice(0, 7))) || b.amt - a.amt);
+    const byM = {}; mine.forEach(r => { byM[r.bill] = (byM[r.bill] || 0) + r.amt; });
+    const sum = Object.keys(byM).sort().reverse().map(mk => `<button type="button" class="btn ghost sm" onclick="jumpDashMonth('${mk}')" title="${t('Show this month on the Dashboard', 'اعرض هذا الشهر في لوحة التحكم')}" style="${mk === day.slice(0, 7) ? '' : 'color:var(--accent-2);font-weight:700'}">${escapeHtml(mLabel(mk))} · ${fmt(byM[mk])}</button>`).join(' ');
+    const body = mine.length ? mine.map(r => {
+      const cust = (typeof customerInfo === 'function' ? (customerInfo(r.inv) || {}).name : '') || r.inv.customerName || '—';
+      const other = r.bill !== day.slice(0, 7);
+      return `<tr><td>${escapeHtml(cust)}</td><td class="font-mono" style="font-size:11px">${escapeHtml(r.inv.ref || '#' + r.inv.id)}</td><td><span class="badge" style="font-size:10px">${escapeHtml(r.inv.category || 'Membership')}</span></td><td class="text-mute" style="font-size:11px">${escapeHtml(r.p.method || '')}</td><td class="text-right num font-bold">${fmt(r.amt)}</td><td><button type="button" class="btn ghost sm" onclick="jumpDashMonth('${r.bill}')" style="${other ? 'color:var(--accent-2);font-weight:700' : ''}">${escapeHtml(mLabel(r.bill))}${other ? ' ↗' : ''}</button></td></tr>`;
+    }).join('') : `<tr><td colspan="6" class="text-mute" style="padding:12px;text-align:center">${t('Nothing collected', 'لا شيء مُحصّل')}</td></tr>`;
+    return `<div style="margin-bottom:16px"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px"><b>${title} · ${fmtDate(day)}</b><span class="text-mute" style="font-size:11px">${t('belongs to', 'تخص')}:</span>${sum || '—'}</div>
+      <div class="table-wrap"><table style="width:100%;font-size:12.5px"><thead><tr><th style="text-align:left">${t('Customer', 'العميل')}</th><th style="text-align:left">${t('Invoice', 'الفاتورة')}</th><th style="text-align:left">${t('Category', 'الفئة')}</th><th style="text-align:left">${t('Method', 'الطريقة')}</th><th class="text-right">${t('Amount', 'المبلغ')}</th><th style="text-align:left">${t('Belongs to', 'تخص شهر')}</th></tr></thead><tbody>${body}</tbody></table></div></div>`;
+  };
+  showModal({
+    title: '💵 ' + t('Collected today & yesterday', 'المُحصّل اليوم وأمس'),
+    size: 'xl',
+    body: `<div class="text-mute" style="font-size:12px;margin-bottom:10px;line-height:1.6">${t('The Dashboard box counts only money that pays the SAME month\'s invoices. Money collected for an older month is listed here against that month (orange ↗) — click a month to open it on the Dashboard.', 'يحتسب صندوق لوحة التحكم فقط المبالغ التي تسدد فواتير نفس الشهر. المبالغ المحصّلة لشهر أقدم تظهر هنا مقابل ذلك الشهر (↗ برتقالي) — اضغط الشهر لفتحه في لوحة التحكم.')}</div>${section(TODAY, t('Today', 'اليوم'))}${section(yday, t('Yesterday', 'أمس'))}`,
+    actions: [{ label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal }],
+  });
+};
+window.jumpDashMonth = function (mk) { if (!/^\d{4}-\d{2}$/.test(String(mk))) return; window._dashPeriod = { type: 'month', value: mk }; closeModal(); if (state.route !== 'dashboard') navigate('dashboard'); else render(); };
 PAGES.dashboard = (main) => {
   const s = computeStats();
   // v6.605 — renewals done in the SAME period as the KPIs (count renewal rows whose start month is in scope).
@@ -383,12 +429,15 @@ PAGES.dashboard = (main) => {
     if (_fr && _dashMonthsSet.has(_fr)) newThisPeriod++;
     if (typeof memberStatus === 'function' && memberStatus(_m) === 'Withdrawn') withdrawnCount++;
   }
-  // v6.617 — money physically collected TODAY (payments dated today across all invoices).
-  let todayRevenue = 0, yesterdayRevenue = 0;
+  // v6.670 — money collected TODAY / YESTERDAY, by the month it BELONGS to: only the part that pays this same month's invoices
+  // counts in the number; money collected for an OLDER (or other) month is shown beside it ("+N for other months") and belongs
+  // to that month (the list shows it against its month). Was: every payment dated that day, whatever month it paid.
+  let todayRevenue = 0, yesterdayRevenue = 0, todayOther = 0, yesterdayOther = 0;
   const _yday = addDays(TODAY, -1);
-  for (const _inv of (state.invoices || [])) {
-    if (_inv.deleted) continue;
-    for (const _p of (_inv.payments || [])) { const _d = _p.date || ''; if (_d === TODAY) todayRevenue += Number(_p.amount) || 0; else if (_d === _yday) yesterdayRevenue += Number(_p.amount) || 0; }
+  for (const _r of paymentsByBillMonth([TODAY, _yday])) {
+    const _same = _r.bill === _r.day.slice(0, 7);
+    if (_r.day === TODAY) { if (_same) todayRevenue += _r.amt; else todayOther += _r.amt; }
+    else { if (_same) yesterdayRevenue += _r.amt; else yesterdayOther += _r.amt; }
   }
   // v6.640 — court + boxing-room rental counts for the period (shown in the New / Renewals box).
   let courtRentals = 0, boxRentals = 0;
@@ -591,11 +640,11 @@ PAGES.dashboard = (main) => {
     <!-- v6.622 Section 2 — today & this week (4 boxes): today revenue · new/renewals · renewing this week · most popular -->
     ${_secHead('📅', t('Today & this week', 'اليوم وهذا الأسبوع'), true)}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:12px">
-      <div class="card" style="padding:12px 14px;border:1px solid rgba(16,185,129,.25);background:rgba(16,185,129,.05)">
+      <div class="card" style="padding:12px 14px;border:1px solid rgba(16,185,129,.25);background:rgba(16,185,129,.05);cursor:pointer" onclick="showDayCollections()" title="${t('Click to see every payment collected today and yesterday, and which month each one belongs to', 'اضغط لرؤية كل دفعة محصّلة اليوم وأمس والشهر الذي تخصه')}">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="font-size:18px">💵</span><div style="font-weight:600;font-size:13px">${t("Today's revenue", 'إيراد اليوم')}</div></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;align-items:stretch">
-          <div style="padding:2px 12px 2px 0;min-width:0"><div class="text-mute" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em">${t('Today', 'اليوم')}</div><div style="font-size:22px;font-weight:800;color:var(--green);line-height:1.15;margin-top:4px">${fmt(todayRevenue)} <span style="font-size:12px;color:var(--text-dim);font-weight:500">QAR</span></div><div class="text-mute" style="font-size:11px;margin-top:3px">${t('collected today', 'المُحصّل اليوم')}</div></div>
-          <div style="padding:2px 0 2px 12px;border-inline-start:1px solid var(--border,rgba(128,128,128,.28));min-width:0"><div class="text-mute" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em">${t('Yesterday', 'أمس')}</div><div style="font-size:22px;font-weight:800;line-height:1.15;margin-top:4px">${fmt(yesterdayRevenue)} <span style="font-size:12px;color:var(--text-dim);font-weight:500">QAR</span></div><div class="text-mute" style="font-size:11px;margin-top:3px">${t('collected yesterday', 'المُحصّل أمس')}</div></div>
+          <div style="padding:2px 12px 2px 0;min-width:0"><div class="text-mute" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em">${t('Today', 'اليوم')}</div><div style="font-size:22px;font-weight:800;color:var(--green);line-height:1.15;margin-top:4px">${fmt(todayRevenue)} <span style="font-size:12px;color:var(--text-dim);font-weight:500">QAR</span></div><div class="text-mute" style="font-size:11px;margin-top:3px">${t('collected today', 'المُحصّل اليوم')}</div>${Math.abs(todayOther) >= 0.5 ? `<div style="font-size:10px;font-weight:700;color:var(--accent-2);margin-top:2px">+${fmt(todayOther)} ${t('for other months', 'لأشهر أخرى')}</div>` : ''}</div>
+          <div style="padding:2px 0 2px 12px;border-inline-start:1px solid var(--border,rgba(128,128,128,.28));min-width:0"><div class="text-mute" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em">${t('Yesterday', 'أمس')}</div><div style="font-size:22px;font-weight:800;line-height:1.15;margin-top:4px">${fmt(yesterdayRevenue)} <span style="font-size:12px;color:var(--text-dim);font-weight:500">QAR</span></div><div class="text-mute" style="font-size:11px;margin-top:3px">${t('collected yesterday', 'المُحصّل أمس')}</div>${Math.abs(yesterdayOther) >= 0.5 ? `<div style="font-size:10px;font-weight:700;color:var(--accent-2);margin-top:2px">+${fmt(yesterdayOther)} ${t('for other months', 'لأشهر أخرى')}</div>` : ''}</div>
         </div>
       </div>
       <div class="card" style="padding:12px 14px;border:1px solid rgba(139,92,246,.25);background:rgba(139,92,246,.05);cursor:pointer" onclick="navigate('members')" title="${t('New registrations + renewals this period', 'التسجيلات الجديدة + التجديدات هذه الفترة')}">
@@ -629,7 +678,7 @@ PAGES.dashboard = (main) => {
     <!-- KPI cards -->
     ${_secHead('💰', t('This month', 'هذا الشهر') + ' · ' + s.periodShort, true)}
     <div class="kpi-grid">
-      <div class="kpi">
+      <div class="kpi" style="cursor:pointer" onclick="window._txnLinkFilter = { months: ${escapeHtml(JSON.stringify(s.months))}.slice(), sport: null }; navigate('transactions')" title="${t('Click to see these transactions', 'اضغط لرؤية هذه العمليات')}">
         <div class="kpi-icon">💰</div>
         <div class="kpi-label" title="${t('Revenue billed this month — each sport’s fee counts in the month that sport STARTS (accrual). This is not the cash received; see “Cash collected” for money actually taken in this month.', 'الإيراد المُحتسب هذا الشهر — رسوم كل رياضة تُحتسب في شهر بدايتها. هذا ليس النقد المُحصّل؛ انظر “النقد المُحصّل” للمبلغ المستلم فعلياً.')}">${t('Total Revenue','إجمالي الإيرادات')} (${s.periodShort})</div>
         <div class="kpi-value num">${fmt(s.currRevenue)} <span style="font-size:13px;color:var(--text-dim);font-weight:500">QAR</span></div>
