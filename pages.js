@@ -18581,6 +18581,7 @@ PAGES.salaries = (main) => {
       }
       if (p.privateBonus > 0) breakdown.push(`🔒 private +${p.privateBonusPct}% × ${fmt(p.privateBonusBase)} = ${fmt(p.privateBonus)}`);   // v6.653
       if (p.receptionBonus > 0) breakdown.push(`🔒 reception share ${p.privateBonusPct}% × ${fmt(p.receptionPoolBase)} ÷ ${p.receptionStaffCount} = ${fmt(p.receptionBonus)}`);
+      if (p.targetBonus > 0) breakdown.push(`🎯 target bonus ${fmt(p.targetBonus)}${p.targetKind === 'reception' ? ` (${fmt(p.targetTierBonus)} ÷ ${p.targetStaff})` : ` (${p.targetValue} new/renew)`}`);   // v6.655
       const breakdownStr = breakdown.join(' + ') || '—';
       const pendingNote = (p.basis === 'attendance' && p.commissionPending > 0)
         ? `<div style="color:var(--accent-2);margin-top:2px">⏳ ${fmt(p.commissionPending)} pending — paid as attended, or stays with the club if they leave</div>`
@@ -19607,6 +19608,7 @@ window.downloadPayslipPDF = function(coachId, monthKey) {
       ` : ''}
       ${pay.privateBonus > 0 ? `<div class="row"><span>Private bonus (+${pay.privateBonusPct}% on ${fmt(pay.privateBonusBase)} QAR of private packages you brought in)</span><span>${fmt(pay.privateBonus)} QAR</span></div>` : ''}
       ${pay.receptionBonus > 0 ? `<div class="row"><span>Reception private share (${pay.privateBonusPct}% of ${fmt(pay.receptionPoolBase)} QAR ÷ ${pay.receptionStaffCount} staff)</span><span>${fmt(pay.receptionBonus)} QAR</span></div>` : ''}
+      ${pay.targetBonus > 0 ? `<div class="row"><span>Target bonus (${pay.targetKind === 'reception' ? 'reception income target ' + fmt(pay.targetTierBonus) + ' ÷ ' + pay.targetStaff + ' staff' : pay.targetValue + ' new/renew this month'})</span><span>${fmt(pay.targetBonus)} QAR</span></div>` : ''}
       <div class="row bold"><span>Gross pay</span><span>${fmt(pay.gross)} QAR</span></div>
 
       ${pay.basis === 'attendance' ? `
@@ -20372,6 +20374,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
       ` : ''}
       ${pay.privateBonus > 0 ? `<div class="row"><span>Private bonus (+${pay.privateBonusPct}% on ${fmt(pay.privateBonusBase)} QAR of private packages)</span><span style="font-family:monospace">${fmt(pay.privateBonus)} QAR</span></div>` : ''}
       ${pay.receptionBonus > 0 ? `<div class="row"><span>Reception private share (${pay.privateBonusPct}% of ${fmt(pay.receptionPoolBase)} QAR ÷ ${pay.receptionStaffCount} staff)</span><span style="font-family:monospace">${fmt(pay.receptionBonus)} QAR</span></div>` : ''}
+      ${pay.targetBonus > 0 ? `<div class="row"><span>Target bonus (${pay.targetKind === 'reception' ? 'reception income target ' + fmt(pay.targetTierBonus) + ' ÷ ' + pay.targetStaff + ' staff' : pay.targetValue + ' new/renew this month'})</span><span style="font-family:monospace">${fmt(pay.targetBonus)} QAR</span></div>` : ''}
       <div class="row bold"><span>Gross pay</span><span style="font-family:monospace">${fmt(pay.gross)} QAR</span></div>
 
       ${pay.advance > 0 ? `
