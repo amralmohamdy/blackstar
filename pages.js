@@ -4136,7 +4136,7 @@ function showMemberForm(m) {
             existing.subscriptions.push({
               activity: e.sport, coachId: e.coachId, totalClasses: parseInt(e.classes) || 0,
               start: e.start || TODAY, end: e.end || null, status: 'active', switchFunded: true,
-              amountPaid: Number(e.price) || 0, _sid: 's' + Date.now() + '_swfix',
+              amountPaid: Number(e.price) || 0, _sid: 's' + Date.now() + '_swfix', ...privFlags(e.private, e.approach),
             });
             if (typeof audit === 'function') audit('member.switch_refund_guard', 'member:' + existing.id,
               `Skipped re-billing switch-funded ${e.sport} (restored its subscription instead)`, { memberId: existing.id, sport: e.sport });
@@ -4929,7 +4929,7 @@ window.transferCoachStudents = function(fromId) {
             sub.transferredToCoachId = to.id; sub.transferredAt = eff;
             // NEW sub → same sport, new coach, the remaining classes, active (earns bShare).
             m.subscriptions.push({ activity: sport, coachId: to.id, coach: to.name, totalClasses: remaining, amountPaid: bShare,
-              start: nextDay, end: origEnd, status: 'active', switchFunded: true, invoiceNumber: sub.invoiceNumber,
+              start: nextDay, end: origEnd, status: 'active', switchFunded: true, invoiceNumber: sub.invoiceNumber, ...privateCarryOnCoachChange(sub, to.id),
               _sid: 's' + Date.now() + '_tr' + split });
             // Split the invoice line: old coach keeps aShare/attended, new coach gets bShare/remaining.
             if (inv && line) {
@@ -15708,6 +15708,43 @@ window.editInvoiceQuick = function(id) {
   bindMemberPicker('ef-cust', { placeholder: '— none —' });
 };
 
+// v6.661 — Review & fix for "the same package billed twice": shows both lines side by side (which one the coach is paid on, what was
+// actually paid on each invoice) and removes the extra line ONLY when no payment would be left over-paid.
+window.openDupLineResolver = function (mid, sport, coachId) {
+  if (currentRole() !== 'admin') { toast(t('Admins only', 'للمسؤولين فقط'), 'error'); return; }
+  const m = (state.members || []).find(x => 'm' + x.id === String(mid)); if (!m) { toast(t('Member not found', 'العضو غير موجود'), 'error'); return; }
+  const groups = dupLineGroups(m, sport, coachId);
+  window._dupRes = { mid, sport, coachId, groups };
+  const pays = inv => (inv.payments || []).map(x => fmtDate(x.date) + ' · ' + fmt(x.amount) + ' ' + escapeHtml(x.method || '')).join('<br>') || '<span class="text-mute">—</span>';
+  const body = groups.length ? groups.map((g, gi) => `
+      <div class="table-wrap" style="margin-bottom:10px"><table style="width:100%;font-size:12.5px"><thead><tr>
+        <th style="text-align:left">${t('Invoice', 'الفاتورة')}</th><th style="text-align:left">${t('Billed on', 'بتاريخ')}</th><th class="text-right">${t('Line', 'البند')}</th>
+        <th class="text-right">${t('Invoice total / paid', 'إجمالي / مدفوع')}</th><th style="text-align:left">${t('Payments', 'الدفعات')}</th><th style="text-align:left">${t('This line is', 'هذا البند')}</th><th></th></tr></thead><tbody>
+      ${g.map((e, ei) => { const bad = e.own ? null : lineVoidProblem(e.inv, e.li); return `<tr>
+        <td class="font-bold">${escapeHtml(e.inv.ref || '#' + e.inv.id)}</td><td>${fmtDate(e.when)}</td><td class="text-right num">${fmt(Number(e.li.price) || 0)}${e.li.classes != null ? ' <span class="text-mute">· ' + e.li.classes + ' ' + t('cl.', 'حصة') + '</span>' : ''}</td>
+        <td class="text-right num">${fmt(invoiceTotal(e.inv))} / <b>${fmt(recordedPaid(e.inv))}</b></td><td style="font-size:11px">${pays(e.inv)}</td>
+        <td>${e.own ? '<span class="badge green" style="font-size:10px">' + t("Package's own line", 'بند الباقة الأصلي') + '</span>' : '<span class="badge" style="font-size:10px;background:rgba(217,119,6,.15);color:var(--accent-2)">' + t('Extra line', 'بند زائد') + '</span>'}</td>
+        <td>${e.own ? '' : (bad ? '<div style="font-size:11px;color:var(--red);max-width:250px">' + t('Cannot remove automatically: ' + fmt(bad.paid) + ' QAR was paid on this invoice and it would drop to ' + fmt(bad.newTotal) + '. If the customer paid twice, refund or move that payment first.', 'لا يمكن الحذف تلقائياً: دُفع ' + fmt(bad.paid) + ' على هذه الفاتورة وستنخفض إلى ' + fmt(bad.newTotal) + '. إذا دفع العميل مرتين فاسترجع أو انقل الدفعة أولاً.') + '</div>'
+          : '<button class="btn primary sm" onclick="removeDupLine(' + gi + ',' + ei + ')">🗑 ' + t('Remove this line', 'حذف هذا البند') + '</button>')}</td></tr>`; }).join('')}
+      </tbody></table></div>`).join('')
+    : `<div style="text-align:center;padding:20px;color:var(--green);font-weight:700">✅ ${t('Nothing left to fix for this package.', 'لا شيء لإصلاحه لهذه الباقة.')}</div>`;
+  showModal({
+    title: '🧹 ' + t('Same package billed twice', 'نفس الباقة مفوترة مرتين') + ' · ' + escapeHtml(m.name) + ' · ' + escapeHtml(sport),
+    size: 'xl',
+    body: `<div class="text-mute" style="font-size:12px;margin-bottom:10px;line-height:1.6">${t('Both lines below point at the same package. The coach is paid once, so pay is already right. The "Extra line" is the one that does not belong to the package; it still sits on the books (revenue / customer balance). Remove it when it is a mistake and no recorded payment depends on it; if money was paid twice, settle that with the customer first.', 'البندان يشيران إلى نفس الباقة. يُدفع للمدرب مرة واحدة. «البند الزائد» لا يخص الباقة وما زال في الدفاتر (الإيراد / رصيد العميل). احذفه إذا كان خطأً ولا توجد دفعة مسجلة تعتمد عليه؛ وإذا دُفع المبلغ مرتين فسوِّه مع العميل أولاً.')}</div>${body}`,
+    actions: [{ label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal }],
+  });
+};
+window.removeDupLine = function (gi, ei) {
+  const c = window._dupRes || {}, e = (c.groups || [])[gi] && c.groups[gi][ei];
+  if (!e || e.own) return;
+  if (!confirm(t('Remove the ' + fmt(Number(e.li.price) || 0) + ' QAR ' + e.li.sport + ' line from ' + (e.inv.ref || '#' + e.inv.id) + '?', 'حذف بند ' + e.li.sport + ' بقيمة ' + fmt(Number(e.li.price) || 0) + ' من ' + (e.inv.ref || '#' + e.inv.id) + '؟'))) return;
+  const price = Number(e.li.price) || 0, r = voidInvoiceLine(e.inv, e.li);
+  if (!r.ok) { toast(t('Not removed — a payment would be left over-paid', 'لم يُحذف — ستبقى دفعة زائدة'), 'error'); return; }
+  if (typeof audit === 'function') audit('invoice.line_void', 'invoice:' + e.inv.id, 'Removed duplicate ' + e.li.sport + ' line (' + fmt(price) + ') from ' + (e.inv.ref || '#' + e.inv.id) + (r.archived ? ' — invoice archived (no lines left)' : ''), { invoiceId: e.inv.id, sport: e.li.sport, price });
+  const done = () => { closeModal(); render(); };
+  withCloudConfirm({ verify: [{ collection: 'invoices', id: e.inv.id }], okMsg: t('Duplicate line removed', 'تم حذف البند المكرر'), afterOk: done, onFail: done });
+};
 window.deleteInvoice = function(id) {
   const _role = currentRole();
   if (_role !== 'admin' && _role !== 'receptionist') { toast('You do not have permission to delete invoices', 'error'); return; }
@@ -18636,6 +18673,43 @@ window.deleteExpense = function(id) {
 // state.salaries[] now stores lightweight rows:
 //   { id, coachId, month, kind: 'advance'|'paid', amount?, paidDate?, note? }
 
+// v6.660 — 🔒 Private check: every package under a "(Private)" coach / sport that nobody has classified, with one-click answers.
+window.openPrivateCheck = function (monthKey) {
+  if (currentRole() !== 'admin') { toast(t('Admins only', 'للمسؤولين فقط'), 'error'); return; }
+  const list = privateUnmarkedPackages(monthKey);
+  window._privChk = { monthKey, list };
+  const label = (typeof fmtMonth === 'function') ? fmtMonth(monthKey) : monthKey;
+  const rows = list.map((x, i) => `<tr>
+      <td class="text-mute">${i + 1}</td>
+      <td><div class="font-bold">${escapeHtml(x.member.name)}</div></td>
+      <td>${escapeHtml(x.sub.activity || '')}</td>
+      <td>${escapeHtml(coachName(x.sub.coachId) || '—')}</td>
+      <td style="font-size:11px;white-space:nowrap">${x.sub.start ? fmtDate(x.sub.start) : '—'} → ${x.sub.end ? fmtDate(x.sub.end) : '—'}</td>
+      <td class="text-right num">${fmt(x.sub.amountPaid || 0)}</td>
+      <td style="white-space:nowrap">
+        <button class="btn ghost sm" onclick="markPackagePrivate(${i}, 'coach')" title="${t('Approached by the coach: coach +' + privateBonusPct() + '%', 'عن طريق المدرب')}">🏃 ${t('Coach', 'مدرب')}</button>
+        <button class="btn ghost sm" onclick="markPackagePrivate(${i}, 'reception')" title="${t('Approached by reception: ' + privateBonusPct() + '% shared by reception', 'عن طريق الاستقبال')}">🧾 ${t('Reception', 'استقبال')}</button>
+        <button class="btn ghost sm" onclick="markPackagePrivate(${i}, 'none')" title="${t('Not a private package — stop listing it', 'ليست باقة خاصة')}">✕ ${t('Not private', 'ليست خاصة')}</button>
+      </td></tr>`).join('');
+  showModal({
+    title: '🔒 ' + t('Private check', 'فحص الخاص') + ' · ' + escapeHtml(label),
+    size: 'xl',
+    body: `<div class="text-mute" style="font-size:12px;margin-bottom:8px;line-height:1.6">${t('These packages are with a private coach (or a private sport) but not marked Private, so no private bonus is paid on them. For each one say who approached the customer — the coach (coach earns +' + privateBonusPct() + '%) or reception (' + privateBonusPct() + '% shared by the reception staff) — or mark it Not private.', 'هذه الباقات لدى مدرب خاص (أو رياضة خاصة) لكنها غير معلَّمة كخاصة، فلا يُدفع عليها بونس. لكل واحدة حدّد من أحضر العميل — المدرب أو الاستقبال — أو علّمها ليست خاصة.')}</div>
+      ${list.length ? `<div class="table-wrap"><table style="width:100%;font-size:12.5px"><thead><tr><th>#</th><th style="text-align:left">${t('Member', 'العضو')}</th><th style="text-align:left">${t('Sport', 'الرياضة')}</th><th style="text-align:left">${t('Coach', 'المدرب')}</th><th style="text-align:left">${t('Period', 'الفترة')}</th><th class="text-right">${t('Paid', 'المدفوع')}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
+        : `<div style="text-align:center;padding:22px;color:var(--green);font-weight:700">✅ ${t('Nothing to check — every package under a private coach is classified.', 'لا شيء للفحص — كل باقة لدى مدرب خاص مصنَّفة.')}</div>`}`,
+    actions: [{ label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal }],
+  });
+};
+window.markPackagePrivate = function (idx, approach) {
+  const ctx = window._privChk || {}, item = (ctx.list || [])[idx];
+  if (!item) return;
+  if (!setPackagePrivate(item.member, item.sub, approach)) return;
+  save();
+  const mk = ctx.monthKey;
+  closeModal();
+  openPrivateCheck(mk);
+  try { if (state.route === 'salaries') render(); } catch (_) {}
+};
 PAGES.salaries = (main) => {
   // Persist the chosen month + settle date on `window` so paying someone (which triggers a global
   // render() → re-runs this page) KEEPS the month the user was viewing instead of snapping back to
@@ -18711,7 +18785,7 @@ PAGES.salaries = (main) => {
         ? ` <span class="badge" style="background:rgba(217,119,6,.15);color:var(--accent-2);font-size:9px;padding:1px 6px;cursor:help" title="${escapeHtml(_dups.map(d => `${d.line.memberName} · ${d.line.sport}`).join(' | '))} — duplicate invoice(s) in the data. Already EXCLUDED from pay (${fmt(_dupExtra)} base ≈ ${fmt(_dupPay)} not paid). Clean up in Finance → Duplicate Invoices.">✓ ${_dups.length} DUP EXCLUDED</span>`
         : '';
       const dupNote = _dups.length
-        ? `<div style="color:var(--accent-2);margin-top:2px;font-weight:600">✓ ${_dups.length} duplicate line${_dups.length === 1 ? '' : 's'} auto-excluded (${escapeHtml(_dups.map(d => d.line.memberName + ' · ' + d.line.sport).join(', '))}) — coach NOT overpaid (${fmt(_dupExtra)} ≈ ${fmt(_dupPay)} excluded). ${currentRole() === 'admin' ? `<a href="#" onclick="event.preventDefault();navigate('dupinvoices')" style="color:var(--blue);font-weight:700;text-decoration:underline">🧹 ${t('Remove duplicates', 'إزالة المكررات')}</a>` : t('Clean the source in Finance → Duplicate Invoices.', 'نظّف المصدر في الفواتير المكررة.')}</div>`
+        ? `<div style="color:var(--accent-2);margin-top:2px;font-weight:600">✓ ${_dups.length} duplicate line${_dups.length === 1 ? '' : 's'} auto-excluded (${escapeHtml(_dups.map(d => d.line.memberName + ' · ' + d.line.sport).join(', '))}) — coach NOT overpaid (${fmt(_dupExtra)} ≈ ${fmt(_dupPay)} excluded). <span class="text-mute" style="font-weight:400">${t('The same package is billed on two invoices (usually a switch or an added sport, then a renewal).', 'نفس الباقة مفوترة على فاتورتين (عادةً تحويل أو إضافة رياضة ثم تجديد).')}</span> ${currentRole() === 'admin' ? _dups.map(d => `<a href="#" onclick="event.preventDefault();openDupLineResolver(${escapeHtml(JSON.stringify(d.line.mid))},${escapeHtml(JSON.stringify(d.line.sport))},${escapeHtml(JSON.stringify(p.coachId))})" style="color:var(--blue);font-weight:700;text-decoration:underline;margin-right:8px">🧹 ${t('Review & fix', 'مراجعة وإصلاح')}${_dups.length > 1 ? ' · ' + escapeHtml(d.line.memberName) : ''}</a>`).join('') : t('Ask an admin to review it.', 'اطلب من المشرف مراجعتها.')}</div>`
         : '';
       return `
         <tr>
@@ -18852,6 +18926,7 @@ PAGES.salaries = (main) => {
         <button class="btn ghost" onclick="window._salRecalc && window._salRecalc()" title="${t('Re-run each coach commission from the latest attendance, invoices and payments', 'أعد حساب عمولة كل مدرب من أحدث الحضور والفواتير والمدفوعات')}">🔄 ${t('Recalculate', 'إعادة الحساب')}</button>
         ${currentRole() === 'admin' ? `<button class="btn ghost" onclick="coachAttributionCheck()" title="${t('Find invoice lines credited to a coach who is no longer the current coach for that sport, and re-credit them', 'ابحث عن بنود منسوبة لمدرب لم يعد مدرب العضو لتلك الرياضة، وأعد إسنادها')}">🧭 ${t('Coach check', 'فحص المدرب')}</button>` : ''}
         ${currentRole() === 'admin' && (typeof _switchedUnreconciled === 'function' && _switchedUnreconciled().length) ? `<button class="btn ghost" style="border-color:var(--accent-2);color:var(--accent-2)" onclick="switchReconcileCheck()" title="${t('A sport was switched before the fix — complete the old sport, split the payment, remove the phantom pending', 'رياضة بُدّلت قبل الإصلاح — أكمل القديمة وقسّم الدفعة وأزل المعلّق الوهمي')}">🔀 ${t('Switch check', 'فحص التبديل')} · ${_switchedUnreconciled().length}</button>` : ''}
+        ${(() => { const n = privateUnmarkedPackages(filter.month).length; return `<button class="btn ghost" onclick="openPrivateCheck(window._salMonth || '${filter.month}')" title="${t('Packages under a private coach that are not marked Private yet', 'باقات لدى مدرب خاص لم تُعلَّم كخاصة بعد')}">🔒 ${t('Private check', 'فحص الخاص')}${n ? ` <span class="badge" style="background:rgba(245,158,11,.2);color:var(--accent-2);font-size:10px">${n}</span>` : ''}</button>`; })()}
         <button class="btn primary" onclick="downloadPayrollCSV('${filter.month}', window._salCoachSet || 'active')">📥 Export payroll</button>
       </div>
     </div>
@@ -25861,6 +25936,7 @@ window.addRenewalMulti = function(m, picks) {
   const rows = picks.map((e, i) => ({
     sport: e.sport, coachId: e.coachId, classes: parseInt(e.classes) || 0, i,
     price: smartPrice(e.sport, Number(e.price) || 0),
+    pv: privateDefaultFor(m, e.sport, e.coachId),   // v6.660
     carry: (typeof carryForwardCredit === 'function') ? (carryForwardCredit(m, e.sport) || 0) : 0,
     deduct: (() => { const le = getLastSportExpiry(e.sport); return le ? countAttendedAfter(e.sport, le) : 0; })(),
   }));
@@ -25874,7 +25950,14 @@ window.addRenewalMulti = function(m, picks) {
       </div>
       <div class="field" style="margin:0;width:78px"><label style="font-size:10px">${t('Classes', 'الحصص')}</label><input id="rnm-cls-${r.i}" type="number" min="0" step="1" value="${r.classes || ''}" /></div>
       <div class="field" style="margin:0;width:104px"><label style="font-size:10px">${t('Amount', 'المبلغ')}</label><input id="rnm-amt-${r.i}" class="rnm-amt" type="number" min="0" step="0.01" value="${r.price || ''}" /></div>
-    </div>`).join('');
+    </div>
+    ${(isCampSport(r.sport) || r.sport === MIXED) ? '' : `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:-2px 0 8px 30px">
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;cursor:pointer"><input type="checkbox" id="rnm-priv-${r.i}" ${r.pv.private ? 'checked' : ''} onchange="var s=document.getElementById('rnm-app-${r.i}');if(s){s.style.display=this.checked?'':'none';if(!this.checked)s.value='';}" /> 🔒 ${t('Private', 'خاص')}</label>
+      <select id="rnm-app-${r.i}" style="padding:6px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text);font-size:12px;display:${r.pv.private ? '' : 'none'}">
+        <option value="" ${r.pv.approach ? '' : 'selected'}>${t('— Approached by… —', '— تم التواصل عن طريق… —')}</option>
+        <option value="coach" ${r.pv.approach === 'coach' ? 'selected' : ''}>${t('By the coach', 'عن طريق المدرب')}</option>
+        <option value="reception" ${r.pv.approach === 'reception' ? 'selected' : ''}>${t('By reception', 'عن طريق الاستقبال')}</option></select>
+    </div>`}`).join('');
 
   showModal({
     title: `${t('Renew Subscription', 'تجديد الاشتراك')} — ${escapeHtml(m.name)}`,
@@ -25902,6 +25985,17 @@ window.addRenewalMulti = function(m, picks) {
         const applyAdj = document.getElementById('rnm-adjust').checked;
         const selected = rows.filter(r => document.getElementById(`rnm-pick-${r.i}`)?.checked);
         if (!selected.length) { toast(t('Tick at least one sport to renew', 'اختر رياضة واحدة على الأقل للتجديد'), 'error'); return; }
+        // v6.660 — Private decision per sport, validated before anything is saved
+        const _pvBy = {};
+        for (const r of selected) {
+          const camp = isCampSport(r.sport) || r.sport === MIXED;
+          const on = !camp && !!(document.getElementById(`rnm-priv-${r.i}`) || {}).checked;
+          const ap = (document.getElementById(`rnm-app-${r.i}`) || {}).value || '';
+          if (on && !(ap === 'coach' || ap === 'reception')) { toast(r.sport + ' — ' + t('Private: choose who approached the customer (coach or reception)', 'خاص: اختر من أحضر العميل (المدرب أو الاستقبال)'), 'error'); return; }
+          _pvBy[r.i] = privFlags(on, ap);
+        }
+        // v6.661 — one confirmation per sport that is already billed around this date
+        for (const r of selected) { const _bh = billedSameLines(m, r.sport, r.coachId, start); if (_bh.length && !confirm(billedSameWarning(m, r.sport, _bh, start))) return; }
         if (typeof assertCloudWritable === 'function' && !assertCloudWritable('record this renewal', 'تسجيل هذا التجديد')) return;
 
         const ref = nextInvoiceRef();
@@ -25930,12 +26024,13 @@ window.addRenewalMulti = function(m, picks) {
           if (!m.renewals) m.renewals = [];
           m.renewals.push({ _rid, activity: r.sport, coach: coachName(r.coachId), coachId: r.coachId, start, end: end || null, validity, totalClasses: classes || null, amountPaid: amount, status, manual: true, createdAt: new Date().toISOString() });
           if (!m.subscriptions) m.subscriptions = [];
-          m.subscriptions.push({ _sid: 's' + _stamp + '_' + r.i, _rid, ...inheritPrivate(m, r.sport, r.coachId), month: ymToShort(start.slice(0, 7)) || start.slice(0, 7), activity: r.sport, coach: coachName(r.coachId), coachId: r.coachId, firstRegistration: m.firstRegistration || null, start, end: end || null, validity, status, totalClasses: classes || null, attendedClasses: 0, priceCompleted: null, amountPaid: amount, invoiceNumber: ref, manual: true });
+          m.subscriptions.push({ _sid: 's' + _stamp + '_' + r.i, _rid, ..._pvBy[r.i], month: ymToShort(start.slice(0, 7)) || start.slice(0, 7), activity: r.sport, coach: coachName(r.coachId), coachId: r.coachId, firstRegistration: m.firstRegistration || null, start, end: end || null, validity, status, totalClasses: classes || null, attendedClasses: 0, priceCompleted: null, amountPaid: amount, invoiceNumber: ref, manual: true });
+          { const _en = (m.enrollments || []).find(e => e.sport === r.sport && String(e.coachId) === String(r.coachId)); if (_en && !isCampSport(r.sport) && r.sport !== MIXED) { _en.private = !!(_pvBy[r.i] && _pvBy[r.i].private); _en.approach = (_pvBy[r.i] && _pvBy[r.i].private) ? _pvBy[r.i].approach : null; } }   // v6.660
           m.renewalsBySport = m.renewalsBySport || {}; m.renewalsBySport[r.sport] = (m.renewalsBySport[r.sport] || 0) + 1;
           m.renewalCount = (m.renewalCount || 0) + 1;
           if (amount > 0) {
             const dl = (isCamp && classes && typeof campLabelForClasses === 'function') ? (campLabelForClasses(classes) || '') : '';
-            invLines.push({ sport: r.sport, coach: coachName(r.coachId), coachId: r.coachId, classes, price: amount, ...inheritPrivate(m, r.sport, r.coachId), durationLabel: dl || null, billMonth: start.slice(0, 7) });
+            invLines.push({ sport: r.sport, coach: coachName(r.coachId), coachId: r.coachId, classes, price: amount, ..._pvBy[r.i], durationLabel: dl || null, billMonth: start.slice(0, 7) });
             invAmount += amount;
           }
           if (!maxEnd || (end && end > maxEnd)) maxEnd = end;
@@ -26063,6 +26158,17 @@ window.addRenewal = function(memberId) {
         <div class="field"><label>Start / renewal date</label><input id="rn-start" type="date" value="${TODAY}" /></div>
         <div class="field"><label>Expiry date <span class="text-mute" style="font-size:10px;font-weight:400">(auto · override allowed)</span></label><input id="rn-end" type="date" /><div id="rn-end-hint" class="text-mute" style="font-size:10px;margin-top:3px"></div></div>
       </div>
+      <div id="rn-priv-box" style="margin-top:6px;padding:9px 12px;border:1px dashed var(--border);border-radius:8px;display:grid;gap:6px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;cursor:pointer"><input type="checkbox" id="rn-private" /> 🔒 ${t('Private', 'خاص')}</label>
+        <div id="rn-priv-wrap" style="display:none;gap:4px">
+          <select id="rn-approach" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)">
+            <option value="">${t('— Approached by… —', '— تم التواصل عن طريق… —')}</option>
+            <option value="coach">${t('Approached by the coach (coach +' + privateBonusPct() + '%)', 'عن طريق المدرب (المدرب +' + privateBonusPct() + '%)')}</option>
+            <option value="reception">${t('Approached by reception (' + privateBonusPct() + '% shared by reception)', 'عن طريق الاستقبال (' + privateBonusPct() + '% للاستقبال)')}</option>
+          </select>
+        </div>
+        <div id="rn-priv-hint" class="text-mute" style="font-size:11px"></div>
+      </div>
       <div id="rn-pay-panel" style="margin-top:6px;padding:12px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.30);border-radius:10px">
         <label style="font-size:11px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px">💳 ${t('Paid now — amount per method', 'المدفوع الآن — المبلغ لكل طريقة')} <span class="text-mute" style="font-weight:400;font-size:10px;text-transform:none">${t('(split allowed · leave ALL blank = paid in full, cash)', '(يمكن التقسيم · اترك الكل فارغاً = مدفوع بالكامل نقداً)')}</span></label>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -26094,11 +26200,18 @@ window.addRenewal = function(memberId) {
         // Camp has no coach; for camp renewals a missing/NaN coach is fine (null).
         const coachId = isCampSport(renewedSport) ? null : (parseInt($('#rn-coach').value) || null);
         if (!start) { toast('Start date required', 'error'); return; }
+        // v6.660 — Private: when ticked, who approached the customer is required (nothing is saved otherwise)
+        const _pvOn = !!($('#rn-private') || {}).checked && !isCampSport(renewedSport) && renewedSport !== MIXED;
+        const _pvAp = ($('#rn-approach') || {}).value || '';
+        if (_pvOn && !(_pvAp === 'coach' || _pvAp === 'reception')) { toast(t('Private: choose who approached the customer (coach or reception)', 'خاص: اختر من أحضر العميل (المدرب أو الاستقبال)'), 'error'); return; }
+        const _pv = privFlags(_pvOn, _pvAp);
         // Guard against creating a DUPLICATE identical period (same sport / coach /
         // start) — the usual cause of two identical rows (renewing twice or a double
         // submit). Admin can still confirm if it's genuinely intended.
         const _dupExisting = (m.subscriptions || []).find(s => (s.activity || '') === renewedSport && (s.start || '') === start && (s.coachId || null) === (coachId || null) && s.status !== 'Withdrawn');
         if (_dupExisting && !confirm(`⚠ ${m.name} already has an identical ${renewedSport} period starting ${fmtDate(start)}.\n\nThis is what creates duplicate rows. Add ANOTHER identical period anyway?`)) return;
+        // v6.661 — the same sport + coach already BILLED around this date on an invoice line (e.g. a switch or an added sport, then a renewal)
+        { const _bh = billedSameLines(m, renewedSport, coachId, start); if (_bh.length && !confirm(billedSameWarning(m, renewedSport, _bh, start))) return; }
         if (!m.renewals) m.renewals = [];
         const _rid = 'r' + Date.now();
 
@@ -26147,7 +26260,7 @@ window.addRenewal = function(memberId) {
         m.subscriptions.push({
           _sid: 's' + Date.now(),
           _rid,                                    // back-ref to the renewal entry
-          ...inheritPrivate(m, renewedSport, coachId),   // v6.653
+          ..._pv,   // v6.660: what the dialog says (defaults to what the package carries)
           month: ymToShort(start.slice(0,7)) || start.slice(0,7),
           activity: renewedSport,
           coach: coachName(coachId),
@@ -26163,6 +26276,7 @@ window.addRenewal = function(memberId) {
           invoiceNumber: ref,
           manual: true,                            // distinguishes from initial registration
         });
+        { const _en = (m.enrollments || []).find(e => e.sport === renewedSport && String(e.coachId) === String(coachId)); if (_en && !isCampSport(renewedSport) && renewedSport !== MIXED) { _en.private = !!_pv.private; _en.approach = _pv.private ? _pv.approach : null; } }   // v6.660: keep the enrollment in step
 
         // 3) Create the corresponding invoice so it appears in revenue
         if (amount > 0) {
@@ -26212,7 +26326,7 @@ window.addRenewal = function(memberId) {
               classes,
               price: amount,
               durationLabel: dl || null,
-              ...inheritPrivate(m, renewedSport, coachId),   // v6.653
+              ..._pv,   // v6.660
               billMonth: start.slice(0, 7),   // renewal revenue lands in the RENEWAL month, unambiguously
             }],
           });
@@ -26260,6 +26374,7 @@ window.addRenewal = function(memberId) {
         if (coachField2) coachField2.style.display = (isCampSport(e2.sport)) ? 'none' : '';
         const cl = document.getElementById('rn-classes'); if (cl) cl.value = e2.classes || '';
         const am = document.getElementById('rn-amount'); if (am) am.value = e2.price || '';
+        applyRnPrivateDefault();   // v6.660
         if (e2.validity) {
           const vSel = document.getElementById('rn-validity');
           if (vSel) vSel.value = e2.validity;
@@ -26269,6 +26384,32 @@ window.addRenewal = function(memberId) {
     });
   }
 
+  // v6.660 — Private decision for this renewal. Starts from what the package carries (renewals keep it for the same coach; reception
+  // always), or ticked-but-undecided for a "(Private)" coach; the user can change it before saving.
+  function syncRnPrivateUi() {
+    const chk = $('#rn-private'), sel = $('#rn-approach'), wrap = $('#rn-priv-wrap'), hint = $('#rn-priv-hint');
+    if (!chk || !sel) return;
+    if (wrap) wrap.style.display = chk.checked ? 'grid' : 'none';
+    if (hint) hint.textContent = !chk.checked ? '' : (sel.value === 'coach' ? t('The coach earns +' + privateBonusPct() + '% on top of his commission.', 'يحصل المدرب على +' + privateBonusPct() + '% فوق عمولته.')
+      : sel.value === 'reception' ? t(privateBonusPct() + '% goes to the reception staff, shared equally.', privateBonusPct() + '% لموظفي الاستقبال بالتساوي.') : t('Required: who brought this customer?', 'مطلوب: من أحضر هذا العميل؟'));
+  }
+  function applyRnPrivateDefault() {
+    const box = $('#rn-priv-box'), chk = $('#rn-private'), sel = $('#rn-approach'); if (!box || !chk || !sel) return;
+    const sp = ($('#rn-act') || {}).value || '', cid = parseInt(($('#rn-coach') || {}).value) || null;
+    const none = !sp || isCampSport(sp) || sp === MIXED;
+    box.style.display = none ? 'none' : 'grid';
+    const d = privateDefaultFor(m, sp, cid);
+    chk.checked = !!d.private; sel.value = d.approach || '';
+    syncRnPrivateUi();
+  }
+  { const chk = $('#rn-private'), sel = $('#rn-approach');
+    if (chk) chk.addEventListener('change', () => { if (!chk.checked && sel) sel.value = ''; syncRnPrivateUi(); });
+    if (sel) sel.addEventListener('change', syncRnPrivateUi);
+    const ac = $('#rn-act'), co = $('#rn-coach');
+    if (ac) ac.addEventListener('change', applyRnPrivateDefault);
+    if (co) co.addEventListener('change', applyRnPrivateDefault);
+    window._rnApplyPrivate = applyRnPrivateDefault;
+    applyRnPrivateDefault(); }
   // Auto-calc renewal expiry: start + validity. User may override.
   let _rnAutoSet = true;
   function recalcRnExpiry() {
