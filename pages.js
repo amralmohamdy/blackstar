@@ -2370,8 +2370,13 @@ function viewMember(id) {
   // since v77 are pushed to subscriptions[] directly, so this guards against
   // legacy data where renewals[] entries lack a matching subscription row.
   const subRids = new Set((m.subscriptions || []).map(s => s._rid).filter(Boolean));
+  // v6.674 — a renewal entry with no package behind it is shown as a legacy row, EXCEPT when a coach SWITCH made on/before its start moved
+  // that sport away from that coach: the package never ran under him, so the entry is superseded (it showed a ghost "parallel" row
+  // with the same attendance counted twice — Khaled Farouk: Abdel Salam 3 Sep next to Aziz 3 Sep, classes 20/26).
+  const _supersededBySwitch = (r) => (m.sportSwitches || []).some(sw => sw && sw.fromSport === (r.activity || r.sport) && String(sw.fromCoachId) === String(r.coachId) && (sw.date || '') <= String(r.start || '').slice(0, 10));
   const standaloneRenewals = (m.renewals || [])
     .filter(r => !r._rid || !subRids.has(r._rid))
+    .filter(r => !_supersededBySwitch(r))
     .map(r => ({ ...r, manual: true, month: ymToShort((r.start || '').slice(0,7)) || (r.start || '').slice(0,7) }));
   const allSubs = [
     ...(m.subscriptions || []),
@@ -2574,6 +2579,22 @@ function viewMember(id) {
   const liveCount = { total: anyLiveMarks ? 1 : 0 };   // flag for the "· live" label
   const attRatePct = curTotalClasses ? Math.min(100, Math.round(curAttended / curTotalClasses * 100)) : 0;
 
+  // v6.672 — the SAME package billed on two invoice lines is invisible in Subscription History (one package row) but inflates the
+  // member's Total / Due. Say so right here, with the invoices involved and (admin) a button to Review & fix.
+  const _dupBanner = (() => {
+    if (typeof dupLineGroups !== 'function' || isViewerRole()) return '';
+    const seen = new Set(), out = [];
+    for (const s of (m.subscriptions || [])) {
+      const k = (s.activity || '') + '|' + s.coachId; if (seen.has(k) || !s.activity) continue; seen.add(k);
+      let g = []; try { g = dupLineGroups(m, s.activity, s.coachId); } catch (_) {}
+      for (const grp of g) out.push({ sport: s.activity, coachId: s.coachId, refs: [...new Set(grp.map(e => e.inv.ref || '#' + e.inv.id))] });
+    }
+    if (!out.length) return '';
+    const admin = currentRole() === 'admin';
+    return `<div style="margin:0 0 12px;padding:10px 12px;border:1px solid rgba(217,119,6,.45);background:rgba(245,158,11,.10);border-radius:10px;font-size:12.5px;line-height:1.7">
+      ${out.map(x => `<div>⚠ <b>${escapeHtml(x.sport)}</b>${coachName(x.coachId) ? ' · ' + escapeHtml(coachName(x.coachId)) : ''} ${t('is billed on', 'مفوترة على')} <b>${x.refs.length}</b> ${t('invoice lines', 'بنود فواتير')} (${x.refs.map(escapeHtml).join(' · ')}) — ${t('the total / due above can be inflated.', 'والإجمالي / المتبقي بالأعلى قد يكون مبالغاً فيه.')}${admin ? ` <button type="button" class="btn ghost sm" onclick="closeModal();openDupLineResolver(${escapeHtml(JSON.stringify('m' + m.id))},${escapeHtml(JSON.stringify(x.sport))},${escapeHtml(JSON.stringify(x.coachId))})">🧹 ${t('Review & fix', 'مراجعة وإصلاح')}</button>` : ''}</div>`).join('')}</div>`;
+  })();
+
   showModal({
     title: `Member: ${escapeHtml(m.name)}`,
     body: `
@@ -2648,6 +2669,7 @@ function viewMember(id) {
           <button onclick="event.stopPropagation();exportMemberAttendance(${m.id})" title="Export attendance history (CSV)" style="position:absolute;top:6px;right:6px;background:transparent;border:none;cursor:pointer;font-size:13px;opacity:.7;padding:2px">⬇</button>
         </div>
       </div>
+      ${_dupBanner}
       <h3 style="font-size:13px;font-weight:600;margin-bottom:8px">Subscription History (${totalSubs})</h3>
       <div class="table-wrap">
         <table>
@@ -20499,6 +20521,9 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
       _kind: l.kind, _trueupClasses: l.classes,   // v6.434: so the report can flag "expiry true-up" clearly
       _dupIgnored: !!l._dupIgnored, _origAmount: l._origAmount,
     }));
+    // v6.671 — the coach's copy never shows the struck-through "DUPLICATE — NOT PAID" row (it confused coaches; pay is already right).
+    // Admin sees the duplicate on the Salaries row (🧹 Review & fix); set window._pdfShowDuplicates = true to print it.
+    if (window._pdfShowDuplicates !== true) lines = lines.filter(l => !l._dupIgnored);
     pendingLines = pay.attendanceLines.pendingLines || [];
   } else if (pay && pay.basis === 'payment') {
     // v6.528: PAYMENT basis — rows are the coach's share of the amount PAID this month, so the PDF
@@ -20566,7 +20591,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
     }
     return Object.values(g);
   })();
-  const dupBanner = _rptDups.length ? `
+  const dupBanner = (_rptDups.length && window._pdfShowDuplicates === true) ? `
     <div style="border:2px solid #d97706;background:#fffbeb;color:#92400e;border-radius:8px;padding:10px 12px;margin:10px 0">
       <div style="font-weight:700;margin-bottom:4px">✓ ${_rptDups.length} duplicate line${_rptDups.length === 1 ? '' : 's'} auto-excluded — this subtotal is already correct</div>
       <div style="font-size:12px;line-height:1.5">
@@ -25672,6 +25697,20 @@ window.switchSport = function(memberId) {
         const _enteredPrice = parseFloat(($('#sw-price') || {}).value);
         const bPrice = skipReconciliation ? (parseFloat(from.price) || 0)
           : (Number.isFinite(_enteredPrice) && _enteredPrice >= 0 ? Math.round(_enteredPrice * 100) / 100 : Math.round(bShare * 100) / 100);   // v6.532: carried classes are a FREE bonus — default charges only the remaining (bShare), so money stays conserved
+
+        // v6.673 — SWITCH GUARDS (nothing is changed yet). A switch moves the REMAINING classes; when a class-based package is fully
+        // used there is nothing to move, so a priced "switch" is really a NEW SALE (Kenan / Rashed Al Hout: a 13/13 package was
+        // "switched" to Aziz with a 500 line, then renewed the same minute → billed twice). Block it and point to Renew.
+        if (!skipReconciliation && totalClasses > 0 && moved <= 0 && bPrice > 0.005) {
+          toast(t('A switch cannot sell a new package: ' + from.sport + ' with ' + coachName(from.coachId) + ' has no classes left (' + attendedA + '/' + totalClasses + ' attended), so nothing moves, yet a price of ' + fmt(bPrice) + ' was entered. Clear the price (0), or — to start a NEW package with the new coach — use Renew and pick the new coach.',
+            'التبديل لا يبيع باقة جديدة: ' + from.sport + ' مع ' + coachName(from.coachId) + ' لا توجد حصص متبقية (' + attendedA + '/' + totalClasses + ') فلا شيء يُنقل، ومع ذلك أُدخل سعر ' + fmt(bPrice) + '. اجعل السعر 0، أو لبدء باقة جديدة مع المدرب الجديد استخدم «تجديد» واختر المدرب الجديد.'), 'error');
+          return;
+        }
+        // …and never bill the destination again when that sport + coach was already billed around this date (a renewal, an added sport).
+        if (!skipReconciliation && typeof billedSameLines === 'function') {
+          const _bh = billedSameLines(m, toSport, toCoachId, switchDate);
+          if (_bh.length && !confirm(billedSameWarning(m, toSport, _bh, switchDate))) return;
+        }
 
         // v6.559 (QC Finding 1): resolve the CURRENT cycle's source subscription ONCE — the sub whose
         // window COVERS the switch date — and reuse it for BOTH the invoice we split and the sub we cap.
