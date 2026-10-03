@@ -10997,6 +10997,7 @@ PAGES.schedule = (main) => {
     'Karate':      { color: '#84cc16', emoji: '🥋' },
     'Swimming':    { color: '#06b6d4', emoji: '🏊' },
     'Zumba':       { color: '#ec4899', emoji: '💃' },
+    'External coach': { color: '#7c3aed', emoji: '🎟' },   // v6.675: placeholder slot for an outside coach
   };
   const sportColor = sp => (SPORT_THEME[baseSportName(sp)] || SPORT_THEME[sp] || { color: '#5b8def', emoji: '🏃' }).color;
   const sportEmoji = sp => { const e = (SPORT_THEME[baseSportName(sp)] || SPORT_THEME[sp] || { emoji: '🏃' }).emoji; return isPrivateSport(sp) ? e + '🔒' : e; };
@@ -11005,7 +11006,8 @@ PAGES.schedule = (main) => {
   // For coaches: empty means all; otherwise only listed coach ids match.
   // For sports: empty means all; otherwise only listed sport names match.
   // A signed-in coach is pre-locked to themselves (and the picker is hidden).
-  let filter = { coaches: myCoachId != null ? [myCoachId] : [], sports: [], days: [] };
+  let filter = { coaches: myCoachId != null ? [myCoachId] : [], sports: [], days: [], memberId: null };   // v6.675: memberId = show only this member's classes
+  let _memKeys = null;   // the selected member's (sport, coach) pairs — rebuilt on every refresh()
   // Days actually shown in the grid: all of DAYS, narrowed to filter.days when set.
   const visibleDays = () => (filter.days.length ? DAYS.filter(d => filter.days.includes(d.key)) : DAYS);
   // Today's weekday key — the default day for the shareable poster.
@@ -11019,6 +11021,7 @@ PAGES.schedule = (main) => {
   function isFiltered(c) {
     if (filter.coaches.length && !filter.coaches.includes(c.coachId)) return false;
     if (filter.sports.length && !filter.sports.includes(c.sport)) return false;
+    if (filter.memberId != null && !scheduleClassMatchesMember(c, _memKeys)) return false;   // v6.675
     return true;
   }
 
@@ -11035,7 +11038,7 @@ PAGES.schedule = (main) => {
   }
   function showSchHover(block) {
     const sport = block.getAttribute('data-sport');
-    if (!sport) return;
+    if (!sport || sport === SCHEDULE_EXTERNAL) return;
     const cidRaw = block.getAttribute('data-coachid');
     const coachId = cidRaw === '' || cidRaw == null ? null : parseInt(cidRaw);
     const top = topActiveMembersForClass(sport, coachId, 10);
@@ -11062,6 +11065,7 @@ PAGES.schedule = (main) => {
   }
 
   function refresh() {
+    _memKeys = (filter.memberId != null) ? memberScheduleKeys((state.members || []).find(x => String(x.id) === String(filter.memberId))) : null;
     // Build the grid
     const days = visibleDays();
     // Keep the grid column count in sync with how many days are visible.
@@ -11089,7 +11093,7 @@ PAGES.schedule = (main) => {
           return `<div class="sch-class" data-id="${c.id}" data-sport="${escapeHtml(c.sport)}" data-coachid="${c.coachId != null ? c.coachId : ''}" style="background:${sportColor(c.sport)};color:white;padding:6px 8px;border-radius:6px;font-size:11px;font-weight:600;margin:2px 0;display:flex;align-items:center;justify-content:space-between;gap:4px;cursor:pointer;opacity:${dimmed ? '0.18' : '1'};transition:opacity .15s;${coach && !isCoachActive(coach) ? 'outline:2px solid #facc15;outline-offset:-2px' : ''}">
             <div style="flex:1;min-width:0;overflow:hidden">
               <div style="display:flex;align-items:center;gap:4px"><span>${sportEmoji(c.sport)}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(t(c.label || c.sport, c.labelAr || c.label || sportNameAR(c.sport)))}</span></div>
-              <div style="font-size:9px;font-weight:500;opacity:.95;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(coach ? coach.name : 'No coach')}${coach && !isCoachActive(coach) ? ' · inactive' : ''}</div>
+              <div style="font-size:9px;font-weight:500;opacity:.95;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(coach ? coach.name : (c.sport === SCHEDULE_EXTERNAL ? t('External booking', 'حجز خارجي') : 'No coach'))}${coach && !isCoachActive(coach) ? ' · inactive' : ''}</div>
             </div>
             ${warn}
             ${canEdit ? `<div style="display:flex;flex-direction:column;gap:1px;flex-shrink:0">
@@ -11200,13 +11204,65 @@ PAGES.schedule = (main) => {
     // Stats
     const total = (state.schedule || []).length;
     const matching = (state.schedule || []).filter(isFiltered).length;
-    $('#sch-count').textContent = (filter.coaches.length || filter.sports.length)
+    $('#sch-count').textContent = (filter.coaches.length || filter.sports.length || filter.memberId != null)
       ? `${matching} of ${total} classes match the filter`
       : `${total} classes scheduled · drag a sport tile onto a cell to add`;
   }
 
   // Modal: pick a coach for a sport (or edit existing class)
+  // v6.675 — a slot booked for an EXTERNAL coach: no coach of ours, no sport enrollment, no payroll. The label says who booked it.
+  function pickExternalAndAdd(day, slot, existing) {
+    const slotLabel = (SLOTS.find(s => s.hour === slot) || {}).label || `${slot}:00`;
+    const dayLabel = (DAYS.find(d => d.key === day) || {}).label || day;
+    showModal({
+      title: existing ? t('Edit external booking', 'تعديل حجز خارجي') : t('Book a slot for an external coach', 'حجز حصة لمدرب خارجي'),
+      body: `
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;padding:10px;background:${sportColor(SCHEDULE_EXTERNAL)};border-radius:8px;color:white">
+          <div style="font-size:30px">${sportEmoji(SCHEDULE_EXTERNAL)}</div>
+          <div>
+            <div style="font-weight:700;font-size:16px">${t('External coach', 'مدرب خارجي')}</div>
+            <div style="font-size:12px;opacity:.9">${dayLabel} · ${slotLabel}</div>
+          </div>
+        </div>
+        <div class="text-mute" style="font-size:12px;line-height:1.6;margin-bottom:10px">${t('A placeholder that holds this time for a coach from outside the club. It has no coach of ours, no members and no pay — write who booked it so it shows on the schedule.', 'حجز مؤقت لهذا الوقت لمدرب من خارج النادي. بدون مدرب من مدربينا ولا أعضاء ولا راتب — اكتب من حجزه ليظهر على الجدول.')}</div>
+        <div class="field">
+          <label>${t('Booked by — English', 'محجوز بواسطة — إنجليزي')}</label>
+          <input id="sch-label" style="width:100%" maxlength="40" value="${escapeHtml((existing && existing.label) || '')}" placeholder="e.g. Coach Ali — Karate" />
+        </div>
+        <div class="field" style="margin-top:8px">
+          <label>${t('Booked by — Arabic', 'محجوز بواسطة — عربي')}</label>
+          <input id="sch-label-ar" dir="rtl" style="width:100%" maxlength="40" value="${escapeHtml((existing && existing.labelAr) || '')}" placeholder="مثال: الكابتن علي — كاراتيه" />
+        </div>`,
+      actions: [
+        ...(existing ? [{ label: t('Remove booking', 'حذف الحجز'), class: 'btn ghost', onclick: () => {
+          if (!confirm(t('Remove this booking from the schedule?', 'حذف هذا الحجز من الجدول؟'))) return;
+          state.schedule = state.schedule.filter(c => c.id !== existing.id);
+          closeModal(); refresh();
+          confirmSaved(t('Booking removed', 'تم حذف الحجز'));
+        } }] : []),
+        { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
+        { label: existing ? t('Save', 'حفظ') : t('Book slot', 'احجز'), class: 'btn primary', onclick: () => {
+          const label = (($('#sch-label') || {}).value || '').trim(), labelAr = (($('#sch-label-ar') || {}).value || '').trim();
+          if (!label && !labelAr) { toast(t('Write who booked this slot (English or Arabic)', 'اكتب من حجز هذه الحصة (إنجليزي أو عربي)'), 'error'); return; }
+          if (existing) {
+            if (label) existing.label = label; else delete existing.label;
+            if (labelAr) existing.labelAr = labelAr; else delete existing.labelAr;
+            existing.external = true; existing.coachId = null;
+          } else {
+            const rec = { id: nextId(state.schedule || []), day, slot, sport: SCHEDULE_EXTERNAL, coachId: null, external: true };
+            if (label) rec.label = label;
+            if (labelAr) rec.labelAr = labelAr;
+            state.schedule.push(rec);
+          }
+          closeModal(); refresh();
+          confirmSaved(existing ? t('Booking updated', 'تم تحديث الحجز') : t('Slot booked', 'تم حجز الحصة'));
+        } },
+      ],
+    });
+  }
+
   function pickCoachAndAdd(sport, day, slot, existing) {
+    if (sport === SCHEDULE_EXTERNAL) return pickExternalAndAdd(day, slot, existing);
     const slotLabel = (SLOTS.find(s => s.hour === slot) || {}).label || `${slot}:00`;
     const dayLabel = (DAYS.find(d => d.key === day) || {}).label || day;
     const eligible = coachesForSport(sport, existing && existing.coachId);
@@ -11410,7 +11466,7 @@ PAGES.schedule = (main) => {
             // Labels (white text with a subtle shadow so it stays readable on any chip colour)
             const cx = x + cellW / 2, cy = by + blockH / 2;
             const coach = state.coaches.find(co => co.id === c.coachId);
-            const sportTxt = ar ? sportNameAR(c.sport) : c.sport.toUpperCase();
+            const sportTxt = (c.sport === SCHEDULE_EXTERNAL && (c.label || c.labelAr)) ? (ar ? (c.labelAr || c.label) : String(c.label || c.labelAr).toUpperCase()) : (ar ? sportNameAR(c.sport) : c.sport.toUpperCase());
             const txt = `${sportEmoji(c.sport)} ${sportTxt}`;
             ctx.save();
             ctx.shadowColor = 'rgba(0,0,0,0.35)'; ctx.shadowBlur = 3; ctx.shadowOffsetY = 1;
@@ -11583,7 +11639,7 @@ PAGES.schedule = (main) => {
         .slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map(s => s.name)
     : Object.keys(SPORT_THEME);
   // Sport palette (draggable tiles) — admins only
-  const sportTiles = !canEdit ? '' : scheduleSports.map(sport => `
+  const sportTiles = !canEdit ? '' : scheduleSports.concat([SCHEDULE_EXTERNAL]).map(sport => `
     <div class="sport-tile" draggable="true" data-sport="${escapeHtml(sport)}"
          style="background:${sportColor(sport)};color:white;padding:8px 14px;border-radius:8px;font-weight:700;font-size:12px;cursor:grab;user-select:none;display:inline-flex;align-items:center;gap:6px;box-shadow:0 2px 6px rgba(0,0,0,.15)">
       <span style="font-size:16px">${sportEmoji(sport)}</span> ${escapeHtml(sport)}
@@ -11640,6 +11696,7 @@ PAGES.schedule = (main) => {
         </select>
         <button class="btn primary" id="sch-status" title="${t('Save this day as a portrait image to share as a WhatsApp status', 'احفظ هذا اليوم كصورة عمودية لمشاركتها كحالة واتساب')}">📲 ${t('Day poster', 'ملصق اليوم')}</button>
         <button class="btn ghost" id="sch-status-ar" title="ملصق اليوم بالعربية">📲 (عربي)</button>
+        <button class="btn primary" id="sch-print" title="${t('Print the schedule exactly as filtered (e.g. one member only)', 'اطبع الجدول كما هو مفلتر (مثلاً لعضو واحد فقط)')}">🖨 ${t('Print', 'طباعة')}</button>
         <button class="btn ghost" id="sch-png" title="${t('Full week grid (wide image)', 'جدول الأسبوع كامل (صورة عريضة)')}">📸 ${t('Week PNG', 'الأسبوع')}</button>
         <button class="btn ghost" id="sch-png-ar" title="تصدير الجدول الأسبوعي بالعربية">📸 (عربي)</button>
       </div>
@@ -11682,7 +11739,7 @@ PAGES.schedule = (main) => {
             <span style="opacity:.6;font-size:10px">▾</span>
           </button>
           <div id="sch-filter-sport-menu" style="display:none;position:absolute;left:0;top:100%;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-top:4px;padding:8px;min-width:200px;max-height:300px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.4)">
-            ${scheduleSports.map(s => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px"><input type="checkbox" class="sch-sport-cb" value="${escapeHtml(s)}" ${filter.sports.includes(s) ? 'checked' : ''} /> ${sportEmoji(s)} ${escapeHtml(s)}</label>`).join('')}
+            ${scheduleSports.concat([SCHEDULE_EXTERNAL]).map(s => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px"><input type="checkbox" class="sch-sport-cb" value="${escapeHtml(s)}" ${filter.sports.includes(s) ? 'checked' : ''} /> ${sportEmoji(s)} ${escapeHtml(s)}</label>`).join('')}
             <div style="border-top:1px solid var(--border);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between"><button type="button" class="btn ghost sm" id="sch-filter-sport-all">All</button><button type="button" class="btn ghost sm" id="sch-filter-sport-clear">Clear</button></div>
           </div>
         </div>
@@ -11696,6 +11753,11 @@ PAGES.schedule = (main) => {
             <div style="border-top:1px solid var(--border);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between"><button type="button" class="btn ghost sm" id="sch-filter-day-all">All</button><button type="button" class="btn ghost sm" id="sch-filter-day-clear">Clear</button></div>
           </div>
         </div>
+        ${canEdit ? `<div style="position:relative">
+          <input type="text" id="sch-member-input" autocomplete="off" placeholder="👤 ${t('Find a member (name / phone)…', 'ابحث عن عضو (اسم / تليفون)…')}" title="${t('Show only the classes of one member, then Print his schedule', 'اعرض حصص عضو واحد فقط ثم اطبع جدوله')}" style="min-width:230px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:var(--surface-2);color:var(--text)" />
+          <div id="sch-member-menu" style="display:none;position:absolute;left:0;top:100%;z-index:60;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-top:4px;min-width:290px;max-height:290px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.4)"></div>
+        </div>
+        <span id="sch-member-chip"></span>` : ''}
         ${(filter.coaches.length || filter.sports.length || filter.days.length) ? `<button type="button" class="btn ghost sm" id="sch-filter-reset">✕ ${t('Clear filters', 'مسح الفلاتر')}</button>` : ''}
         <div style="font-size:11px;color:var(--text-mute);margin-left:auto">Filters dim non-matching classes; export honors the filter</div>
       </div>
@@ -11792,10 +11854,74 @@ PAGES.schedule = (main) => {
   $('#sch-filter-sport-all')?.addEventListener('click', () => { filter.sports = $$('.sch-sport-cb').map(cb => cb.value); $$('.sch-sport-cb').forEach(cb => cb.checked = true); updateFilterLabels(); refresh(); });
   $('#sch-filter-day-all')?.addEventListener('click', () => { $$('.sch-day-cb').forEach(cb => cb.checked = true); filter.days = DAYS.map(d => d.key); updateFilterLabels(); refresh(); });
   // Reset all
-  $('#sch-filter-reset')?.addEventListener('click', () => { filter.coaches = []; filter.sports = []; filter.days = []; $$('.sch-coach-cb, .sch-sport-cb, .sch-day-cb').forEach(cb => cb.checked = false); updateFilterLabels(); refresh(); });
+  $('#sch-filter-reset')?.addEventListener('click', () => { filter.coaches = []; filter.sports = []; filter.days = []; filter.memberId = null; if (typeof _renderMemberChip === 'function') _renderMemberChip(); $$('.sch-coach-cb, .sch-sport-cb, .sch-day-cb').forEach(cb => cb.checked = false); updateFilterLabels(); refresh(); });
 
   // Export PNG (weekly grid)
   $('#sch-png').addEventListener('click', () => exportPng('en'));
+  // v6.675 — member search: pick a member and the grid shows only HIS classes; Print prints exactly what is shown.
+  const _memberOf = id => (state.members || []).find(x => String(x.id) === String(id)) || null;
+  function _renderMemberChip() {
+    const chip = $('#sch-member-chip'); if (!chip) return;
+    const m = filter.memberId != null ? _memberOf(filter.memberId) : null;
+    if (!m) { chip.innerHTML = ''; return; }
+    const shown = (state.schedule || []).filter(isFiltered).length;
+    chip.innerHTML = `<span class="badge" style="background:rgba(139,92,246,.14);color:#7c3aed;font-weight:700;padding:5px 10px;display:inline-flex;align-items:center;gap:8px">👤 ${escapeHtml(m.name)}${m.nameArabic ? ' · ' + escapeHtml(m.nameArabic) : ''} · ${shown} ${t('class slot(s)', 'حصة بالجدول')}<button type="button" id="sch-member-clear" title="${t('Show everyone', 'اعرض الجميع')}" style="background:none;border:0;color:inherit;cursor:pointer;font-size:13px;padding:0">✕</button></span>`;
+    const clr = $('#sch-member-clear'); if (clr) clr.addEventListener('click', () => { filter.memberId = null; refresh(); _renderMemberChip(); });
+  }
+  const _mIn = $('#sch-member-input'), _mMenu = $('#sch-member-menu');
+  function _selectMember(id) {
+    filter.memberId = id; refresh(); _renderMemberChip();
+    if (_mIn) _mIn.value = ''; if (_mMenu) _mMenu.style.display = 'none';
+  }
+  if (_mIn && _mMenu) {
+    _mIn.addEventListener('input', () => {
+      const q = _mIn.value.trim(), res = scheduleMemberSearch(q, 8);
+      if (!q) { _mMenu.style.display = 'none'; return; }
+      _mMenu.innerHTML = res.length ? res.map(m => { const n = memberScheduleKeys(m).length;
+        return `<div class="sch-member-opt" data-id="${m.id}" style="padding:7px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)"><div style="font-weight:600">${escapeHtml(m.name)}</div><div class="text-mute" style="font-size:11px">${m.nameArabic ? escapeHtml(m.nameArabic) + ' · ' : ''}${escapeHtml(m.phone || '')} · ${n} ${t('active sport(s)', 'رياضة نشطة')}</div></div>`; }).join('')
+        : `<div class="text-mute" style="padding:8px 10px;font-size:12px">${t('No matching member', 'لا يوجد عضو مطابق')}</div>`;
+      _mMenu.style.display = 'block';
+      $$('.sch-member-opt').forEach(o => o.addEventListener('click', () => { const m = _memberOf(o.getAttribute('data-id')); if (m) _selectMember(m.id); }));
+    });
+    if (!window._schMemberOutside) { window._schMemberOutside = true; document.addEventListener('click', e => { const menu = document.getElementById('sch-member-menu'); if (menu && !(e.target.closest && e.target.closest('#sch-member-input, #sch-member-menu'))) menu.style.display = 'none'; }); }
+  }
+  // Print the schedule exactly as filtered (one member, one coach, some days…): only the matching classes are printed.
+  function printSchedule() {
+    const m = filter.memberId != null ? _memberOf(filter.memberId) : null;
+    const days = visibleDays();
+    const chips = [];
+    if (!m) {
+      if (filter.coaches.length) chips.push(filter.coaches.map(id => coachName(id)).filter(Boolean).join(', '));
+      if (filter.sports.length) chips.push(filter.sports.join(', '));
+    }
+    let n = 0;
+    const rows = SLOTS.map(slot => `<tr><th>${slot.label}</th>${days.map(day => {
+      const items = classesAt(day.key, slot.hour).filter(isFiltered);
+      n += items.length;
+      return `<td>${items.map(c => { const coach = state.coaches.find(x => x.id === c.coachId);
+        return `<div class="cls" style="background:${sportColor(c.sport)}"><b>${sportEmoji(c.sport)} ${escapeHtml(t(c.label || c.sport, c.labelAr || c.label || sportNameAR(c.sport)))}</b><span>${escapeHtml(coach ? coach.name : (c.sport === SCHEDULE_EXTERNAL ? t('External booking', 'حجز خارجي') : ''))}</span></div>`; }).join('')}</td>`; }).join('')}</tr>`).join('');
+    const title = m ? `${escapeHtml(m.name)}${m.nameArabic ? ' · ' + escapeHtml(m.nameArabic) : ''}` : t('Class schedule', 'جدول الحصص');
+    const w = window.open('', '_blank');
+    if (!w) { toast(t('Popup blocked — please allow popups', 'تم حظر النافذة — اسمح بالنوافذ المنبثقة'), 'error'); return; }
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title><style>
+      body{font-family:'Helvetica Neue',Arial,sans-serif;color:#1a1a1a;padding:28px;max-width:1100px;margin:0 auto}
+      .hd{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #f26060;padding-bottom:10px;margin-bottom:16px}
+      .logo{font-size:20px;font-weight:800;color:#f26060}.sub{color:#666;font-size:12px}h1{font-size:22px;margin:0}
+      table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border:1px solid #d8dee8;padding:6px;vertical-align:top;font-size:12px}
+      thead th{background:#eef2f8;font-size:11px;text-transform:uppercase;letter-spacing:.5px}tbody th{background:#f5f7fb;width:90px;font-size:11px}
+      .cls{color:#fff;border-radius:6px;padding:6px 8px;margin:2px 0}.cls b{display:block;font-size:12px}.cls span{display:block;font-size:10px;opacity:.95}
+      .empty{padding:14px;background:#f5f5f7;border-radius:6px;color:#666;text-align:center;margin:10px 0}.ft{margin-top:14px;color:#999;font-size:10px;text-align:center}
+      @media print{body{padding:10px}}</style></head><body>
+      <div class="hd"><div><div class="logo">★ Black Stars</div><div class="sub">Sports Club · ${t('Class schedule', 'جدول الحصص')}</div></div>
+      <div style="text-align:right"><h1>${title}</h1><div class="sub">${m ? escapeHtml(m.phone || '') : escapeHtml(chips.join(' · '))}</div></div></div>
+      ${n ? '' : `<div class="empty">${m ? t('No scheduled classes found for this member (no active enrollment matches a class on the schedule).', 'لا توجد حصص مجدولة لهذا العضو (لا يوجد اشتراك نشط يطابق حصة بالجدول).') : t('No classes match the filter.', 'لا توجد حصص مطابقة للفلتر.')}</div>`}
+      <table><thead><tr><th></th>${days.map(d => `<th>${t(d.label, dayNameAR(d.key))}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>
+      <div class="ft">${t('Generated', 'تاريخ الإنشاء')} ${fmtDate(TODAY)} · Black Stars Sports Club</div></body></html>`);
+    w.document.close();
+    try { w.focus(); setTimeout(() => { try { w.print(); } catch (_) {} }, 300); } catch (_) {}
+  }
+  $('#sch-print')?.addEventListener('click', printSchedule);
+  window._schHook = { filter, refresh, print: printSchedule, add: (sport, day, slot, existing) => pickCoachAndAdd(sport, day, slot, existing), selectMember: _selectMember };
   const pngAr = $('#sch-png-ar'); if (pngAr) pngAr.addEventListener('click', () => exportPng('ar'));
   // Daily poster (portrait, for WhatsApp status)
   const _statusDay = () => (($('#sch-status-day') || {}).value || _todayKey);
