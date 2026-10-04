@@ -11269,7 +11269,11 @@ PAGES.schedule = (main) => {
     const opts = eligible.map(c =>
       `<option value="${c.id}" ${existing && existing.coachId === c.id ? 'selected' : ''}>${coachOptionLabel(c, sport)}</option>`
     ).join('');
-    const noneNote = eligible.length ? '' : `<div class="text-mute" style="font-size:11px;margin-top:6px">No active coach teaches ${escapeHtml(sport)}. Add the sport to a coach in the Team page, or activate a coach.</div>`;
+    // v6.677 — a class can be placed with NO coach (an outside coach, or not decided yet). The option sits LAST so a new class still
+    // defaults to a real coach; it is the default only when nobody teaches the sport, or when editing a coach-less class.
+    const _noCoachSel = existing ? (existing.coachId == null) : (eligible.length === 0);
+    const noCoachOpt = `<option value="" ${_noCoachSel ? 'selected' : ''}>${t('— No coach (outside coach / not decided)', '— بدون مدرب (مدرب خارجي / لم يُحدَّد)')}</option>`;
+    const noneNote = eligible.length ? '' : `<div class="text-mute" style="font-size:11px;margin-top:6px">${t('No active coach teaches ' + sport + '. Leave "No coach" to reserve the slot, or add the sport to a coach in the Team page.', 'لا يوجد مدرب نشط يدرّس ' + sport + '. اترك «بدون مدرب» لحجز الحصة، أو أضف الرياضة لمدرب من صفحة الفريق.')}</div>`;
     showModal({
       title: existing ? `Edit Class — ${escapeHtml(sport)}` : `Add Class — ${escapeHtml(sport)}`,
       body: `
@@ -11282,7 +11286,7 @@ PAGES.schedule = (main) => {
         </div>
         <div class="field">
           <label>Coach</label>
-          <select id="sch-coach" style="width:100%">${opts}</select>
+          <select id="sch-coach" style="width:100%">${opts}${noCoachOpt}</select>
           ${noneNote}
         </div>
         <div class="field" style="margin-top:12px">
@@ -11304,7 +11308,8 @@ PAGES.schedule = (main) => {
         } }] : []),
         { label: 'Cancel', class: 'btn ghost', onclick: closeModal },
         { label: existing ? 'Save' : 'Add Class', class: 'btn primary', onclick: () => {
-          const coachId = parseInt($('#sch-coach').value);
+          const _cv = ($('#sch-coach').value || '').trim();
+          const coachId = _cv === '' ? null : parseInt(_cv);   // v6.677: null = no coach
           // A coach can't teach two classes in the same time slot on the same day.
           const clash = (state.schedule || []).find(c =>
             c.day === day && c.slot === slot && c.coachId === coachId &&
@@ -12706,9 +12711,12 @@ PAGES.invoices = (main) => {
     // over-paid invoices cancel other members' real dues, under-reporting the true outstanding
     // (e.g. 5,950 vs the real ~17k, disagreeing with the Due Payment screen). (v6.325)
     const outstanding = allRows.reduce((s, r) => s + invoiceBalance(r), 0);
+    // v6.676 — what was collected, split: cash · card + fawran (· transfer when there is any)
+    const _cm = collectedByMethod(allRows, rowPaidOf);
+    const _collBreak = collected > 0.005 ? ` (${t('cash', 'نقد')} ${fmtMoney(_cm.cash)} · ${t('card + fawran', 'بطاقة + فوران')} ${fmtMoney(_cm.card + _cm.fawran)}${_cm.transfer > 0.5 ? ` · ${t('transfer', 'تحويل')} ${fmtMoney(_cm.transfer)}` : ''})` : '';
     $('#inv-count').textContent = isViewerRole()
       ? `${allRows.length} invoices`
-      : `${allRows.length} invoices · ${fmtMoney(total)} charged · ${fmtMoney(collected)} collected${outstanding > 0.5 ? ` · ${fmtMoney(outstanding)} due` : ''}`;
+      : `${allRows.length} invoices · ${fmtMoney(total)} charged · ${fmtMoney(collected)} collected${_collBreak}${outstanding > 0.5 ? ` · ${fmtMoney(outstanding)} due` : ''}`;
     $('#inv-pagination').innerHTML = paginationBar(pg, allRows.length, 'inv');
     bindPagination('inv', pg, allRows.length, refresh);
 
