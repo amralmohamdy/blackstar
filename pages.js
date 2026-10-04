@@ -241,6 +241,26 @@ function _privPendingNote(pl, plain, coachPct) {
   const amt = fmt(pl.amountBase * (pl.priv === 'coach' && coachPct != null ? coachPct : pct) / 100);
   return '<div style="font-size:9px;font-weight:600;color:#7c3aed">' + (pl.priv === 'coach' ? '+' + amt + ' private bonus once attended' : pct + '% to reception (' + amt + ') · paid in full next month') + '</div>';
 }
+// v6.678 — one-row summary strip shared by Invoices and Transactions: count · charged · collected (cash / card + fawran) · due (by the
+// invoice's method). o = { icon, count, countLabel, charged, collected, cm, due, dm, dueNote, money }  (money:false → the count card only)
+function moneyStripHtml(o) {
+  const num = v => fmt(Math.round((Number(v) || 0) * 100) / 100);
+  const chip = (icon, label, v, tone) => `<span style="display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap;background:${tone};color:var(--text)">${icon} <span style="color:var(--text-dim);font-weight:500">${label}</span> <b class="num" style="font-variant-numeric:tabular-nums">${num(v)}</b></span>`;
+  const chips = (m, tone) => (m ? [chip('💵', t('Cash', 'نقد'), m.cash, tone), chip('💳', t('Card + Fawran', 'بطاقة + فوران'), (m.card || 0) + (m.fawran || 0), tone)].concat((m.transfer || 0) > 0.5 ? [chip('🏦', t('Transfer', 'تحويل'), m.transfer, tone)] : []).join('') : '');
+  const card = (icon, label, value, sub, tint, edge) => `<div style="flex:1 1 205px;min-width:190px;padding:13px 15px;border-radius:14px;border:1px solid ${edge};background:linear-gradient(145deg,${tint},transparent 75%),var(--surface);display:flex;flex-direction:column;gap:7px">
+      <div style="display:flex;align-items:center;gap:7px;font-size:10.5px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--text-mute)"><span style="font-size:15px;letter-spacing:0">${icon}</span>${label}</div>
+      <div style="display:flex;align-items:baseline;gap:6px"><span class="num" style="font-size:25px;font-weight:800;line-height:1.1;font-variant-numeric:tabular-nums">${value}</span></div>
+      ${sub ? `<div style="display:flex;flex-wrap:wrap;gap:5px">${sub}</div>` : ''}</div>`;
+  const parts = [card(o.icon || '🧾', escapeHtml(o.countLabel || t('Invoices', 'الفواتير')), String(o.count), '', 'rgba(91,141,239,.14)', 'rgba(91,141,239,.30)')];
+  if (o.money !== false) {
+    parts.push(card('🏷️', t('Charged', 'المفوتر'), `${num(o.charged)} <span style="font-size:12px;color:var(--text-dim);font-weight:500">QAR</span>`, '', 'rgba(148,163,184,.14)', 'rgba(148,163,184,.30)'));
+    parts.push(card('✅', t('Collected', 'المحصّل'), `${num(o.collected)} <span style="font-size:12px;color:var(--text-dim);font-weight:500">QAR</span>`, chips(o.cm, 'rgba(16,185,129,.16)'), 'rgba(16,185,129,.15)', 'rgba(16,185,129,.34)'));
+    const owing = (Number(o.due) || 0) > 0.5;
+    parts.push(card(owing ? '⏳' : '🎉', t('Due', 'المتبقي'), owing ? `${num(o.due)} <span style="font-size:12px;color:var(--text-dim);font-weight:500">QAR</span>` : `<span style="font-size:17px;color:var(--green)">${t('All settled', 'لا متبقي')}</span>`,
+      owing ? chips(o.dm, 'rgba(245,158,11,.20)') + (o.dueNote ? `<span style="font-size:10px;color:var(--text-mute);align-self:center">${o.dueNote}</span>` : '') : '', owing ? 'rgba(245,158,11,.16)' : 'rgba(16,185,129,.08)', owing ? 'rgba(245,158,11,.40)' : 'rgba(16,185,129,.22)'));
+  }
+  return parts.join('');
+}
 PAGES.targets = (main) => {
   const role = currentRole();
   const isCoach = role === 'coach';
@@ -12711,12 +12731,10 @@ PAGES.invoices = (main) => {
     // over-paid invoices cancel other members' real dues, under-reporting the true outstanding
     // (e.g. 5,950 vs the real ~17k, disagreeing with the Due Payment screen). (v6.325)
     const outstanding = allRows.reduce((s, r) => s + invoiceBalance(r), 0);
-    // v6.676 — what was collected, split: cash · card + fawran (· transfer when there is any)
+    // v6.676/678 — what was collected, split by method (shown in the summary strip)
     const _cm = collectedByMethod(allRows, rowPaidOf);
-    const _collBreak = collected > 0.005 ? ` (${t('cash', 'نقد')} ${fmtMoney(_cm.cash)} · ${t('card + fawran', 'بطاقة + فوران')} ${fmtMoney(_cm.card + _cm.fawran)}${_cm.transfer > 0.5 ? ` · ${t('transfer', 'تحويل')} ${fmtMoney(_cm.transfer)}` : ''})` : '';
-    $('#inv-count').textContent = isViewerRole()
-      ? `${allRows.length} invoices`
-      : `${allRows.length} invoices · ${fmtMoney(total)} charged · ${fmtMoney(collected)} collected${_collBreak}${outstanding > 0.5 ? ` · ${fmtMoney(outstanding)} due` : ''}`;
+    $('#inv-count').textContent = `${allRows.length} ${t('invoices', 'فاتورة')}`;
+    { const _kp = $('#inv-kpis'); if (_kp) _kp.innerHTML = moneyStripHtml({ icon: '🧾', countLabel: t('Invoices', 'الفواتير'), count: allRows.length, charged: total, collected, cm: _cm, due: outstanding, dm: dueByMethod(allRows, r => invoiceBalance(r)), money: !isViewerRole() }); }
     $('#inv-pagination').innerHTML = paginationBar(pg, allRows.length, 'inv');
     bindPagination('inv', pg, allRows.length, refresh);
 
@@ -12777,6 +12795,7 @@ PAGES.invoices = (main) => {
         <button class="btn primary" id="add-inv">+ New Invoice</button>
       </div>
     </div>
+    <div id="inv-kpis" style="display:flex;flex-wrap:wrap;gap:10px;margin:0 0 14px"></div>
     <div class="card">
       <div class="filter-bar">
         <div class="search"><input id="inv-search" type="text" value="${escapeHtml(filter.search || '')}" placeholder="${t('Search name (EN/AR), mobile, QID, coach, sport...', 'ابحث بالاسم أو الجوال أو الهوية أو المدرب أو الرياضة...')}" /></div>
@@ -26936,14 +26955,27 @@ window.editSubscription = function(memberId, sid) {
   if (!m || !Array.isArray(m.subscriptions)) return;
   const sub = m.subscriptions.find(s => (s._sid || s._rid) === sid);
   if (!sub) { toast(t('Subscription not found', 'الاشتراك غير موجود'), 'error'); return; }
-  const inv = (state.invoices || []).find(v => !v.deleted && !v.switchCredit && v.ref === sub.invoiceNumber);
+  let inv = (state.invoices || []).find(v => !v.deleted && !v.switchCredit && v.ref === sub.invoiceNumber);
   // v6.626 — SAFE, period-scoped line resolution. Prefer an exact sport+coach match (string-normalized,
   // so a legacy string coachId "5" still matches a numeric 5). Only fall back to a sport-only match when
   // there is EXACTLY ONE such line, so we can never grab a DIFFERENT period's line.
   const _sameSportLines = (inv && Array.isArray(inv.lineItems)) ? inv.lineItems.filter(l => l.sport === sub.activity) : [];
   const _coachLines = _sameSportLines.filter(l => String(l.coachId) === String(sub.coachId));
-  const line = _coachLines.length === 1 ? _coachLines[0]
+  let line = _coachLines.length === 1 ? _coachLines[0]
              : (_sameSportLines.length === 1 ? _sameSportLines[0] : null);
+  // v6.680 — a package with NO invoice of its own (a switched-to sport whose value stayed on the old invoice): Edit used to save the
+  // price on the sub only, so the profile "Paid" stayed empty. Offer the member's invoices to bill it on.
+  const _attachMode = !inv;
+  const _memInvs = _attachMode ? (state.invoices || []).filter(v => v && !v.deleted && !v.switchCredit && v.activityType !== 'switch-credit' && v.customerId === m.id && (v.category || 'Membership') === 'Membership' && Array.isArray(v.lineItems) && v.lineItems.length) : [];
+  const _attachDefault = (() => {
+    const same = _memInvs.filter(v => v.lineItems.some(l => l.sport === sub.activity));
+    const pool = same.length ? same : _memInvs;
+    const before = pool.filter(v => String(v.date || '') <= String(sub.start || '9999'));
+    return (before.length ? before : pool).slice().sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))[0] || null;
+  })();
+  let _selInv = inv || _attachDefault;
+  const _paidOf = iv => Math.round(invoicePaid(iv) * 100) / 100;
+  const _othersOf = iv => (iv && iv === inv && line) ? Math.max(0, invoiceTotal(iv) - (Number(line.price) || 0)) : (iv ? invoiceTotal(iv) : 0);   // the rest of the invoice besides this package
   // v6.626 — CRITICAL SAFETY: if ANOTHER subscription of the same sport + coach points to the SAME
   // invoice, this invoice LINE is shared across periods. Rewriting its price/coach here would silently
   // change the OTHER period too (the "editing one period updates all the previous ones" bug). When that
@@ -26955,9 +26987,10 @@ window.editSubscription = function(memberId, sid) {
     && String(o.coachId) === String(sub.coachId));
   const linePrice = line ? (Number(line.price) || 0) : (Number(sub.amountPaid) || 0);
   // v6.668 — "Paid so far" is editable when this invoice holds ONLY this line (so what is paid is unambiguous)
-  const _canAdjPaid = !!(inv && line && !_lineShared && Array.isArray(inv.lineItems) && inv.lineItems.length === 1);
-  const _curPaid = _canAdjPaid ? Math.round(invoicePaid(inv) * 100) / 100 : 0;
-  const _wasFullyPaid = _canAdjPaid && linePrice > 0 && Math.abs(_curPaid - linePrice) < 0.01;
+  // v6.680 — also on a multi-sport invoice: Paid is then the INVOICE's paid (all its sports), labelled as such.
+  const _canAdjPaid = !!(_selInv && (line || _attachMode));
+  const _curPaid = _canAdjPaid ? _paidOf(_selInv) : 0;
+  const _wasFullyPaid = _canAdjPaid && !_attachMode && invoiceTotal(_selInv) > 0 && Math.abs(_curPaid - invoiceTotal(_selInv)) < 0.01;
   const hasSwitchCredit = (state.invoices || []).some(v => !v.deleted && v.switchCredit && v.customerId === m.id && Array.isArray(v.lineItems) && v.lineItems.some(l => l.sport === sub.activity));
   const statuses = ['active', 'completed', 'expired', 'frozen'];
   // Coach picker (v6.482): the PROFILE is the single place to set a sport's price / classes / coach.
@@ -26976,7 +27009,12 @@ window.editSubscription = function(memberId, sid) {
           <input id="es-classes" type="number" min="0" value="${sub.totalClasses != null ? sub.totalClasses : 0}" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)"></label>
         <label style="display:grid;gap:4px">${t('Price (QAR)', 'السعر')} <span class="text-mute" style="font-size:10px">${t('updates the invoice line + commission + profile', 'يحدّث بند الفاتورة والعمولة والملف')}</span>
           <input id="es-price" type="number" min="0" step="0.01" value="${linePrice}" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)"></label>
+        ${(_attachMode && _attachDefault) ? `<div style="display:grid;gap:6px;padding:10px;border:1px solid rgba(245,158,11,.45);background:rgba(245,158,11,.08);border-radius:8px">
+          <div style="font-size:12px;font-weight:700">⚠ ${t('This package has no invoice line of its own', 'هذه الباقة ليس لها بند فاتورة خاص بها')}</div>
+          <div class="text-mute" style="font-size:11px;line-height:1.5">${t('That is why its price and paid could not be saved before. Pick the invoice it belongs to — a line for this sport is added there (a 0 placeholder line of the same sport is removed).', 'لهذا لم يكن السعر والمدفوع يُحفظان. اختر الفاتورة التي تخصها — يُضاف بند لهذه الرياضة عليها (ويُحذف بند مؤقت بقيمة 0 لنفس الرياضة).')}</div>
+          <select id="es-attach" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)">${_memInvs.map(v => `<option value="${escapeHtml(v.ref || '')}" ${v === _attachDefault ? 'selected' : ''}>${escapeHtml(v.ref || '#' + v.id)} · ${v.date ? fmtDate(v.date) : ''} · ${escapeHtml(v.lineItems.map(l => l.sport).join(' + '))} · ${t('charged', 'مفوتر')} ${fmt(invoiceTotal(v))} · ${t('paid', 'مدفوع')} ${fmt(_paidOf(v))}</option>`).join('')}</select></div>` : ''}
         ${_canAdjPaid ? `<label style="display:grid;gap:4px">${t('Paid so far (QAR)', 'المدفوع حتى الآن')} <span class="text-mute" style="font-size:10px">${t('what is recorded as paid on this invoice — saved with the edit, so the profile shows it', 'المسجَّل كمدفوع على هذه الفاتورة — يُحفظ مع التعديل ليظهر في الملف')}</span>
+          <span id="es-inv-note" class="text-mute" style="font-size:10px">${(_othersOf(_selInv) > 0.005 || _attachMode) ? escapeHtml(t('Invoice ' + (_selInv.ref || '') + ' covers all its sports — this is the invoice’s total paid.', 'الفاتورة ' + (_selInv.ref || '') + ' تشمل كل رياضاتها — هذا إجمالي المدفوع على الفاتورة.')) : ''}</span>
           <div style="display:flex;gap:6px;align-items:center"><input id="es-paid" type="number" min="0" step="0.01" value="${_curPaid}" style="flex:1;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)"><button type="button" class="btn ghost sm" id="es-paid-full" title="${t('Set paid = price (fully paid)', 'اجعل المدفوع = السعر (مدفوع بالكامل)')}">= ${t('price', 'السعر')}</button></div>
           <span id="es-paid-hint" class="text-mute" style="font-size:11px;font-weight:600"></span></label>` : `<div class="text-mute" style="font-size:11px">${t('This invoice has several sports (or its line is shared), so what is paid is changed per payment: use 💳 Installments.', 'هذه الفاتورة تضم عدة رياضات (أو بندها مشترك) لذا يُعدَّل المدفوع من 💳 الأقساط.')}</div>`}
         <label style="display:grid;gap:4px">${t('Coach', 'المدرب')} <span class="text-mute" style="font-size:10px">${t('commission for this sport follows the coach', 'عمولة هذه الرياضة تتبع المدرب')}</span>
@@ -27023,14 +27061,35 @@ window.editSubscription = function(memberId, sid) {
         }
         // v6.668 — record the "Paid so far" the admin set. BEFORE the price changes (a legacy no-ledger invoice reads as paid at its OLD total).
         const _pdEl = $('#es-paid');
-        if (_canAdjPaid && _pdEl && String(_pdEl.value).trim() !== '') {
+        const _atEl = $('#es-attach');
+        const _tgt = _attachMode ? ((_atEl && _atEl.value && _memInvs.find(v => (v.ref || '') === _atEl.value)) || _attachDefault) : inv;
+        if (_canAdjPaid && _pdEl && _tgt && String(_pdEl.value).trim() !== '') {
           const _np = parseFloat(_pdEl.value);
           if (isNaN(_np) || _np < 0) { toast(t('Paid must be 0 or more', 'المدفوع يجب أن يكون 0 أو أكثر'), 'error'); return; }
-          const _d = adjustInvoicePaid(inv, _np, (sub.activity || '') + ' price ' + fmt(linePrice) + ' → ' + fmt(isNaN(price) ? linePrice : price));
+          const _cp = _paidOf(_tgt);
+          const _d = adjustInvoicePaid(_tgt, _np, (sub.activity || '') + ' price ' + fmt(linePrice) + ' → ' + fmt(isNaN(price) ? linePrice : price));
           if (_d) {
-            if (typeof stampUpdate === 'function') stampUpdate(inv);
-            if (typeof audit === 'function') audit('invoice.paid_adjust', 'invoice:' + inv.id, 'Paid on ' + (inv.ref || '#' + inv.id) + ' ' + fmt(_curPaid) + ' → ' + fmt(_np) + ' (' + (_d > 0 ? '+' : '') + fmt(_d) + ') from the profile edit of ' + (sub.activity || ''), { invoiceId: inv.id, from: _curPaid, to: _np });
+            if (typeof stampUpdate === 'function') stampUpdate(_tgt);
+            if (typeof audit === 'function') audit('invoice.paid_adjust', 'invoice:' + _tgt.id, 'Paid on ' + (_tgt.ref || '#' + _tgt.id) + ' ' + fmt(_cp) + ' → ' + fmt(_np) + ' (' + (_d > 0 ? '+' : '') + fmt(_d) + ') from the profile edit of ' + (sub.activity || ''), { invoiceId: _tgt.id, from: _cp, to: _np });
           }
+        }
+        // v6.680 — bill the package on the chosen invoice: add its line, drop a 0 placeholder of the same sport, link the sub.
+        if (_attachMode && _tgt && !isNaN(price)) {
+          const _cid = newCoachId !== undefined ? newCoachId : (sub.coachId != null ? sub.coachId : null);
+          const _nl = { sport: sub.activity, coachId: _cid, coach: _cid != null ? coachName(_cid) : '', price, classes: cls, billMonth: String(sub.start || _tgt.date || TODAY).slice(0, 7) };
+          for (const v of _memInvs) {
+            const zeros = v.lineItems.filter(l => l.sport === sub.activity && String(l.coachId) === String(_cid) && !(Number(l.price) > 0));
+            for (const z of zeros) { if (v.lineItems.length + (v === _tgt ? 1 : 0) > 1) { v.lineItems.splice(v.lineItems.indexOf(z), 1); v.amount = invoiceTotal(v); if (typeof stampUpdate === 'function') stampUpdate(v); } }
+          }
+          if (!(Array.isArray(_tgt.payments) && _tgt.payments.length) && invoicePaid(_tgt) > 0) {   // legacy no-ledger invoice: freeze what it read as paid BEFORE the new line is added
+            const _was = Math.round(invoicePaid(_tgt) * 100) / 100;
+            _tgt.payments = [{ date: _tgt.date || TODAY, month: String(_tgt.date || TODAY).slice(0, 7), amount: _was, method: _tgt.method || 'cash', pid: 'recon:' + _tgt.id, _recon: true }];
+            _tgt.amountPaid = _was;
+          }
+          _tgt.lineItems.push(_nl);
+          sub.invoiceNumber = _tgt.ref;
+          inv = _tgt; line = _nl;
+          if (typeof audit === 'function') audit('subscription.attach_invoice', 'member:' + m.id, 'Billed ' + sub.activity + ' (' + fmt(price) + ') on ' + (_tgt.ref || '#' + _tgt.id) + ' from the profile edit', { memberId: m.id, invoiceId: _tgt.id });
         }
         sub.totalClasses = cls;
         sub.status = st;
@@ -27099,17 +27158,25 @@ window.editSubscription = function(memberId, sid) {
     if (pEl && prEl && typeof pEl.addEventListener === 'function' && typeof prEl.addEventListener === 'function') {
       let _sync = _wasFullyPaid;
       const num = el => { const v = parseFloat(el.value); return isNaN(v) ? 0 : v; };
+      const atEl = $('#es-attach'), noteEl = $('#es-inv-note');
+      if (atEl && typeof atEl.addEventListener === 'function') atEl.addEventListener('change', () => {
+        const v = _memInvs.find(x => (x.ref || '') === atEl.value); if (!v) return;
+        _selInv = v; _sync = false; pEl.value = String(_paidOf(v));
+        if (noteEl) noteEl.textContent = t('Invoice ' + (v.ref || '') + ' covers all its sports — this is the invoice’s total paid.', 'الفاتورة ' + (v.ref || '') + ' تشمل كل رياضاتها — هذا إجمالي المدفوع على الفاتورة.');
+        refresh();
+      });
       const refresh = () => {
         if (!hint) return;
-        const price = num(prEl), paid = num(pEl), gap = Math.round((price - paid) * 100) / 100;
-        const shift = Math.round((paid - _curPaid) * 100) / 100;
+        const price = num(prEl) + _othersOf(_selInv), paid = num(pEl), gap = Math.round((price - paid) * 100) / 100;
+        const shift = Math.round((paid - _paidOf(_selInv)) * 100) / 100;
         hint.textContent = (Math.abs(gap) < 0.005 ? t('Fully paid', 'مدفوع بالكامل') : (gap > 0 ? fmt(gap) + ' ' + t('due', 'متبقي') : fmt(-gap) + ' ' + t('overpaid', 'زيادة')))
           + (Math.abs(shift) >= 0.005 ? ' · ' + t('will record ' + (shift > 0 ? '+' : '') + fmt(shift) + ' on the invoice', 'سيُسجَّل ' + (shift > 0 ? '+' : '') + fmt(shift) + ' على الفاتورة') : '');
         hint.style.color = Math.abs(gap) < 0.005 ? 'var(--green)' : (gap > 0 ? 'var(--accent-2)' : 'var(--red)');
       };
-      prEl.addEventListener('input', () => { if (_sync) pEl.value = prEl.value; refresh(); });
+      const _total = () => String(Math.round((num(prEl) + _othersOf(_selInv)) * 100) / 100);   // this package + the rest of the invoice
+      prEl.addEventListener('input', () => { if (_sync) pEl.value = _total(); refresh(); });
       pEl.addEventListener('input', () => { _sync = false; refresh(); });
-      if (fullBtn) fullBtn.addEventListener('click', () => { pEl.value = prEl.value; _sync = true; refresh(); });
+      if (fullBtn) fullBtn.addEventListener('click', () => { pEl.value = _total(); _sync = true; refresh(); });
       refresh();
     }
   }
@@ -29078,6 +29145,39 @@ PAGES.coachhome = (main) => {
           ${expected.length ? `<div style="margin-top:6px;font-size:12px" class="text-mute">${expected.map(r => escapeHtml(r.name)).join(' · ')}</div>` : `<div style="margin-top:6px;font-size:12px" class="text-mute">${t('No active students enrolled in this class yet.', 'لا يوجد طلاب نشطون في هذه الحصة بعد.')}</div>`}
         </div>`).join('') : `<div class="text-mute" style="font-size:13px">${t('You have no classes scheduled for today.', 'لا توجد حصص مجدولة لك اليوم.')}</div>`}
     </div>`;
+  // v6.680 — this month's rank among the coaches (new/renew packages), as motivation.
+  let rankCard = '';
+  {
+    const board = coachRanking(currentMonth());
+    const mine = board.find(r => String(r.id) === String(coach.id));
+    if (mine) {
+      const medal = r => r === 1 ? '🥇' : r === 2 ? '🥈' : r === 3 ? '🥉' : '🏅';
+      const leader = board[0];
+      const ahead = board.filter(r => r.count > mine.count).sort((a, b) => a.count - b.count)[0];
+      const tied = board.filter(r => r.count === mine.count && r.id !== mine.id).length;
+      let line;
+      if (!leader.count) line = t('No new/renew yet this month — be the first on the board!', 'لا توجد باقات جديدة/تجديد بعد هذا الشهر — كن الأول على اللوحة!');
+      else if (mine.rank === 1) line = t('You are leading — keep it up!', 'أنت في الصدارة — واصل!') + (tied ? ' ' + t('(tied with ' + tied + ')', '(متعادل مع ' + tied + ')') : '');
+      else {
+        const gap = ahead.count - mine.count;
+        line = t(gap + ' more new/renew to reach #' + ahead.rank, 'تحتاج ' + gap + ' جديد/تجديد للوصول إلى المركز ' + ahead.rank) + (tied ? ' · ' + t('tied with ' + tied, 'متعادل مع ' + tied) : '');
+      }
+      // The board shows ranks and counts only — a coach never sees another coach's name.
+      const podium = board.filter(r => r.rank <= 3 && r.count > 0).slice(0, 5).map(r => { const me = String(r.id) === String(coach.id); return `<span style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:12px;background:${me ? 'rgba(245,158,11,.22)' : 'var(--surface-2)'};font-weight:${me ? 800 : 500}">${medal(r.rank)} #${r.rank} · <b class="num">${r.count}</b> ${t('new/renew', 'جديد/تجديد')}${me ? ' · ' + t('you', 'أنت') : ''}</span>`; }).join('');
+      rankCard = `<div class="card" style="margin-bottom:16px;border:1px solid rgba(245,158,11,.4);background:linear-gradient(135deg,rgba(245,158,11,.14),rgba(245,158,11,.02))">
+        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+          <div style="font-size:42px;line-height:1">${leader.count ? medal(mine.rank) : '🏅'}</div>
+          <div style="flex:1;min-width:190px">
+            <div class="text-mute" style="font-size:11px;text-transform:uppercase;letter-spacing:.5px">${t('Your rank this month', 'ترتيبك هذا الشهر')} · ${escapeHtml(fmtMonth(currentMonth()))}</div>
+            <div style="font-size:26px;font-weight:800">${leader.count ? '#' + mine.rank : '—'} <span style="font-size:13px;font-weight:500" class="text-mute">${t('of', 'من')} ${board.length} ${t('coaches', 'مدربين')} · ${mine.count} ${t('new/renew', 'جديد/تجديد')}</span></div>
+            <div style="font-size:13px;margin-top:2px">${line}</div>
+          </div>
+          <button class="btn ghost sm" onclick="navigate('targets')">🎯 ${t('My target', 'هدفي')} →</button>
+        </div>
+        ${podium ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px">${podium}</div>` : ''}
+      </div>`;
+    }
+  }
   const nxWhen = nx ? (nx.delta === 0 ? t('Today', 'اليوم') : nx.delta === 1 ? t('Tomorrow', 'غداً') : t('in', 'خلال') + ' ' + nx.delta + ' ' + t('days', 'أيام')) : '';
   const nextClassCard = nx ? `
     <div class="card" style="margin-bottom:16px;border:1px solid rgba(91,141,239,.35);background:linear-gradient(135deg,rgba(91,141,239,.12),rgba(91,141,239,.02))">
@@ -29105,6 +29205,8 @@ PAGES.coachhome = (main) => {
         <button class="btn ghost" onclick="window._coachRosterCsv(${coach.id})" title="${t('Export your roster as CSV', 'تصدير قائمتك CSV')}">⬇ ${t('Roster CSV', 'تصدير القائمة')}</button>
       </div>
     </div>
+
+    ${rankCard}
 
     ${nextClassCard}
 
@@ -35296,7 +35398,7 @@ PAGES.transactions = (main) => {
   const pg = (window._txnPager = window._txnPager || makePager(25));
   if (window._txnLinkFilter) {
     const lf = window._txnLinkFilter; window._txnLinkFilter = null;
-    Object.assign(st, { categories: [], activities: [], methods: [], coachIds: [], hasDue: false, dueMode: 'gross', amountField: 'due', amountPreset: 'any', amountMin: '', amountMax: '', search: '' });
+    Object.assign(st, { categories: [], activities: [], methods: [], coachIds: [], hasDue: false, dueMode: 'gross', amountField: 'due', amountPreset: 'any', amountMin: '', amountMax: '', search: '', day: '' });
     st.preset = lf.months.length ? 'monthyear' : 'all';
     st.monthKeys = lf.months.slice();
     st.sportKey = lf.sport;
@@ -35325,13 +35427,14 @@ PAGES.transactions = (main) => {
   }
 
   function build() {
-    const range = resolveRange(st.preset, st.from, st.to);
+    const range = st.day ? { from: st.day, to: st.day } : resolveRange(st.preset, st.from, st.to);   // v6.679: one specific day wins over the preset
     // Which billing months to scope to (each invoice's share is summed across them
     // so totals match Invoices / Dashboard / Club Revenue). this_month / last_month
     // use a single month; the Month + Year multi-picker (req #7) builds every
     // (year × month) combo — e.g. Jun+Jul across 2025 & 2026. Other presets stay by date.
     let monthScopes = [];
-    if (st.preset === 'this_month') monthScopes = [TODAY.slice(0, 7)];
+    if (st.day) monthScopes = [];   // an exact day is date-based, not a billing-month view
+    else if (st.preset === 'this_month') monthScopes = [TODAY.slice(0, 7)];
     else if (st.preset === 'last_month') monthScopes = [String(range.from || '').slice(0, 7)];
     else if (st.preset === 'monthyear' && st.monthKeys && st.monthKeys.length) monthScopes = st.monthKeys.slice();   // exact months handed over from Reports
     else if (st.preset === 'monthyear') {
@@ -35547,6 +35650,12 @@ PAGES.transactions = (main) => {
       countText = `${txns.length} ${t('transactions', 'عملية')} · ${fmt(grand)} QAR${dueShown > 0 ? ` · ${dueLabel} ${fmt(dueShown)}` : ''}${(st.dueMode === 'net' && grandDue !== grandNetDue) ? ` (${t('gross', 'إجمالي')} ${fmt(grandDue)})` : ''}`;
     }
     $('#txn-count').textContent = countText;
+    { const _kp = $('#txn-kpis'); if (_kp) {
+      const _invOf = tx => (state.invoices || []).find(i => i.id === tx.id) || null;
+      const _mode = st.dueMode === 'net' ? 'netDue' : 'due';
+      _kp.innerHTML = moneyStripHtml({ icon: '🧾', countLabel: t('Transactions', 'العمليات'), count: txns.length, charged: grand, collected: grandPaid,
+        cm: collectedByMethod(txns, tx => tx.paid, _invOf), due: dueShown, dm: dueByMethod(txns, tx => tx[_mode], _invOf),
+        dueNote: (st.dueMode === 'net' && Math.abs(grandDue - grandNetDue) > 0.5) ? t('net · gross ' + fmt(grandDue), 'صافي · إجمالي ' + fmt(grandDue)) : '', money: !isViewerRole() }); } }
     { const lb = $('#txn-linkbanner'); if (lb) {
       const mk = (st.preset === 'monthyear' && st.monthKeys && st.monthKeys.length) ? st.monthKeys : [];
       lb.innerHTML = st.sportKey ? `<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:8px 12px;margin:0 2px 10px;border:1px solid rgba(139,92,246,.35);background:rgba(139,92,246,.07);border-radius:8px;font-size:12px">
@@ -35638,26 +35747,14 @@ PAGES.transactions = (main) => {
           <input type="checkbox" id="txn-hasdue" ${st.hasDue ? 'checked' : ''} style="cursor:pointer" />
           <span>${t('Has due', 'عليها متبقٍ')}</span>
         </label>
-        <select id="txn-duemode" class="btn ghost" title="${t('Gross due = full unpaid balance. Net due = balance minus member credits/advances.', 'إجمالي المتبقي = كامل الرصيد غير المدفوع. صافي المتبقي = الرصيد مطروحاً منه أرصدة العميل.')}">
-          <option value="gross" ${st.dueMode === 'gross' ? 'selected' : ''}>${t('Gross due', 'إجمالي المتبقي')}</option>
-          <option value="net" ${st.dueMode === 'net' ? 'selected' : ''}>${t('Net due', 'صافي المتبقي')}</option>
-        </select>
-        <div style="display:flex;align-items:center;gap:4px" title="${t('Filter by amount range', 'تصفية حسب المبلغ')}">
-          <select id="txn-amtfield" class="btn ghost">
-            <option value="due" ${st.amountField === 'due' ? 'selected' : ''}>${t('Due', 'المتبقي')}</option>
-            <option value="paid" ${st.amountField === 'paid' ? 'selected' : ''}>${t('Paid', 'المدفوع')}</option>
-            <option value="total" ${st.amountField === 'total' ? 'selected' : ''}>${t('Total', 'الإجمالي')}</option>
-          </select>
-          <select id="txn-amtpreset" class="btn ghost">
-            <option value="any" ${st.amountPreset === 'any' ? 'selected' : ''}>${t('Any', 'الكل')}</option>
-            <option value="has" ${st.amountPreset === 'has' ? 'selected' : ''}>${t('> 0', '> 0')}</option>
-            <option value="zero" ${st.amountPreset === 'zero' ? 'selected' : ''}>${t('= 0', '= 0')}</option>
-          </select>
-          <input id="txn-amtmin" type="number" inputmode="numeric" placeholder="${t('min', 'الأدنى')}" value="${st.amountMin}" style="width:70px;padding:6px 8px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text)" />
-          <input id="txn-amtmax" type="number" inputmode="numeric" placeholder="${t('max', 'الأقصى')}" value="${st.amountMax}" style="width:70px;padding:6px 8px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text)" />
+        <div style="display:flex;align-items:center;gap:4px" title="${t('Show only invoices dated one specific day', 'اعرض الفواتير المؤرخة بيوم واحد محدد فقط')}">
+          <span class="text-mute" style="font-size:11px">📅 ${t('Day', 'يوم')}</span>
+          <input id="txn-day" type="date" class="btn ghost" style="padding:6px 8px" value="${st.day || ''}" />
+          <button type="button" id="txn-day-clear" class="btn ghost sm" title="${t('Clear the day filter', 'مسح فلتر اليوم')}" style="padding:6px 8px;${st.day ? '' : 'display:none'}">✕</button>
         </div>
         <div class="search"><input id="txn-search" type="text" placeholder="${t('Search customer / ref / sport…', 'بحث عميل / مرجع / رياضة…')}" value="${escapeHtml(st.search)}" /></div>
       </div>
+      <div id="txn-kpis" style="display:flex;flex-wrap:wrap;gap:10px;margin:0 2px 12px"></div>
       <div id="txn-linkbanner"></div>
       <div id="txn-summary" style="display:flex;flex-wrap:wrap;gap:6px;padding:0 2px 12px"></div>
       <div class="table-wrap">
@@ -35671,6 +35768,8 @@ PAGES.transactions = (main) => {
     </div>
   `;
   $('#txn-preset').addEventListener('change', e => { st.preset = e.target.value; st.monthKeys = []; pg.page = 1; refresh(); });
+  $('#txn-day')?.addEventListener('change', e => { st.day = e.target.value || ''; const c = $('#txn-day-clear'); if (c) c.style.display = st.day ? '' : 'none'; pg.page = 1; refresh(); });
+  $('#txn-day-clear')?.addEventListener('click', () => { st.day = ''; const i = $('#txn-day'); if (i) i.value = ''; const c = $('#txn-day-clear'); if (c) c.style.display = 'none'; pg.page = 1; refresh(); });
   $('#txn-from')?.addEventListener('change', e => { st.from = e.target.value; pg.page = 1; refresh(); });
   $('#txn-to')?.addEventListener('change', e => { st.to = e.target.value; pg.page = 1; refresh(); });
   bindMultiSelect('txn-cat', (vals) => { st.categories = vals; pg.page = 1; refresh(); });
