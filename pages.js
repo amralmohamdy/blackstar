@@ -14700,14 +14700,34 @@ function _gliSubsHtml(m) {
       <button type="button" class="btn primary sm" id="gli-subs-go">🧾 ${t('Invoice for each selected', 'فاتورة لكل المحدد')} (<span id="gli-subs-n">0</span>)</button>
     </div></div>`;
 }
-// Print one invoice per ticked package (each opens in its own tab; if the browser blocks the extra tabs, say so).
+// Several invoices in ONE document, each on its own page (a single tab: the browser only allows one pop-up per click).
+window._combineInvoiceDocs = function (htmls, title) {
+  const NL = String.fromCharCode(10);
+  const bodyOf = h => { const a = h.indexOf('<body>'), b = h.lastIndexOf('</body>'); const inner = h.slice(a + 6, b < 0 ? undefined : b); const w = inner.indexOf('<div class="print-btn-wrap">'); return w < 0 ? inner : inner.slice(0, w); };
+  const first = htmls[0], ti = first.indexOf('<title>'), te = first.indexOf('</title>');
+  let head = first.slice(0, first.indexOf('<body>'));
+  if (ti >= 0 && te > ti) head = first.slice(0, ti) + '<title>' + escapeHtml(title || 'Invoices') + '</title>' + first.slice(te + 8, first.indexOf('<body>'));
+  const sheets = htmls.map((h, i) => '<div class="inv-sheet" style="' + (i < htmls.length - 1 ? 'page-break-after:always;break-after:page;' : '') + 'padding-bottom:12px">' + bodyOf(h) + '</div>').join(NL);
+  const bar = '<div class="print-btn-wrap" style="position:sticky;top:0;z-index:5"><button class="print-btn" onclick="document.title=' + escapeHtml(JSON.stringify(title || 'Invoices')) + ';window.print()">⬇ Export PDF (' + htmls.length + ')</button> <button class="print-btn secondary" onclick="window.print()">🖨 Print</button> <button class="print-btn secondary" onclick="window.close()">Close</button></div>';
+  return head + '<body>' + NL + bar + NL + sheets + NL + '</body>' + NL + '</html>';
+};
+window._openHtmlBlob = function (html) {
+  const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+  const win = window.open(url, '_blank');
+  if (!win) { toast(t('Pop-up blocked — allow pop-ups for this site', 'تم حظر النافذة — اسمح بالنوافذ المنبثقة لهذا الموقع'), 'error'); URL.revokeObjectURL(url); return false; }
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  return true;
+};
 window._gliPrintSubs = function (memberId, sids) {
   const list = (sids || []).slice();
   if (!list.length) { toast(t('Tick at least one package', 'اختر باقة واحدة على الأقل'), 'error'); return 0; }
-  let n = 0;
-  for (const sid of list) { try { printMemberSubInvoicePDF(memberId, sid); n++; } catch (e) { /* keep going */ } }
-  if (list.length > 1) toast(t(n + ' invoices opened — if only one tab opened, allow pop-ups for this site and press again', 'تم فتح ' + n + ' فواتير — إن فُتحت نافذة واحدة فقط فاسمح بالنوافذ المنبثقة ثم أعد'), 'info');
-  return n;
+  if (list.length === 1) { printMemberSubInvoicePDF(memberId, list[0]); return 1; }
+  const htmls = [];
+  for (const sid of list) { try { const h = printMemberSubInvoicePDF(memberId, sid, { returnHtml: true }); if (h) htmls.push(h); } catch (e) { /* skip this one */ } }
+  if (!htmls.length) { toast(t('Nothing to print for the ticked packages', 'لا يوجد ما يُطبع للباقات المحددة'), 'error'); return 0; }
+  const m = state.members.find(x => x.id === memberId);
+  if (_openHtmlBlob(_combineInvoiceDocs(htmls, ((m && m.name) || 'Member') + ' - ' + htmls.length + ' invoices'))) toast(t(htmls.length + ' invoices opened in one document — one page each. Click Export PDF to save.', 'تم فتح ' + htmls.length + ' فواتير في مستند واحد — صفحة لكل فاتورة. اضغط تصدير PDF للحفظ.'));
+  return htmls.length;
 };
 function generateLatestInvoice(onDone) {
   showModal({
@@ -16014,6 +16034,17 @@ window.editInvoiceQuick = function(id) {
     </div>
   ` : '';
 
+  // v6.686 — the PAYMENT date(s) next to the invoice Date: when the money was received (it decides which month the cash belongs to).
+  const _efRows = (Array.isArray(inv.payments) ? inv.payments : []).map((p, i) => ({ p, i })).filter(x => Math.abs(Number(x.p.amount) || 0) > 0.0001);
+  const _efPayHtml = _efRows.length
+    ? `<div class="field"><label>${_efRows.length === 1 ? t('Payment date', 'تاريخ الدفع') : t('Payment dates', 'تواريخ الدفعات')} <span class="text-mute" style="font-size:10px">(${t('when the money was received — it decides the month the cash belongs to', 'متى استُلم المبلغ — يحدد شهر التحصيل')})</span></label>
+        ${_efRows.map(({ p, i }) => `<div style="display:flex;align-items:center;gap:8px;margin-top:4px;flex-wrap:wrap">
+          <input type="date" class="ef-pdate" data-i="${i}" value="${escapeHtml(String(p.date || '').slice(0, 10))}" style="flex:0 0 170px" />
+          <span class="num" style="font-weight:700;font-size:13px;${Number(p.amount) < 0 ? 'color:var(--red)' : ''}">${fmt(p.amount)} QAR</span>
+          <span class="badge" style="font-size:10px">${escapeHtml(p.method || '')}</span>
+          ${p._correction || p._adj ? `<span class="text-mute" style="font-size:10px">${t('correction', 'تصحيح')}</span>` : ''}</div>`).join('')}
+      </div>`
+    : `<div class="text-mute" style="font-size:11.5px;margin:2px 0 8px">${t('No payment recorded yet — nothing to date.', 'لا توجد دفعة مسجلة بعد.')}</div>`;
   showModal({
     title: `Edit Invoice ${inv.ref || '#'+inv.id}`,
     body: `
@@ -16051,6 +16082,7 @@ window.editInvoiceQuick = function(id) {
       </div>
       <div class="text-mute" style="font-size:11px;margin:2px 0 6px">When a member pays the rest <b>later</b>, use the <b style="color:var(--green)">💵 Pay</b> button on the invoice row — it dates the payment in the month received. Edit "Paid" here only to <b>fix a wrong amount</b>.</div>
       <div class="field"><label>Date</label><input id="ef-date" type="date" value="${inv.date}" /></div>
+      ${_efPayHtml}
       ${stockPanel}
     `,
     actions: [
@@ -16081,6 +16113,19 @@ window.editInvoiceQuick = function(id) {
         inv.amount = parseFloat($('#ef-amt').value) || 0;
         inv.date = $('#ef-date').value;
         inv.month = inv.date.slice(0, 7);
+        // v6.686 — payment dates edited in the dialog: re-date those payment rows (the amount and method stay; the month follows the date).
+        const _pdEls = Array.from(document.querySelectorAll('.ef-pdate') || []);
+        const _pdRedated = [];
+        for (const el of _pdEls) {
+          const row = (inv.payments || [])[parseInt(el.dataset.i, 10)], v = String(el.value || '').slice(0, 10);
+          if (row && /^\d{4}-\d{2}-\d{2}$/.test(v) && v !== String(row.date || '').slice(0, 10)) _pdRedated.push({ row, from: row.date, to: v });
+        }
+        const _splitDate = (_pdEls.length === 1 && /^\d{4}-\d{2}-\d{2}$/.test(String(_pdEls[0].value || ''))) ? String(_pdEls[0].value).slice(0, 10) : inv.date;   // a split keeps the payment's own date
+        for (const x of _pdRedated) { x.row.date = x.to; x.row.month = x.to.slice(0, 7); }
+        if (_pdRedated.length) {
+          if (typeof stampUpdate === 'function') stampUpdate(inv);
+          if (typeof audit === 'function') audit('invoice.payment_date', 'invoice:' + inv.id, 'Payment date on ' + (inv.ref || '#' + inv.id) + ': ' + _pdRedated.map(x => fmtDate(x.from) + ' → ' + fmtDate(x.to)).join(', '), { invoiceId: inv.id });
+        }
         // Correct the collected amount if it was edited (or if the total was
         // lowered below what's collected). Rebuild the ledger as a single
         // corrected entry on the invoice date — this is a fix, not a new
@@ -16099,7 +16144,7 @@ window.editInvoiceQuick = function(id) {
           const _months = new Set((inv.payments || []).map(p => String(p.month || (p.date || '').slice(0, 7))).filter(Boolean));
           if (_months.size > 1) { toast(t('This invoice has installments across several months — edit the split from the 💳 Payments screen so no month’s revenue moves.', 'هذه الفاتورة أقساط عبر عدة أشهر — عدّل التقسيم من شاشة الدفعات 💳 حتى لا تنتقل إيرادات أي شهر.'), 'error'); return; }
           inv.method = parts[0].method;
-          inv.payments = parts.map(p => ({ date: inv.date, month: (inv.date || TODAY).slice(0, 7), amount: p.amount, method: p.method, by: currentUserId(), byName: currentUserName(), at: new Date().toISOString(), note: t('Split via Edit invoice', 'تقسيم عبر تعديل الفاتورة') }));
+          inv.payments = parts.map(p => ({ date: _splitDate, month: (_splitDate || TODAY).slice(0, 7), amount: p.amount, method: p.method, by: currentUserId(), byName: currentUserName(), at: new Date().toISOString(), note: t('Split via Edit invoice', 'تقسيم عبر تعديل الفاتورة') }));
           inv.amountPaid = splitTotal;
           save();
           closeModal();
@@ -16632,7 +16677,7 @@ window.printMemberInvoicePDF = function(memberId) {
 // prints just ONE sport (one subscription period), so a member with several sports — or the same
 // sport renewed several times — can get a receipt for exactly the package they ask about. Called
 // from the 📄 button on each Subscription-History row. Builds a synthetic, never-persisted invoice.
-window.printMemberSubInvoicePDF = function(memberId, sid) {
+window.printMemberSubInvoicePDF = function(memberId, sid, opts) {
   const m = state.members.find(x => x.id === memberId);
   if (!m) { toast('Member not found', 'error'); return; }
   const sub = (m.subscriptions || []).find(s => (s._sid || s._rid || '') === sid);
@@ -16714,7 +16759,7 @@ window.printMemberSubInvoicePDF = function(memberId, sid) {
     lineItems, _synthetic: true, _singleSport: true,
   };
   state.invoices.push(temp);
-  try { printInvoicePDF(tempId); }
+  try { return printInvoicePDF(tempId, opts); }
   finally { const i = state.invoices.findIndex(x => x.id === tempId); if (i >= 0) state.invoices.splice(i, 1); }
 };
 
@@ -16736,7 +16781,7 @@ function clubLogoHTML(size = 56) {
   </svg>`;
 }
 
-window.printInvoicePDF = function(id) {
+window.printInvoicePDF = function(id, opts) {   // opts.returnHtml → give the document back instead of opening a tab (v6.685)
   const inv = state.invoices.find(x => x.id === id);
   if (!inv) { toast('Invoice not found', 'error'); return; }
 
@@ -16844,6 +16889,12 @@ window.printInvoicePDF = function(id) {
       : (inv.sport ? [inv.sport] : []);
     const seen = new Set();
     for (const sp of sports) {
+      const _lp = (Array.isArray(inv.lineItems) ? inv.lineItems : []).find(li => li && li.sport === sp && li._period && li._period.start);   // v6.685: a per-package invoice carries ITS OWN period
+      if (_lp) {
+        const k2 = sp + '|' + _lp._period.start + '|' + (_lp._period.end || '');
+        if (!seen.has(k2)) { seen.add(k2); validityRows.push({ sport: sp, start: _lp._period.start, end: _lp._period.end || null }); }
+        continue;
+      }
       const sub = matchedMember.subscriptions.find(s => (s.activity || '') === sp && s.invoiceNumber && (s.invoiceNumber === inv.ref || s.invoiceNumber === inv.invoiceNumber))
                || matchedMember.subscriptions.filter(s => (s.activity || '') === sp).slice(-1)[0];
       if (!sub || !sub.start) continue;
@@ -17522,6 +17573,7 @@ window.printInvoicePDF = function(id) {
 </body>
 </html>`;
 
+  if (opts && opts.returnHtml) return html;
   // Open in a new window
   const blob = new Blob([html], { type: 'text/html' });
   const url = URL.createObjectURL(blob);
