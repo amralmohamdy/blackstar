@@ -219,6 +219,14 @@ function _targetCard(emoji, title, subtitle, value, tiers, unit) {
     <div style="margin-top:8px;display:grid;gap:2px;text-align:left">${legend}</div>
   </div>`;
 }
+// v6.682 — the member's Arabic name on its OWN line under the English one in the coach reports (EN and AR never share a line)
+function _arNameOf(l, plain) {
+  const ms = state.members || [];
+  const _id = l.memberId != null ? l.memberId : (/^m/.test(String(l.mid || '')) ? String(l.mid).slice(1) : null);
+  const mem = (_id != null && ms.find(m => String(m.id) === String(_id))) || (() => { const f = ms.filter(m => !m.deleted && m.name === l.memberName); return f.length === 1 ? f[0] : null; })();
+  const ar = mem && mem.nameArabic ? String(mem.nameArabic).trim() : '';
+  return ar ? `<div dir="rtl" style="text-align:left;${plain ? 'font-size:10px;color:#555' : 'font-size:11px;color:var(--text-mute)'}">${escapeHtml(ar)}</div>` : '';
+}
 // v6.656 — "Private" tag + the bonus a private line carries, for the coach salary report (screen + PDF).
 function _privTagHtml(priv, plain) {
   if (priv !== 'coach' && priv !== 'reception') return '';
@@ -10367,7 +10375,7 @@ function _buildClasses() {
     .filter(c => c && c.sport)
     .map(c => ({
       id: c.id, day: c.day, slot: c.slot, sport: c.sport, coachId: c.coachId,
-      coach: coachName(c.coachId),
+      coach: c.coachId == null ? '' : coachName(c.coachId),   // v6.684: no coach → blank, the class shows the sport only
       // v6.401: slot-aware — a student assigned to specific times shows only in those classes;
       // an unassigned student still shows in every class of that sport+coach (as before).
       roster: (typeof classRoster === 'function') ? classRoster(c.sport, c.coachId, c.day, c.slot) : [],
@@ -10427,7 +10435,7 @@ PAGES.classes = (main) => {
           <div style="display:flex;align-items:center;gap:10px">
             <span class="cls-chev" style="display:inline-block;transition:transform .15s;transform:rotate(${isCollapsed ? '-90' : '0'}deg);color:var(--text-mute);font-size:13px">▾</span>
             <div>
-              <div style="font-weight:800;font-size:15px">${dot}${escapeHtml(c.sport)} · <span style="color:var(--blue)">${escapeHtml(c.coach)}</span></div>
+              <div style="font-weight:800;font-size:15px">${dot}${escapeHtml(c.sport)}${c.coach ? ` · <span style="color:var(--blue)">${escapeHtml(c.coach)}</span>` : ''}</div>
               <div class="text-mute" style="font-size:12px;margin-top:2px">🗓 ${escapeHtml(_classDayLabel(c.day))} · ⏰ ${escapeHtml(_classSlotLabel(c.slot))} · 👥 <b>${c.roster.length}</b> ${t('students', 'طالب')}${isCollapsed ? ' · ' + t('collapsed', 'مطوية') : ''}</div>
             </div>
           </div>
@@ -10507,10 +10515,10 @@ function _classById(id) {
   const c = (state.schedule || []).find(x => String(x.id) === String(id));
   if (!c) return null;
   // v6.401: slot-aware, so a printed/exported register matches exactly what the screen shows.
-  return { ...c, coach: coachName(c.coachId), roster: (typeof classRoster === 'function') ? classRoster(c.sport, c.coachId, c.day, c.slot) : [] };
+  return { ...c, coach: c.coachId == null ? '' : coachName(c.coachId), roster: (typeof classRoster === 'function') ? classRoster(c.sport, c.coachId, c.day, c.slot) : [] };
 }
 function _classTitle(c) {
-  return `${c.sport} · ${c.coach} · ${_classDayLabel(c.day)} ${_classSlotLabel(c.slot)}`;
+  return `${c.sport}${c.coach ? ' · ' + c.coach : ''} · ${_classDayLabel(c.day)} ${_classSlotLabel(c.slot)}`;
 }
 
 // Register sheet: a printable roster with an attendance column left blank for pen-and-paper use.
@@ -10530,7 +10538,7 @@ window._classPrint = function (id) {
       th,td{border:1px solid #bbb;padding:7px 9px;text-align:left}
       th{background:#f0f0f0}</style></head>
     <body onload="window.print()">
-      <h1>📋 ${escapeHtml(c.sport)} — ${escapeHtml(c.coach)}</h1>
+      <h1>📋 ${escapeHtml(c.sport)}${c.coach ? ' — ' + escapeHtml(c.coach) : ''}</h1>
       <div class="sub">${escapeHtml(_classDayLabel(c.day))} · ${escapeHtml(_classSlotLabel(c.slot))} · ${c.roster.length} students · Black Stars Sports Club</div>
       <table><thead><tr><th style="width:36px">#</th><th>Student</th><th style="width:130px">Mobile</th><th style="width:90px">Attendance</th></tr></thead>
         <tbody>${rows}</tbody></table>
@@ -10576,7 +10584,7 @@ window._classAssign = function (id) {
   showModal({
     title: '👥 ' + t('Students in this class', 'طلاب هذه الحصة'),
     body: `
-      <div style="font-size:13px;margin-bottom:6px"><b>${escapeHtml(c.sport)} · ${escapeHtml(c.coach)}</b><br>
+      <div style="font-size:13px;margin-bottom:6px"><b>${escapeHtml(c.sport)}${c.coach ? ' · ' + escapeHtml(c.coach) : ''}</b><br>
         <span class="text-mute">${escapeHtml(_classDayLabel(c.day))} · ${escapeHtml(_classSlotLabel(c.slot))}</span></div>
       <div class="text-mute" style="font-size:11.5px;line-height:1.6;margin-bottom:10px">
         ${escapeHtml(t('Tick the students who attend at THIS time. A student you never assign anywhere keeps appearing in every class this coach runs for this sport — so you only need this when a coach teaches the same sport at two different times.', 'حدّد الطلاب الذين يحضرون في هذا الوقت. الطالب غير المُسند لأي وقت يظل يظهر في كل حصص هذا المدرب لهذه الرياضة — لذا تحتاج هذا فقط عندما يدرّس المدرب نفس الرياضة في وقتين.'))}
@@ -10611,7 +10619,7 @@ window._classAssign = function (id) {
         }
         if (!changed) { closeModal(); toast(t('No changes', 'لا تغييرات'), 'info'); return; }
         if (typeof audit === 'function') audit('class.assign', 'schedule:' + c.id,
-          `Class list updated: ${c.sport} · ${c.coach} · ${_classDayLabel(c.day)} ${_classSlotLabel(c.slot)} — ${picked.size} student(s)`,
+          `Class list updated: ${c.sport}${c.coach ? ' · ' + c.coach : ''} · ${_classDayLabel(c.day)} ${_classSlotLabel(c.slot)} — ${picked.size} student(s)`,
           { sport: c.sport, coachId: c.coachId, day: c.day, slot: c.slot, count: picked.size });
         closeModal();
         render();
@@ -11113,7 +11121,7 @@ PAGES.schedule = (main) => {
           return `<div class="sch-class" data-id="${c.id}" data-sport="${escapeHtml(c.sport)}" data-coachid="${c.coachId != null ? c.coachId : ''}" style="background:${sportColor(c.sport)};color:white;padding:6px 8px;border-radius:6px;font-size:11px;font-weight:600;margin:2px 0;display:flex;align-items:center;justify-content:space-between;gap:4px;cursor:pointer;opacity:${dimmed ? '0.18' : '1'};transition:opacity .15s;${coach && !isCoachActive(coach) ? 'outline:2px solid #facc15;outline-offset:-2px' : ''}">
             <div style="flex:1;min-width:0;overflow:hidden">
               <div style="display:flex;align-items:center;gap:4px"><span>${sportEmoji(c.sport)}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(t(c.label || c.sport, c.labelAr || c.label || sportNameAR(c.sport)))}</span></div>
-              <div style="font-size:9px;font-weight:500;opacity:.95;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(coach ? coach.name : (c.sport === SCHEDULE_EXTERNAL ? t('External booking', 'حجز خارجي') : 'No coach'))}${coach && !isCoachActive(coach) ? ' · inactive' : ''}</div>
+              <div style="font-size:9px;font-weight:500;opacity:.95;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(coach ? coach.name : (c.sport === SCHEDULE_EXTERNAL ? t('External booking', 'حجز خارجي') : ''))}${coach && !isCoachActive(coach) ? ' · inactive' : ''}</div>
             </div>
             ${warn}
             ${canEdit ? `<div style="display:flex;flex-direction:column;gap:1px;flex-shrink:0">
@@ -13989,6 +13997,76 @@ window._icOpen = (invId) => { if (typeof printInvoicePDF === 'function') printIn
 // scope: 🧩 Missing · 📇 Corrupted/drift · ⚠ Orphans. (Folds in the old separate
 // Missing-Invoices screen.)
 // ════════════════════════════════════════════════════════════════════════════
+// v6.681 — every member who has switched sport / coach, with the discrepancies found on their records (admin).
+PAGES.switchedmembers = (main) => {
+  if (currentRole() !== 'admin') { main.innerHTML = `<div class="card"><div class="empty">${t('Admins only.', 'المسؤولون فقط.')}</div></div>`; return; }
+  const st = window._swmState || (window._swmState = { q: '', show: 'issues', kind: '' });
+  const all = switchedMembersReport();
+  const real = r => r.issues.some(i => i.sev !== 'info');
+  const sevStyle = { high: 'background:rgba(239,68,68,.14);color:var(--red)', med: 'background:rgba(245,158,11,.16);color:var(--accent-2)', info: 'background:rgba(91,141,239,.14);color:var(--blue)' };
+  const nq = normalizeArabicForSearch(st.q || '');
+  const shown = all.filter(r => {
+    if (st.show === 'issues' && !r.issues.length) return false;
+    if (st.show === 'real' && !real(r)) return false;
+    if (st.show === 'clean' && r.issues.length) return false;
+    if (st.kind && !r.issues.some(i => i.k === st.kind)) return false;
+    if (nq && !normalizeArabicForSearch([r.m.name, r.m.nameArabic, r.m.phone].join(' ')).includes(nq)) return false;
+    return true;
+  });
+  const kindCount = {}; all.forEach(r => r.issues.forEach(i => { kindCount[i.k] = (kindCount[i.k] || 0) + 1; }));
+  const kpi = (icon, label, v, tint, edge) => `<div style="flex:1 1 170px;min-width:160px;padding:12px 14px;border-radius:14px;border:1px solid ${edge};background:linear-gradient(145deg,${tint},transparent 75%),var(--surface)"><div style="font-size:10.5px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--text-mute)">${icon} ${label}</div><div class="num" style="font-size:26px;font-weight:800;line-height:1.2">${v}</div></div>`;
+  const issueHtml = r => r.issues.length ? r.issues.map(i => { const d = SWITCH_ISSUE[i.k]; return `<div style="margin:0 0 6px"><span class="badge" style="${sevStyle[i.sev]};font-size:10px;font-weight:700">${escapeHtml(t(d.en, d.ar))}</span><div style="font-size:11.5px;margin-top:2px">${escapeHtml(i.t)}</div><div class="text-mute" style="font-size:10.5px">➜ ${escapeHtml(t(d.fixEn, d.fixAr))}</div></div>`; }).join('') : `<span class="badge" style="background:rgba(16,185,129,.14);color:var(--green)">✓ ${t('Clean', 'سليم')}</span>`;
+  const rowsHtml = shown.map(r => {
+    const sw = r.switches.map(s => `<div style="font-size:11.5px;white-space:nowrap">${s.date ? fmtDate(s.date) : '—'} · ${escapeHtml(s.from || '')} <span class="text-mute">${escapeHtml(s.fromCoach)}</span> → <b>${escapeHtml(s.to || '')}</b> <span class="text-mute">${escapeHtml(s.toCoach)}</span>${s.planned ? ` <span class="text-mute">(${s.attended == null ? '?' : s.attended}/${s.planned})</span>` : ''}</div>`).join('') || `<span class="text-mute" style="font-size:11px">${t('coach transfer / credit only', 'تحويل مدرب / رصيد فقط')}</span>`;
+    return `<tr data-mid="${escapeHtml(String(r.m.id))}" style="cursor:pointer">
+      <td><div class="font-bold">${escapeHtml(r.m.name || '')}</div>${r.m.nameArabic ? `<div class="text-mute" dir="rtl" style="font-size:11px">${escapeHtml(r.m.nameArabic)}</div>` : ''}${r.m.phone ? `<div style="font-size:11px"><a href="https://wa.me/${String(r.m.phone).replace(/[^\d]/g, '')}" target="_blank" onclick="event.stopPropagation()" style="color:var(--blue);text-decoration:none">${escapeHtml(r.m.phone)}</a></div>` : ''}</td>
+      <td>${sw}</td>
+      <td style="font-size:11.5px">${r.current.map(x => `<div>${escapeHtml(x)}</div>`).join('') || '<span class="text-mute">—</span>'}</td>
+      <td class="text-right num" style="white-space:nowrap;font-size:12px"><div>${fmt(r.paid)} <span class="text-mute">/ ${fmt(r.charged)}</span></div>${r.due > 0.5 ? `<div style="color:var(--accent-2);font-weight:700">${fmt(r.due)} ${t('due', 'متبقي')}</div>` : ''}</td>
+      <td style="min-width:300px">${issueHtml(r)}</td>
+      <td><button class="btn ghost sm" data-open="${escapeHtml(String(r.m.id))}">${t('Open', 'فتح')}</button></td></tr>`;
+  }).join('');
+  main.innerHTML = `
+    <div class="topbar"><div><h1>🔀 ${t('Switched Members', 'الأعضاء المحوّلون')}</h1>
+      <div class="subtitle">${t('Everyone who switched sport or coach, with the discrepancies found on their records', 'كل من حوّل رياضة أو مدرباً، مع الفروقات الموجودة في سجلاتهم')}</div></div>
+      <div class="topbar-actions"><button class="btn ghost" id="swm-csv">⬇ CSV</button></div></div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin:0 0 14px">
+      ${kpi('🔀', t('Switched members', 'الأعضاء المحوّلون'), all.length, 'rgba(91,141,239,.14)', 'rgba(91,141,239,.30)')}
+      ${kpi('⚠', t('Need attention', 'تحتاج مراجعة'), all.filter(real).length, 'rgba(239,68,68,.14)', 'rgba(239,68,68,.32)')}
+      ${kpi('💰', t('Money notes', 'ملاحظات مالية'), all.filter(r => r.issues.some(i => i.sev === 'info')).length, 'rgba(245,158,11,.14)', 'rgba(245,158,11,.32)')}
+      ${kpi('✓', t('Clean', 'سليم'), all.filter(r => !r.issues.length).length, 'rgba(16,185,129,.14)', 'rgba(16,185,129,.32)')}
+    </div>
+    <div class="card">
+      <div class="filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+        <input id="swm-q" class="btn ghost" style="min-width:220px;text-align:left" placeholder="${t('Search name / phone…', 'ابحث بالاسم / الهاتف…')}" value="${escapeHtml(st.q || '')}" />
+        <select id="swm-show" class="btn ghost">
+          ${[['issues', t('With any issue', 'بها ملاحظات')], ['real', t('Need attention only', 'تحتاج مراجعة فقط')], ['all', t('All switched', 'كل المحوّلين')], ['clean', t('Clean only', 'السليمون فقط')]].map(([v, l]) => `<option value="${v}" ${st.show === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        <select id="swm-kind" class="btn ghost"><option value="">${t('Any issue type', 'أي نوع')}</option>
+          ${Object.keys(SWITCH_ISSUE).map(k => `<option value="${k}" ${st.kind === k ? 'selected' : ''}>${escapeHtml(t(SWITCH_ISSUE[k].en, SWITCH_ISSUE[k].ar))} (${kindCount[k] || 0})</option>`).join('')}</select>
+        <span class="text-mute" style="font-size:12px">${shown.length} ${t('shown', 'معروض')}</span>
+      </div>
+      <div style="overflow:auto"><table class="data-table" style="width:100%"><thead><tr>
+        <th>${t('Member', 'العضو')}</th><th>${t('Switches', 'التحويلات')}</th><th>${t('Current packages', 'الباقات الحالية')}</th><th class="text-right">${t('Paid / charged', 'المدفوع / المفوتر')}</th><th>${t('Discrepancies', 'الفروقات')}</th><th></th></tr></thead>
+        <tbody>${rowsHtml || `<tr><td colspan="6" class="text-mute" style="text-align:center;padding:18px">${t('Nothing matches.', 'لا يوجد ما يطابق.')}</td></tr>`}</tbody></table></div>
+    </div>`;
+  const redraw = () => PAGES.switchedmembers(main);
+  const q = $('#swm-q'); if (q) q.addEventListener('change', () => { st.q = q.value; redraw(); });
+  const sh = $('#swm-show'); if (sh) sh.addEventListener('change', () => { st.show = sh.value; redraw(); });
+  const kd = $('#swm-kind'); if (kd) kd.addEventListener('change', () => { st.kind = kd.value; redraw(); });
+  main.querySelectorAll && main.querySelectorAll('tr[data-mid]').forEach(tr => tr.addEventListener('click', () => { const id = tr.getAttribute('data-mid'); const m = state.members.find(x => String(x.id) === id); if (m) viewMember(m.id); }));
+  const csv = $('#swm-csv');
+  if (csv) csv.addEventListener('click', () => {
+    const q2 = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+    const lines = [['Name', 'Arabic name', 'Mobile', 'Switches', 'Current packages', 'Paid', 'Charged', 'Due', 'Severity', 'Issue', 'Details', 'Suggested fix'].map(q2).join(',')];
+    for (const r of shown) {
+      const base = [r.m.name, r.m.nameArabic || '', r.m.phone || '', r.switches.map(s => (s.date || '') + ' ' + s.from + ' ' + s.fromCoach + ' → ' + s.to + ' ' + s.toCoach).join(' | '), r.current.join(' | '), Math.round(r.paid * 100) / 100, Math.round(r.charged * 100) / 100, Math.round(r.due * 100) / 100];
+      if (!r.issues.length) lines.push(base.concat(['', 'Clean', '', '']).map(q2).join(','));
+      for (const i of r.issues) lines.push(base.concat([i.sev, SWITCH_ISSUE[i.k].en + ' / ' + SWITCH_ISSUE[i.k].ar, i.t, SWITCH_ISSUE[i.k].fixEn + ' / ' + SWITCH_ISSUE[i.k].fixAr]).map(q2).join(','));
+    }
+    downloadFile(`switched-members-${TODAY}.csv`, '﻿' + lines.join('\n'), 'text/csv');
+  });
+};
+
 PAGES.invoicechecker = (main) => {
   if (currentRole() !== 'admin') { main.innerHTML = `<div class="card"><div class="empty">${t('Admins only.', 'المسؤولون فقط.')}</div></div>`; return; }
 
@@ -14598,6 +14676,39 @@ PAGES.birthdays = (main) => {
     <div class="text-mute" style="font-size:11px;margin-top:8px">${t('Tapping “Send wishes” opens WhatsApp with the message pre-filled — you just press send. The member needs a valid WhatsApp number on file.', 'بالضغط على «إرسال تهنئة» يفتح واتساب مع الرسالة جاهزة — تضغط إرسال فقط. يلزم وجود رقم واتساب صحيح للعضو.')}</div>`;
 };
 
+// v6.684 — "Invoice by subscription": every package of a member (any period, any sport) can be printed as its OWN invoice, several at once.
+// Prints from the member's records (never creates or re-charges anything) — same document as the 📄 button on the member card.
+function _gliSubsHtml(m) {
+  const subs = (m.subscriptions || []).filter(s => s && s.activity && (s._sid || s._rid)).slice().sort((a, b) => String(b.start || '').localeCompare(String(a.start || '')));
+  if (!subs.length) return '';
+  const priceOut = new Map(), paidMap = (typeof memberSubPaidMap === 'function') ? memberSubPaidMap(m, subs, priceOut) : new Map();
+  const rows = subs.map(s => {
+    const sid = s._sid || s._rid, paid = paidMap.has(s) ? paidMap.get(s) : (Number(s.amountPaid) || 0), price = priceOut.has(s) ? priceOut.get(s) : null;
+    const gone = s.switchedAwayTo ? t('switched', 'محوّل') : ((s.end && s.end < TODAY) ? t('ended', 'منتهية') : t('active', 'نشطة'));
+    return `<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-top:1px solid var(--border);cursor:pointer">
+      <input type="checkbox" class="gli-sub" value="${escapeHtml(String(sid))}" />
+      <span style="flex:1;font-size:12px"><b>${escapeHtml(s.activity)}</b> <span class="text-mute">${escapeHtml(s.coach || coachName(s.coachId) || '—')}</span><br><span class="text-mute" style="font-size:11px">${s.start ? fmtDate(s.start) : '—'} → ${s.end ? fmtDate(s.end) : '—'} · ${gone}${s.totalClasses ? ' · ' + s.totalClasses + ' ' + t('classes', 'حصة') : ''}</span></span>
+      <span class="num" style="font-size:12px;font-weight:700;white-space:nowrap">${fmt(paid)}${price != null && Math.abs(price - paid) > 0.5 ? ` <span class="text-mute" style="font-weight:500">/ ${fmt(price)}</span>` : ''}</span>
+      <button type="button" class="btn ghost sm" onclick="event.preventDefault();printMemberSubInvoicePDF(${m.id}, '${escapeHtml(String(sid))}')" title="${t('Invoice for this package only', 'فاتورة لهذه الباقة فقط')}">🧾</button></label>`;
+  }).join('');
+  return `<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden">
+    <div style="padding:9px 10px;background:var(--surface-2);font-size:12.5px;font-weight:700">🧾 ${t('Invoice by subscription', 'فاتورة لكل اشتراك')} <span class="text-mute" style="font-weight:500">· ${subs.length} ${t('packages', 'باقات')}</span></div>
+    <div class="text-mute" style="padding:6px 10px;font-size:11px;line-height:1.5">${t('Tick one or more packages for one invoice EACH. It prints from the records — nothing is created or re-charged.', 'اختر باقة أو أكثر لفاتورة لكل واحدة. تُطبع من السجلات — لا يُنشأ ولا يُحاسَب شيء جديد.')}</div>
+    <div style="max-height:220px;overflow:auto">${rows}</div>
+    <div style="display:flex;gap:8px;align-items:center;padding:8px 10px;border-top:1px solid var(--border);flex-wrap:wrap">
+      <button type="button" class="btn ghost sm" id="gli-subs-all">${t('Select all', 'تحديد الكل')}</button>
+      <button type="button" class="btn primary sm" id="gli-subs-go">🧾 ${t('Invoice for each selected', 'فاتورة لكل المحدد')} (<span id="gli-subs-n">0</span>)</button>
+    </div></div>`;
+}
+// Print one invoice per ticked package (each opens in its own tab; if the browser blocks the extra tabs, say so).
+window._gliPrintSubs = function (memberId, sids) {
+  const list = (sids || []).slice();
+  if (!list.length) { toast(t('Tick at least one package', 'اختر باقة واحدة على الأقل'), 'error'); return 0; }
+  let n = 0;
+  for (const sid of list) { try { printMemberSubInvoicePDF(memberId, sid); n++; } catch (e) { /* keep going */ } }
+  if (list.length > 1) toast(t(n + ' invoices opened — if only one tab opened, allow pop-ups for this site and press again', 'تم فتح ' + n + ' فواتير — إن فُتحت نافذة واحدة فقط فاسمح بالنوافذ المنبثقة ثم أعد'), 'info');
+  return n;
+};
 function generateLatestInvoice(onDone) {
   showModal({
     title: '⚡ Generate latest invoice',
@@ -14608,6 +14719,7 @@ function generateLatestInvoice(onDone) {
       </div>
       <div class="field"><label>Member</label>${memberPickerHtml('gli-cust', { placeholder: 'Search member by name, mobile, or QID…' })}</div>
       <div id="gli-preview" style="margin-top:12px;display:none;background:var(--surface-2);border-radius:8px;padding:12px;font-size:13px"></div>
+      <div id="gli-subs" style="margin-top:12px;display:none"></div>
       <div class="form-row" style="margin-top:10px">
         <div class="field"><label>Invoice date <span class="text-mute" style="font-size:10px">(defaults to sport start date)</span></label><input type="date" id="gli-date" value="${TODAY}" oninput="this.dataset.touched='1'" /></div>
       </div>
@@ -14712,9 +14824,18 @@ function generateLatestInvoice(onDone) {
     if (!hidden || !preview) return;
     function update() {
       const id = parseInt(hidden.value);
-      if (!id) { preview.style.display = 'none'; return; }
+      const subsBox = document.getElementById('gli-subs');
+      if (!id) { preview.style.display = 'none'; if (subsBox) subsBox.style.display = 'none'; return; }
       const m = state.members.find(x => x.id === id);
-      if (!m) { preview.style.display = 'none'; return; }
+      if (!m) { preview.style.display = 'none'; if (subsBox) subsBox.style.display = 'none'; return; }
+      if (subsBox) {
+        const sh = _gliSubsHtml(m); subsBox.innerHTML = sh; subsBox.style.display = sh ? 'block' : 'none';
+        const boxes = () => Array.from(subsBox.querySelectorAll ? subsBox.querySelectorAll('.gli-sub') : []);
+        const cnt = () => { const n = boxes().filter(b => b.checked).length; const el = document.getElementById('gli-subs-n'); if (el) el.textContent = String(n); };
+        boxes().forEach(b => b.addEventListener('change', cnt));
+        const all = document.getElementById('gli-subs-all'); if (all) all.addEventListener('click', () => { const on = boxes().some(b => !b.checked); boxes().forEach(b => { b.checked = on; }); cnt(); });
+        const go = document.getElementById('gli-subs-go'); if (go) go.addEventListener('click', () => window._gliPrintSubs(m.id, boxes().filter(b => b.checked).map(b => b.value)));
+      }
       let enrollments = (m.enrollments || []).filter(e => e.sport && ((e.price || 0) > 0 || (e.classes || 0) > 0));
       if (!enrollments.length) {
         const bySport = new Map();
@@ -20484,7 +20605,7 @@ window.showRevenueDetail = function(coachId, monthKey) {
   let pendingLines = [];
   if (pay && pay.basis === 'attendance' && pay.attendanceLines) {
     lines = (pay.attendanceLines.lines || []).map(l => ({
-      memberName: l.memberName, sport: l.sport, price: l.amountBase, priv: l.priv || '',
+      memberName: l.memberName, memberId: /^m/.test(String(l.mid || '')) ? String(l.mid).slice(1) : null, sport: l.sport, price: l.amountBase, priv: l.priv || '',
       // Full course price = per-class fee × total classes. (v6.576)
       fee: (l.perClass != null && l.total) ? Math.round(l.perClass * l.total * 100) / 100 : null,
       isSwitch: l.kind === 'switch', kind: l.kind, classes: l.classes,
@@ -20552,7 +20673,7 @@ window.showRevenueDetail = function(coachId, monthKey) {
             ${lines.length ? lines.map(l => `
               <tr>
                 <td style="padding:6px 8px;border-top:1px solid var(--border)">
-                  ${escapeHtml(l.memberName)}
+                  ${escapeHtml(l.memberName)}${_arNameOf(l)}
                   ${l.isSwitch ? '<span class="badge" style="font-size:9px;padding:1px 6px;background:rgba(245,158,11,.15);color:var(--accent-2);margin-left:6px">SWITCH</span>' : ''}
                 </td>
                 <td style="padding:6px 8px;border-top:1px solid var(--border)">${escapeHtml(l.sport || '—')}${_privTagHtml(l.priv)}</td>
@@ -20582,7 +20703,7 @@ window.showRevenueDetail = function(coachId, monthKey) {
               <tbody>
                 ${pendingLines.map((p, _pn) => `<tr>
                   <td style="padding:6px 8px;border-top:1px solid var(--border);color:var(--text-mute)">${_pn + 1}</td>
-                  <td style="padding:6px 8px;border-top:1px solid var(--border)">${escapeHtml(p.memberName)}${p.status === 'Frozen' ? ' <span class="badge blue" style="font-size:9px">❄️ Frozen</span>' : ''}</td>
+                  <td style="padding:6px 8px;border-top:1px solid var(--border)">${escapeHtml(p.memberName)}${_arNameOf(p)}${p._dupIgnored ? ' <span class="badge" style="font-size:9px;background:#fee2e2;color:#b91c1c">DUPLICATE — NOT COUNTED</span>' : ''}${p.status === 'Frozen' ? ' <span class="badge blue" style="font-size:9px">❄️ Frozen</span>' : ''}</td>
                   <td style="padding:6px 8px;border-top:1px solid var(--border)">${escapeHtml(p.sport || '—')}${_privTagHtml(p.priv)}${_privPendingNote(p, false, pay.privateBonusPct)}</td>
                   <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right">${p.classes != null ? p.classes + (p.total ? ' / ' + p.total : '') : (p.status === 'Frozen' ? '❄️ frozen' : '—')}</td>
                   <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace">${fmt(p.amountBase * pay.commissionRate / 100)}</td>
@@ -20665,7 +20786,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
   let pendingLines = [];
   if (pay && pay.basis === 'attendance' && pay.attendanceLines) {
     lines = (pay.attendanceLines.lines || []).map(l => ({
-      memberName: l.memberName, sport: l.sport, price: l.amountBase, priv: l.priv || '',
+      memberName: l.memberName, memberId: /^m/.test(String(l.mid || '')) ? String(l.mid).slice(1) : null, sport: l.sport, price: l.amountBase, priv: l.priv || '',
       isSwitch: l.kind === 'switch', invoiceRef: l.kind === 'trueup' ? 'expiry true-up' : (l.kind === 'attended' ? (l.classes + ' class' + (l.classes === 1 ? '' : 'es')) : ''),
       invoiceDate: null, start: l.start, end: l.end, attended: l.attended, total: l.total, status: l.status,
       perClass: l.perClass,
@@ -20678,6 +20799,8 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
     // Admin sees the duplicate on the Salaries row (🧹 Review & fix); set window._pdfShowDuplicates = true to print it.
     if (window._pdfShowDuplicates !== true) lines = lines.filter(l => !l._dupIgnored);
     pendingLines = pay.attendanceLines.pendingLines || [];
+    // v6.684 — same for the pending table: a duplicate copy of a package is already 0 in the pay, so the coach's copy doesn't list it.
+    if (window._pdfShowDuplicates !== true) pendingLines = pendingLines.filter(l => !l._dupIgnored);
   } else if (pay && pay.basis === 'payment') {
     // v6.528: PAYMENT basis — rows are the coach's share of the amount PAID this month, so the PDF
     // subtotals + total match the Salaries paid-amount gross (was the full charged line fees).
@@ -20840,7 +20963,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
             const rowTr = (l, n) => `
             <tr${l._dupIgnored ? ' style="background:#fafafa;color:#b0b0b0"' : ''}>
               <td style="color:#999">${n}</td>
-              <td>${l._dupIgnored ? `<span style="text-decoration:line-through">${escapeHtml(l.memberName)}</span> <span class="badge" style="background:#fee2e2;color:#b91c1c">DUPLICATE — NOT PAID</span>` : escapeHtml(l.memberName)}${l.isSwitch ? '<span class="badge">SWITCH</span>' : ''}${l._kind === 'trueup'
+              <td>${l._dupIgnored ? `<span style="text-decoration:line-through">${escapeHtml(l.memberName)}</span> <span class="badge" style="background:#fee2e2;color:#b91c1c">DUPLICATE — NOT PAID</span>` : escapeHtml(l.memberName)}${_arNameOf(l, true)}${l.isSwitch ? '<span class="badge">SWITCH</span>' : ''}${l._kind === 'trueup'
                 ? `<div style="margin-top:3px"><span style="display:inline-block;background:#fff7ed;color:#9a3412;border:1px solid #fdba74;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700;line-height:1.4">⏳ EXPIRED — ${l._trueupClasses} paid class${l._trueupClasses === 1 ? '' : 'es'} not attended, paid in full</span></div>`
                 : `<div style="color:#999;font-size:10px">${escapeHtml(l.invoiceRef || '')}${l.invoiceDate ? ' · ' + fmtDate(l.invoiceDate) : ''}</div>`}</td>
               <td>${escapeHtml(l.sport || '—')}${_privTagHtml(l.priv, true)}</td>
@@ -20882,7 +21005,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
         <tbody>
           ${pendingLines.map((p, _pn) => `<tr>
             <td style="color:#999">${_pn + 1}</td>
-            <td>${escapeHtml(p.memberName)}${p.status === 'Frozen' ? ' <span style="font-size:10px;color:#2563eb;font-weight:700">❄️ Frozen</span>' : ''}</td>
+            <td>${escapeHtml(p.memberName)}${_arNameOf(p, true)}${p.status === 'Frozen' ? ' <span style="font-size:10px;color:#2563eb;font-weight:700">❄️ Frozen</span>' : ''}</td>
             <td>${escapeHtml(p.sport || '—')}${_privTagHtml(p.priv, true)}${_privPendingNote(p, true, pay.privateBonusPct)}</td>
             <td style="font-size:11px">${p.start ? fmtDate(p.start) : '—'}</td>
             <td style="font-size:11px">${p.end ? fmtDate(p.end) : (p.status === 'Frozen' ? '<span style="color:#2563eb">paused</span>' : '—')}</td>
@@ -23756,6 +23879,7 @@ PAGES.attendance = (main) => {
   function _refreshScoped() {
     const gMonth = gridMonth();
     window._attCurrentMonth = gMonth;
+    window._attScopeMonths = (filter.month === 'all') ? (filter.months.length ? filter.months.slice() : monthsWithData()) : [gMonth];
     let rows = getRows();
     // v6.514: in single-month view, drop any coach-split row whose window doesn't reach the shown
     // month (a departed/transferred coach — e.g. Iyad, gone 31 Jul — must not be listed in August;
@@ -24712,7 +24836,8 @@ PAGES.attendance = (main) => {
 window._attPdf = function(memberId, month, sport) {
   const m = state.members.find(x => x.id === memberId);
   if (!m) return;
-  const mo = month || (window._attCurrentMonth) || latestDataMonth();
+  // v6.683 — the row PDF follows the months the screen shows (it used to print only the LAST one, so a Sep-marked member read empty in Oct).
+  const _one = (mo) => {
   const days = daysInMonth(mo);
   const sportsMap = m.dailyAttendance?.[mo] || {};
   // v6.571 — a Mixed package's day marks live in m.mixedAttendance, not dailyAttendance.
@@ -24762,10 +24887,21 @@ window._attPdf = function(memberId, month, sport) {
         <tbody>${dayRows}</tbody></table>
       </div>`;
   }).join('');
+  return { mo, sportSections, totalY, totalN, sportsShown };
+  };
+  const _scopeMonths = (!month && state.route === 'attendance' && Array.isArray(window._attScopeMonths) && window._attScopeMonths.length) ? window._attScopeMonths.slice().sort() : [month || (window._attCurrentMonth) || latestDataMonth()];
+  const _parts = _scopeMonths.map(_one);
+  const _marked = _parts.filter(x => x.totalY + x.totalN > 0);
+  const _used = _marked.length ? _marked : _parts.slice(-1);   // nothing marked anywhere: one empty month, as before
+  const mo = _used[_used.length - 1].mo;
+  const monthLabel = _used.length > 1 ? _used.map(x => fmtMonth(x.mo)).join(' · ') : fmtMonth(mo);
+  const sportsShown = [...new Set(_used.flatMap(x => x.sportsShown))];
+  const sportSections = _used.map(x => (_used.length > 1 ? `<div style="font-size:13px;font-weight:800;margin:16px 0 8px;padding-bottom:4px;border-bottom:2px solid #f26060">${fmtMonth(x.mo)}</div>` : '') + x.sportSections).join('');
+  const totalY = _used.reduce((s, x) => s + x.totalY, 0), totalN = _used.reduce((s, x) => s + x.totalN, 0);
 
   const total = totalY + totalN;
   const rate = total ? Math.round(totalY / total * 100) : 0;
-  const fileName = `${m.name.replace(/[^a-z0-9]+/gi, '_')}${sport?`_${sport.replace(/[^a-z0-9]+/gi,'_')}`:''}_attendance_${mo}`;
+  const fileName = `${m.name.replace(/[^a-z0-9]+/gi, '_')}${sport?`_${sport.replace(/[^a-z0-9]+/gi,'_')}`:''}_attendance_${_used.length > 1 ? _used[0].mo + '_to_' + mo : mo}`;
 
   const win = window.open('', '_blank');
   win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${fileName}</title>
@@ -24791,7 +24927,7 @@ window._attPdf = function(memberId, month, sport) {
       <div style="text-align:right;font-size:11px;color:#777">Generated<br><b>${fmtDate(TODAY)}</b></div>
     </div>
     <h1>${escapeHtml(m.name)}${m.nameArabic ? ` <span style="color:#999;font-weight:400">(${escapeHtml(m.nameArabic)})</span>` : ''}</h1>
-    <div class="meta">${sport ? '' : `<b>${sportsShown.length} sport${sportsShown.length===1?'':'s'}</b> · `}${fmtMonth(mo)} · Status: <b>${memberStatus(m)}</b></div>
+    <div class="meta">${sport ? '' : `<b>${sportsShown.length} sport${sportsShown.length===1?'':'s'}</b> · `}${monthLabel} · Status: <b>${memberStatus(m)}</b></div>
     <div class="summary">
       <div class="kpi"><div class="l">Present (Y)</div><div class="v" style="color:#059669">${totalY}</div></div>
       <div class="kpi"><div class="l">Absent (N)</div><div class="v" style="color:#dc2626">${totalN}</div></div>
