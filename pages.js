@@ -27108,7 +27108,7 @@ window.editSubscription = function(memberId, sid) {
   if (!m || !Array.isArray(m.subscriptions)) return;
   const sub = m.subscriptions.find(s => (s._sid || s._rid) === sid);
   if (!sub) { toast(t('Subscription not found', 'الاشتراك غير موجود'), 'error'); return; }
-  let inv = (state.invoices || []).find(v => !v.deleted && !v.switchCredit && v.ref === sub.invoiceNumber);
+  let inv = (state.invoices || []).find(v => !v.deleted && !v.switchCredit && sub.invoiceNumber && v.ref === sub.invoiceNumber);   // v6.695 — no link ≠ "undefined === undefined"
   // v6.626 — SAFE, period-scoped line resolution. Prefer an exact sport+coach match (string-normalized,
   // so a legacy string coachId "5" still matches a numeric 5). Only fall back to a sport-only match when
   // there is EXACTLY ONE such line, so we can never grab a DIFFERENT period's line.
