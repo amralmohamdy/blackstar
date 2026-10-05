@@ -579,27 +579,6 @@ PAGES.dashboard = (main) => {
               + `<optgroup label="${t('Month', 'شهر')}">` + months.map(mk => opt(mk, fmtMonth(mk))).join('') + `</optgroup>`;
           })()}
         </select>
-        ${(() => {
-          const per = normalizeDashPeriod(), cur = new Set(dashPeriodMonths(per));
-          const set = new Set([currentMonth()]);
-          for (const i of state.invoices) if (i.month) set.add(i.month);
-          for (const e of (state.expenses || [])) { const mo = expenseMonth(e); if (mo) set.add(mo); }
-          const months = [...set].filter(plausibleMonthKey).sort().reverse();
-          return `<div style="position:relative;display:inline-block" id="dash-multi-wrap">
-          <button type="button" class="btn ghost" id="dash-multi-btn" title="${t('Pick several months to add up', 'اختر عدة أشهر لجمعها')}">☑ ${t('Months', 'أشهر')}${per.type === 'months' ? ' (' + cur.size + ')' : ''} ▾</button>
-          <div id="dash-multi-panel" style="display:none;position:absolute;top:calc(100% + 4px);inset-inline-end:0;z-index:200;min-width:230px;max-height:min(460px,calc(100vh - 150px));overflow:hidden;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.18);padding:8px">
-            <div style="flex:none;display:flex;flex-wrap:wrap;gap:6px;padding-bottom:8px;border-bottom:1px solid var(--border);margin-bottom:6px">
-              <button type="button" class="btn ghost sm" data-last="3">${t('Last 3', 'آخر 3')}</button>
-              <button type="button" class="btn ghost sm" data-last="6">${t('Last 6', 'آخر 6')}</button>
-              <button type="button" class="btn ghost sm" id="dash-multi-clear">${t('Clear', 'مسح')}</button>
-            </div>
-            <div id="dash-multi-list" style="overflow:auto;flex:1 1 auto;min-height:0">${months.map(mk => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:6px;cursor:pointer;font-size:13px"><input type="checkbox" class="dash-multi-cb" value="${mk}" ${cur.has(mk) && per.type !== 'all' && per.type !== 'year' ? 'checked' : ''} /> <span>${fmtMonth(mk)}</span></label>`).join('')}</div>
-            <div style="flex:none;display:flex;gap:8px;justify-content:flex-end;padding-top:8px;border-top:1px solid var(--border);margin-top:6px;background:var(--surface)">
-              <button type="button" class="btn ghost sm" id="dash-multi-cancel">${t('Cancel', 'إلغاء')}</button>
-              <button type="button" class="btn primary sm" id="dash-multi-apply">${t('Apply', 'تطبيق')}</button>
-            </div>
-          </div></div>`;
-        })()}
         <button class="btn ghost" id="export-btn">📥 ${t('Export','تصدير')}</button>
         <button class="btn ghost" id="dash-backup-top" title="Download a JSON backup of all your data">💾 ${t('Backup','نسخة احتياطية')}</button>
         ${currentRole() === 'admin' ? `<button class="btn ghost" id="dash-cloud-storage" title="${t('See how much data is stored in the cloud, by collection','اطّلع على حجم البيانات المخزّنة في السحابة حسب المجموعة')}">☁ ${t('Storage','التخزين')}</button>` : ''}
@@ -796,32 +775,6 @@ PAGES.dashboard = (main) => {
     window._dashPeriod = v === 'all' ? { type: 'all' } : (v.startsWith('Y:') ? { type: 'year', value: v.slice(2) } : { type: 'month', value: v });
     render();
   });
-
-  // v6.667 — several months at once: tick months, Apply (one repaint). Last 3 / 6 are shortcuts, one month = the normal single month.
-  { const mBtn = $('#dash-multi-btn'), mPanel = $('#dash-multi-panel');
-    if (mBtn && mPanel) {
-      const cbs = () => Array.from(mPanel.querySelectorAll('.dash-multi-cb'));
-      mBtn.addEventListener('click', e => { e.stopPropagation(); mPanel.style.display = mPanel.style.display === 'flex' ? 'none' : 'flex'; });
-      mPanel.addEventListener('click', e => e.stopPropagation());
-      if (!window._dashMultiOutside) { window._dashMultiOutside = true; document.addEventListener('click', () => { const pn = document.getElementById('dash-multi-panel'); if (pn && pn.style.display === 'flex') pn.style.display = 'none'; }); }
-      const applyMonths = () => {
-        const per = dashPeriodFromMonths(cbs().filter(c => c.checked).map(c => c.value));
-        if (!per) { toast(t('Tick at least one month', 'اختر شهراً واحداً على الأقل'), 'error'); return; }
-        window._dashPeriod = per;
-        render();
-      };
-      // Last 3 / Last 6 tick the newest months AND apply at once (they used to only tick, and Apply sat below the fold)
-      Array.from(mPanel.querySelectorAll('[data-last]')).forEach(b => b.addEventListener('click', () => {
-        const n = parseInt(b.getAttribute('data-last'), 10) || 3, all = cbs().map(c => c.value);   // newest first
-        cbs().forEach(c => { c.checked = all.indexOf(c.value) < n; });
-        applyMonths();
-      }));
-      const clr = $('#dash-multi-clear'); if (clr) clr.addEventListener('click', () => cbs().forEach(c => { c.checked = false; }));
-      const cancel = $('#dash-multi-cancel'); if (cancel) cancel.addEventListener('click', () => { mPanel.style.display = 'none'; });
-      const apply = $('#dash-multi-apply');
-      if (apply) apply.addEventListener('click', applyMonths);
-    }
-  }
 
   // v6.605 — these four cards were removed from the brief dashboard; the draw fns no-op when their
   // container is absent (guarded), so these calls stay harmless and the fns remain for reuse.
@@ -4268,6 +4221,37 @@ function showMemberForm(m) {
         //     match an unfinished sub (true duplicate); otherwise it is a brand-new subscription.
         const _sameCoach = (a, b) => String(a) === String(b);
         const _finished = (s) => (s.status || '').toLowerCase() === 'completed' || (s.status || '').toLowerCase() === 'withdrawn' || !!s.switchedAwayTo;
+        // v6.691 — a coach changed on an EXISTING row must not move the classes already attended: the old coach keeps them (and their
+        // commission), the new coach takes the remaining ones from today. (Before, the whole package — every past class — went to the new coach.)
+        // To CORRECT a wrong coach (the new one taught it all) use ✎ Edit sport → "Correct a wrong coach".
+        const _handovers = [];
+        for (const e of enrollments) {
+          if (!e._originalSport || e._originalCoachId == null || e.coachId == null || _sameCoach(e.coachId, e._originalCoachId) || isCampSport(e.sport) || e.sport === MIXED) continue;
+          let hs = null;
+          for (let i = subs.length - 1; i >= 0; i--) { const c = subs[i]; if (c.activity === e.sport && _sameCoach(c.coachId, e._originalCoachId) && !_finished(c)) { hs = c; break; } }
+          if (!hs) continue;
+          const beforeCls = parseInt(hs.totalClasses) || 0, oldName = coachName(e._originalCoachId);
+          const r = handOverSubToCoach(existing, hs, e.coachId, TODAY);
+          if (r.mode === 'split') {
+            subs.push(r.newSub);                                              // Save works on a copy of the subscriptions
+            if (parseInt(e.classes) === beforeCls) e.classes = r.remaining;    // the row now describes the NEW package (unless the admin typed other numbers)
+            if (Math.abs((parseFloat(e.price) || 0) - r.base) < 0.005) e.price = r.bShare;
+            e.switchedInto = true; e._originalCoachId = e.coachId;
+            // the form row drives the package dates on sync: make it the NEW package's window (next day → the original end)
+            e.start = r.newSub.start;
+            if (r.newSub.end) { const dd = Math.round((Date.parse(r.newSub.end) - Date.parse(r.newSub.start)) / 86400000); if (dd > 0) e.validity = dd; }
+            _handovers.push(oldName + ' → ' + coachName(e.coachId) + ' (' + e.sport + ': ' + r.attended + ' ' + t('attended stay', 'محضورة تبقى') + ', ' + r.remaining + ' ' + t('move', 'تنتقل') + ')');
+            if (typeof audit === 'function') audit('subscription.coach_handover', 'member:' + existing.id, e.sport + ': ' + oldName + ' → ' + coachName(e.coachId) + ' @ ' + TODAY + ' (' + r.attended + ' attended stay, ' + r.remaining + ' move)', { memberId: existing.id, sport: e.sport });
+          } else if (r.mode === 'whole') {
+            e._originalCoachId = e.coachId;                                    // nothing attended yet: the package simply went to the new coach
+          } else {
+            e._keepSubCoach = true;                                            // every class already attended: the package stays with the old coach
+            _handovers.push(oldName + ' (' + e.sport + ': ' + t('all classes already attended — stays with them', 'كل الحصص حُضرت — تبقى معه') + ')');
+          }
+        }
+        if (_handovers.length) toast(t('Coach changed — the classes already attended stay with the old coach: ', 'تغيّر المدرب — الحصص المحضورة تبقى مع المدرب السابق: ') + _handovers.join(' · '), 'info');
+        // the saved enrollments were copied from the rows BEFORE the hand-over: refresh them so they describe the new package (coach, classes, price, dates)
+        data.enrollments = enrollments.map(({ _originalSport, _originalCoachId, _paid, _attended, _keepSubCoach, ...en }) => en);
         for (const e of enrollments) {
           let matched = false;
           if (e._originalSport) {
@@ -4275,13 +4259,13 @@ function showMemberForm(m) {
             for (let i = subs.length - 1; i >= 0; i--) {
               const s = subs[i];
               if (s.activity === e.sport && _sameCoach(s.coachId, e._originalCoachId)) {
-                syncSubToEnrollment(s, e, existing, state.invoices); matched = true; break;
+                syncSubToEnrollment(s, e, existing, state.invoices, { keepCoach: !!e._keepSubCoach }); matched = true; break;
               }
             }
             // Legacy fallback: original coach not recorded / already renamed → match by sport once.
             if (!matched) {
               for (let i = subs.length - 1; i >= 0; i--) {
-                if (subs[i].activity === e.sport) { syncSubToEnrollment(subs[i], e, existing, state.invoices); matched = true; break; }
+                if (subs[i].activity === e.sport) { syncSubToEnrollment(subs[i], e, existing, state.invoices, { keepCoach: !!e._keepSubCoach }); matched = true; break; }
               }
             }
           } else {
@@ -4761,10 +4745,16 @@ window.offboardCoach = function (coachId) {
         let moved = 0;
         for (const m of (state.members || [])) {
           if (m.deleted) continue;
-          for (const s of (m.subscriptions || [])) {
+          // v6.691 — the leaving coach keeps the classes already attended (his final payout above); each LIVE package is split and the new coach
+          // takes the remaining classes. A package that is already finished stays with the coach who taught it.
+          for (const s of (m.subscriptions || []).slice()) {
             if (s.coachId !== coachId) continue;
             const sp = s.activity || m.sport || '';
-            if (map[sp] != null) { s.coachId = map[sp]; const nc = state.coaches.find(x => x.id === map[sp]); s.coach = nc ? nc.name : s.coach; moved++; }
+            if (map[sp] == null) continue;
+            const st = (s.status || '').toLowerCase();
+            if (st === 'completed' || st === 'withdrawn' || s.switchedAwayTo || (s.end && String(s.end).slice(0, 10) < TODAY)) continue;
+            const r = handOverSubToCoach(m, s, map[sp], TODAY);
+            if (r.mode === 'split' || r.mode === 'whole') moved++;
           }
           // Mirror to enrollments so future renewals carry the new coach.
           for (const e of (m.enrollments || [])) {
@@ -5066,60 +5056,9 @@ window.transferCoachStudents = function(fromId) {
             if (!_sameC(sub.coachId, fromId) || !_eligibleAtEff(sub)) continue;
             const sport = sub.activity;
             if (!_sportMatch(sport)) continue;   // v6.503: single-sport transfer skips the other sports
-            const origEnd = sub.end || null;
-            const total = parseInt(sub.totalClasses) || 0;
-            // Attended = classes done on/before the effective date, windowed to THIS sub's period.
-            const win = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, sub) : { from: sub.start || null, to: sub.end || null };
-            const winTo = (win.to && eff && win.to < eff) ? win.to : eff;
-            const attended = (typeof liveAttendanceCount === 'function') ? Math.min(total, liveAttendanceCount(m, sport, win.from, winTo).y || 0) : Math.min(total, parseInt(sub.attendedClasses) || 0);
-            const remaining = Math.max(0, total - attended);
-            // Find THIS sub's invoice. By ref first; but a sub's stored invoiceNumber can be stale (a
-            // regenerated invoice gets a new ref — Adham's sub named INV946292 but the real one is
-            // INV946297). Fall back to a Membership invoice that carries a matching sport+coach line,
-            // disambiguating a renewal by the closest date — else the line isn't found, only the SUB's
-            // class count is capped, and the un-shrunk line pays the old coach a doubled per-class. (v6.498)
-            let inv = (state.invoices || []).find(v => !v.deleted && v.customerId === m.id && (v.ref === sub.invoiceNumber || v.invoiceNumber === sub.invoiceNumber));
-            if (!inv || !(Array.isArray(inv.lineItems) && inv.lineItems.some(l => l.sport === sport && _sameC(l.coachId, fromId)))) {
-              const cands = (state.invoices || []).filter(v => !v.deleted && v.customerId === m.id && (v.category || 'Membership') === 'Membership' && !v.switchCredit && v.activityType !== 'switch-credit' && Array.isArray(v.lineItems) && v.lineItems.some(l => l.sport === sport && _sameC(l.coachId, fromId)));
-              if (cands.length) inv = cands.slice().sort((a, b) => Math.abs((Date.parse(a.date) || 0) - (Date.parse(sub.start) || 0)) - Math.abs((Date.parse(b.date) || 0) - (Date.parse(sub.start) || 0)))[0];
-            }
-            const line = (inv && Array.isArray(inv.lineItems)) ? (inv.lineItems.find(l => l.sport === sport && _sameC(l.coachId, fromId)) || inv.lineItems.find(l => l.sport === sport)) : null;
-            const base = line ? (Number(line.price) || 0) : (Number(sub.amountPaid) || 0);
-            if (remaining <= 0) continue;   // fully attended — the whole course belongs to the old coach; leave it as history
-            if (attended <= 0) {
-              // Old coach earned nothing on this course → hand it over whole (no split).
-              sub.coachId = to.id; sub.coach = to.name;
-              if (line) { line.coachId = to.id; line.coach = to.name; }
-              // v6.517: match the DEPARTING coach's enrollment, not just the sport — a member with the
-              // same sport under two coaches must not have the OTHER coach's enrollment rewritten.
-              const e0 = (m.enrollments || []).find(e => e.sport === sport && _sameC(e.coachId, fromId)) || (m.enrollments || []).find(e => e.sport === sport);
-              if (e0) e0.coachId = to.id;
-              moved++; continue;
-            }
-            const aShare = Math.round((attended / total) * base * 100) / 100;
-            const bShare = Math.round((base - aShare) * 100) / 100;
-            // OLD sub → completed at the attended classes, paid its share (attendance basis: per-class ×
-            // attended = aShare, remaining 0 so it never pends; payment basis: its line = aShare).
-            sub.totalClasses = attended; sub.status = 'completed'; sub.amountPaid = aShare;
-            sub.transferredToCoachId = to.id; sub.transferredAt = eff;
-            // NEW sub → same sport, new coach, the remaining classes, active (earns bShare).
-            m.subscriptions.push({ activity: sport, coachId: to.id, coach: to.name, totalClasses: remaining, amountPaid: bShare,
-              start: nextDay, end: origEnd, status: 'active', switchFunded: true, invoiceNumber: sub.invoiceNumber, ...privateCarryOnCoachChange(sub, to.id),
-              _sid: 's' + Date.now() + '_tr' + split });
-            // Split the invoice line: old coach keeps aShare/attended, new coach gets bShare/remaining.
-            if (inv && line) {
-              line.price = aShare; line.classes = attended;
-              inv.lineItems.push({ sport, coachId: to.id, coach: to.name, price: bShare, classes: remaining, issueDate: eff });
-              inv.amount = (typeof invoiceTotal === 'function') ? invoiceTotal(inv) : inv.lineItems.reduce((s, l) => s + (Number(l.price) || 0), 0);
-              if (typeof stampUpdate === 'function') stampUpdate(inv);
-            }
-            // Enrollment → the new coach + remaining classes (so future renewals are theirs).
-            // v6.517: match the DEPARTING coach's enrollment (coach-aware), so a same-sport two-coach
-            // member's other coach isn't clobbered.
-            const enr = (m.enrollments || []).find(e => e.sport === sport && _sameC(e.coachId, fromId)) || (m.enrollments || []).find(e => e.sport === sport);
-            if (enr) { enr.coachId = to.id; enr.classes = remaining; enr.price = bShare; enr.switchedInto = true; }
-            else { if (!Array.isArray(m.enrollments)) m.enrollments = []; m.enrollments.push({ sport, coachId: to.id, classes: remaining, price: bShare, start: nextDay, switchedInto: true }); }
-            split++;
+            // v6.691 — the split itself is shared (handOverSubToCoach): old coach keeps the attended classes, new coach takes the rest.
+            const r = handOverSubToCoach(m, sub, to.id, eff);
+            if (r.mode === 'split') split++; else if (r.mode === 'whole') moved++;
           }
           // v6.498: the old coach's DATE-EXPIRED subs were skipped above (they're finished history), but
           // some still carry status 'active' and would linger as an "active" record under the departed
@@ -19255,6 +19194,7 @@ PAGES.salaries = (main) => {
     const totalNet = people.reduce((s,p) => s + p.net, 0);
     const totalPending = people.reduce((s,p) => s + ((p.basis === 'attendance' ? p.commissionPending : 0) || 0), 0);
     const paidCount = people.filter(p => p.paidStatus === 'paid').length;
+    const totalExtraPaid = people.reduce((s, p) => s + (p.paidExtra || 0), 0);   // v6.693
 
     $('#sal-tbody').innerHTML = people.length ? people.map((p, _n) => {
       const isStaff = p.role === 'staff';
@@ -19313,6 +19253,7 @@ PAGES.salaries = (main) => {
           </td>
           <td class="text-right num font-bold" style="color:${netColor}">${fmt(p.net)}</td>
           <td>
+            ${p.paidExtra > 0 ? `<div style="margin-bottom:3px"><span class="badge" style="background:rgba(124,58,237,.14);color:#7c3aed;font-weight:700;cursor:help" title="${t('Paid more than agreed for this month. This is only a flag — it is NOT carried to or deducted from next month.', 'مدفوع أكثر من المتفق عليه لهذا الشهر. مجرد علامة — لا تُرحَّل ولا تُخصم من الشهر القادم.')}">⬆ ${t('Extra paid', 'دفع زائد')} +${fmt(p.paidExtra)}</span></div>` : ''}
             ${p.paidStatus === 'paid'
               ? `<span class="badge active" title="${t('Actually paid', 'المدفوع فعلاً')} ${fmt(p.paidTotal)} QAR${p.paidDate ? (t(' on ', ' بتاريخ ') + fmtDate(p.paidDate)) : ''}${(p.net - p.paidTotal) > 0.5 ? ' — ' + t('net is now', 'الصافي الآن') + ' ' + fmt(p.net) + ' (' + t('more attendance added after payment', 'أُضيف حضور بعد الدفع') + ')' : ''}">${t('Paid', 'مدفوع')} ${fmt(p.paidTotal)}${p.paidDate ? ' · ' + fmtDate(p.paidDate) : ''}</span>${(p.net - p.paidTotal) > 0.5 ? `<div style="color:var(--accent-2);font-size:10px;margin-top:2px;font-weight:600" title="${t('More attendance was added after this coach was paid — net rose from', 'أُضيف حضور بعد دفع هذا المدرب — ارتفع الصافي من')} ${fmt(p.paidTotal)} ${t('to', 'إلى')} ${fmt(p.net)}">▲ ${fmt(p.net - p.paidTotal)} ${t('more owed since paid', 'مستحق إضافي بعد الدفع')}</div>` : ''}`
               : p.paidStatus === 'partial'
@@ -19371,7 +19312,7 @@ PAGES.salaries = (main) => {
           <td class="text-right num" style="color:var(--accent-2)">${totalPending > 0 ? '⏳ ' + fmt(totalPending) : '—'}</td>
           <td class="text-right num text-dim">${totalAdv > 0 ? fmt(totalAdv) : '—'}</td>
           <td class="text-right num" style="color:var(--green);font-size:15px">${fmt(totalNet)}</td>
-          <td colspan="2" class="text-mute" style="font-size:11px">${paidCount} of ${people.length} paid</td>
+          <td colspan="2" class="text-mute" style="font-size:11px">${paidCount} of ${people.length} paid${totalExtraPaid > 0.5 ? `<div style="color:#7c3aed;font-weight:700">⬆ ${t('Extra paid', 'دفع زائد')} ${fmt(totalExtraPaid)}</div>` : ''}</td>
         </tr>` : '';
     }
     // Commission is recomputed LIVE from the latest attendance/invoices/payments on every open and
@@ -19822,6 +19763,18 @@ window._salSplitToggle = function(el) {
 window._salSplitSum = function() {
   let tot = 0; document.querySelectorAll('.sp-sp').forEach(i => { tot += Math.max(0, parseFloat(i.value) || 0); });
   const el = document.getElementById('sp-split-sum'); if (el) el.textContent = fmt(Math.round(tot));
+  if (window._salExtraHint) window._salExtraHint();
+};
+// v6.693 — live hint in the Pay dialog: an amount above what is still due is allowed and is saved as a flag ("extra paid"), never carried forward.
+window._salExtraHint = function () {
+  const h = document.getElementById('sp-extra-hint'); if (!h) return;
+  const rem = parseFloat(h.getAttribute('data-rem')) || 0;
+  const split = !!(document.getElementById('sp-split-cb') && document.getElementById('sp-split-cb').checked);
+  let amt = 0;
+  if (split) document.querySelectorAll('.sp-sp').forEach(i => { amt += Math.max(0, parseFloat(i.value) || 0); });
+  else amt = parseFloat((document.getElementById('sp-add-amt') || {}).value) || 0;
+  const x = Math.round((amt - rem) * 100) / 100;
+  h.textContent = x > 0.5 ? '⬆ ' + fmt(x) + ' ' + t('above what is still due — saved as "extra paid" (a flag only, never carried to next month)', 'فوق المتبقي — يُحفظ كـ«دفع زائد» (علامة فقط، لا تُرحَّل للشهر القادم)') : '';
 };
 window._salAddPay = function(coachId, monthKey) {
   const splitOn = !!(document.getElementById('sp-split-cb') && document.getElementById('sp-split-cb').checked);
@@ -20051,7 +20004,7 @@ window.markPaid = function(coachId, monthKey) {
         <div style="font-weight:700;font-size:12px;margin-bottom:8px">＋ ${t('Add a payment', 'إضافة دفعة')}</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">
           <div id="sp-single" style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">
-            <div class="field" style="margin:0"><label style="font-size:11px">${t('Amount', 'المبلغ')}</label><input id="sp-add-amt" type="number" min="0" step="1" value="${remaining > 0 ? Math.round(remaining) : ''}" placeholder="0" style="max-width:120px" /></div>
+            <div class="field" style="margin:0"><label style="font-size:11px">${t('Amount', 'المبلغ')}</label><input id="sp-add-amt" oninput="window._salExtraHint && window._salExtraHint()" type="number" min="0" step="1" value="${remaining > 0 ? Math.round(remaining) : ''}" placeholder="0" style="max-width:120px" /></div>
             <div class="field" style="margin:0"><label style="font-size:11px">${t('Method', 'الطريقة')}</label>${methodSel}</div>
           </div>
           <div id="sp-split" style="display:none;flex:1 1 100%">
@@ -20067,6 +20020,7 @@ window.markPaid = function(coachId, monthKey) {
           <div class="field" style="margin:0"><label style="font-size:11px">${t('Date', 'التاريخ')}</label><input id="sp-add-date" type="date" value="${TODAY}" /></div>
           <button class="btn primary" onclick="_salAddPay(${coachId},'${monthKey}')">＋ ${t('Add payment', 'إضافة الدفعة')}</button>
         </div>
+        <div id="sp-extra-hint" data-rem="${remaining}" style="font-size:11.5px;font-weight:700;color:#7c3aed;margin-top:7px"></div>
         <label style="display:flex;align-items:center;gap:8px;font-size:11.5px;font-weight:600;cursor:pointer;margin-top:9px;color:var(--text-mute)"><input type="checkbox" id="sp-split-cb" onchange="window._salSplitToggle(this)" style="width:auto;margin:0" /> ${t('Split this payout across methods (e.g. part cash + part transfer)', 'تقسيم هذه الدفعة بين الطرق (مثلاً جزء نقدي + جزء تحويل)')}</label>
       </div>
 
@@ -20074,6 +20028,7 @@ window.markPaid = function(coachId, monthKey) {
         <div>${t('Agreed', 'المتفق')} <b>${fmt(target)}</b> · ${t('Paid', 'المدفوع')} <b>${fmt(paidTotal)}</b> · ${t('Remaining', 'المتبقي')} <b style="color:${remaining > 0.005 ? '#f59e0b' : 'var(--green)'}">${fmt(remaining)}</b></div>
         <span style="font-weight:800;color:${statusColor}">${statusLabel}</span>
       </div>
+      ${pay.paidExtra > 0 ? `<div style="margin-top:8px;padding:9px 12px;border-radius:8px;background:rgba(124,58,237,.10);border:1px solid rgba(124,58,237,.30);font-size:12px;line-height:1.5;color:#7c3aed"><b>⬆ ${t('Extra paid', 'دفع زائد')} +${fmt(pay.paidExtra)}</b> — ${t('paid above the agreed amount for this month. It is only a flag: it is NOT carried to or deducted from next month.', 'مدفوع فوق المبلغ المتفق عليه لهذا الشهر. مجرد علامة: لا تُرحَّل ولا تُخصم من الشهر القادم.')}</div>` : ''}
       <div class="text-mute" style="font-size:11px;margin-top:8px">${t('Each payment is recorded as its own Salary expense (money out) with its date + method — shown on the Expenses screen.', 'كل دفعة تُسجَّل كمصروف راتب مستقل (خروج نقدي) بتاريخها وطريقتها — تظهر في شاشة المصروفات.')}</div>
     `,
     actions: [
@@ -26830,7 +26785,13 @@ window.addRenewal = function(memberId) {
           invoiceNumber: ref,
           manual: true,                            // distinguishes from initial registration
         });
-        { const _en = (m.enrollments || []).find(e => e.sport === renewedSport && String(e.coachId) === String(coachId)); if (_en && !isCampSport(renewedSport) && renewedSport !== MIXED) { _en.private = !!_pv.private; _en.approach = _pv.private ? _pv.approach : null; } }   // v6.660: keep the enrollment in step
+        { const _en = (m.enrollments || []).find(e => e.sport === renewedSport && String(e.coachId) === String(coachId));
+          if (_en && !isCampSport(renewedSport) && renewedSport !== MIXED) {
+            _en.private = !!_pv.private; _en.approach = _pv.private ? _pv.approach : null;   // v6.660: keep the enrollment in step
+            // v6.692 — and its package: the renewed class count (incl. carried / minus deducted), price and dates. The enrollment used to keep the OLD
+            // numbers, so "Generate latest invoice" / Rebuild from profile later brought them back (Mohamed Hamdy: 14 renewed, invoice rebuilt at 10).
+            if (!_en.start || start >= _en.start) { if (classes) _en.classes = classes; if (amount > 0) _en.price = amount; _en.start = start; _en.validity = validity; }
+          } }
 
         // 3) Create the corresponding invoice so it appears in revenue
         if (amount > 0) {
@@ -27166,7 +27127,9 @@ window.editSubscription = function(memberId, sid) {
   })();
   let _selInv = inv || _attachDefault;
   const _paidOf = iv => Math.round(invoicePaid(iv) * 100) / 100;
-  const _othersOf = iv => (iv && iv === inv && line) ? Math.max(0, invoiceTotal(iv) - (Number(line.price) || 0)) : (iv ? invoiceTotal(iv) : 0);   // the rest of the invoice besides this package
+  // v6.692 — the chosen invoice may ALREADY hold this package's line (a regenerated invoice nobody linked to the package): adopt it, never add a 2nd line
+  const _adoptOf = iv => { if (!iv || !_attachMode) return null; return (iv.lineItems || []).find(l => l.sport === sub.activity && (l.coachId == null || String(l.coachId) === String(sub.coachId)) && Number(l.price) > 0 && (() => { const o = (typeof findSubForLine === 'function') ? findSubForLine(m, iv, l) : null; return !o || o === sub; })()) || null; };
+  const _othersOf = iv => (iv && iv === inv && line) ? Math.max(0, invoiceTotal(iv) - (Number(line.price) || 0)) : (iv ? Math.max(0, invoiceTotal(iv) - ((_adoptOf(iv) || {}).price || 0)) : 0);   // the rest of the invoice besides this package
   // v6.626 — CRITICAL SAFETY: if ANOTHER subscription of the same sport + coach points to the SAME
   // invoice, this invoice LINE is shared across periods. Rewriting its price/coach here would silently
   // change the OTHER period too (the "editing one period updates all the previous ones" bug). When that
@@ -27182,6 +27145,11 @@ window.editSubscription = function(memberId, sid) {
   const _canAdjPaid = !!(_selInv && (line || _attachMode));
   const _curPaid = _canAdjPaid ? _paidOf(_selInv) : 0;
   const _wasFullyPaid = _canAdjPaid && !_attachMode && invoiceTotal(_selInv) > 0 && Math.abs(_curPaid - invoiceTotal(_selInv)) < 0.01;
+  // v6.691 — classes already attended with the CURRENT coach (as of today): a coach change must not move them to the new coach.
+  const _hoTotal = parseInt(sub.totalClasses) || 0;
+  const _hoWin = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, sub) : { from: sub.start || null, to: sub.end || null };
+  const _hoAtt = (isCampSport(sub.activity || '') || sub.activity === MIXED) ? 0 : Math.min(_hoTotal, (typeof liveAttendanceCount === 'function') ? (liveAttendanceCount(m, sub.activity, _hoWin.from, (_hoWin.to && _hoWin.to < TODAY) ? _hoWin.to : TODAY).y || 0) : 0);
+  const _hoRem = Math.max(0, _hoTotal - _hoAtt), _hoOld = coachName(sub.coachId);
   const hasSwitchCredit = (state.invoices || []).some(v => !v.deleted && v.switchCredit && v.customerId === m.id && Array.isArray(v.lineItems) && v.lineItems.some(l => l.sport === sub.activity));
   const statuses = ['active', 'completed', 'expired', 'frozen'];
   // Coach picker (v6.482): the PROFILE is the single place to set a sport's price / classes / coach.
@@ -27209,7 +27177,12 @@ window.editSubscription = function(memberId, sid) {
           <div style="display:flex;gap:6px;align-items:center"><input id="es-paid" type="number" min="0" step="0.01" value="${_curPaid}" style="flex:1;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)"><button type="button" class="btn ghost sm" id="es-paid-full" title="${t('Set paid = price (fully paid)', 'اجعل المدفوع = السعر (مدفوع بالكامل)')}">= ${t('price', 'السعر')}</button></div>
           <span id="es-paid-hint" class="text-mute" style="font-size:11px;font-weight:600"></span></label>` : `<div class="text-mute" style="font-size:11px">${t('This invoice has several sports (or its line is shared), so what is paid is changed per payment: use 💳 Installments.', 'هذه الفاتورة تضم عدة رياضات (أو بندها مشترك) لذا يُعدَّل المدفوع من 💳 الأقساط.')}</div>`}
         <label style="display:grid;gap:4px">${t('Coach', 'المدرب')} <span class="text-mute" style="font-size:10px">${t('commission for this sport follows the coach', 'عمولة هذه الرياضة تتبع المدرب')}</span>
-          <select id="es-coach" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)">${coachOpts}</select></label>
+          <select id="es-coach" onchange="window._esCoachChanged && window._esCoachChanged()" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)">${coachOpts}</select></label>
+        ${_hoAtt > 0 ? `<div id="es-ho-box" style="display:none;gap:8px;padding:10px 12px;border:1px solid rgba(245,158,11,.5);background:rgba(245,158,11,.09);border-radius:8px;font-size:12px;line-height:1.55">
+          <div style="font-weight:700">⚠ ${_hoAtt} ${t('of', 'من')} ${_hoTotal} ${t('classes were already attended with', 'حصة حضرها العضو مع')} ${escapeHtml(_hoOld)}</div>
+          ${_hoRem > 0 ? `<label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer"><input type="radio" name="es-ho-mode" id="es-ho-handover" checked style="margin-top:3px"> <span><b>${t('Hand over', 'تسليم')}</b> — ${escapeHtml(_hoOld)} ${t('keeps those', 'يحتفظ بالـ')} ${_hoAtt} ${t('classes and their commission; the new coach takes the remaining', 'حصة وعمولتها؛ والمدرب الجديد يتسلّم الـ')} ${_hoRem}. ${t('Last day with', 'آخر يوم مع')} ${escapeHtml(_hoOld)}: <input type="date" id="es-ho-date" value="${TODAY}" style="padding:3px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface-2);color:var(--text)"></span></label>` : `<label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer"><input type="radio" name="es-ho-mode" id="es-ho-keep" checked style="margin-top:3px"> <span><b>${t('Keep', 'إبقاء')}</b> — ${t('every class is already attended, so this package stays with', 'كل الحصص حُضرت، فتبقى هذه الباقة مع')} ${escapeHtml(_hoOld)} (${t('only future renewals go to the new coach', 'والتجديدات القادمة فقط للمدرب الجديد')})</span></label>`}
+          <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer"><input type="radio" name="es-ho-mode" id="es-ho-correct" style="margin-top:3px"> <span><b>${t('Correct a wrong coach', 'تصحيح مدرب خاطئ')}</b> — ${t('the new coach taught the WHOLE package: ALL the attended classes and their commission move to the new coach', 'المدرب الجديد درّب الباقة كلها: تنتقل كل الحصص المحضورة وعمولتها إلى المدرب الجديد')}</span></label>
+        </div>` : ''}
         ${(isCampSport(sub.activity || '') || sub.activity === MIXED) ? '' : `<div style="display:grid;gap:6px;padding:8px 10px;border:1px dashed var(--border);border-radius:8px">
           <label style="display:flex;align-items:center;gap:6px;font-weight:600;cursor:pointer"><input type="checkbox" id="es-private" ${sub.private ? 'checked' : ''} onchange="var w=document.getElementById('es-approach-wrap');if(w)w.style.display=this.checked?'grid':'none'" /> 🔒 ${t('Private', 'خاص')}</label>
           ${(!sub.private && isPrivateSport(((state.coaches || []).find(c => String(c.id) === String(sub.coachId)) || {}).name || '')) ? `<div style="font-size:11px;font-weight:600;color:var(--accent-2)">⚠ ${t('This is a private coach — tick Private so the 10% bonus is paid.', 'هذا مدرب خاص — فعّل «خاص» ليُدفع بونس 10%.')}</div>` : ''}
@@ -27232,12 +27205,35 @@ window.editSubscription = function(memberId, sid) {
         const price = parseFloat(($('#es-price') || {}).value);
         const st = ($('#es-status') || {}).value || 'active';
         const coEl = $('#es-coach');
-        const newCoachId = coEl ? (coEl.value === '' ? null : (parseInt(coEl.value, 10) || coEl.value)) : undefined;
+        let newCoachId = coEl ? (coEl.value === '' ? null : (parseInt(coEl.value, 10) || coEl.value)) : undefined;
         // v6.653 — Private flag + who approached the customer
         const _pvEl = $('#es-private'), _apEl = $('#es-approach');
         const newPrivate = _pvEl ? !!_pvEl.checked : undefined;
         const newApproach = _apEl ? _apEl.value : '';
         if (newPrivate && !(newApproach === 'coach' || newApproach === 'reception')) { toast(t('Private: choose who approached the customer (coach or reception)', 'خاص: اختر من أحضر العميل (المدرب أو الاستقبال)'), 'error'); return; }
+        // v6.691 — a coach change on a package with attended classes must NOT move them: hand over (split) by default.
+        const _coachChanged = newCoachId !== undefined && newCoachId != null && String(newCoachId) !== String(sub.coachId == null ? '' : sub.coachId);
+        if (_coachChanged && _hoAtt > 0) {
+          const _correct = !!(($('#es-ho-correct') || {}).checked);
+          if (!_correct && _hoRem > 0) {
+            const _samePrice = isNaN(price) || Math.abs(price - linePrice) < 0.005;
+            if (cls !== _hoTotal || !_samePrice) { toast(t('Change the coach and the classes / price in two separate saves (save one, then the other)', 'غيّر المدرب والحصص / السعر في حفظين منفصلين (احفظ أحدهما ثم الآخر)'), 'error'); return; }
+            const _eff = ($('#es-ho-date') || {}).value || TODAY;
+            const _r = handOverSubToCoach(m, sub, newCoachId, _eff);
+            if (_r.mode === 'split') {
+              if (typeof stampUpdate === 'function') stampUpdate(m);
+              if (typeof audit === 'function') audit('subscription.coach_handover', 'member:' + m.id, sub.activity + ': ' + _hoOld + ' → ' + coachName(newCoachId) + ' @ ' + _eff + ' (' + _r.attended + ' attended stay, ' + _r.remaining + ' move)', { memberId: m.id, sport: sub.activity });
+              closeModal();
+              confirmSaved(t(_hoOld + ' keeps the ' + _r.attended + ' attended classes; ' + coachName(newCoachId) + ' takes the remaining ' + _r.remaining, _hoOld + ' يحتفظ بالـ ' + _r.attended + ' حصة المحضورة؛ و' + coachName(newCoachId) + ' يتسلّم الـ ' + _r.remaining + ' المتبقية'), { onOk: () => viewMember(m.id) });
+              return;
+            }
+          } else if (!_correct) {
+            newCoachId = undefined;   // every class already attended → the package stays with its coach (history)
+            toast(t('All classes were already attended with ' + _hoOld + ' — the package stays with them', 'كل الحصص حُضرت مع ' + _hoOld + ' — تبقى الباقة معه'), 'info');
+          } else if (typeof audit === 'function') {
+            audit('subscription.coach_corrected', 'member:' + m.id, sub.activity + ': coach corrected ' + _hoOld + ' → ' + coachName(newCoachId) + ' (all ' + _hoAtt + ' attended classes moved)', { memberId: m.id, sport: sub.activity });
+          }
+        }
         // v6.645: lowering the class count WITHOUT lowering the price makes every class worth more, and the
         // coach's commission on the classes ALREADY attended jumps with it (12→2 classes at 600 turned 15 into
         // 90 for one class). Say so before saving, with the before/after value per class.
@@ -27277,10 +27273,12 @@ window.editSubscription = function(memberId, sid) {
             _tgt.payments = [{ date: _tgt.date || TODAY, month: String(_tgt.date || TODAY).slice(0, 7), amount: _was, method: _tgt.method || 'cash', pid: 'recon:' + _tgt.id, _recon: true }];
             _tgt.amountPaid = _was;
           }
-          _tgt.lineItems.push(_nl);
+          const _ad = _adoptOf(_tgt);
+          if (_ad) { _ad.price = price; _ad.classes = cls; _ad.coachId = _cid; _ad.coach = _cid != null ? coachName(_cid) : ''; _ad.billMonth = _ad.billMonth || _nl.billMonth; _tgt.amount = invoiceTotal(_tgt); line = _ad; }
+          else { _tgt.lineItems.push(_nl); line = _nl; }
           sub.invoiceNumber = _tgt.ref;
-          inv = _tgt; line = _nl;
-          if (typeof audit === 'function') audit('subscription.attach_invoice', 'member:' + m.id, 'Billed ' + sub.activity + ' (' + fmt(price) + ') on ' + (_tgt.ref || '#' + _tgt.id) + ' from the profile edit', { memberId: m.id, invoiceId: _tgt.id });
+          inv = _tgt;
+          if (typeof audit === 'function') audit('subscription.attach_invoice', 'member:' + m.id, (line && line !== _nl ? 'Linked ' : 'Billed ') + sub.activity + ' (' + fmt(price) + ') on ' + (_tgt.ref || '#' + _tgt.id) + ' from the profile edit', { memberId: m.id, invoiceId: _tgt.id });
         }
         sub.totalClasses = cls;
         sub.status = st;
@@ -27344,6 +27342,10 @@ window.editSubscription = function(memberId, sid) {
       } },
     ],
   });
+  window._esCoachChanged = function () {
+    const s = document.getElementById('es-coach'), b = document.getElementById('es-ho-box'); if (!s || !b) return;
+    b.style.display = (s.value !== '' && s.value !== String(curCoach == null ? '' : curCoach)) ? 'grid' : 'none';
+  };
   // v6.668 — "Paid so far": keeps a fully-paid package fully paid while the price is edited (the club's convention), shows due / overpaid live.
   { const pEl = $('#es-paid'), prEl = $('#es-price'), hint = $('#es-paid-hint'), fullBtn = $('#es-paid-full');
     if (pEl && prEl && typeof pEl.addEventListener === 'function' && typeof prEl.addEventListener === 'function') {
