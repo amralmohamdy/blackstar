@@ -19253,7 +19253,7 @@ PAGES.salaries = (main) => {
           </td>
           <td class="text-right num font-bold" style="color:${netColor}">${fmt(p.net)}</td>
           <td>
-            ${p.paidExtra > 0 ? `<div style="margin-bottom:3px"><span class="badge" style="background:rgba(124,58,237,.14);color:#7c3aed;font-weight:700;cursor:help" title="${t('Paid more than agreed for this month. This is only a flag — it is NOT carried to or deducted from next month.', 'مدفوع أكثر من المتفق عليه لهذا الشهر. مجرد علامة — لا تُرحَّل ولا تُخصم من الشهر القادم.')}">⬆ ${t('Extra paid', 'دفع زائد')} +${fmt(p.paidExtra)}</span></div>` : ''}
+            ${p.paidExtra > 0 ? `<div style="margin-bottom:3px"><span class="badge" style="background:rgba(124,58,237,.14);color:#7c3aed;font-weight:700;cursor:help" title="${t('Paid more than this month\'s net (what is owed now). This is only a flag — it is NOT carried to or deducted from next month.', 'مدفوع أكثر من صافي هذا الشهر (المستحق الآن). مجرد علامة — لا تُرحَّل ولا تُخصم من الشهر القادم.')}">⬆ ${t('Extra paid', 'دفع زائد')} +${fmt(p.paidExtra)}</span></div>` : ''}
             ${p.paidStatus === 'paid'
               ? `<span class="badge active" title="${t('Actually paid', 'المدفوع فعلاً')} ${fmt(p.paidTotal)} QAR${p.paidDate ? (t(' on ', ' بتاريخ ') + fmtDate(p.paidDate)) : ''}${(p.net - p.paidTotal) > 0.5 ? ' — ' + t('net is now', 'الصافي الآن') + ' ' + fmt(p.net) + ' (' + t('more attendance added after payment', 'أُضيف حضور بعد الدفع') + ')' : ''}">${t('Paid', 'مدفوع')} ${fmt(p.paidTotal)}${p.paidDate ? ' · ' + fmtDate(p.paidDate) : ''}</span>${(p.net - p.paidTotal) > 0.5 ? `<div style="color:var(--accent-2);font-size:10px;margin-top:2px;font-weight:600" title="${t('More attendance was added after this coach was paid — net rose from', 'أُضيف حضور بعد دفع هذا المدرب — ارتفع الصافي من')} ${fmt(p.paidTotal)} ${t('to', 'إلى')} ${fmt(p.net)}">▲ ${fmt(p.net - p.paidTotal)} ${t('more owed since paid', 'مستحق إضافي بعد الدفع')}</div>` : ''}`
               : p.paidStatus === 'partial'
@@ -19768,13 +19768,14 @@ window._salSplitSum = function() {
 // v6.693 — live hint in the Pay dialog: an amount above what is still due is allowed and is saved as a flag ("extra paid"), never carried forward.
 window._salExtraHint = function () {
   const h = document.getElementById('sp-extra-hint'); if (!h) return;
-  const rem = parseFloat(h.getAttribute('data-rem')) || 0;
+  let rem = parseFloat(h.getAttribute('data-rem')) || 0;
+  if (document.getElementById('sp-settle') && document.getElementById('sp-settle').checked) rem += parseFloat(h.getAttribute('data-pend')) || 0;   // "Settle pending in full" adds the pending to the payout
   const split = !!(document.getElementById('sp-split-cb') && document.getElementById('sp-split-cb').checked);
   let amt = 0;
   if (split) document.querySelectorAll('.sp-sp').forEach(i => { amt += Math.max(0, parseFloat(i.value) || 0); });
   else amt = parseFloat((document.getElementById('sp-add-amt') || {}).value) || 0;
   const x = Math.round((amt - rem) * 100) / 100;
-  h.textContent = x > 0.5 ? '⬆ ' + fmt(x) + ' ' + t('above what is still due — saved as "extra paid" (a flag only, never carried to next month)', 'فوق المتبقي — يُحفظ كـ«دفع زائد» (علامة فقط، لا تُرحَّل للشهر القادم)') : '';
+  h.textContent = x > 0.5 ? '⬆ ' + fmt(x) + ' ' + t('above what is owed now — saved as "extra paid" (a flag only, never carried to next month)', 'فوق المستحق الآن — يُحفظ كـ«دفع زائد» (علامة فقط، لا تُرحَّل للشهر القادم)') : '';
 };
 window._salAddPay = function(coachId, monthKey) {
   const splitOn = !!(document.getElementById('sp-split-cb') && document.getElementById('sp-split-cb').checked);
@@ -20020,7 +20021,7 @@ window.markPaid = function(coachId, monthKey) {
           <div class="field" style="margin:0"><label style="font-size:11px">${t('Date', 'التاريخ')}</label><input id="sp-add-date" type="date" value="${TODAY}" /></div>
           <button class="btn primary" onclick="_salAddPay(${coachId},'${monthKey}')">＋ ${t('Add payment', 'إضافة الدفعة')}</button>
         </div>
-        <div id="sp-extra-hint" data-rem="${remaining}" style="font-size:11.5px;font-weight:700;color:#7c3aed;margin-top:7px"></div>
+        <div id="sp-extra-hint" data-rem="${Math.max(0, Math.max(pay.net, 0) + (rec ? (Number(rec.settledPending) || 0) : 0) - paidTotal)}" data-pend="${pay.commissionPending > 0 ? pay.commissionPending : 0}" style="font-size:11.5px;font-weight:700;color:#7c3aed;margin-top:7px"></div>
         <label style="display:flex;align-items:center;gap:8px;font-size:11.5px;font-weight:600;cursor:pointer;margin-top:9px;color:var(--text-mute)"><input type="checkbox" id="sp-split-cb" onchange="window._salSplitToggle(this)" style="width:auto;margin:0" /> ${t('Split this payout across methods (e.g. part cash + part transfer)', 'تقسيم هذه الدفعة بين الطرق (مثلاً جزء نقدي + جزء تحويل)')}</label>
       </div>
 
@@ -20028,7 +20029,7 @@ window.markPaid = function(coachId, monthKey) {
         <div>${t('Agreed', 'المتفق')} <b>${fmt(target)}</b> · ${t('Paid', 'المدفوع')} <b>${fmt(paidTotal)}</b> · ${t('Remaining', 'المتبقي')} <b style="color:${remaining > 0.005 ? '#f59e0b' : 'var(--green)'}">${fmt(remaining)}</b></div>
         <span style="font-weight:800;color:${statusColor}">${statusLabel}</span>
       </div>
-      ${pay.paidExtra > 0 ? `<div style="margin-top:8px;padding:9px 12px;border-radius:8px;background:rgba(124,58,237,.10);border:1px solid rgba(124,58,237,.30);font-size:12px;line-height:1.5;color:#7c3aed"><b>⬆ ${t('Extra paid', 'دفع زائد')} +${fmt(pay.paidExtra)}</b> — ${t('paid above the agreed amount for this month. It is only a flag: it is NOT carried to or deducted from next month.', 'مدفوع فوق المبلغ المتفق عليه لهذا الشهر. مجرد علامة: لا تُرحَّل ولا تُخصم من الشهر القادم.')}</div>` : ''}
+      ${pay.paidExtra > 0 ? `<div style="margin-top:8px;padding:9px 12px;border-radius:8px;background:rgba(124,58,237,.10);border:1px solid rgba(124,58,237,.30);font-size:12px;line-height:1.5;color:#7c3aed"><b>⬆ ${t('Extra paid', 'دفع زائد')} +${fmt(pay.paidExtra)}</b> — ${t('paid above what is owed for this month now (the net is ' + fmt(Math.max(pay.net, 0)) + '). It is only a flag: it is NOT carried to or deducted from next month.', 'مدفوع فوق المستحق لهذا الشهر الآن (الصافي ' + fmt(Math.max(pay.net, 0)) + '). مجرد علامة: لا تُرحَّل ولا تُخصم من الشهر القادم.')}</div>` : ''}
       <div class="text-mute" style="font-size:11px;margin-top:8px">${t('Each payment is recorded as its own Salary expense (money out) with its date + method — shown on the Expenses screen.', 'كل دفعة تُسجَّل كمصروف راتب مستقل (خروج نقدي) بتاريخها وطريقتها — تظهر في شاشة المصروفات.')}</div>
     `,
     actions: [
