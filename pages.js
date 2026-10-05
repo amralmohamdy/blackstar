@@ -9969,7 +9969,7 @@ PAGES.dashboardkpi = (main) => {
 
     <div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:16px">
       ${kpi('Revenue this month', money(D.revenueThisMonth) + ' QAR', 'var(--green)', (deltaStr ? deltaStr + ' · ' : '') + 'billed · collected ' + money(D.collectedThisMonth) + ' · due ' + money(D.dueThisMonth))}
-      ${kpi('Cash in hand', (D.countedCash != null ? money(D.countedCash) : '—') + ' QAR', (D.countedCash || 0) >= 0 ? 'var(--green)' : 'var(--red)', (D.countedCash != null ? 'counted in drawer' : 'no count yet') + ' · net flow ' + money(D.cashInHand), "navigate('cashinhand')")}
+      ${(() => { const _ld = cashDrawerNow(); const _cc = _ld ? _ld.expected : D.countedCash; return kpi('Cash in hand', (_cc != null ? money(_cc) : '—') + ' QAR', (_cc || 0) >= 0 ? 'var(--green)' : 'var(--red)', (_ld ? 'live: last count + cash since' : (D.countedCash != null ? 'counted in drawer' : 'no count yet')) + ' · net flow ' + money(D.cashInHand), "navigate('cashinhand')"); })()}
       ${kpi('Collection rate', D.collectionRate + '%', D.collectionRate >= 80 ? 'var(--green)' : D.collectionRate >= 50 ? 'var(--accent-2)' : 'var(--red)', money(D.collected) + ' / ' + money(D.billed) + ' QAR')}
       ${kpi('Outstanding dues', money(D.duesTotal) + ' QAR', 'var(--accent-2)', D.duesMembers + ' members owe', "navigate('duepayment')")}
     </div>
@@ -11617,7 +11617,7 @@ PAGES.schedule = (main) => {
     : Object.keys(SPORT_THEME);
   // Sport palette (draggable tiles) — admins only
   const sportTiles = !canEdit ? '' : scheduleSports.concat([SCHEDULE_EXTERNAL]).map(sport => `
-    <div class="sport-tile" draggable="true" data-sport="${escapeHtml(sport)}"
+    <div class="sport-tile" draggable="true" data-sport="${escapeHtml(sport)}" title="${t('Click to filter the schedule by this sport · drag onto a cell to add a class', 'اضغط لتصفية الجدول حسب هذه الرياضة · اسحب إلى خانة لإضافة حصة')}"
          style="background:${sportColor(sport)};color:white;padding:8px 14px;border-radius:8px;font-weight:700;font-size:12px;cursor:grab;user-select:none;display:inline-flex;align-items:center;gap:6px;box-shadow:0 2px 6px rgba(0,0,0,.15)">
       <span style="font-size:16px">${sportEmoji(sport)}</span> ${escapeHtml(sport)}
     </div>
@@ -11756,6 +11756,14 @@ PAGES.schedule = (main) => {
       tile.classList.add('dragging');
     });
     tile.addEventListener('dragend', () => tile.classList.remove('dragging'));
+    // v6.699 — a click filters the grid by this sport (click again to clear; Ctrl / Shift-click adds more sports)
+    tile.addEventListener('click', e => {
+      const sp = tile.dataset.sport, on = filter.sports.includes(sp);
+      if (e.ctrlKey || e.metaKey || e.shiftKey) filter.sports = on ? filter.sports.filter(x => x !== sp) : filter.sports.concat([sp]);
+      else filter.sports = (on && filter.sports.length === 1) ? [] : [sp];
+      $$('.sch-sport-cb').forEach(cb => { cb.checked = filter.sports.includes(cb.value); });
+      updateFilterLabels(); refresh();
+    });
   });
 
   // Filter wiring
@@ -11797,6 +11805,7 @@ PAGES.schedule = (main) => {
     if (cL) cL.textContent = filter.coaches.length ? (filter.coaches.length === 1 ? (coachName(filter.coaches[0]) || 'Coach') : filter.coaches.length + ' coaches') : 'All coaches';
     const sL = $('#sch-filter-sport-label');
     if (sL) sL.textContent = filter.sports.length ? (filter.sports.length === 1 ? filter.sports[0] : filter.sports.length + ' sports') : 'All sports';
+    $$('.sport-tile').forEach(tl => { const on = filter.sports.includes(tl.dataset.sport); tl.style.outline = on ? '3px solid var(--text)' : ''; tl.style.outlineOffset = on ? '2px' : ''; tl.style.opacity = (filter.sports.length && !on) ? '.55' : ''; });
     const dL = $('#sch-filter-day-label');
     if (dL) dL.textContent = filter.days.length ? (filter.days.length === 1 ? (DAYS.find(d => d.key === filter.days[0]) || {}).label : filter.days.length + ' days') : 'All days';
   }
@@ -17720,6 +17729,56 @@ window.deleteCashCollection = function(id) {
   withCloudConfirm({ verify: [{ collection: 'expenses', id, absent: true, snapshot: ex }], okMsg: 'Cash collection deleted', afterOk: () => render() });
 };
 
+// v6.700 — the LIVE drawer: the last physical count + every cash movement since it (cash payments in, cash refunds / cash expenses /
+// salary / owner take-outs out). Derived, never stored: an edited, refunded or deleted payment corrects it by itself, two devices
+// can't double-count, and the count stays the proof. Rule for "since": a later DATE counts; on the count's own day only a
+// timestamp after the count does (rows with no timestamp are taken as already in the count). Returns null with no count yet.
+function cashDrawerNow() {
+  const counts = (state.cashCounts || []).slice().sort((a, b) => String(b.createdAt || b.date || '').localeCompare(String(a.createdAt || a.date || '')));
+  const c = counts[0];
+  if (!c) return null;
+  const cDate = String(c.date || String(c.createdAt || '').slice(0, 10)).slice(0, 10), cAt = c.createdAt ? String(c.createdAt) : '';
+  const after = (date, ts) => { const d = String(date || '').slice(0, 10); if (!d) return false; if (d !== cDate) return d > cDate; return !!(ts && cAt && String(ts) > cAt); };
+  const moves = [];
+  for (const i of (state.invoices || [])) {
+    if (!i || i.deleted || i.switchCredit || i.activityType === 'switch-credit') continue;   // a switch-credit memo is an offset, not drawer cash
+    const who = ((typeof customerInfo === 'function' ? (customerInfo(i) || {}).name : '') || i.customerName || i.category || '—'), ref = i.ref || ('#' + i.id);
+    if (Array.isArray(i.payments) && i.payments.length) {
+      for (const p of i.payments) {
+        if (!p || p._recon) continue;   // a reconstruction row is old money, not a new receipt
+        const amt = Number(p.amount) || 0;
+        if (!amt || normalizeMethod(p.method || i.method) !== 'cash') continue;
+        if (after(p.date, p.at)) moves.push({ when: p.at || p.date, amount: amt, label: who, ref, kind: amt > 0 ? 'in' : 'refund' });
+      }
+    } else if (normalizeMethod(i.method) === 'cash') {   // legacy invoice with no ledger = paid in full on its date
+      const amt = invoicePaid(i);
+      if (amt && after(i.date, i.createdAt)) moves.push({ when: i.createdAt || i.date, amount: amt, label: who, ref, kind: amt > 0 ? 'in' : 'refund' });
+    }
+  }
+  for (const e of (state.expenses || [])) {
+    if (!e || e.deleted || normalizeMethod(e.method || 'cash') !== 'cash') continue;
+    const amt = Number(e.amount) || 0;
+    if (amt && after(e.date || (e.month ? e.month + '-01' : ''), e.createdAt || e.at)) moves.push({ when: e.createdAt || e.at || e.date, amount: -amt, label: e.category || t('Expense', 'مصروف'), ref: e.description || e.note || '', kind: 'out' });
+  }
+  moves.sort((a, b) => String(b.when).localeCompare(String(a.when)));
+  const r2 = x => Math.round(x * 100) / 100;
+  const receipts = r2(moves.reduce((s, m) => s + (m.amount > 0 ? m.amount : 0), 0)), outflows = r2(moves.reduce((s, m) => s + (m.amount < 0 ? -m.amount : 0), 0));
+  const base = Number(c.amount) || 0;
+  return { count: c, base, moves, receipts, outflows, expected: r2(base + receipts - outflows) };
+}
+// How a typed count compares with what the drawer should hold right now → { expected, diff } (null with no earlier count).
+function cashCountVariance(amount, dateStr) {
+  if (String(dateStr || TODAY).slice(0, 10) !== TODAY) return null;   // a back-dated count can't be compared with "now"
+  const D = cashDrawerNow();
+  if (!D) return null;
+  return { expected: D.expected, diff: Math.round((amount - D.expected) * 100) / 100 };
+}
+function cashVarianceText(v) {
+  if (!v) return '';
+  if (Math.abs(v.diff) < 0.5) return t('matches the expected ', 'مطابق للمتوقع ') + fmt(v.expected);
+  return t('expected ', 'المتوقع ') + fmt(v.expected) + ' → ' + (v.diff < 0 ? t('SHORT ', 'عجز ') : t('OVER ', 'زيادة ')) + fmt(Math.abs(v.diff));
+}
+
 PAGES.cashinhand = (main) => {
   if (currentRole() !== 'admin' && currentRole() !== 'receptionist') {
     main.innerHTML = `<div class="topbar"><div><h1>🧮 ${t('Cash in Hand', 'النقد في الصندوق')}</h1></div></div>
@@ -17730,6 +17789,8 @@ PAGES.cashinhand = (main) => {
   const latest = counts[0] || null;
   const prev = counts[1] || null;
   const delta = latest && prev ? (Number(latest.amount) || 0) - (Number(prev.amount) || 0) : null;
+  const LD = cashDrawerNow();   // v6.700 — last count + the cash movements since
+  const _mvRows = (LD && currentRole() === 'admin') ? LD.moves.slice(0, 200).map(m => `<tr><td class="text-mute" style="white-space:nowrap">${escapeHtml(String(m.when || '').replace('T', ' ').slice(0, 16))}</td><td>${escapeHtml(m.label)}${m.ref ? ` <span class="text-mute font-mono" style="font-size:11px">${escapeHtml(m.ref)}</span>` : ''}</td><td class="text-mute">${m.kind === 'in' ? t('cash in', 'نقد وارد') : m.kind === 'refund' ? t('cash refund', 'استرداد نقدي') : t('cash out', 'نقد صادر')}</td><td class="text-right num font-bold" style="color:${m.amount >= 0 ? 'var(--green)' : 'var(--red)'}">${m.amount >= 0 ? '+' : '−'}${fmtMoney(Math.abs(m.amount))}</td></tr>`).join('') : '';
 
   main.innerHTML = `
     <div class="topbar">
@@ -17744,20 +17805,23 @@ PAGES.cashinhand = (main) => {
 
     <div class="card" style="margin-bottom:16px;text-align:center;padding:28px 18px;background:linear-gradient(135deg,rgba(16,185,129,.10),transparent 70%)">
       <div class="text-mute" style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;font-weight:700">${t('Current cash in hand', 'النقد الحالي في الصندوق')}</div>
-      <div style="font-size:46px;font-weight:800;color:var(--green);line-height:1.1;margin:6px 0">${latest ? fmtMoney(latest.amount) : '—'}</div>
+      <div style="font-size:46px;font-weight:800;color:${LD && LD.expected < 0 ? 'var(--red)' : 'var(--green)'};line-height:1.1;margin:6px 0">${LD ? fmtMoney(LD.expected) : '—'}</div>
+      ${LD ? `<div style="font-size:12px;margin-bottom:2px"><span class="badge active" style="font-size:9px">● ${t('live', 'مباشر')}</span> <span class="text-mute">${t('last count', 'آخر جرد')} <b>${fmtMoney(LD.base)}</b> · <span style="color:var(--green)">+${fmtMoney(LD.receipts)} ${t('cash in', 'نقد وارد')}</span> · <span style="color:var(--red)">−${fmtMoney(LD.outflows)} ${t('cash out', 'نقد صادر')}</span></span></div>` : ''}
       ${latest ? `<div class="text-mute" style="font-size:12px">${t('Last counted', 'آخر جرد')}: <b>${fmtDate(latest.date)}</b>${latest.by ? ' · ' + escapeHtml(latest.by) : ''}${latest.note ? ' · ' + escapeHtml(latest.note) : ''}</div>` : `<div class="text-mute" style="font-size:13px">${t('No cash count recorded yet. Click “Record cash count” to enter your first one.', 'لا يوجد جرد مسجّل بعد. اضغط «تسجيل جرد النقد» لإدخال أول جرد.')}</div>`}
       ${delta != null ? `<div style="font-size:12px;margin-top:6px;color:${delta >= 0 ? 'var(--green)' : 'var(--red)'}">${delta >= 0 ? '▲' : '▼'} ${fmtMoney(Math.abs(delta))} ${t('vs previous count', 'مقارنة بالجرد السابق')}</div>` : ''}
       <div style="display:flex;gap:8px;justify-content:center;align-items:center;margin-top:16px;flex-wrap:wrap">
         <input id="cih-quick" type="number" inputmode="decimal" min="0" step="0.01" placeholder="${t('Enter today\u2019s count…', 'أدخل جرد اليوم…')}" style="max-width:180px;text-align:center;padding:9px 12px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:15px" />
         <button class="btn primary" id="cih-quick-save">✓ ${t('Update', 'تحديث')}</button>
       </div>
-      <div class="text-mute" style="font-size:11px;margin-top:6px">${t('Quick-record today\u2019s drawer count, or use the button above for date/notes.', 'سجّل جرد اليوم بسرعة، أو استخدم الزر بالأعلى للتاريخ والملاحظات.')}</div>
+      <div class="text-mute" style="font-size:11px;margin-top:6px">${t('The figure above updates by itself with every cash payment, refund and cash expense. Count the drawer and enter it here to confirm it — the screen tells you if it is short or over.', 'الرقم أعلاه يتحدّث تلقائياً مع كل دفعة نقدية واسترداد ومصروف نقدي. عُدّ الصندوق وأدخل المبلغ هنا لتأكيده — ستظهر لك الشاشة إن كان هناك عجز أو زيادة.')}</div>
     </div>
+
+    ${(LD && currentRole() === 'admin') ? `<div class="card" style="margin-bottom:16px"><details${LD.moves.length && LD.moves.length <= 12 ? ' open' : ''}><summary style="cursor:pointer;font-weight:700">💵 ${t('Cash movements since the last count', 'حركة النقد منذ آخر جرد')} <span class="text-mute" style="font-weight:500">(${LD.moves.length})</span></summary>${LD.moves.length ? `<div style="overflow:auto;margin-top:8px"><table class="data-table" style="width:100%"><thead><tr><th>${t('When', 'الوقت')}</th><th>${t('What', 'البيان')}</th><th>${t('Type', 'النوع')}</th><th class="text-right">${t('Amount', 'المبلغ')}</th></tr></thead><tbody>${_mvRows}</tbody></table></div>` : `<div class="text-mute" style="font-size:13px;padding:8px 0">${t('No cash movement since the last count.', 'لا حركة نقدية منذ آخر جرد.')}</div>`}</details></div>` : ''}
 
     <div class="card">
       <div class="card-header"><div><div class="card-title">🧾 ${t('Count history', 'سجل الجرد')}</div><div class="card-subtitle">${t('Every cash count you have recorded, newest first', 'كل عمليات جرد النقد المسجّلة، الأحدث أولاً')}</div></div></div>
       ${counts.length ? `<div style="overflow:auto"><table class="data-table" style="width:100%"><thead><tr>
-        <th>${t('Date', 'التاريخ')}</th><th class="text-right">${t('Amount', 'المبلغ')}</th><th class="text-right">${t('Change', 'التغير')}</th><th>${t('Counted by', 'الجرد بواسطة')}</th><th>${t('Note', 'ملاحظة')}</th><th></th>
+        <th>${t('Date', 'التاريخ')}</th><th class="text-right">${t('Amount', 'المبلغ')}</th><th class="text-right">${t('Change', 'التغير')}</th><th class="text-right">${t('Expected', 'المتوقع')}</th><th class="text-right">${t('Short / over', 'عجز / زيادة')}</th><th>${t('Counted by', 'الجرد بواسطة')}</th><th>${t('Note', 'ملاحظة')}</th><th></th>
       </tr></thead><tbody>
       ${counts.map((c, i) => {
         const p = counts[i + 1];
@@ -17766,6 +17830,8 @@ PAGES.cashinhand = (main) => {
           <td>${fmtDate(c.date)}${i === 0 ? ` <span class="badge active" style="font-size:9px">${t('current', 'الحالي')}</span>` : ''}</td>
           <td class="text-right num font-bold">${fmtMoney(c.amount)}</td>
           <td class="text-right num" style="${d == null ? 'color:var(--text-mute)' : d >= 0 ? 'color:var(--green)' : 'color:var(--red)'}">${d == null ? '—' : (d >= 0 ? '+' : '−') + fmtMoney(Math.abs(d))}</td>
+          <td class="text-right num text-mute">${c.expected != null ? fmtMoney(c.expected) : '—'}</td>
+          <td class="text-right num" style="${c.diff == null ? 'color:var(--text-mute)' : Math.abs(c.diff) < 0.5 ? 'color:var(--green)' : 'color:var(--red);font-weight:700'}">${c.diff == null ? '—' : (Math.abs(c.diff) < 0.5 ? '✓' : (c.diff < 0 ? '−' : '+') + fmtMoney(Math.abs(c.diff)))}</td>
           <td class="text-mute">${c.by ? escapeHtml(c.by) : '—'}</td>
           <td class="text-mute">${c.note ? escapeHtml(c.note) : '—'}</td>
           <td class="text-right" style="white-space:nowrap">${currentRole() === 'admin' ? `<button class="btn ghost sm" onclick="window.openCashCountDialog('${c.id}')" title="${t('Edit this entry', 'تعديل هذا السجل')}">✏️</button> ` : ''}<button class="btn ghost sm" onclick="window.deleteCashCount('${c.id}')" title="${t('Delete this entry', 'حذف هذا السجل')}">🗑</button></td>
@@ -17781,12 +17847,14 @@ PAGES.cashinhand = (main) => {
     const amount = parseFloat(el && el.value);
     if (isNaN(amount) || amount < 0) { toast('Enter a valid amount', 'error'); return; }
     const entry = { id: 'cc_' + Date.now(), amount, date: TODAY, by: '', note: '', createdAt: new Date().toISOString() };
+    const _v = cashCountVariance(amount, TODAY);   // v6.700 — against what the drawer should hold BEFORE this count
+    if (_v) { entry.expected = _v.expected; entry.diff = _v.diff; }
     if (!Array.isArray(state.cashCounts)) state.cashCounts = [];
     state.cashCounts.push(entry);
-    if (typeof audit === 'function') audit('cash.count', 'cashinhand', `Recorded cash count ${fmt(amount)} QAR (quick)`);
+    if (typeof audit === 'function') audit('cash.count', 'cashinhand', `Recorded cash count ${fmt(amount)} QAR (quick)` + (_v ? ' · ' + cashVarianceText(_v) : ''));
     render();
     // v6.388: confirm the cash count reached the cloud before saying it recorded.
-    confirmSaved(`✓ ${t('Cash count recorded', 'تم تسجيل الجرد')}: ${fmt(amount)} QAR`);
+    confirmSaved(`✓ ${t('Cash count recorded', 'تم تسجيل الجرد')}: ${fmt(amount)} QAR` + (_v ? ' · ' + cashVarianceText(_v) : ''));
   };
   $('#cih-quick-save')?.addEventListener('click', quickSave);
   $('#cih-quick')?.addEventListener('keydown', e => { if (e.key === 'Enter') quickSave(); });
@@ -17825,11 +17893,13 @@ window.openCashCountDialog = function(existingId) {
           withCloudConfirm({ verify: [{ collection: 'cashCounts', id: ex.id }], okMsg: `${t('Cash count updated', 'تم تحديث الجرد')}: ${fmt(amount)} QAR`, afterOk: () => render() });
         } else {
           const entry = { id: 'cc_' + Date.now(), amount, date, by, note, createdAt: new Date().toISOString() };
+          const _v = cashCountVariance(amount, date);   // v6.700
+          if (_v) { entry.expected = _v.expected; entry.diff = _v.diff; }
           if (!Array.isArray(state.cashCounts)) state.cashCounts = [];
           state.cashCounts.push(entry);
-          if (typeof audit === 'function') audit('cash.count', 'cashinhand', `Recorded cash count ${fmt(amount)} QAR`);
+          if (typeof audit === 'function') audit('cash.count', 'cashinhand', `Recorded cash count ${fmt(amount)} QAR` + (_v ? ' · ' + cashVarianceText(_v) : ''));
           closeModal();
-          withCloudConfirm({ verify: [{ collection: 'cashCounts', id: entry.id }], okMsg: `${t('Cash count recorded', 'تم تسجيل الجرد')}: ${fmt(amount)} QAR`, afterOk: () => render() });
+          withCloudConfirm({ verify: [{ collection: 'cashCounts', id: entry.id }], okMsg: `${t('Cash count recorded', 'تم تسجيل الجرد')}: ${fmt(amount)} QAR` + (_v ? ' · ' + cashVarianceText(_v) : ''), afterOk: () => render() });
         }
       }},
     ],
