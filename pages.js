@@ -428,7 +428,7 @@ window.showDayCollections = function () {
     const body = mine.length ? mine.map(r => {
       const cust = (typeof customerInfo === 'function' ? (customerInfo(r.inv) || {}).name : '') || r.inv.customerName || '—';
       const other = r.bill !== day.slice(0, 7);
-      return `<tr><td>${escapeHtml(cust)}</td><td class="font-mono" style="font-size:11px">${escapeHtml(r.inv.ref || '#' + r.inv.id)}</td><td><span class="badge" style="font-size:10px">${escapeHtml(r.inv.category || 'Membership')}</span></td><td class="text-mute" style="font-size:11px">${escapeHtml(r.p.method || '')}</td><td class="text-right num font-bold">${fmt(r.amt)}</td><td><button type="button" class="btn ghost sm" onclick="jumpDashMonth('${r.bill}')" style="${other ? 'color:var(--accent-2);font-weight:700' : ''}">${escapeHtml(mLabel(r.bill))}${other ? ' ↗' : ''}</button></td></tr>`;
+      return `<tr><td>${escapeHtml(cust)}</td><td class="font-mono" style="font-size:11px">${escapeHtml(r.inv.ref || '#' + r.inv.id)}${(!r.inv.ref && currentRole() === 'admin') ? ` <button type="button" class="btn ghost sm" style="color:var(--red)" onclick="closeModal();deleteInvoice(${r.inv.id})" title="${t('This invoice has no reference number — delete (archive) it', 'هذه الفاتورة بلا رقم مرجعي — احذفها (أرشفة)')}">🗑</button>` : ''}</td><td><span class="badge" style="font-size:10px">${escapeHtml(r.inv.category || 'Membership')}</span></td><td class="text-mute" style="font-size:11px">${escapeHtml(r.p.method || '')}</td><td class="text-right num font-bold">${fmt(r.amt)}</td><td><button type="button" class="btn ghost sm" onclick="jumpDashMonth('${r.bill}')" style="${other ? 'color:var(--accent-2);font-weight:700' : ''}">${escapeHtml(mLabel(r.bill))}${other ? ' ↗' : ''}</button></td></tr>`;
     }).join('') : `<tr><td colspan="6" class="text-mute" style="padding:12px;text-align:center">${t('Nothing collected', 'لا شيء مُحصّل')}</td></tr>`;
     return `<div style="margin-bottom:16px"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px"><b>${title} · ${fmtDate(day)}</b><span class="text-mute" style="font-size:11px">${t('belongs to', 'تخص')}:</span>${sum || '—'}</div>
       <div class="table-wrap"><table style="width:100%;font-size:12.5px"><thead><tr><th style="text-align:left">${t('Customer', 'العميل')}</th><th style="text-align:left">${t('Invoice', 'الفاتورة')}</th><th style="text-align:left">${t('Category', 'الفئة')}</th><th style="text-align:left">${t('Method', 'الطريقة')}</th><th class="text-right">${t('Amount', 'المبلغ')}</th><th style="text-align:left">${t('Belongs to', 'تخص شهر')}</th></tr></thead><tbody>${body}</tbody></table></div></div>`;
@@ -6348,7 +6348,9 @@ window.rebuildMemberFromProfile = function (memberId) {
   }
   // 3) Invoice lines for sports NOT in the profile → offer to remove (opt-in).
   const orphanLines = [];
-  for (const iv of membershipInvs) { if (Array.isArray(iv.lineItems)) iv.lineItems.forEach((li, idx) => { if (li.sport && !enrolledSports.has(li.sport)) orphanLines.push({ iv, li, idx }); }); }
+  // v6.698 — a line whose package still exists (a sport she switched away from, a completed period) is history, not an orphan
+  const _hasPkg = li => (m.subscriptions || []).some(s => s.activity === li.sport && (s.status || '').toLowerCase() !== 'withdrawn' && (li.coachId == null || s.coachId == null || String(s.coachId) === String(li.coachId)));
+  for (const iv of membershipInvs) { if (Array.isArray(iv.lineItems)) iv.lineItems.forEach((li, idx) => { if (li.sport && !enrolledSports.has(li.sport) && !_hasPkg(li)) orphanLines.push({ iv, li, idx }); }); }
   const orphanHtml = orphanLines.map((o, i) => `<label style="display:flex;align-items:center;gap:8px;font-size:12px;padding:3px 0;cursor:pointer"><input type="checkbox" class="rbp-orphan" data-i="${i}"> ${t('Remove line', 'حذف سطر')} <b>${escapeHtml(o.li.sport)}</b> · ${fmt(o.li.price)} (${escapeHtml(cn(o.li.coachId))})</label>`).join('');
 
   if (!rows.length && !orphanLines.length) { toast(t('Already matches the profile — nothing to rebuild', 'مطابق للملف بالفعل — لا شيء لإعادة بنائه'), 'success'); return; }
@@ -13662,18 +13664,29 @@ window.memberInvoiceHealth = function (m) {
     // The CURRENT membership invoice = the most RECENT one (a renewal supersedes the old period's
     // invoice), so check that, not the earliest.
     const iv = invs.slice().sort((a, b) => String(a.date || '').localeCompare(String(b.date || ''))).pop();
-    const lines = (Array.isArray(iv.lineItems) && iv.lineItems.length) ? iv.lineItems : [{ sport: iv.sport, price: iv.amount }];
-    const invSport = new Map();
-    for (const l of lines) { if (!l || !l.sport) continue; invSport.set(l.sport, (invSport.get(l.sport) || 0) + (Number(l.price) || 0)); }
+    const _linesOf = v => (Array.isArray(v.lineItems) && v.lineItems.length) ? v.lineItems : [{ sport: v.sport, price: v.amount }];
+    const lines = _linesOf(iv);
+    // v6.696 — one invoice per package (what Rebuild from profile makes) is normal: judge each sport on the LATEST invoice that bills it,
+    // not only on the member's newest invoice (that read the older package's sport as "not on invoice" and could never turn green).
+    const invSport = new Map(), _used = new Set([iv]);
+    for (const v of invs.slice().sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')))) {
+      const per = new Map();
+      for (const l of _linesOf(v)) { if (l && l.sport) per.set(l.sport, (per.get(l.sport) || 0) + (Number(l.price) || 0)); }
+      for (const [sp, pr] of per) { invSport.set(sp, pr); if (sportPrice.has(sp)) _used.add(v); }
+    }
+    // v6.698 — a sport she switched away from keeps its line (the old coach's share): only a line with NO package of that sport is "removed"
+    const newestSport = new Set(lines.filter(l => l && l.sport && !(m.subscriptions || []).some(s => s.activity === l.sport && (s.status || '').toLowerCase() !== 'withdrawn' && (l.coachId == null || s.coachId == null || String(s.coachId) === String(l.coachId)))).map(l => l.sport));
 
     const reasons = [];
     for (const [sp, pr] of sportPrice) {
       if (!invSport.has(sp)) reasons.push(`${t('Sport not on invoice', 'رياضة غير مفوترة')}: ${escapeHtml(sp)}`);
       else if (Math.abs(pr - invSport.get(sp)) > 0.5) reasons.push(`${escapeHtml(sp)}: ${t('invoice', 'الفاتورة')} ${fmt(invSport.get(sp))} ≠ ${t('profile price', 'سعر الملف')} ${fmt(pr)}`);
     }
-    for (const [sp] of invSport) { if (!sportPrice.has(sp)) reasons.push(`${t('Invoice bills a removed sport', 'الفاتورة تحوي رياضة محذوفة')}: ${escapeHtml(sp)}`); }
-    const lineSum = lines.reduce((s, l) => s + (Number(l && l.price) || 0), 0);
-    if (Math.abs(lineSum - (Number(iv.amount) || 0)) > 0.5) reasons.push(`${t('Total', 'الإجمالي')} ${fmt(iv.amount)} ≠ ${t('line-items', 'مجموع البنود')} ${fmt(lineSum)}`);
+    for (const sp of newestSport) { if (!sportPrice.has(sp)) reasons.push(`${t('Invoice bills a removed sport', 'الفاتورة تحوي رياضة محذوفة')}: ${escapeHtml(sp)}`); }
+    for (const v of _used) {
+      const lineSum = _linesOf(v).reduce((s, l) => s + (Number(l && l.price) || 0), 0);
+      if (Math.abs(lineSum - (Number(v.amount) || 0)) > 0.5) reasons.push(`${t('Total', 'الإجمالي')} ${fmt(v.amount)} ≠ ${t('line-items', 'مجموع البنود')} ${fmt(lineSum)}`);
+    }
 
     // Does the invoice actually COVER the current membership period? A renewal creates a NEW
     // subscription period; if no invoice falls in that period's window (nor is linked to it),
