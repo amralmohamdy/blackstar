@@ -587,14 +587,14 @@ PAGES.dashboard = (main) => {
           const months = [...set].filter(plausibleMonthKey).sort().reverse();
           return `<div style="position:relative;display:inline-block" id="dash-multi-wrap">
           <button type="button" class="btn ghost" id="dash-multi-btn" title="${t('Pick several months to add up', 'اختر عدة أشهر لجمعها')}">☑ ${t('Months', 'أشهر')}${per.type === 'months' ? ' (' + cur.size + ')' : ''} ▾</button>
-          <div id="dash-multi-panel" style="display:none;position:absolute;top:calc(100% + 4px);inset-inline-end:0;z-index:200;min-width:230px;max-height:360px;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.18);padding:8px">
-            <div style="display:flex;flex-wrap:wrap;gap:6px;padding-bottom:8px;border-bottom:1px solid var(--border);margin-bottom:6px">
+          <div id="dash-multi-panel" style="display:none;position:absolute;top:calc(100% + 4px);inset-inline-end:0;z-index:200;min-width:230px;max-height:min(460px,calc(100vh - 150px));overflow:hidden;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.18);padding:8px">
+            <div style="flex:none;display:flex;flex-wrap:wrap;gap:6px;padding-bottom:8px;border-bottom:1px solid var(--border);margin-bottom:6px">
               <button type="button" class="btn ghost sm" data-last="3">${t('Last 3', 'آخر 3')}</button>
               <button type="button" class="btn ghost sm" data-last="6">${t('Last 6', 'آخر 6')}</button>
               <button type="button" class="btn ghost sm" id="dash-multi-clear">${t('Clear', 'مسح')}</button>
             </div>
-            ${months.map(mk => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:6px;cursor:pointer;font-size:13px"><input type="checkbox" class="dash-multi-cb" value="${mk}" ${cur.has(mk) && per.type !== 'all' && per.type !== 'year' ? 'checked' : ''} /> <span>${fmtMonth(mk)}</span></label>`).join('')}
-            <div style="display:flex;gap:8px;justify-content:flex-end;padding-top:8px;border-top:1px solid var(--border);margin-top:6px">
+            <div id="dash-multi-list" style="overflow:auto;flex:1 1 auto;min-height:0">${months.map(mk => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:6px;cursor:pointer;font-size:13px"><input type="checkbox" class="dash-multi-cb" value="${mk}" ${cur.has(mk) && per.type !== 'all' && per.type !== 'year' ? 'checked' : ''} /> <span>${fmtMonth(mk)}</span></label>`).join('')}</div>
+            <div style="flex:none;display:flex;gap:8px;justify-content:flex-end;padding-top:8px;border-top:1px solid var(--border);margin-top:6px;background:var(--surface)">
               <button type="button" class="btn ghost sm" id="dash-multi-cancel">${t('Cancel', 'إلغاء')}</button>
               <button type="button" class="btn primary sm" id="dash-multi-apply">${t('Apply', 'تطبيق')}</button>
             </div>
@@ -801,22 +801,25 @@ PAGES.dashboard = (main) => {
   { const mBtn = $('#dash-multi-btn'), mPanel = $('#dash-multi-panel');
     if (mBtn && mPanel) {
       const cbs = () => Array.from(mPanel.querySelectorAll('.dash-multi-cb'));
-      mBtn.addEventListener('click', e => { e.stopPropagation(); mPanel.style.display = mPanel.style.display === 'block' ? 'none' : 'block'; });
+      mBtn.addEventListener('click', e => { e.stopPropagation(); mPanel.style.display = mPanel.style.display === 'flex' ? 'none' : 'flex'; });
       mPanel.addEventListener('click', e => e.stopPropagation());
-      if (!window._dashMultiOutside) { window._dashMultiOutside = true; document.addEventListener('click', () => { const pn = document.getElementById('dash-multi-panel'); if (pn && pn.style.display === 'block') pn.style.display = 'none'; }); }
-      Array.from(mPanel.querySelectorAll('[data-last]')).forEach(b => b.addEventListener('click', () => {
-        const n = parseInt(b.getAttribute('data-last'), 10) || 3, all = cbs().map(c => c.value);   // newest first
-        cbs().forEach(c => { c.checked = all.indexOf(c.value) < n; });
-      }));
-      const clr = $('#dash-multi-clear'); if (clr) clr.addEventListener('click', () => cbs().forEach(c => { c.checked = false; }));
-      const cancel = $('#dash-multi-cancel'); if (cancel) cancel.addEventListener('click', () => { mPanel.style.display = 'none'; });
-      const apply = $('#dash-multi-apply');
-      if (apply) apply.addEventListener('click', () => {
+      if (!window._dashMultiOutside) { window._dashMultiOutside = true; document.addEventListener('click', () => { const pn = document.getElementById('dash-multi-panel'); if (pn && pn.style.display === 'flex') pn.style.display = 'none'; }); }
+      const applyMonths = () => {
         const per = dashPeriodFromMonths(cbs().filter(c => c.checked).map(c => c.value));
         if (!per) { toast(t('Tick at least one month', 'اختر شهراً واحداً على الأقل'), 'error'); return; }
         window._dashPeriod = per;
         render();
-      });
+      };
+      // Last 3 / Last 6 tick the newest months AND apply at once (they used to only tick, and Apply sat below the fold)
+      Array.from(mPanel.querySelectorAll('[data-last]')).forEach(b => b.addEventListener('click', () => {
+        const n = parseInt(b.getAttribute('data-last'), 10) || 3, all = cbs().map(c => c.value);   // newest first
+        cbs().forEach(c => { c.checked = all.indexOf(c.value) < n; });
+        applyMonths();
+      }));
+      const clr = $('#dash-multi-clear'); if (clr) clr.addEventListener('click', () => cbs().forEach(c => { c.checked = false; }));
+      const cancel = $('#dash-multi-cancel'); if (cancel) cancel.addEventListener('click', () => { mPanel.style.display = 'none'; });
+      const apply = $('#dash-multi-apply');
+      if (apply) apply.addEventListener('click', applyMonths);
     }
   }
 
@@ -3730,8 +3733,8 @@ function showMemberForm(m) {
       </div>
       <div class="form-row">
         <div class="field"><label>QID</label><input id="f-qid" value="${escapeHtml(m.qid || '')}" placeholder="288…" /></div>
-        <div class="field"><label>Birthdate <span class="text-mute" style="font-size:10px">(must be 3+ years old)</span></label><input id="f-bdate" type="date" value="${m.birthdate || ''}" oninput="(function(v){var a=memberAge(v);var ai=document.getElementById('f-age');if(ai)ai.value=a!=null?a:'';})(this.value)" /></div>
-        <div class="field" style="max-width:110px"><label>Age <span class="text-mute" style="font-size:10px">(quick)</span></label><input id="f-age" type="number" min="3" max="120" value="${m.birthdate && memberAge(m.birthdate) != null ? memberAge(m.birthdate) : ''}" placeholder="e.g. 8" oninput="(function(v){var bd=ageToBirthdate(v);var bi=document.getElementById('f-bdate');if(bi)bi.value=bd;})(this.value)" title="Type an age to auto-fill an approximate birthdate, or enter the exact birthdate on the left" /></div>
+        <div class="field"><label>Birthdate <span class="text-mute" style="font-size:10px">(must be ${MIN_MEMBER_AGE}+ years old)</span></label><input id="f-bdate" type="date" value="${m.birthdate || ''}" oninput="(function(v){var a=memberAge(v);var ai=document.getElementById('f-age');if(ai)ai.value=a!=null?a:'';})(this.value)" /></div>
+        <div class="field" style="max-width:110px"><label>Age <span class="text-mute" style="font-size:10px">(quick)</span></label><input id="f-age" type="number" min="${MIN_MEMBER_AGE}" max="120" value="${m.birthdate && memberAge(m.birthdate) != null ? memberAge(m.birthdate) : ''}" placeholder="e.g. 8" oninput="(function(v){var bd=ageToBirthdate(v);var bi=document.getElementById('f-bdate');if(bi)bi.value=bd;})(this.value)" title="Type an age to auto-fill an approximate birthdate, or enter the exact birthdate on the left" /></div>
         <div class="field"><label>Gender</label>
           <select id="f-gender">
             <option value="" ${!m.gender ? 'selected' : ''}>—</option>
@@ -3909,7 +3912,7 @@ function showMemberForm(m) {
           }
         }
 
-        // 4. Birthdate must make member at least 3 years old (if provided)
+        // 4. Birthdate must make member at least MIN_MEMBER_AGE years old (if provided)
         if (birthdate) {
           const bd = new Date(birthdate);
           if (isNaN(bd.getTime())) {
@@ -3921,8 +3924,8 @@ function showMemberForm(m) {
           let age = today.getFullYear() - bd.getFullYear();
           const m = today.getMonth() - bd.getMonth();
           if (m < 0 || (m === 0 && today.getDate() < bd.getDate())) age--;
-          if (age < 3) {
-            toast(`Member must be at least 3 years old (currently ${age})`, 'error');
+          if (age < MIN_MEMBER_AGE) {
+            toast(`Member must be at least ${MIN_MEMBER_AGE} years old (currently ${age})`, 'error');
             $('#f-bdate')?.focus();
             return;
           }
