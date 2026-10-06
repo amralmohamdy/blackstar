@@ -13660,10 +13660,10 @@ window.memberInvoiceHealth = function (m) {
     // behind (e.g. an expired 1-week Summer Camp @400 sitting next to the active 1-month @1400).
     // Take the LATEST enrollment per sport (by start date), NOT the sum — otherwise old + new
     // double-count and the invoice looks wrong (invoice 400 vs "profile" 1800).
-    const sportPrice = new Map(), _spStart = new Map();
+    const sportPrice = new Map(), _spStart = new Map(), sportCoach = new Map();
     for (const e of enr) {
       const st = String(e.start || '');
-      if (!sportPrice.has(e.sport) || st >= (_spStart.get(e.sport) || '')) { sportPrice.set(e.sport, Number(e.price) || 0); _spStart.set(e.sport, st); }
+      if (!sportPrice.has(e.sport) || st >= (_spStart.get(e.sport) || '')) { sportPrice.set(e.sport, Number(e.price) || 0); _spStart.set(e.sport, st); sportCoach.set(e.sport, e.coachId); }
     }
 
     const invs = (state.invoices || []).filter(i => i && !i.deleted && String(i.customerId) === String(m.id)
@@ -13677,19 +13677,22 @@ window.memberInvoiceHealth = function (m) {
     const lines = _linesOf(iv);
     // v6.696 — one invoice per package (what Rebuild from profile makes) is normal: judge each sport on the LATEST invoice that bills it,
     // not only on the member's newest invoice (that read the older package's sport as "not on invoice" and could never turn green).
-    const invSport = new Map(), _used = new Set([iv]);
+    const invSport = new Map(), invCoach = new Map(), _used = new Set([iv]);
     for (const v of invs.slice().sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')))) {
-      const per = new Map();
-      for (const l of _linesOf(v)) { if (l && l.sport) per.set(l.sport, (per.get(l.sport) || 0) + (Number(l.price) || 0)); }
-      for (const [sp, pr] of per) { invSport.set(sp, pr); if (sportPrice.has(sp)) _used.add(v); }
+      const per = new Map(), perC = new Map();
+      for (const l of _linesOf(v)) { if (l && l.sport) { per.set(l.sport, (per.get(l.sport) || 0) + (Number(l.price) || 0)); if (!perC.has(l.sport)) perC.set(l.sport, new Map()); perC.get(l.sport).set(String(l.coachId), (perC.get(l.sport).get(String(l.coachId)) || 0) + (Number(l.price) || 0)); } }
+      for (const [sp, pr] of per) { invSport.set(sp, pr); invCoach.set(sp, perC.get(sp)); if (sportPrice.has(sp)) _used.add(v); }
     }
+    // v6.701 — a coach change mid-package leaves TWO lines of one sport on the invoice (old coach's attended share + new coach's remaining share); the profile holds only the
+    // enrolled coach's share, so compare with THAT coach's line (falls back to the whole sport when no line carries that coach)
+    const billedFor = sp => { const byC = invCoach.get(sp), c = sportCoach.get(sp); return (byC && c != null && c !== '' && byC.has(String(c))) ? byC.get(String(c)) : invSport.get(sp); };
     // v6.698 — a sport she switched away from keeps its line (the old coach's share): only a line with NO package of that sport is "removed"
     const newestSport = new Set(lines.filter(l => l && l.sport && !(m.subscriptions || []).some(s => s.activity === l.sport && (s.status || '').toLowerCase() !== 'withdrawn' && (l.coachId == null || s.coachId == null || String(s.coachId) === String(l.coachId)))).map(l => l.sport));
 
     const reasons = [];
     for (const [sp, pr] of sportPrice) {
       if (!invSport.has(sp)) reasons.push(`${t('Sport not on invoice', 'رياضة غير مفوترة')}: ${escapeHtml(sp)}`);
-      else if (Math.abs(pr - invSport.get(sp)) > 0.5) reasons.push(`${escapeHtml(sp)}: ${t('invoice', 'الفاتورة')} ${fmt(invSport.get(sp))} ≠ ${t('profile price', 'سعر الملف')} ${fmt(pr)}`);
+      else if (Math.abs(pr - billedFor(sp)) > 0.5) reasons.push(`${escapeHtml(sp)}: ${t('invoice', 'الفاتورة')} ${fmt(billedFor(sp))} ≠ ${t('profile price', 'سعر الملف')} ${fmt(pr)}`);
     }
     for (const sp of newestSport) { if (!sportPrice.has(sp)) reasons.push(`${t('Invoice bills a removed sport', 'الفاتورة تحوي رياضة محذوفة')}: ${escapeHtml(sp)}`); }
     for (const v of _used) {
@@ -23354,6 +23357,16 @@ PAGES.attendance = (main) => {
     }
     return set;
   }
+  // v6.702 — a coach's Sports filter lists only the sports HE teaches (his profile sports + every sport of his members' enrollments / packages / Mixed classes he taught);
+  // admin / reception keep the full list. Falls back to the full list if nothing is found, so the menu is never empty.
+  const _attSportList = (() => {
+    if (myCoachId == null) return SPORTS;
+    const c = (state.coaches || []).find(x => String(x.id) === String(myCoachId));
+    const set = new Set((c && Array.isArray(c.sports)) ? c.sports : []);
+    for (const m of (state.members || [])) { if (!m || m.deleted) continue; coachSportsFor(m, myCoachId).forEach(s => set.add(s)); }
+    const list = SPORTS.filter(s => set.has(s));
+    return list.length ? list : SPORTS;
+  })();
   // Does the member hold a LIVE (not completed/withdrawn/switched) Mixed package? Any coach may mark it.
   function memberHasLiveMixed(m) {
     return (m.subscriptions || []).some(s => (s.activity || '') === MIXED
@@ -24358,7 +24371,7 @@ PAGES.attendance = (main) => {
         <div style="position:relative">
           <button type="button" id="att-sports-btn" style="min-width:150px;text-align:left;display:inline-flex;align-items:center;justify-content:space-between;gap:8px">${t('All sports', 'كل الرياضات')} <span style="opacity:.6">▾</span></button>
           <div id="att-sports-menu" style="display:none;position:absolute;left:0;top:100%;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-top:4px;padding:8px;min-width:180px;box-shadow:0 8px 24px rgba(0,0,0,.4)">
-            ${SPORTS.map(s => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px"><input type="checkbox" class="att-sport-cb" value="${s}" /> ${s}</label>`).join('')}
+            ${_attSportList.map(s => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px"><input type="checkbox" class="att-sport-cb" value="${s}" /> ${s}</label>`).join('')}
           </div>
         </div>
         <div style="min-width:260px;flex:1;max-width:340px">${memberPickerHtml('att-student', { placeholder: t('All students (type to search)', 'كل الطلاب (اكتب للبحث)') })}${recentSearchChipsHtml('attendance', 'att-recent-search', 3)}</div>
