@@ -612,31 +612,31 @@ PAGES.dashboard = (main) => {
     <!-- v6.616 Section 1 — member status (Active · Expired · Completed) -->
     ${_secHead('👥', t('Membership status', 'حالة العضوية'), false)}
     <div class="kpi-grid mb-3" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px">
-      <div class="kpi green" style="cursor:pointer" onclick="navigate('members')" title="${t('Active memberships','العضويات النشطة')}">
+      <div class="kpi green" style="cursor:pointer" onclick="_dashGoMembers({statuses:['Active']})" title="${t('Active memberships — click to list them','العضويات النشطة — اضغط لعرضهم')}">
         <div class="kpi-icon">✅</div>
         <div class="kpi-label">${t('Active','نشط')}</div>
         <div class="kpi-value num">${s.activeMembers}</div>
         <div class="kpi-delta flat">${t('active memberships','عضويات نشطة')}</div>
       </div>
-      <div class="kpi red" style="cursor:pointer" onclick="navigate('expiring')" title="${t('Expired — need renewal','منتهية — بحاجة للتجديد')}">
+      <div class="kpi red" style="cursor:pointer" onclick="_dashGoMembers({statuses:['Expired']})" title="${t('Expired — need renewal — click to list them','منتهية — بحاجة للتجديد — اضغط لعرضهم')}">
         <div class="kpi-icon">⛔</div>
         <div class="kpi-label">${t('Expired','منتهية')}</div>
         <div class="kpi-value num">${s.expiredMembers}</div>
         <div class="kpi-delta flat">${t('need renewal','بحاجة للتجديد')}</div>
       </div>
-      <div class="kpi purple" style="cursor:pointer" onclick="navigate('expiring')" title="${t('Completed all classes','أنهوا جميع الحصص')}">
+      <div class="kpi purple" style="cursor:pointer" onclick="_dashGoMembers({statuses:['Completed']})" title="${t('Completed all classes — click to list them','أنهوا جميع الحصص — اضغط لعرضهم')}">
         <div class="kpi-icon">🎓</div>
         <div class="kpi-label">${t('Completed','مكتمل')}</div>
         <div class="kpi-value num">${s.completedMembers}</div>
         <div class="kpi-delta flat">${t('finished classes','أنهوا الحصص')}</div>
       </div>
-      <div class="kpi" style="cursor:pointer" onclick="navigate('members')" title="${t('Withdrawn — left the club','منسحبون — غادروا النادي')}">
+      <div class="kpi" style="cursor:pointer" onclick="_dashGoMembers({statuses:['Withdrawn']})" title="${t('Withdrawn — left the club — click to list them','منسحبون — غادروا النادي — اضغط لعرضهم')}">
         <div class="kpi-icon">↩</div>
         <div class="kpi-label">${t('Withdrawn','منسحب')}</div>
         <div class="kpi-value num">${withdrawnCount}</div>
         <div class="kpi-delta flat">${t('left the club','غادروا النادي')}</div>
       </div>
-      ${s.frozenMembers ? `<div class="kpi" style="cursor:pointer" onclick="navigate('members')" title="${t('Frozen memberships','عضويات مجمّدة')}">
+      ${s.frozenMembers ? `<div class="kpi" style="cursor:pointer" onclick="_dashGoMembers({statuses:['Frozen']})" title="${t('Frozen memberships — click to list them','عضويات مجمّدة — اضغط لعرضهم')}">
         <div class="kpi-icon">❄️</div>
         <div class="kpi-label">${t('Frozen','مجمّد')}</div>
         <div class="kpi-value num">${s.frozenMembers}</div>
@@ -654,11 +654,11 @@ PAGES.dashboard = (main) => {
           <div style="padding:2px 0 2px 12px;border-inline-start:1px solid var(--border,rgba(128,128,128,.28));min-width:0"><div class="text-mute" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em">${t('Yesterday', 'أمس')}</div><div style="font-size:22px;font-weight:800;line-height:1.15;margin-top:4px">${fmt(yesterdayRevenue)} <span style="font-size:12px;color:var(--text-dim);font-weight:500">QAR</span></div><div class="text-mute" style="font-size:11px;margin-top:3px">${t('collected yesterday', 'المُحصّل أمس')}</div>${Math.abs(yesterdayOther) >= 0.5 ? `<div style="font-size:10px;font-weight:700;color:var(--accent-2);margin-top:2px">+${fmt(yesterdayOther)} ${t('for other months', 'لأشهر أخرى')}</div>` : ''}</div>
         </div>
       </div>
-      <div class="card" style="padding:12px 14px;border:1px solid rgba(139,92,246,.25);background:rgba(139,92,246,.05);cursor:pointer" onclick="navigate('members')" title="${t('New registrations + renewals this period', 'التسجيلات الجديدة + التجديدات هذه الفترة')}">
+      <div class="card" style="padding:12px 14px;border:1px solid rgba(139,92,246,.25);background:rgba(139,92,246,.05)">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="font-size:18px">🆕</span><div style="font-weight:600;font-size:13px">${t('New / Renewals', 'جديد / تجديدات')} (${s.periodShort})</div></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;align-items:stretch">
-          <div style="padding:2px 12px 2px 0;min-width:0"><div class="text-mute" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em">${t('New', 'جديد')}</div><div style="font-size:22px;font-weight:800;line-height:1.15;margin-top:4px">${newThisPeriod}</div><div class="text-mute" style="font-size:11px;margin-top:3px">${t('new members', 'أعضاء جدد')}</div></div>
-          <div style="padding:2px 0 2px 12px;border-inline-start:1px solid var(--border,rgba(128,128,128,.28));min-width:0"><div class="text-mute" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em">${t('Renewals', 'تجديدات')} 🔄</div><div style="font-size:22px;font-weight:800;line-height:1.15;margin-top:4px">${renewalsThisPeriod}</div><div class="text-mute" style="font-size:11px;margin-top:3px">${t('renewals', 'تجديدات')}</div></div>
+          <div style="padding:2px 12px 2px 0;min-width:0;cursor:pointer" onclick="_dashGoMembers({newMonths:${escapeHtml(JSON.stringify([..._dashMonthsSet]))}})" title="${t('Members who registered in this period — click to list them', 'الأعضاء المسجّلون في هذه الفترة — اضغط لعرضهم')}"><div class="text-mute" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em">${t('New', 'جديد')}</div><div style="font-size:22px;font-weight:800;line-height:1.15;margin-top:4px">${newThisPeriod}</div><div class="text-mute" style="font-size:11px;margin-top:3px">${t('new members', 'أعضاء جدد')}</div></div>
+          <div style="padding:2px 0 2px 12px;border-inline-start:1px solid var(--border,rgba(128,128,128,.28));min-width:0;cursor:pointer" onclick="_dashGoMembers({renewMonths:${escapeHtml(JSON.stringify([..._dashMonthsSet]))}})" title="${t('Members who renewed in this period — click to list them (a member who renewed twice counts twice here, once in the list)', 'الأعضاء الذين جدّدوا في هذه الفترة — اضغط لعرضهم (من جدّد مرتين يُحسب مرتين هنا ومرة في القائمة)')}"><div class="text-mute" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em">${t('Renewals', 'تجديدات')} 🔄</div><div style="font-size:22px;font-weight:800;line-height:1.15;margin-top:4px">${renewalsThisPeriod}</div><div class="text-mute" style="font-size:11px;margin-top:3px">${t('renewals', 'تجديدات')}</div></div>
         </div>
         <div style="font-size:11px;margin-top:8px;color:var(--text-dim);border-top:1px solid var(--border);padding-top:6px">🏟 ${courtRentals} ${t('court', 'ملعب')} <span style="margin:0 3px">·</span> 🥊 ${boxRentals} ${t('box room', 'غرفة ملاكمة')} <span class="text-mute">${t('rentals', 'إيجارات')}</span></div>
       </div>
@@ -671,7 +671,7 @@ PAGES.dashboard = (main) => {
           ${renewingThisWeek.length ? t('Members with expiry in the next 7 days — chase those renewals','أعضاء تنتهي عضويتهم خلال 7 أيام — تابع التجديدات') : t('No renewals due in the next 7 days','لا تجديدات مستحقة خلال 7 أيام')}
         </div>
       </div>
-      <div class="card" style="padding:12px 14px;border:1px solid rgba(91,141,239,.25);background:rgba(91,141,239,.05)">
+      <div class="card" style="padding:12px 14px;border:1px solid rgba(91,141,239,.25);background:rgba(91,141,239,.05)${topSport ? ';cursor:pointer' : ''}" ${topSport ? `onclick="_dashGoMembers({curSport:${escapeHtml(JSON.stringify(topSport[0]))},statuses:['Active','Completed','Frozen','Withdrawn']})" title="${t('Click to list these members', 'اضغط لعرض هؤلاء الأعضاء')}"` : ''}>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
           <span style="font-size:18px">🏆</span>
           <div style="font-weight:600;font-size:13px">${topSport ? t('Most popular','الأكثر شعبية') + ': ' + escapeHtml(topSport[0]) : t('Most popular','الأكثر شعبية')}</div>
@@ -692,13 +692,13 @@ PAGES.dashboard = (main) => {
         ${kpiDelta(s.currRevenue, s.prevRevenue)}
         ${sparkline([s.prevRevenue, s.currRevenue])}
       </div>
-      <div class="kpi orange">
+      <div class="kpi orange" style="cursor:pointer" onclick="_dashGoExpenses(${escapeHtml(JSON.stringify(s.months))})" title="${t('Click to open the Expenses for this period', 'اضغط لفتح مصروفات هذه الفترة')}">
         <div class="kpi-icon">💸</div>
         <div class="kpi-label" title="${t('Accrual view — operating expenses PLUS all coach pay EARNED this month (fixed salaries + commission), whether paid yet or not. This differs from the Expenses screen, which shows cash actually PAID OUT; coach commission earned but not yet paid is the main gap.', 'عرض الاستحقاق — مصروفات التشغيل + كامل أجور المدربين المستحقة هذا الشهر (رواتب ثابتة + عمولة)، سواء دُفعت أم لا. يختلف عن شاشة المصروفات التي تعرض النقد المدفوع فعلياً؛ الفرق الأساسي هو عمولة المدربين المستحقة غير المدفوعة.')}">${t('Total Expenses','إجمالي المصروفات')} (${s.periodShort})</div>
         <div class="kpi-value num">${fmt(s.currExpenses + s.currSalaries)} <span style="font-size:13px;color:var(--text-dim);font-weight:500">QAR · ${t('accrual', 'استحقاق')}</span></div>
         <div class="kpi-delta flat" title="${t('Cash paid out = what the Expenses screen shows (all recorded expenses this month, incl. salary payments entered). Payroll earned = all coach pay earned this month whether paid yet or not — the accrual headline above = Ops + payroll earned.', 'النقد المدفوع = ما تعرضه شاشة المصروفات (كل المصروفات المسجّلة هذا الشهر شاملة رواتب مدفوعة). الرواتب المستحقة = كامل أجور المدربين هذا الشهر سواء دُفعت أم لا — رقم الاستحقاق بالأعلى = التشغيل + الرواتب المستحقة.')}">💵 ${fmt(s.currCashExpenses)} ${t('cash paid', 'مدفوع نقداً')} · 🧮 ${fmt(s.currSalaries)} ${t('payroll earned', 'رواتب مستحقة')}</div>
       </div>
-      <div class="kpi ${s.currProfit >= 0 ? 'green' : 'red'}">
+      <div class="kpi ${s.currProfit >= 0 ? 'green' : 'red'}" style="cursor:pointer" onclick="navigate('reports')" title="${t('Click to open the Reports', 'اضغط لفتح التقارير')}">
         <div class="kpi-icon">${s.currProfit >= 0 ? '📈' : '📉'}</div>
         <div class="kpi-label">${s.periodShort} ${t('Net Profit','صافي الربح')}</div>
         <div class="kpi-value num">${fmt(s.currProfit)} <span style="font-size:13px;color:var(--text-dim);font-weight:500">QAR</span></div>
@@ -1130,6 +1130,17 @@ function _subFilterStatus(m, s) {
   const sl = (s.status || '').toLowerCase();
   return sl === 'completed' ? 'Completed' : sl === 'expired' ? 'Expired' : 'Active';
 }
+// v6.704 — Dashboard boxes open the SAME people / figures behind their number: a clean Members filter (set, never toggled)...
+window._dashGoMembers = function (o) {
+  o = o || {};
+  saveFilter('members', { search: '', status: 'all', statuses: o.statuses || [], sports: o.sports || [], coach: 'all', coaches: [], nationality: 'all', nationalities: [], incomplete: 'all', balance: 'all', expiry: 'all', enrollMonths: [], dateFrom: '', dateTo: '', dateBasis: 'enrolled', newMonths: o.newMonths || [], renewMonths: o.renewMonths || [], curSport: o.curSport || '' });
+  if (typeof navigate === 'function') navigate('members');
+};
+// ...and the Expenses screen for the period the Dashboard is showing.
+window._dashGoExpenses = function (months) {
+  saveFilter('expenses', { search: '', months: (months || []).slice(), categories: [], methods: [], coaches: [] });
+  if (typeof navigate === 'function') navigate('expenses');
+};
 // Clicking a status chip in the Members header filters the table to that status.
 // Clicking the same chip again clears the filter (toggle). Persists the filter and
 // re-renders the Members page.
@@ -1418,6 +1429,11 @@ PAGES.members = (main) => {
       if (!m.deleted && wantArchived && statusSel.length === 0) return false; // only Archived chosen
       // Similar-name filter: keep only members flagged as a likely duplicate.
       if (f.dupNames && dupNameInfo && !dupNameInfo.ids.has(m.id)) return false;
+      // v6.704 — Dashboard links: registered in these months (New) / has a renewal starting in these months (Renewals), same rules as the Dashboard counts.
+      if (f.newMonths && f.newMonths.length && !f.newMonths.includes(String(m.firstRegistration || m.joinDate || '').slice(0, 7))) return false;
+      if (f.renewMonths && f.renewMonths.length && !(m.renewals || []).some(r => f.renewMonths.includes(String(r.start || r.createdAt || '').slice(0, 7)))) return false;
+      // enrolled in this sport NOW (profile sport / enrollments) — the Dashboard's "Most popular" rule; the normal Sports filter also matches old packages
+      if (f.curSport && !(m.sport === f.curSport || (m.enrollments || []).some(e => e.sport === f.curSport))) return false;
       if (f.search) {
         const raw = f.search.trim();
         let hit = searchMatchesFields(raw, [m.name, m.nameArabic, m.phone, m.phone2, m.qid, m.email, m.nationality], [m.phone, m.phone2]);
@@ -1550,6 +1566,7 @@ PAGES.members = (main) => {
     const anyFilterActive = filter.search || (filter.statuses && filter.statuses.length) || (filter.sports && filter.sports.length) ||
       (filter.coaches && filter.coaches.length) || (filter.nationalities && filter.nationalities.length) || filter.incomplete !== 'all' ||
       (filter.balance && filter.balance !== 'all') || (filter.expiry && filter.expiry !== 'all') || (filter.enrollMonths && filter.enrollMonths.length) ||
+      (filter.newMonths && filter.newMonths.length) || (filter.renewMonths && filter.renewMonths.length) || filter.curSport ||
       filter.dateFrom || filter.dateTo;
     const hiddenByFilters = Math.max(0, baseline - allRows.length);
     const banner = $('#members-filter-banner');
@@ -5203,6 +5220,10 @@ window.editCoach = function(id, defaultRole) {
           <div class="text-mute" style="font-size:10px;margin-top:3px">💡 Payroll won't show this person for months BEFORE they joined.</div>
         </div>
       </div>
+      <div class="field" id="c-left-field"><label>${t('Left the club on', 'تاريخ ترك العمل')} <span class="text-mute" style="font-size:10px">(${t('when Inactive', 'عند اختيار غير نشط')})</span></label>
+        <input id="c-left" type="date" value="${c.leftOn || ''}" />
+        <div class="text-mute" style="font-size:10px;margin-top:3px">💡 ${t('From this date he earns nothing: that month = classes he taught up to it + packages that ended up to it (fixed salary pro-rated); later months = 0; students still under his name pay him nothing.', 'من هذا التاريخ لا يستحق شيئاً: شهر الترك = الحصص التي أداها حتى التاريخ + الباقات التي انتهت حتى التاريخ (والراتب الثابت بالتناسب)؛ الشهور التالية = 0؛ والطلاب الباقون باسمه لا يُدفع له عنهم.')}</div>
+      </div>
       <div class="field" id="c-sports-field" style="display:${role === 'staff' ? 'none' : 'block'}">
         <label>Sports taught</label>
         <div style="padding:8px;background:var(--surface-2);border-radius:8px">${sportChecks}</div>
@@ -5251,6 +5272,7 @@ window.editCoach = function(id, defaultRole) {
         const qid = $('#c-qid').value.trim() || null;
         const gender = $('#c-gender').value || null;
         const joinedDate = $('#c-joined').value || null;   // hides earlier months from payroll (v6.364)
+        const leftOn = (activeVal === 'N' ? (($('#c-left') || {}).value || null) : null);   // v6.707 — resignation date (kept only while Inactive)
 
         if (fixedSalary === 0 && rate === 0) {
           if (!confirm('Both fixed salary AND commission % are 0. This person will earn nothing. Save anyway?')) return;
@@ -5262,6 +5284,7 @@ window.editCoach = function(id, defaultRole) {
             name, rate, fixedSalary, commissionBasis, payAttendedOnly, role: roleVal, sports, active: activeVal,
             phone, email: email || null, qid, birthdate: birthdate || null, gender, joinedDate,
           };
+          if (leftOn) _nc.leftOn = leftOn;
           if (_pp != null) _nc.privateBonusPct = _pp;
           state.coaches.push(_nc);
           _savedCoachId = _nc.id;
@@ -5271,6 +5294,7 @@ window.editCoach = function(id, defaultRole) {
             phone, email: email || null, qid, birthdate: birthdate || null, gender, joinedDate,
           });
           if (_pp == null) delete c.privateBonusPct; else c.privateBonusPct = _pp;
+          if (leftOn) c.leftOn = leftOn; else delete c.leftOn;
           _savedCoachId = c.id;
         }
         closeModal();
