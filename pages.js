@@ -27497,10 +27497,11 @@ window.deleteSubscription = function(memberId, sid) {
   const switchNote = (sub.switchFunded && !hasTwin)
     ? '\n\n⚠ This sport was funded by a SPORT SWITCH (its value moved here from another sport). Deleting it will leave the switch credit stranded and may cause the sport to be re-billed later. To undo a switch, use Switch Sport again or Edit pricing instead.'
     : '';
-  if (!confirm(`Delete this subscription period?\n\n${label}\nPaid: ${fmt(sub.amountPaid || 0)} QAR${dupNote}${switchNote}\n\nThis removes just this one period and its linked invoice (no refund record). The member's other subscriptions are untouched.`)) return;
+  if (!confirm(`Delete this subscription period?\n\n${label}\nPaid: ${fmt(sub.amountPaid || 0)} QAR${dupNote}${switchNote}\n\n${hasTwin ? 'This removes just this duplicate record — the invoice and the other twin are not touched.' : 'This removes just this one period and its linked invoice line (no refund record). The member\'s other subscriptions are untouched.'}`)) return;
 
   // Remove the linked invoice line / invoice for this sub, so PAID drops.
-  const ref = sub.invoiceNumber || null;
+  // v6.703 — a TWIN shares this invoice line (the surviving twin still owns it), so deleting the twin leaves the invoice alone.
+  const ref = hasTwin ? null : (sub.invoiceNumber || null);
   if (ref) {
     for (const inv of (state.invoices || [])) {
       if (inv.deleted) continue;
@@ -27508,11 +27509,14 @@ window.deleteSubscription = function(memberId, sid) {
       if ((inv.ref || '') !== ref && inv.invoiceNumber !== ref) continue;
       const items = (inv.lineItems && inv.lineItems.length) ? inv.lineItems : null;
       if (items && items.length > 1) {
-        // Shrink: drop just this sport's line.
-        const keep = items.filter(li => li.sport !== sub.activity);
-        const removed = items.filter(li => li.sport === sub.activity).reduce((s, li) => s + (Number(li.price) || 0), 0);
-        inv.lineItems = keep;
-        inv.amount = Math.max(0, (inv.amount || 0) - removed);
+        // Shrink: drop just THIS package's line — this sport AND this coach (v6.703: a coach change leaves 2 lines of one sport; the other coach's line stays).
+        const sameSport = items.filter(li => li.sport === sub.activity);
+        const mine = sub.coachId != null ? sameSport.filter(li => String(li.coachId) === String(sub.coachId)) : [];
+        const drop = mine.length ? mine : sameSport;
+        const keep = items.filter(li => drop.indexOf(li) < 0);
+        const removed = drop.reduce((s, li) => s + (Number(li.price) || 0), 0);
+        if (!keep.length) { inv.deleted = true; }
+        else { inv.lineItems = keep; inv.amount = Math.max(0, (inv.amount || 0) - removed); }
       } else {
         inv.deleted = true;   // whole invoice was for this sub
       }
@@ -27591,21 +27595,27 @@ window.deleteSportFull = function(memberId, sid) {
   const label = `${sport || 'sport'} (${sub.start ? fmtDate(sub.start) : '?'} → ${sub.end ? fmtDate(sub.end) : '?'})`;
   if (!confirm(`⚠ DELETE this sport from the member — PERMANENT.\n\n${label}\nPaid: ${fmt(sub.amountPaid || 0)} QAR\nAttendance to be removed: ${attended} class${attended === 1 ? '' : 'es'}\n\nThis removes the subscription period, its enrollment (if no other period of this sport remains), the ${attended} attendance mark${attended === 1 ? '' : 's'} in this window, and the linked invoice line. This cannot be undone.\n\nContinue?`)) return;
 
+  // v6.703 — an identical TWIN period still owns the attendance marks and the invoice line: removing the twin must not clear them.
+  const hasTwin = m.subscriptions.some(o => (o._sid || o._rid) !== sid && (o.activity || '') === sport && (o.start || '') === (sub.start || '') && (o.end || '') === (sub.end || '') && (o.coachId || null) === (sub.coachId || null));
   // 1) Remove the attendance recorded during this period for this sport.
-  const removedAtt = _clearSportAttendanceWindow(m, sport, sub.start || null, sub.end || null);
+  const removedAtt = hasTwin ? 0 : _clearSportAttendanceWindow(m, sport, sub.start || null, sub.end || null);
 
   // 2) Remove / shrink the linked invoice for this sub (so PAID drops), same as the
   //    quick delete.
-  const ref = sub.invoiceNumber || null;
+  const ref = hasTwin ? null : (sub.invoiceNumber || null);
   if (ref) {
     for (const inv of (state.invoices || [])) {
       if (inv.deleted || inv.customerId !== m.id) continue;
       if ((inv.ref || '') !== ref && inv.invoiceNumber !== ref) continue;
       const items = (inv.lineItems && inv.lineItems.length) ? inv.lineItems : null;
       if (items && items.length > 1) {
-        const removed = items.filter(li => li.sport === sport).reduce((s, li) => s + (Number(li.price) || 0), 0);
-        inv.lineItems = items.filter(li => li.sport !== sport);
-        inv.amount = Math.max(0, (inv.amount || 0) - removed);
+        const sameSport = items.filter(li => li.sport === sport);
+        const mine = sub.coachId != null ? sameSport.filter(li => String(li.coachId) === String(sub.coachId)) : [];
+        const drop = mine.length ? mine : sameSport;   // v6.703 — this package's line (sport + coach), not every line of the sport
+        const keep = items.filter(li => drop.indexOf(li) < 0);
+        const removed = drop.reduce((s, li) => s + (Number(li.price) || 0), 0);
+        if (!keep.length) { inv.deleted = true; }
+        else { inv.lineItems = keep; inv.amount = Math.max(0, (inv.amount || 0) - removed); }
       } else {
         inv.deleted = true;
       }
