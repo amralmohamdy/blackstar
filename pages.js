@@ -4922,7 +4922,7 @@ window.viewCoach = function(id) {
     actions: [
       ...((isCoachRole(c) && ['admin', 'receptionist'].includes(currentRole())) ? [{ label: '🔒 ' + t('Private bonus %', 'نسبة بونس الخاص'), class: 'btn ghost', onclick: () => { closeModal(); editCoachPrivatePct(id); } }] : []),
       ...(isViewerRole() ? [] : [
-        { label: active ? '🚫 Deactivate' : '✅ Activate', class: 'btn ghost', onclick: () => { toggleCoachActive(id); closeModal(); viewCoach(id); } },
+        { label: active ? '🚫 Deactivate' : '✅ Activate', class: 'btn ghost', onclick: () => { toggleCoachActive(id, () => viewCoach(id)); } },
         { label: '👋 Coach left (offboard)', class: 'btn ghost', onclick: () => { closeModal(); offboardCoach(id); } },
         { label: '🔁 Transfer students', class: 'btn ghost', onclick: () => { closeModal(); transferCoachStudents(id); } },
         { label: 'Edit', class: 'btn ghost', onclick: () => { closeModal(); editCoach(id); } },
@@ -5305,6 +5305,7 @@ window.editCoach = function(id, defaultRole) {
   // Wire role change → adapt the form on the fly
   setTimeout(() => {
     const roleSel = $('#c-role');
+    { const _act = $('#c-active'), _lf = $('#c-left'); if (_act && _lf) _act.addEventListener('change', () => { if (_act.value === 'N' && !_lf.value) _lf.value = TODAY; }); }   // v6.708
     const fixedInp = $('#c-fixed');
     const rateInp = $('#c-rate');
     const sportsField = $('#c-sports-field');
@@ -12232,12 +12233,45 @@ PAGES.coaches = (main) => {
 };
 
 // Toggle a coach's active flag (Y <-> N)
-window.toggleCoachActive = function(coachId) {
+// v6.708 — Deactivate asks WHICH DAY he left (default today, or any date): that date is what stops his pay (coach.leftOn, see coachLeaveCut). Activate clears it.
+window.toggleCoachActive = function(coachId, onDone) {
   if (currentRole() !== 'admin') { toast('Only admins can change coach status', 'error'); return; }
   const c = state.coaches.find(x => x.id === coachId);
   if (!c) return;
-  c.active = (c.active || 'Y') === 'Y' ? 'N' : 'Y';
-  withCloudConfirm({ verify: [{ collection: 'coaches', id: c.id }], okMsg: `${c.name} marked ${c.active === 'Y' ? 'Active' : 'Inactive'}`, afterOk: () => render() });
+  const finish = (msg) => withCloudConfirm({ verify: [{ collection: 'coaches', id: c.id }], okMsg: msg, afterOk: () => { render(); if (typeof onDone === 'function') onDone(); } });
+  if (!isCoachActive(c)) {
+    c.active = 'Y'; delete c.leftOn;
+    if (typeof stampUpdate === 'function') stampUpdate(c);
+    if (typeof audit === 'function') audit('coach.activate', 'coach:' + c.id, c.name + ' re-activated');
+    if (typeof closeModal === 'function') closeModal();
+    finish(c.name + ' marked Active');
+    return;
+  }
+  showModal({
+    title: '🚫 ' + t('Deactivate', 'إيقاف') + ' · ' + escapeHtml(c.name),
+    body: '<div style="display:grid;gap:10px;font-size:13px">'
+      + '<label style="display:grid;gap:4px">' + t('Last day with the club', 'آخر يوم في العمل')
+      + '<input id="dc-date" type="date" value="' + TODAY + '" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)"></label>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap"><button type="button" class="btn ghost sm" id="dc-today">' + t('Today', 'اليوم') + '</button><button type="button" class="btn ghost sm" id="dc-yest">' + t('Yesterday', 'أمس') + '</button></div>'
+      + '<div class="text-mute" style="font-size:11px;line-height:1.6">' + t('From this day he earns nothing: that month = the classes he taught up to it + the packages that ended up to it (fixed salary pro-rated); later months = 0; students still under his name pay him nothing. Earlier months are not touched.', 'من هذا اليوم لا يستحق شيئاً: الشهر = الحصص التي أداها حتى هذا اليوم + الباقات التي انتهت حتى هذا اليوم (والراتب الثابت بالتناسب)؛ الشهور التالية = 0؛ والطلاب الباقون باسمه لا يُدفع له عنهم. الشهور السابقة لا تتغير.') + '</div></div>',
+    actions: [
+      { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: () => { closeModal(); if (typeof onDone === 'function') onDone(); } },
+      { label: '🚫 ' + t('Deactivate', 'إيقاف'), class: 'btn primary', onclick: () => {
+        const d = (($('#dc-date') || {}).value || '').slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) { toast(t('Pick the last day', 'اختر آخر يوم'), 'error'); return; }
+        c.active = 'N'; c.leftOn = d;
+        if (typeof stampUpdate === 'function') stampUpdate(c);
+        if (typeof audit === 'function') audit('coach.deactivate', 'coach:' + c.id, c.name + ' deactivated · last day ' + d);
+        closeModal();
+        finish(c.name + ' marked Inactive · last day ' + fmtDate(d));
+      } },
+    ],
+  });
+  setTimeout(() => {
+    const di = $('#dc-date');
+    $('#dc-today')?.addEventListener('click', () => { if (di) di.value = TODAY; });
+    $('#dc-yest')?.addEventListener('click', () => { if (di) di.value = addDays(TODAY, -1); });
+  }, 0);
 };
 
 // ─── Multi-select month picker ─────────────────────────────────
