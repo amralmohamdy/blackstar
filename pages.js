@@ -17790,43 +17790,61 @@ window.deleteCashCollection = function(id) {
   withCloudConfirm({ verify: [{ collection: 'expenses', id, absent: true, snapshot: ex }], okMsg: 'Cash collection deleted', afterOk: () => render() });
 };
 
-// v6.700 — the LIVE drawer: the last physical count + every cash movement since it (cash payments in, cash refunds / cash expenses /
-// salary / owner take-outs out). Derived, never stored: an edited, refunded or deleted payment corrects it by itself, two devices
-// can't double-count, and the count stays the proof. Rule for "since": a later DATE counts; on the count's own day only a
-// timestamp after the count does (rows with no timestamp are taken as already in the count). Returns null with no count yet.
+// v6.700 / v6.710 — the LIVE drawer: the last physical count + every CASH PAYMENT a member made since it − every CASH COLLECTION (the owner taking cash out).
+// Nothing else changes it: cash expenses, salaries and refunds are NOT deducted (the next physical count absorbs them). A payment can be taken out of the
+// list with its 🗑 (admin) — that only stops it counting here (payment.noDrawer); the member's payment, invoice and revenue are untouched, and it can be
+// restored. Derived, never stored. Rule for "since": a later DATE counts; on the count's own day only a timestamp after the count does (rows with no
+// timestamp are taken as already in the count). Returns null with no count yet.
 function cashDrawerNow() {
   const counts = (state.cashCounts || []).slice().sort((a, b) => String(b.createdAt || b.date || '').localeCompare(String(a.createdAt || a.date || '')));
   const c = counts[0];
   if (!c) return null;
   const cDate = String(c.date || String(c.createdAt || '').slice(0, 10)).slice(0, 10), cAt = c.createdAt ? String(c.createdAt) : '';
   const after = (date, ts) => { const d = String(date || '').slice(0, 10); if (!d) return false; if (d !== cDate) return d > cDate; return !!(ts && cAt && String(ts) > cAt); };
-  const moves = [];
+  const moves = [], hidden = [];
   for (const i of (state.invoices || [])) {
     if (!i || i.deleted || i.switchCredit || i.activityType === 'switch-credit') continue;   // a switch-credit memo is an offset, not drawer cash
-    const who = ((typeof customerInfo === 'function' ? (customerInfo(i) || {}).name : '') || i.customerName || i.category || '—'), ref = i.ref || ('#' + i.id);
+    const mem = i.customerId != null ? (state.members || []).find(x => x && x.id === i.customerId) : null;
+    const info = (typeof customerInfo === 'function' ? (customerInfo(i) || {}) : {});
+    // description = member name (English) · Arabic name · mobile, then the invoice number
+    const who = [(mem && mem.name) || info.name || i.customerName || i.category || '', (mem && mem.nameArabic) || '', (mem && mem.phone) || info.phone || i.customerPhone || ''].filter(Boolean).join(' · ') || '—';
+    const ref = i.ref || ('#' + i.id);
     if (Array.isArray(i.payments) && i.payments.length) {
-      for (const p of i.payments) {
-        if (!p || p._recon) continue;   // a reconstruction row is old money, not a new receipt
+      i.payments.forEach((p, pi) => {
+        if (!p || p._recon) return;   // a reconstruction row is old money, not a new receipt
         const amt = Number(p.amount) || 0;
-        if (!amt || normalizeMethod(p.method || i.method) !== 'cash') continue;
-        if (after(p.date, p.at)) moves.push({ when: p.at || p.date, amount: amt, label: who, ref, kind: amt > 0 ? 'in' : 'refund' });
-      }
+        if (!(amt > 0) || normalizeMethod(p.method || i.method) !== 'cash') return;   // only cash coming IN
+        if (!after(p.date, p.at)) return;
+        (p.noDrawer ? hidden : moves).push({ when: p.at || p.date, amount: amt, label: who, ref, kind: 'in', inv: i.id, pi });
+      });
     } else if (normalizeMethod(i.method) === 'cash') {   // legacy invoice with no ledger = paid in full on its date
       const amt = invoicePaid(i);
-      if (amt && after(i.date, i.createdAt)) moves.push({ when: i.createdAt || i.date, amount: amt, label: who, ref, kind: amt > 0 ? 'in' : 'refund' });
+      if (amt > 0 && after(i.date, i.createdAt)) (i.noDrawer ? hidden : moves).push({ when: i.createdAt || i.date, amount: amt, label: who, ref, kind: 'in', inv: i.id, pi: -1 });
     }
   }
-  for (const e of (state.expenses || [])) {
-    if (!e || e.deleted || normalizeMethod(e.method || 'cash') !== 'cash') continue;
+  for (const e of (state.expenses || [])) {   // the owner taking cash out of the drawer — the ONLY deduction
+    if (!e || e.deleted || (e.category || '') !== CASH_COLLECTION_CATEGORY) continue;
     const amt = Number(e.amount) || 0;
-    if (amt && after(e.date || (e.month ? e.month + '-01' : ''), e.createdAt || e.at)) moves.push({ when: e.createdAt || e.at || e.date, amount: -amt, label: e.category || t('Expense', 'مصروف'), ref: e.description || e.note || '', kind: 'out' });
+    if (amt > 0 && after(e.date || (e.month ? e.month + '-01' : ''), e.createdAt || e.at)) moves.push({ when: e.createdAt || e.at || e.date, amount: -amt, label: t('Cash collected by owner', 'نقد استلمه المالك'), ref: e.description || e.note || '', kind: 'collection', exp: e.id });
   }
   moves.sort((a, b) => String(b.when).localeCompare(String(a.when)));
   const r2 = x => Math.round(x * 100) / 100;
-  const receipts = r2(moves.reduce((s, m) => s + (m.amount > 0 ? m.amount : 0), 0)), outflows = r2(moves.reduce((s, m) => s + (m.amount < 0 ? -m.amount : 0), 0));
+  const receipts = r2(moves.reduce((s, m) => s + (m.amount > 0 ? m.amount : 0), 0)), collections = r2(moves.reduce((s, m) => s + (m.amount < 0 ? -m.amount : 0), 0));
   const base = Number(c.amount) || 0;
-  return { count: c, base, moves, receipts, outflows, expected: r2(base + receipts - outflows) };
+  return { count: c, base, moves, hidden, receipts, collections, expected: r2(base + receipts - collections) };
 }
+// Take a cash payment out of the drawer list / put it back (admin). Only the flag moves — the payment itself is untouched.
+window.cashDrawerHide = function (invId, pi, on) {
+  if (currentRole() !== 'admin') { toast(t('Admins only', 'للمسؤولين فقط'), 'error'); return; }
+  const inv = (state.invoices || []).find(x => x && x.id === invId); if (!inv) return;
+  const row = pi >= 0 ? (inv.payments || [])[pi] : inv;
+  if (!row) return;
+  if (on && !confirm(t('Remove this payment from Cash in Hand?\n\nThe member\'s payment, the invoice and the revenue are NOT changed — it only stops counting in the drawer figure. You can restore it from the list below.', 'إزالة هذه الدفعة من النقد في الصندوق؟\n\nدفعة العضو والفاتورة والإيراد لا تتغير — فقط تتوقف عن الاحتساب في رقم الصندوق. يمكنك استرجاعها من القائمة أدناه.'))) return;
+  if (on) { row.noDrawer = true; row.noDrawerAt = new Date().toISOString(); row.noDrawerBy = (typeof currentUserName === 'function') ? currentUserName() : ''; } else { delete row.noDrawer; delete row.noDrawerAt; delete row.noDrawerBy; }
+  if (typeof stampUpdate === 'function') stampUpdate(inv);
+  if (typeof audit === 'function') audit(on ? 'cash.drawer.hide' : 'cash.drawer.restore', 'invoice:' + inv.id, (on ? 'Removed from' : 'Restored to') + ' Cash in Hand: ' + (inv.ref || '#' + inv.id) + ' · ' + fmt(pi >= 0 ? row.amount : invoicePaid(inv)) + ' QAR');
+  withCloudConfirm({ verify: [{ collection: 'invoices', id: inv.id }], okMsg: on ? t('Removed from Cash in Hand', 'أُزيلت من النقد في الصندوق') : t('Restored to Cash in Hand', 'أُعيدت إلى النقد في الصندوق'), afterOk: () => render() });
+};
 // How a typed count compares with what the drawer should hold right now → { expected, diff } (null with no earlier count).
 function cashCountVariance(amount, dateStr) {
   if (String(dateStr || TODAY).slice(0, 10) !== TODAY) return null;   // a back-dated count can't be compared with "now"
@@ -17851,7 +17869,10 @@ PAGES.cashinhand = (main) => {
   const prev = counts[1] || null;
   const delta = latest && prev ? (Number(latest.amount) || 0) - (Number(prev.amount) || 0) : null;
   const LD = cashDrawerNow();   // v6.700 — last count + the cash movements since
-  const _mvRows = (LD && currentRole() === 'admin') ? LD.moves.slice(0, 200).map(m => `<tr><td class="text-mute" style="white-space:nowrap">${escapeHtml(String(m.when || '').replace('T', ' ').slice(0, 16))}</td><td>${escapeHtml(m.label)}${m.ref ? ` <span class="text-mute font-mono" style="font-size:11px">${escapeHtml(m.ref)}</span>` : ''}</td><td class="text-mute">${m.kind === 'in' ? t('cash in', 'نقد وارد') : m.kind === 'refund' ? t('cash refund', 'استرداد نقدي') : t('cash out', 'نقد صادر')}</td><td class="text-right num font-bold" style="color:${m.amount >= 0 ? 'var(--green)' : 'var(--red)'}">${m.amount >= 0 ? '+' : '−'}${fmtMoney(Math.abs(m.amount))}</td></tr>`).join('') : '';
+  const _isAdm = currentRole() === 'admin';
+  const _mvRow = (m, hid) => `<tr${hid ? ' style="opacity:.6"' : ''}><td class="text-mute" style="white-space:nowrap">${escapeHtml(String(m.when || '').replace('T', ' ').slice(0, 16))}</td><td>${escapeHtml(m.label)}${m.kind === 'collection' && String(m.ref || '').replace(/^Cash collected by owner\s*[—-]\s*/i, '') ? ' <span class="text-mute">· ' + escapeHtml(String(m.ref).replace(/^Cash collected by owner\s*[—-]\s*/i, '')) + '</span>' : ''}</td><td class="font-mono" style="font-size:12px">${m.kind === 'collection' ? '' : escapeHtml(m.ref || '')}</td><td class="text-right num font-bold" style="color:${m.amount >= 0 ? 'var(--green)' : 'var(--red)'}">${m.amount >= 0 ? '+' : '−'}${fmtMoney(Math.abs(m.amount))}</td><td class="text-right" style="white-space:nowrap">${_isAdm ? (m.kind === 'collection' ? `<button class="btn ghost sm" onclick="deleteCashCollection(${m.exp})" title="${t('Delete this cash collection', 'حذف هذا الاستلام النقدي')}">🗑</button>` : (hid ? `<button class="btn ghost sm" onclick="cashDrawerHide(${m.inv}, ${m.pi}, false)" title="${t('Put it back in Cash in Hand', 'إرجاعها إلى النقد في الصندوق')}">↩ ${t('Restore', 'استرجاع')}</button>` : `<button class="btn ghost sm" onclick="cashDrawerHide(${m.inv}, ${m.pi}, true)" title="${t('Remove from Cash in Hand (the payment itself is not changed)', 'إزالة من النقد في الصندوق (الدفعة نفسها لا تتغير)')}">🗑</button>`)) : ''}</td></tr>`;
+  const _mvRows = (LD && _isAdm) ? LD.moves.slice(0, 200).map(m => _mvRow(m, false)).join('') : '';
+  const _hidRows = (LD && _isAdm) ? LD.hidden.slice(0, 100).map(m => _mvRow(m, true)).join('') : '';
 
   main.innerHTML = `
     <div class="topbar">
@@ -17867,17 +17888,19 @@ PAGES.cashinhand = (main) => {
     <div class="card" style="margin-bottom:16px;text-align:center;padding:28px 18px;background:linear-gradient(135deg,rgba(16,185,129,.10),transparent 70%)">
       <div class="text-mute" style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;font-weight:700">${t('Current cash in hand', 'النقد الحالي في الصندوق')}</div>
       <div style="font-size:46px;font-weight:800;color:${LD && LD.expected < 0 ? 'var(--red)' : 'var(--green)'};line-height:1.1;margin:6px 0">${LD ? fmtMoney(LD.expected) : '—'}</div>
-      ${LD ? `<div style="font-size:12px;margin-bottom:2px"><span class="badge active" style="font-size:9px">● ${t('live', 'مباشر')}</span> <span class="text-mute">${t('last count', 'آخر جرد')} <b>${fmtMoney(LD.base)}</b> · <span style="color:var(--green)">+${fmtMoney(LD.receipts)} ${t('cash in', 'نقد وارد')}</span> · <span style="color:var(--red)">−${fmtMoney(LD.outflows)} ${t('cash out', 'نقد صادر')}</span></span></div>` : ''}
+      ${LD ? `<div style="font-size:12px;margin-bottom:2px"><span class="badge active" style="font-size:9px">● ${t('live', 'مباشر')}</span> <span class="text-mute">${t('last count', 'آخر جرد')} <b>${fmtMoney(LD.base)}</b> · <span style="color:var(--green)">+${fmtMoney(LD.receipts)} ${t('cash in', 'نقد وارد')}</span> · <span style="color:var(--red)">−${fmtMoney(LD.collections)} ${t('collected by owner', 'استلمه المالك')}</span></span></div>` : ''}
       ${latest ? `<div class="text-mute" style="font-size:12px">${t('Last counted', 'آخر جرد')}: <b>${fmtDate(latest.date)}</b>${latest.by ? ' · ' + escapeHtml(latest.by) : ''}${latest.note ? ' · ' + escapeHtml(latest.note) : ''}</div>` : `<div class="text-mute" style="font-size:13px">${t('No cash count recorded yet. Click “Record cash count” to enter your first one.', 'لا يوجد جرد مسجّل بعد. اضغط «تسجيل جرد النقد» لإدخال أول جرد.')}</div>`}
       ${delta != null ? `<div style="font-size:12px;margin-top:6px;color:${delta >= 0 ? 'var(--green)' : 'var(--red)'}">${delta >= 0 ? '▲' : '▼'} ${fmtMoney(Math.abs(delta))} ${t('vs previous count', 'مقارنة بالجرد السابق')}</div>` : ''}
       <div style="display:flex;gap:8px;justify-content:center;align-items:center;margin-top:16px;flex-wrap:wrap">
         <input id="cih-quick" type="number" inputmode="decimal" min="0" step="0.01" placeholder="${t('Enter today\u2019s count…', 'أدخل جرد اليوم…')}" style="max-width:180px;text-align:center;padding:9px 12px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:15px" />
         <button class="btn primary" id="cih-quick-save">✓ ${t('Update', 'تحديث')}</button>
       </div>
-      <div class="text-mute" style="font-size:11px;margin-top:6px">${t('The figure above updates by itself with every cash payment, refund and cash expense. Count the drawer and enter it here to confirm it — the screen tells you if it is short or over.', 'الرقم أعلاه يتحدّث تلقائياً مع كل دفعة نقدية واسترداد ومصروف نقدي. عُدّ الصندوق وأدخل المبلغ هنا لتأكيده — ستظهر لك الشاشة إن كان هناك عجز أو زيادة.')}</div>
+      <div class="text-mute" style="font-size:11px;margin-top:6px">${t('The figure above goes up with every cash payment a member makes and down with every cash collection by the owner. Expenses, salaries and refunds are NOT deducted — count the drawer and enter it here: the screen tells you if it is short or over.', 'الرقم أعلاه يزيد مع كل دفعة نقدية من عضو وينقص مع كل استلام نقدي للمالك. المصروفات والرواتب والمبالغ المستردة لا تُخصم — عُدّ الصندوق وأدخله هنا: ستظهر لك الشاشة إن كان هناك عجز أو زيادة.')}</div>
     </div>
 
-    ${(LD && currentRole() === 'admin') ? `<div class="card" style="margin-bottom:16px"><details${LD.moves.length && LD.moves.length <= 12 ? ' open' : ''}><summary style="cursor:pointer;font-weight:700">💵 ${t('Cash movements since the last count', 'حركة النقد منذ آخر جرد')} <span class="text-mute" style="font-weight:500">(${LD.moves.length})</span></summary>${LD.moves.length ? `<div style="overflow:auto;margin-top:8px"><table class="data-table" style="width:100%"><thead><tr><th>${t('When', 'الوقت')}</th><th>${t('What', 'البيان')}</th><th>${t('Type', 'النوع')}</th><th class="text-right">${t('Amount', 'المبلغ')}</th></tr></thead><tbody>${_mvRows}</tbody></table></div>` : `<div class="text-mute" style="font-size:13px;padding:8px 0">${t('No cash movement since the last count.', 'لا حركة نقدية منذ آخر جرد.')}</div>`}</details></div>` : ''}
+    ${(LD && currentRole() === 'admin') ? `<div class="card" style="margin-bottom:16px"><details${LD.moves.length && LD.moves.length <= 12 ? ' open' : ''}><summary style="cursor:pointer;font-weight:700">💵 ${t('Cash payments & collections since the last count', 'المدفوعات النقدية والاستلامات منذ آخر جرد')} <span class="text-mute" style="font-weight:500">(${LD.moves.length})</span></summary>${LD.moves.length ? `<div style="overflow:auto;margin-top:8px"><table class="data-table" style="width:100%"><thead><tr><th>${t('When', 'الوقت')}</th><th>${t('Member (English · Arabic · mobile)', 'العضو (إنجليزي · عربي · موبايل)')}</th><th>${t('Invoice', 'الفاتورة')}</th><th class="text-right">${t('Amount', 'المبلغ')}</th><th></th></tr></thead><tbody>${_mvRows}</tbody></table></div>` : `<div class="text-mute" style="font-size:13px;padding:8px 0">${t('No cash payment or collection since the last count.', 'لا مدفوعات نقدية ولا استلامات منذ آخر جرد.')}</div>`}</details></div>` : ''}
+
+    ${(LD && _isAdm && LD.hidden.length) ? `<div class="card" style="margin-bottom:16px"><details><summary style="cursor:pointer;font-weight:700">🚫 ${t('Removed from Cash in Hand', 'أُزيلت من النقد في الصندوق')} <span class="text-mute" style="font-weight:500">(${LD.hidden.length})</span></summary><div style="overflow:auto;margin-top:8px"><table class="data-table" style="width:100%"><tbody>${_hidRows}</tbody></table></div></details></div>` : ''}
 
     <div class="card">
       <div class="card-header"><div><div class="card-title">🧾 ${t('Count history', 'سجل الجرد')}</div><div class="card-subtitle">${t('Every cash count you have recorded, newest first', 'كل عمليات جرد النقد المسجّلة، الأحدث أولاً')}</div></div></div>
