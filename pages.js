@@ -440,6 +440,49 @@ window.showDayCollections = function () {
     actions: [{ label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal }],
   });
 };
+// v6.713 — the Dashboard period is a dropdown with CHECKBOXES: tick one month or several (Jul + Sep, last 3…), the figures update at once and the panel stays open;
+// quick buttons: All time · each year · Last 3 / 6 months. Unticking the last month falls back to the current month (never an empty period).
+function _dashPeriodPicker() {
+  const per = normalizeDashPeriod();
+  const set = new Set([currentMonth()]);
+  for (const i of state.invoices) if (i.month) set.add(i.month);
+  for (const e of (state.expenses || [])) { const mo = expenseMonth(e); if (mo) set.add(mo); }
+  const months = [...set].filter(plausibleMonthKey).sort().reverse();   // drop corrupt years (v6.621)
+  const years = [...new Set(months.map(m => m.slice(0, 4)))].sort().reverse();
+  const picked = new Set((per.type === 'month' || per.type === 'months') ? dashPeriodMonths(per) : []);
+  const qb = (k, txt, on) => `<button type="button" class="btn ${on ? 'primary' : 'ghost'} sm" onclick="_dashQuick('${k}')">${txt}</button>`;
+  const open = !!window._dashMenuOpen;
+  return `<div id="dash-period-wrap" style="position:relative">
+    <button type="button" id="dash-period-btn" class="btn ghost" onclick="_dashToggleMenu(event)" title="${t('Show figures for this period — tick one or several months', 'عرض الأرقام لهذه الفترة — اختر شهراً أو عدة أشهر')}" style="padding:8px 12px;font-size:13px">🗓 ${escapeHtml(dashPeriodLabel(per))} ▾</button>
+    <div id="dash-period-menu" style="display:${open ? 'flex' : 'none'};flex-direction:column;gap:8px;position:absolute;top:100%;inset-inline-end:0;z-index:60;width:270px;max-height:min(440px,72vh);margin-top:6px;padding:10px;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.35)">
+      <div style="display:flex;flex-wrap:wrap;gap:6px">${qb('all', t('All time', 'كل الوقت'), per.type === 'all')}${years.map(y => qb('Y:' + y, y, per.type === 'year' && String(per.value) === y)).join('')}${qb('3', t('Last 3', 'آخر 3'), false)}${qb('6', t('Last 6', 'آخر 6'), false)}</div>
+      <div class="text-mute" style="font-size:11px;line-height:1.5">${t('Tick one or more months — the figures update straight away.', 'اختر شهراً أو أكثر — تتحدث الأرقام فوراً.')}</div>
+      <div id="dash-period-list" style="overflow:auto;min-height:0;flex:1;display:grid;gap:1px;align-content:start">${months.map(mk => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px;border-radius:6px${picked.has(mk) ? ';background:rgba(91,141,239,.12)' : ''}"><input type="checkbox" ${picked.has(mk) ? 'checked' : ''} onchange="_dashPick('${mk}', this.checked)"> ${escapeHtml(fmtMonth(mk))}</label>`).join('')}</div>
+    </div></div>`;
+}
+window._dashToggleMenu = function (e) {
+  if (e && e.stopPropagation) e.stopPropagation();
+  const m = document.getElementById('dash-period-menu'); if (!m) return;
+  const open = m.style.display !== 'flex'; m.style.display = open ? 'flex' : 'none'; window._dashMenuOpen = open;
+};
+window._dashQuick = function (k) {
+  let per;
+  if (k === 'all') per = { type: 'all' };
+  else if (String(k).startsWith('Y:')) per = { type: 'year', value: String(k).slice(2) };
+  else { const n = parseInt(k, 10) || 3, cur = currentMonth(), list = []; for (let i = 0; i < n; i++) list.push(_monthShift(cur, -i)); per = dashPeriodFromMonths(list); }
+  if (!per) return;
+  window._dashPeriod = per; window._dashMenuOpen = false; render();
+};
+window._dashPick = function (mk, on) {
+  const per = normalizeDashPeriod();
+  let cur = (per.type === 'month' || per.type === 'months') ? dashPeriodMonths(per) : [];
+  cur = on ? [...new Set([...cur, mk])] : cur.filter(x => x !== mk);
+  if (!cur.length) cur = [currentMonth()];
+  window._dashPeriod = dashPeriodFromMonths(cur);
+  const l = document.getElementById('dash-period-list'); window._dashMenuScroll = l ? l.scrollTop : 0;
+  window._dashMenuOpen = true; render();
+};
+if (typeof document !== 'undefined' && !window._dashMenuBound) { window._dashMenuBound = true; document.addEventListener('click', e => { if (e.target && e.target.closest && e.target.closest('#dash-period-wrap')) return; if (!window._dashMenuOpen) return; window._dashMenuOpen = false; const m = document.getElementById('dash-period-menu'); if (m) m.style.display = 'none'; }); }
 window.jumpDashMonth = function (mk) { if (!/^\d{4}-\d{2}$/.test(String(mk))) return; window._dashPeriod = { type: 'month', value: mk }; closeModal(); if (state.route !== 'dashboard') navigate('dashboard'); else render(); };
 PAGES.dashboard = (main) => {
   const s = computeStats();
@@ -563,22 +606,7 @@ PAGES.dashboard = (main) => {
         <div class="subtitle">Black Stars Sports Club · ${(() => { const a = availableMonths(); return a.length ? (a.length === 1 ? fmtMonth(a[0]) : `${fmtMonth(a[0])} – ${fmtMonth(a[a.length-1])}`) : 'No data yet'; })()}</div>
       </div>
       <div class="topbar-actions">
-        <select id="dash-period" title="${t('Show figures for this period', 'عرض الأرقام لهذه الفترة')}" style="padding:8px 12px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
-          ${(() => {
-            const per = normalizeDashPeriod();
-            const selVal = per.type === 'all' ? 'all' : (per.type === 'year' ? 'Y:' + per.value : (per.type === 'months' ? 'multi' : per.value));
-            const set = new Set([currentMonth()]);
-            for (const i of state.invoices) if (i.month) set.add(i.month);
-            for (const e of (state.expenses || [])) { const mo = expenseMonth(e); if (mo) set.add(mo); }
-            const months = [...set].filter(plausibleMonthKey).sort().reverse();   // drop corrupt years (v6.621)
-            const years = [...new Set(months.map(m => m.slice(0, 4)))].sort().reverse();
-            const opt = (v, lab) => `<option value="${v}" ${v === selVal ? 'selected' : ''}>${lab}</option>`;
-            return (per.type === 'months' ? `<option value="multi" selected>🗓 ${escapeHtml(dashPeriodLabel(per))}</option>` : '')
-              + opt('all', t('All time', 'كل الوقت'))
-              + `<optgroup label="${t('Year', 'سنة')}">` + years.map(y => opt('Y:' + y, y)).join('') + `</optgroup>`
-              + `<optgroup label="${t('Month', 'شهر')}">` + months.map(mk => opt(mk, fmtMonth(mk))).join('') + `</optgroup>`;
-          })()}
-        </select>
+        ${_dashPeriodPicker()}
         <button class="btn ghost" id="export-btn">📥 ${t('Export','تصدير')}</button>
         <button class="btn ghost" id="dash-backup-top" title="Download a JSON backup of all your data">💾 ${t('Backup','نسخة احتياطية')}</button>
         ${currentRole() === 'admin' ? `<button class="btn ghost" id="dash-cloud-storage" title="${t('See how much data is stored in the cloud, by collection','اطّلع على حجم البيانات المخزّنة في السحابة حسب المجموعة')}">☁ ${t('Storage','التخزين')}</button>` : ''}
@@ -768,13 +796,7 @@ PAGES.dashboard = (main) => {
   if (dashBackupTop) dashBackupTop.addEventListener('click', () => window.downloadBackup());
   const dashCloudStorage = $('#dash-cloud-storage');
   if (dashCloudStorage) dashCloudStorage.addEventListener('click', () => window.showCloudStorageUI());
-  const dashPeriodSel = $('#dash-period');
-  if (dashPeriodSel) dashPeriodSel.addEventListener('change', () => {
-    const v = dashPeriodSel.value;
-    if (v === 'multi') return;   // already showing the picked months
-    window._dashPeriod = v === 'all' ? { type: 'all' } : (v.startsWith('Y:') ? { type: 'year', value: v.slice(2) } : { type: 'month', value: v });
-    render();
-  });
+  if (window._dashMenuOpen) { const _pl = $('#dash-period-list'); if (_pl && window._dashMenuScroll) _pl.scrollTop = window._dashMenuScroll; }   // v6.713 — the period panel stays open while ticking months
 
   // v6.605 — these four cards were removed from the brief dashboard; the draw fns no-op when their
   // container is absent (guarded), so these calls stay harmless and the fns remain for reuse.
@@ -23777,6 +23799,9 @@ PAGES.attendance = (main) => {
     const _prevMark = m.dailyAttendance[mo][sport][String(day)] || null;
     if (next === null) delete m.dailyAttendance[mo][sport][String(day)];
     else m.dailyAttendance[mo][sport][String(day)] = next;
+    // v6.714 — the first class of a renewal becomes its start date (expiry follows)
+    const _anch = (next === 'Y' && typeof anchorRenewalOnMark === 'function') ? anchorRenewalOnMark(m, String(sport).replace(/ \d+$/, ''), `${mo}-${String(day).padStart(2, '0')}`) : null;
+    if (_anch) toast(t(`Renewal start set to the first class: ${fmtDate(_anch.plan.first)}` + (_anch.plan.newEnd ? ` · expires ${fmtDate(_anch.plan.newEnd)}` : ''), `بداية التجديد = أول حصة: ${fmtDate(_anch.plan.first)}` + (_anch.plan.newEnd ? ` · ينتهي ${fmtDate(_anch.plan.newEnd)}` : '')));
     // Stamp + audit the attendance change (req #5 last-updated, #8 audit trail —
     // attendance was previously NOT logged).
     const _markISO = `${mo}-${String(day).padStart(2, '0')}`;
@@ -26663,7 +26688,7 @@ window.addRenewalMulti = function(m, picks) {
         <div class="text-mute" style="font-size:10px">${t('Untick a sport to leave it out. Each renews at its OWN amount — nothing is bundled.', 'ألغِ اختيار رياضة لاستثنائها. كل رياضة تُجدَّد بمبلغها الخاص — لا شيء مُجمَّع.')}</div>
       </div>
       <div class="form-row">
-        <div class="field"><label>${t('Start / renewal date', 'تاريخ البداية / التجديد')}</label><input id="rnm-start" type="date" value="${TODAY}" /></div>
+        <div class="field"><label>${t('Start / renewal date', 'تاريخ البداية / التجديد')} <span class="text-mute" style="font-size:10px;font-weight:400">${t('(moves to the first attended class)', '(يتحول لأول حصة حضرها)')}</span></label><input id="rnm-start" type="date" value="${TODAY}" /></div>
         <div class="field"><label>${t('Validity', 'المدة')}</label><select id="rnm-validity">${validityOptionsHtml(DEFAULT_VALIDITY)}</select></div>
         <div class="field"><label>${t('Status', 'الحالة')}</label><select id="rnm-status"><option value="active">${t('Active', 'نشط')}</option><option value="expired">${t('Expired', 'منتهٍ')}</option></select></div>
       </div>
@@ -26747,6 +26772,8 @@ window.addRenewalMulti = function(m, picks) {
         }
         m.startDate = start;
         if (maxEnd && (!m.expiryDate || maxEnd > m.expiryDate)) m.expiryDate = maxEnd;
+        // v6.714 — classes already attended on a renewed package → it starts on the first of them
+        (m.subscriptions || []).filter(s => s._rid && created.length && String(s._sid || '').startsWith('s' + _stamp + '_')).forEach(s => { const _pl = renewalStartPlan(m, s); if (_pl && !_pl.blocked) applyRenewalStart(m, s, _pl); });
         if (status === 'active') m.status = 'Active';
         if (m.status === 'Withdrawn') m.status = (status === 'active' ? 'Active' : 'Expired');
 
@@ -26850,7 +26877,7 @@ window.addRenewal = function(memberId) {
         <div class="field"><label>Amount / Fee (QAR)</label><input id="rn-amount" type="number" step="0.01" min="0" value="${enrolledUnique[0]?.price || ''}" /></div>
       </div>
       <div class="form-row">
-        <div class="field"><label>Start / renewal date</label><input id="rn-start" type="date" value="${TODAY}" /></div>
+        <div class="field"><label>Start / renewal date <span class="text-mute" style="font-size:10px;font-weight:400">(moves to the first attended class)</span></label><input id="rn-start" type="date" value="${TODAY}" /></div>
         <div class="field"><label>Expiry date <span class="text-mute" style="font-size:10px;font-weight:400">(auto · override allowed)</span></label><input id="rn-end" type="date" /><div id="rn-end-hint" class="text-mute" style="font-size:10px;margin-top:3px"></div></div>
       </div>
       <div id="rn-priv-box" style="margin-top:6px;padding:9px 12px;border:1px dashed var(--border);border-radius:8px;display:grid;gap:6px">
@@ -27039,6 +27066,8 @@ window.addRenewal = function(memberId) {
         m.renewalsBySport[renewedSport] = (m.renewalsBySport[renewedSport] || 0) + 1;
         m.startDate = start;
         if (end && (!m.expiryDate || end > m.expiryDate)) m.expiryDate = end;
+        // v6.714 — classes already attended on this package (renewing late) → it starts on the first of them
+        { const _ns = m.subscriptions[m.subscriptions.length - 1], _pl = renewalStartPlan(m, _ns); if (_pl && !_pl.blocked) applyRenewalStart(m, _ns, _pl); }
         if ($('#rn-status').value === 'active') m.status = 'Active';
         // Renewing re-activates a withdrawn member (Withdrawn is terminal otherwise).
         if (m.status === 'Withdrawn') m.status = ($('#rn-status').value === 'active' ? 'Active' : 'Expired');
