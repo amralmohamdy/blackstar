@@ -2700,6 +2700,23 @@ function viewMember(id) {
           <tbody>${subs || `<tr><td colspan="${isViewerRole() ? 7 : 8}" class="text-mute" style="padding:16px">No subscription records</td></tr>`}</tbody>
         </table>
       </div>
+      ${(() => {
+        // v6.715 — month-by-month attendance summary (all packages) right in the card
+        const am = memberAttendanceByMonth(m), keys = Object.keys(am).sort().reverse();
+        if (!keys.length) return '';
+        let ty = 0, tn = 0;
+        const rows = keys.map(mo => {
+          const o = am[mo]; ty += o.y; tn += o.n;
+          const by = Object.keys(o.by); const rate = (o.y + o.n) ? Math.round(o.y / (o.y + o.n) * 100) + '%' : '—';
+          return `<tr><td>${fmtMonth(mo)}${by.length > 1 ? `<div class="text-mute" style="font-size:10px">${by.map(s => escapeHtml(s) + ' ' + o.by[s]).join(' · ')}</div>` : ''}</td><td style="color:var(--green);font-weight:700">${o.y}</td><td style="color:${o.n ? 'var(--red)' : 'var(--text-mute)'}">${o.n}</td><td>${o.y + o.n}</td><td>${rate}</td></tr>`;
+        }).join('');
+        const trate = (ty + tn) ? Math.round(ty / (ty + tn) * 100) + '%' : '—';
+        return `<h3 style="font-size:13px;font-weight:600;margin:14px 0 8px">${t('Attendance summary', 'ملخص الحضور')}</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>${t('Month', 'الشهر')}</th><th>${t('Present', 'حضور')}</th><th>${t('Absent', 'غياب')}</th><th>${t('Total', 'الإجمالي')}</th><th>${t('Rate', 'النسبة')}</th></tr></thead>
+        <tbody>${rows}<tr style="font-weight:700;border-top:2px solid var(--border)"><td>${t('All months', 'كل الشهور')}</td><td style="color:var(--green)">${ty}</td><td>${tn}</td><td>${ty + tn}</td><td>${trate}</td></tr></tbody>
+      </table></div>`;
+      })()}
       ${currentRole() === 'admin' ? (() => {
         // ─── Manage sport history (admin only) ──────────────────────────────
         // Lists sports this member has records for that are NO LONGER active —
@@ -37211,3 +37228,18 @@ window.deleteNote = function(id) {
   if (typeof audit === 'function') audit('note.delete', 'note:' + id, n.title || '(untitled)');
   withCloudConfirm({ verify: [{ collection: 'notes', id, absent: true, snapshot: n }], okMsg: t('Note deleted', 'تم حذف الملاحظة'), afterOk: () => render() });
 };
+
+// v6.715 — per-month present/absent counts across ALL of a member's sports (+ Mixed)
+function memberAttendanceByMonth(m) {
+  const out = {};
+  const add = (mo, sp, mark) => { const o = out[mo] || (out[mo] = { y: 0, n: 0, by: {} }); if (mark === 'Y') { o.y++; o.by[sp] = (o.by[sp] || 0) + 1; } else if (mark === 'N') o.n++; };
+  for (const mo of Object.keys((m && m.dailyAttendance) || {})) {
+    const cells = m.dailyAttendance[mo]; if (!cells || typeof cells !== 'object') continue;
+    for (const key of Object.keys(cells)) {
+      const days = cells[key]; if (!days || typeof days !== 'object') continue;
+      for (const d of Object.keys(days)) add(mo, key.replace(/ \d+$/, ''), days[d]);
+    }
+  }
+  for (const mo of Object.keys((m && m.mixedAttendance) || {})) for (const d of Object.keys(m.mixedAttendance[mo] || {})) { const r = m.mixedAttendance[mo][d]; if (r && r.mark !== 'N') add(mo, MIXED, 'Y'); }
+  return out;
+}
