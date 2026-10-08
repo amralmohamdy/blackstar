@@ -6364,9 +6364,10 @@ window.rebuildMemberFromProfile = function (memberId) {
     const cands = (m.subscriptions || []).filter(s => s.activity === sp && (s.status || '').toLowerCase() !== 'withdrawn');
     const coachCands = cands.filter(s => cid == null || s.coachId == null || String(s.coachId) === String(cid));
     const pool = coachCands.length ? coachCands : cands;
-    return pool.find(s => String(s.start || '') === String(e.start || '') && e.start)
-        || pool.slice().sort((a, b) => String(a.start || '').localeCompare(String(b.start || ''))).slice(-1)[0]
-        || null;
+    // v6.717 — the enrollment is what the member is signed up for NOW = the LATEST package of that sport + coach. An exact-start match
+    // used to win even when it was an OLDER, finished package (a stale enrollment start) and its price/classes were overwritten with the
+    // current package's (Ezz El-Din: the Aug 350 package would have become 375). Older packages are history — never touched.
+    return pool.slice().sort((a, b) => String(a.start || '').localeCompare(String(b.start || ''))).slice(-1)[0] || null;
   };
   const lineForSub = (sp, sub) => {
     if (sub && sub.invoiceNumber) {
