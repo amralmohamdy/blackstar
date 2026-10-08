@@ -18141,22 +18141,39 @@ function _recMonths() {
 }
 
 // v6.718 — Month Reconciliation: cash in hand + due + expenses + cash in bank (typed by hand) must equal the month's revenue.
-// Revenue / due / expenses are the Dashboard's own figures (financeAgg); cash in hand is the live drawer (cashDrawerNow).
+// Revenue / due are the Dashboard's own figures (financeAgg); cash in hand is the live drawer (cashDrawerNow).
+// Expenses = every expense paid out in the month (bank commission and salary payments included) EXCEPT the Citadel share (owed, not paid out)
+// and the owner cash-out / bank-deposit transfers.
+function monthRecExpenses(ym) {
+  let total = 0, citadel = 0, bankComm = 0;
+  for (const e of (state.expenses || [])) {
+    if (!e || e.deleted || expenseMonth(e) !== ym) continue;
+    if (isCashMovementExpense(e.category)) continue;
+    const amt = Number(e.amount) || 0;
+    if (e.autoCitadelShare || e.category === 'Citadel Company Share') { citadel += amt; continue; }
+    total += amt;
+    if (e.autoBankCommission || e.category === 'Bank Commission') bankComm += amt;
+  }
+  const r2 = x => Math.round(x * 100) / 100;
+  return { total: r2(total), citadel: r2(citadel), bankComm: r2(bankComm) };
+}
 function monthRecCompute(ym, bankOverride) {
   const F = financeAgg([ym]), D = (typeof cashDrawerNow === 'function') ? cashDrawerNow() : null, r2 = x => Math.round(x * 100) / 100;
   const stored = state.settings && state.settings.monthRecBank && state.settings.monthRecBank[ym];
   const bank = bankOverride != null ? bankOverride : (stored != null && stored !== '' ? Number(stored) : null);
-  const cash = D ? D.expected : null, revenue = r2(F.revenue), due = r2(F.due), expenses = r2(F.cashExpenses);
+  const X = monthRecExpenses(ym);
+  const cash = D ? D.expected : null, revenue = r2(F.revenue), due = r2(F.due), expenses = X.total;
   const have = cash != null && bank != null && isFinite(bank);
   const total = r2((cash || 0) + due + expenses + (have ? bank : 0)), diff = r2(revenue - total);
-  return { ym, revenue, cash, due, expenses, plExpenses: r2(F.expenses), bank, have, total, diff, match: have && Math.abs(diff) < 1 };
+  return { ym, revenue, cash, due, expenses, citadel: X.citadel, bankComm: X.bankComm, bank, have, total, diff, match: have && Math.abs(diff) < 1 };
 }
 window._mrShow = function () {
   const v = String((document.getElementById('mr-bank') || {}).value || '').trim(), ym = TODAY.slice(0, 7);
   const R = monthRecCompute(ym, v === '' ? null : parseFloat(v));
   const set = (id, html, color) => { const el = document.getElementById(id); if (el) { el.innerHTML = html; if (color) el.style.color = color; } };
   set('mr-total', R.have ? fmt(R.total) : '—');
-  set('mr-diff', R.have ? (R.match ? '✓ ' + t('Matched', 'متطابق') : (R.diff > 0 ? '▲ ' : '▼ ') + fmt(Math.abs(R.diff))) : '—', R.have ? (R.match ? 'var(--green)' : 'var(--red)') : 'var(--text-mute)');
+  set('mr-diff', R.have ? (R.match ? '✓ ' + t('Matched', 'متطابق') : (R.diff > 0 ? '▲ ' : '▼ ') + fmt(Math.abs(R.diff))) : '—', R.have ? (R.match ? '#fff' : '#fff') : '#fff');
+  const band = document.getElementById('mr-band'); if (band) band.style.background = !R.have ? 'linear-gradient(135deg,#64748b,#475569)' : (R.match ? 'linear-gradient(135deg,#16a34a,#15803d)' : 'linear-gradient(135deg,#dc2626,#b91c1c)');
   return R;
 };
 window._mrReconcile = function () {
@@ -18189,22 +18206,29 @@ PAGES.monthrec = (main) => {
     return;
   }
   const R = monthRecCompute(ym), money = n => fmt(Math.round(n * 100) / 100);
-  const row = (label, note, val, link) => '<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-top:1px solid var(--border)"><div><div style="font-weight:600">' + label + '</div>' + (note ? '<div class="text-mute" style="font-size:11px">' + note + '</div>' : '') + '</div><div class="num font-bold" style="font-size:16px">' + (link ? '<a href="#" onclick="navigate(\'' + link + '\');return false" style="text-decoration:none;color:inherit">' + val + ' ›</a>' : val) + '</div></div>';
+  // one colourful box; `link` makes the whole box open its source screen
+  const box = (grad, icon, label, valueHtml, note, link) =>
+    '<div' + (link ? ' onclick="navigate(\'' + link + '\')" style="cursor:pointer;' : ' style="') + 'background:' + grad + ';color:#fff;border-radius:16px;padding:18px 20px;min-height:150px;display:flex;flex-direction:column;justify-content:space-between;box-shadow:0 6px 18px rgba(0,0,0,.18)">' +
+      '<div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;opacity:.95"><span style="font-size:22px">' + icon + '</span>' + label + '</div>' +
+      '<div style="font-size:30px;font-weight:800;line-height:1.1;margin:10px 0 6px">' + valueHtml + '</div>' +
+      '<div style="font-size:11px;opacity:.88;line-height:1.5">' + note + '</div></div>';
+  const plus = '<div style="display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;color:var(--text-mute)">+</div>';
+  const bandBg = !R.have ? 'linear-gradient(135deg,#64748b,#475569)' : (R.match ? 'linear-gradient(135deg,#16a34a,#15803d)' : 'linear-gradient(135deg,#dc2626,#b91c1c)');
   main.innerHTML =
-    '<div class="topbar"><div><h1>🧾 ' + t('Month Reconciliation', 'تسوية الشهر') + '</h1><div class="subtitle">' + fmtMonth(ym) + ' · ' + t('does every riyal add up?', 'هل تتطابق كل الأرقام؟') + '</div></div></div>' +
-    '<div class="card" style="padding:18px;margin-bottom:16px">' +
-      '<div style="font-size:12px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px">' + t('Cash in hand + Due + Expenses + Cash in bank = Total revenue', 'النقد في الصندوق + المستحق + المصروفات + الرصيد البنكي = إجمالي الإيراد') + '</div>' +
-      row('🧮 ' + t('Cash in hand', 'النقد في الصندوق'), R.cash == null ? t('no cash count yet — record one first', 'لا يوجد جرد بعد — سجّل جرداً أولاً') : t('live drawer: last count + cash since', 'الصندوق الحالي: آخر جرد + النقد منذ ذلك'), R.cash == null ? '—' : money(R.cash), 'cashinhand') +
-      row('📋 ' + t('Due for this month', 'المستحق لهذا الشهر'), t('billed this month and not yet collected', 'مفوتر هذا الشهر ولم يُحصّل بعد'), money(R.due)) +
-      row('💸 ' + t('Expenses', 'المصروفات'), t('all money paid out this month (incl. salary payments); owner cash-out and bank deposits excluded', 'كل المبالغ المدفوعة هذا الشهر (شاملة الرواتب)؛ سحب المالك وإيداع البنك مستثنى') + ' · ' + t('expenses', 'مصروفات') + ' ' + money(R.plExpenses), money(R.expenses), 'expenses') +
-      '<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-top:1px solid var(--border);gap:12px"><div><div style="font-weight:600">🏦 ' + t('Cash in bank', 'الرصيد البنكي') + '</div><div class="text-mute" style="font-size:11px">' + t('type the bank balance by hand', 'اكتب رصيد البنك يدوياً') + '</div></div>' +
-        '<input id="mr-bank" type="number" step="0.01" min="0" inputmode="decimal" value="' + (R.bank != null ? R.bank : '') + '" oninput="_mrShow()" style="width:160px;text-align:right;font-size:16px;font-weight:700;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);color:var(--text)" /></div>' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-top:2px solid var(--border)"><div style="font-weight:800">= ' + t('Sum of the four', 'مجموع الأربعة') + '</div><div id="mr-total" class="num font-bold" style="font-size:18px">' + (R.have ? money(R.total) : '—') + '</div></div>' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;font-weight:800"><div>' + t('Total revenue', 'إجمالي الإيراد') + ' · ' + fmtMonth(ym) + '</div><div class="num" style="font-size:18px">' + money(R.revenue) + '</div></div>' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;font-weight:800"><div>' + t('Difference', 'الفرق') + '</div><div id="mr-diff" class="num" style="font-size:18px;color:' + (R.have ? (R.match ? 'var(--green)' : 'var(--red)') : 'var(--text-mute)') + '">' + (R.have ? (R.match ? '✓ ' + t('Matched', 'متطابق') : (R.diff > 0 ? '▲ ' : '▼ ') + money(Math.abs(R.diff))) : '—') + '</div></div>' +
-      '<div style="margin-top:12px;display:flex;gap:8px;align-items:center"><button class="btn primary" onclick="_mrReconcile()">⚖️ ' + t('Reconcile', 'تسوية') + '</button><span class="text-mute" style="font-size:11px">' + t('saves the bank figure for this month and checks the match', 'يحفظ رقم البنك لهذا الشهر ويتحقق من التطابق') + '</span></div>' +
+    '<div class="topbar"><div><h1>🧾 ' + t('Month Reconciliation', 'تسوية الشهر') + '</h1><div class="subtitle">' + fmtMonth(ym) + ' · ' + t('does every riyal add up?', 'هل تتطابق كل الأرقام؟') + '</div></div>' +
+      '<div class="topbar-actions"><button class="btn primary" onclick="_mrReconcile()">⚖️ ' + t('Reconcile', 'تسوية') + '</button></div></div>' +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:16px">' +
+      box('linear-gradient(135deg,#10b981,#047857)', '🧮', t('Cash in hand', 'النقد في الصندوق'), R.cash == null ? '—' : money(R.cash) + ' <span style="font-size:13px;font-weight:600">QAR</span>', R.cash == null ? t('no cash count yet — tap to record one', 'لا يوجد جرد بعد — اضغط لتسجيله') : t('live drawer: last count + cash since · tap to open', 'الصندوق الحالي: آخر جرد + النقد منذ ذلك · اضغط للفتح'), 'cashinhand') +
+      box('linear-gradient(135deg,#f59e0b,#c2410c)', '📋', t('Due this month', 'المستحق هذا الشهر'), money(R.due) + ' <span style="font-size:13px;font-weight:600">QAR</span>', t('billed this month, not yet collected', 'مفوتر هذا الشهر ولم يُحصّل بعد')) +
+      box('linear-gradient(135deg,#ef4444,#9f1239)', '💸', t('Expenses', 'المصروفات'), money(R.expenses) + ' <span style="font-size:13px;font-weight:600">QAR</span>', t('all expenses + bank commission + salary payments', 'كل المصروفات + عمولة البنك + دفعات الرواتب') + (R.citadel ? ' · ' + t('Citadel share', 'حصة سيتاديل') + ' ' + money(R.citadel) + ' ' + t('not counted', 'غير محتسبة') : '') + ' · ' + t('tap to open', 'اضغط للفتح'), 'expenses') +
+      box('linear-gradient(135deg,#3b82f6,#4338ca)', '🏦', t('Cash in bank', 'الرصيد البنكي'), '<input id="mr-bank" type="number" step="0.01" min="0" inputmode="decimal" value="' + (R.bank != null ? R.bank : '') + '" oninput="_mrShow()" onclick="event.stopPropagation()" placeholder="0.00" style="width:100%;font-size:26px;font-weight:800;padding:6px 10px;border:2px solid rgba(255,255,255,.55);border-radius:10px;background:rgba(255,255,255,.16);color:#fff;outline:none" />', t('type the bank balance by hand', 'اكتب رصيد البنك يدوياً')) +
     '</div>' +
-    '<div class="text-mute" style="font-size:11px;line-height:1.6">' + t('Revenue, due and expenses are the same figures as the Dashboard. A gap of less than 1 QAR counts as matched.', 'الإيراد والمستحق والمصروفات هي نفس أرقام لوحة التحكم. فرق أقل من ريال واحد يُعدّ متطابقاً.') + '</div>';
+    '<div id="mr-band" style="background:' + bandBg + ';color:#fff;border-radius:16px;padding:18px 22px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;align-items:center;box-shadow:0 6px 18px rgba(0,0,0,.18)">' +
+      '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;opacity:.9">' + t('Sum of the four boxes', 'مجموع الصناديق الأربعة') + '</div><div id="mr-total" style="font-size:26px;font-weight:800">' + (R.have ? money(R.total) : '—') + '</div></div>' +
+      '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;opacity:.9">' + t('Total revenue', 'إجمالي الإيراد') + ' · ' + fmtMonth(ym) + '</div><div style="font-size:26px;font-weight:800">' + money(R.revenue) + '</div></div>' +
+      '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;opacity:.9">' + t('Difference', 'الفرق') + '</div><div id="mr-diff" style="font-size:26px;font-weight:800">' + (R.have ? (R.match ? '✓ ' + t('Matched', 'متطابق') : (R.diff > 0 ? '▲ ' : '▼ ') + money(Math.abs(R.diff))) : '—') + '</div></div>' +
+    '</div>' +
+    '<div class="text-mute" style="font-size:11px;line-height:1.6;margin-top:12px">' + t('Cash in hand + Due + Expenses + Cash in bank = Total revenue. Revenue and due are the Dashboard figures. A gap of less than 1 QAR counts as matched.', 'النقد في الصندوق + المستحق + المصروفات + الرصيد البنكي = إجمالي الإيراد. الإيراد والمستحق هما أرقام لوحة التحكم. فرق أقل من ريال يُعدّ متطابقاً.') + '</div>';
 };
 
 PAGES.bankaccount = (main) => {
