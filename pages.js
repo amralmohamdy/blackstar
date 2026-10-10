@@ -4193,7 +4193,7 @@ function showMemberForm(m) {
                 if (typeof audit === 'function') audit('member.sibling_split', 'family:' + famId, `Split ${fmt(familyTotal)} across ${sibs.length} siblings = ${fmt(share)} each`);
                 closeModal();
                 render();
-                if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'members', id: data.id }], okMsg: `${t('Sibling added & saved to cloud', 'تمت إضافة الأخ/الأخت وحُفظ في السحابة')} · family payment ${fmt(familyTotal)} split across ${sibs.length} = ${fmt(share)} each` });
+                if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'members', id: data.id }], okMsg: `${t('Sibling added & saved to cloud', 'تمت إضافة الأخ/الأخت وحُفظ في السحابة')} · family payment ${fmt(familyTotal)} split across ${sibs.length} = ${fmt(share)} each`, afterOk: () => { startMemberAccount(data); showNewMemberWelcomeModal(data.id); } });
                 else { save(); toast(`Sibling added · family payment ${fmt(familyTotal)} split across ${sibs.length} = ${fmt(share)} each`); }
                 return;
               }
@@ -4207,6 +4207,7 @@ function showMemberForm(m) {
             render();
             const _okNewMemberInv = () => {
               toast(`✓ ${t('Member added & saved to cloud', 'تمت إضافة العضو وحُفظ في السحابة')} · ${enrollments.length} sport${enrollments.length !== 1 ? 's' : ''} · invoice ${ref}` + (invoiceBalance(newInv) > 0.001 ? ` · ${fmt(paidNow)} paid, ${fmt(invoiceBalance(newInv))} due` : ''), 'success');
+              startMemberAccount(data);   // v6.720 — create the member's portal login now
               showNewMemberInvoiceModal(newInv.id, data.name);
               if (typeof pushInvoiceNotif === 'function') pushInvoiceNotif(newInv.id, data.id, data.name, 'new');   // bell → download later (v6.469)
             };
@@ -4220,7 +4221,7 @@ function showMemberForm(m) {
           // Close the form and go straight to the loader (don't render the whole list first —
           // that delayed the loader); the list re-renders on OK. (v6.348)
           closeModal();
-          if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'members', id: data.id }], okMsg: t('Member added & saved to cloud', 'تمت إضافة العضو وحُفظ في السحابة'), afterOk: () => render() });
+          if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'members', id: data.id }], okMsg: t('Member added & saved to cloud', 'تمت إضافة العضو وحُفظ في السحابة'), afterOk: () => { render(); startMemberAccount(data); showNewMemberWelcomeModal(data.id); } });
           else { save(); render(); toast('Member added'); }
           return;
         }
@@ -4561,6 +4562,7 @@ function showNewMemberInvoiceModal(invoiceId, customerName) {
         ${payLine}
         <div class="text-dim" style="font-size:13px;margin-bottom:4px">A subscription invoice has been created automatically.</div>
         <div class="text-mute" style="font-size:12px">You can export it as a PDF (filename will be the customer's name) to share with the customer.</div>
+        <div id="nm-acct" class="text-mute" style="font-size:12px;margin-top:10px">⏳ Creating login…</div>
       </div>
     `,
     actions: [
@@ -4568,8 +4570,10 @@ function showNewMemberInvoiceModal(invoiceId, customerName) {
       { label: '✏️ Edit member', class: 'btn ghost', onclick: () => { closeModal(); if (inv && inv.customerId) editMember(inv.customerId); } },
       { label: '💬 Send to WhatsApp', class: 'btn ghost', onclick: () => { closeModal(); sendInvoiceWhatsApp(invoiceId); } },
       { label: '⬇ Export Invoice PDF', class: 'btn primary', onclick: () => { closeModal(); printInvoicePDF(invoiceId); } },
+      ...(inv && inv.customerId != null ? [{ label: '👋 Send Welcome Message', class: 'btn primary', onclick: () => { closeModal(); sendWelcomeMessage(inv.customerId, 'new'); } }] : []),
     ],
   });
+  if (inv && inv.customerId != null) fillAcctLine(inv.customerId);
 }
 
 // Per-member money + attendance rollup for the CSV export. Money comes from
@@ -30553,6 +30557,18 @@ function welcomeMemberships(m) {
     classes: parseInt(s.totalClasses) || null,
   }));
 }
+// v6.720 — website + login for the member portal. Username = mobile@blackstars.com, password = the mobile number (set when the account is
+// created on Save). A renewal gets the website + username only (the password may have been changed since).
+const MEMBER_PORTAL_URL = 'https://www.blackstarssports.com';
+function welcomeLoginBlock(m, kind) {
+  const digits = canonicalMobile(m && m.phone);
+  if (!digits || digits.length < 6) return { ar: '', en: '' };
+  const email = phoneToMemberEmail(m.phone), withPw = kind !== 'renewal';
+  return {
+    ar: '🌐 الموقع: ' + MEMBER_PORTAL_URL + '\n👤 اسم المستخدم: ' + email + (withPw ? '\n🔑 كلمة المرور: ' + digits + '\n(يرجى تغيير كلمة المرور بعد أول تسجيل دخول)' : ''),
+    en: '🌐 Website: ' + MEMBER_PORTAL_URL + '\n👤 Username: ' + email + (withPw ? '\n🔑 Password: ' + digits + '\n(Please change your password after your first login)' : ''),
+  };
+}
 // Bilingual (Arabic-first) welcome / renewal message with the membership details inlined.
 function buildWelcomeMsg(m, kind) {
   const nameAr = m.nameArabic || m.name || '';
@@ -30567,13 +30583,15 @@ function buildWelcomeMsg(m, kind) {
     `${d.classes ? '\n   🎟️ Sessions: ' + d.classes : ''}`;
   const detAr = dets.map(lineAr).join('\n\n');
   const detEn = dets.map(lineEn).join('\n\n');
+  const lg = welcomeLoginBlock(m, kind);
+  const lgAr = lg.ar ? '\n\n' + lg.ar : '', lgEn = lg.en ? '\n\n' + lg.en : '';
   let ar, en;
   if (kind === 'renewal') {
-    ar = `مرحباً ${nameAr} 🖤⭐\n\nشكراً لتجديد اشتراكك في نادي بلاك ستارز الرياضي! سعداء باستمرارك معنا 💚\n\nتفاصيل اشتراكك:\n${detAr}\n\nنتمنى لك موسماً رياضياً ممتعاً! لأي استفسار، نحن في خدمتك.\nنادي بلاك ستارز الرياضي 🖤⭐`;
-    en = `Hello ${nameEn} 🖤⭐\n\nThank you for renewing your membership at Black Stars Sports Club — we're happy to have you continue with us! 💚\n\nYour membership details:\n${detEn}\n\nWishing you a great season. For any questions, we're here to help.\nBlack Stars Sports Club 🖤⭐`;
+    ar = `مرحباً ${nameAr} 🖤⭐\n\nشكراً لتجديد اشتراكك في نادي بلاك ستارز الرياضي! سعداء باستمرارك معنا 💚\n\nتفاصيل اشتراكك:\n${detAr}${lgAr}\n\nنتمنى لك موسماً رياضياً ممتعاً! لأي استفسار، نحن في خدمتك.\nنادي بلاك ستارز الرياضي 🖤⭐`;
+    en = `Hello ${nameEn} 🖤⭐\n\nThank you for renewing your membership at Black Stars Sports Club — we're happy to have you continue with us! 💚\n\nYour membership details:\n${detEn}${lgEn}\n\nWishing you a great season. For any questions, we're here to help.\nBlack Stars Sports Club 🖤⭐`;
   } else {
-    ar = `أهلاً وسهلاً ${nameAr} 🖤⭐\n\nيسعدنا انضمامك إلى عائلة نادي بلاك ستارز الرياضي! مرحباً بك 💚\n\nتفاصيل اشتراكك:\n${detAr}\n\nنتمنى لك رحلة رياضية ممتعة! لأي استفسار، نحن في خدمتك.\nنادي بلاك ستارز الرياضي 🖤⭐`;
-    en = `Welcome ${nameEn} 🖤⭐\n\nWe're delighted to have you join the Black Stars Sports Club family! 💚\n\nYour membership details:\n${detEn}\n\nWishing you a wonderful sporting journey. We're here for anything you need.\nBlack Stars Sports Club 🖤⭐`;
+    ar = `أهلاً وسهلاً ${nameAr} 🖤⭐\n\nيسعدنا انضمامك إلى عائلة نادي بلاك ستارز الرياضي! مرحباً بك 💚\n\nتفاصيل اشتراكك:\n${detAr}${lgAr}\n\nنتمنى لك رحلة رياضية ممتعة! لأي استفسار، نحن في خدمتك.\nنادي بلاك ستارز الرياضي 🖤⭐`;
+    en = `Welcome ${nameEn} 🖤⭐\n\nWe're delighted to have you join the Black Stars Sports Club family! 💚\n\nYour membership details:\n${detEn}${lgEn}\n\nWishing you a wonderful sporting journey. We're here for anything you need.\nBlack Stars Sports Club 🖤⭐`;
   }
   return ar + '\n\n———\n\n' + en;
 }
@@ -30587,6 +30605,68 @@ function pendingWelcomeCount() {
     return (state.members || []).filter(m => welcomeKind(m, cutoff) && !welcomeDone(m)).length;
   } catch (_) { return 0; }
 }
+// v6.720 — create the member's portal login (mobile@blackstars.com / password = mobile) if it does not exist yet. Idempotent: an existing login is kept.
+// Uses the secondary Firebase app, so the staff session is untouched. Returns { ok, email, pw, created } or { ok:false, error }.
+async function ensureMemberPortalAccount(m) {
+  const digits = canonicalMobile(m && m.phone);
+  if (!digits || digits.length < 6) return { ok: false, error: t('no valid mobile number', 'لا يوجد رقم جوال صالح') };
+  const email = phoneToMemberEmail(m.phone), pw = digits;
+  let res;
+  try { res = await window.Storage.provisionMemberLogin(email, pw); }
+  catch (err) { return { ok: false, email, pw, error: (err && (err.message || err.code)) || String(err) }; }
+  if (!m.portalAccount) m.portalAccount = {};
+  if (!m.portalAccount.createdAt) m.portalAccount.createdAt = new Date().toISOString();
+  if (!m.portalAccount.status) m.portalAccount.status = 'Created';
+  if (!state.settings) state.settings = {};
+  if (!state.settings.userRoles) state.settings.userRoles = {};
+  if (!state.settings.userRoles[email]) { const entry = { role: 'student', memberId: m.id }; stampUpdate(entry); state.settings.userRoles[email] = entry; }
+  stampUpdate(m);
+  if (typeof audit === 'function') audit('member.account', 'member:' + m.id, (res === 'created' ? 'Portal login created for ' : 'Portal login already existed for ') + (m.name || m.nameArabic) + ' (' + email + ')', { memberId: m.id, account: email, created: res === 'created' });
+  save();
+  return { ok: true, email, pw, created: res === 'created' };
+}
+// Start (and remember) the account creation for a just-saved member; the confirmation popup reads the result.
+window.startMemberAccount = function (m) {
+  const p = ensureMemberPortalAccount(m);
+  (window._acctP = window._acctP || {})[m.id] = p;
+  return p;
+};
+window.fillAcctLine = function (memberId) {
+  const p = window._acctP && window._acctP[memberId]; if (!p) return;
+  p.then(a => {
+    const el = document.getElementById('nm-acct'); if (!el) return;
+    el.innerHTML = a.ok
+      ? '🔑 ' + t(a.created ? 'Login created' : 'Login already exists', a.created ? 'تم إنشاء الحساب' : 'الحساب موجود مسبقاً') + ': <b dir="ltr">' + escapeHtml(a.email) + '</b> · ' + t('password = mobile number', 'كلمة المرور = رقم الجوال')
+      : '⚠ ' + t('Login not created: ', 'لم يُنشأ الحساب: ') + escapeHtml(a.error || '');
+    el.style.color = a.ok ? 'var(--green)' : 'var(--accent-2)';
+  });
+};
+// Send the welcome (with website + login) on WhatsApp: make sure the login exists first, so the credentials in the text work.
+window.sendWelcomeMessage = async function (id, kind, rerender) {
+  if (!['admin', 'receptionist'].includes(currentRole())) { toast(t('Admins or receptionists only', 'للمسؤولين أو موظفي الاستقبال فقط'), 'error'); return; }
+  const m = state.members.find(x => x.id === id); if (!m) return;
+  kind = kind || (welcomeKind(m, addDays(TODAY, -90)) || 'new');
+  const win = window.open('', '_blank');   // opened inside the click so the browser allows it; pointed at WhatsApp below
+  const a = await ensureMemberPortalAccount(m);
+  if (!a.ok && canonicalMobile(m.phone).length >= 6) { try { if (win) win.close(); } catch (_) {} toast(t('Login could not be created: ', 'تعذّر إنشاء الحساب: ') + (a.error || ''), 'error'); return; }
+  const wa = welcomeWaLink(m, kind);
+  if (!wa) { try { if (win) win.close(); } catch (_) {} toast(t('This member has no valid phone number.', 'لا يوجد رقم هاتف صالح لهذا العضو.'), 'error'); return; }
+  if (win) win.location = wa; else window.open(wa, '_blank', 'noopener');
+  window.markWelcomed(id, rerender ? { rerender: true } : undefined);
+};
+// Popup after a new member is saved WITHOUT an invoice (no payment / sibling): account status + Send Welcome Message.
+window.showNewMemberWelcomeModal = function (memberId) {
+  const m = state.members.find(x => x.id === memberId); if (!m) return;
+  showModal({
+    title: '✅ ' + t('Member added', 'تمت إضافة العضو'),
+    body: '<div style="text-align:center;padding:10px 0"><div style="font-size:42px;margin-bottom:10px">🎉</div><div style="font-size:16px;font-weight:600;margin-bottom:6px">' + escapeHtml(m.name || m.nameArabic || '') + ' ' + t('added successfully', 'أُضيف بنجاح') + '</div><div id="nm-acct" class="text-mute" style="font-size:12px;margin-top:8px">⏳ ' + t('Creating login…', 'جارٍ إنشاء الحساب…') + '</div></div>',
+    actions: [
+      { label: t('Done', 'تم'), class: 'btn ghost', onclick: closeModal },
+      { label: '👋 ' + t('Send Welcome Message', 'إرسال رسالة الترحيب'), class: 'btn primary', onclick: () => { closeModal(); sendWelcomeMessage(memberId, 'new'); } },
+    ],
+  });
+  fillAcctLine(memberId);
+};
 // Stamp a member as welcomed today (no immediate re-render — the WhatsApp tab is opening).
 window.markWelcomed = function(id, opts) {
   const m = state.members.find(x => x.id === id);
@@ -30613,7 +30693,7 @@ window.previewWelcome = function(id, kind) {
     actions: [
       { label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal },
       { label: '📋 ' + t('Copy', 'نسخ'), class: 'btn ghost', onclick: () => { try { navigator.clipboard.writeText(window._welcomeMsgCache || msg); toast(t('Copied', 'تم النسخ'), 'success'); } catch (_) { toast(t('Copy failed', 'تعذر النسخ'), 'error'); } } },
-      ...(wa ? [{ label: '💬 ' + t('Send on WhatsApp', 'إرسال عبر واتساب'), class: 'btn primary', onclick: () => { window.open(wa, '_blank', 'noopener'); window.markWelcomed(id, { rerender: true }); closeModal(); } }] : []),
+      ...(wa ? [{ label: '💬 ' + t('Send on WhatsApp', 'إرسال عبر واتساب'), class: 'btn primary', onclick: () => { closeModal(); sendWelcomeMessage(id, kind, true); } }] : []),
     ],
   });
 };
@@ -30675,7 +30755,7 @@ PAGES.welcome = (main) => {
         <td class="text-right" style="white-space:nowrap">
           <button class="btn ghost sm" onclick="previewWelcome(${m.id}, '${r.kind}')" title="${t('Preview the message', 'معاينة الرسالة')}">👁 ${t('Preview', 'معاينة')}</button>
           ${wa
-            ? `<a class="btn ${r.done ? 'ghost' : 'primary'} sm" style="text-decoration:none" href="${wa}" target="_blank" rel="noopener" onclick="markWelcomed(${m.id})" title="${t('Open WhatsApp with the welcome pre-filled', 'فتح واتساب برسالة الترحيب الجاهزة')}">💬 ${r.done ? t('Send again', 'إرسال مجدداً') : t('Send welcome', 'إرسال الترحيب')}</a>`
+            ? `<button class="btn ${r.done ? 'ghost' : 'primary'} sm" onclick="sendWelcomeMessage(${m.id}, '${r.kind}', true)" title="${t('Create the login if needed and open WhatsApp with the welcome pre-filled', 'إنشاء الحساب عند الحاجة وفتح واتساب برسالة الترحيب الجاهزة')}">💬 ${r.done ? t('Send again', 'إرسال مجدداً') : t('Send welcome', 'إرسال الترحيب')}</button>`
             : `<span class="text-mute" style="font-size:11px">${t('no phone', 'لا يوجد هاتف')}</span>`}
           ${r.done ? '' : `<button class="btn ghost sm" onclick="markWelcomed(${m.id}, {rerender:true})" title="${t('Mark welcomed without sending', 'وضع علامة تم الترحيب دون إرسال')}">✓</button>`}
           <button class="btn ghost sm" onclick="viewMember(${m.id})" title="${t('Open profile', 'فتح الملف')}">👤</button>
