@@ -2805,6 +2805,7 @@ function viewMember(id) {
         `;
       })() : ''}
     `,
+    size: 'xl',   // v6.724 — wider card (the history table no longer scrolls sideways)
     actions: [
       ...(() => {
         // "🧾 Get Invoice" — find the latest non-deleted Membership invoice for this
@@ -2854,6 +2855,7 @@ function viewMember(id) {
       { label: '📊 ' + t('Attendance CSV', 'حضور CSV'), class: 'btn ghost', onclick: () => { exportMemberAttendance(id); } },
       { label: '👨‍👩‍👧 Family', class: 'btn ghost', onclick: () => { closeModal(); assignFamily(id); } },
       { label: 'Edit', class: 'btn ghost', onclick: () => { closeModal(); editMember(id); } },
+      ...(['admin', 'receptionist'].includes(currentRole()) ? [{ label: '👋 ' + t('Send Welcome Message', 'إرسال رسالة الترحيب'), class: 'btn primary', onclick: () => { sendWelcomeMessage(id); } }] : []),
       { label: 'Close', class: 'btn primary', onclick: closeModal },
     ],
   });
@@ -3575,7 +3577,7 @@ function updatePaidNowHint() {
 }
 
 function addEnrollRow() {  const last = window._enrollRows[window._enrollRows.length - 1];
-  window._enrollRows.push({ sport: SPORTS[0], coachId: state.coaches[0]?.id, classes: '', price: '', start: TODAY, validity: DEFAULT_VALIDITY });
+  window._enrollRows.push({ sport: SPORTS[0], coachId: null, classes: '', price: '', start: TODAY, validity: DEFAULT_VALIDITY });
   renderEnrollRows();
 }
 
@@ -3639,7 +3641,7 @@ function showMemberForm(m) {
         start: TODAY, validity: DEFAULT_VALIDITY, paid: false,
       }));
     } else {
-      window._enrollRows = [{ sport: m.sport || SPORTS[0], coachId: m.coachId || state.coaches[0]?.id, classes: '', price: '', start: TODAY, validity: DEFAULT_VALIDITY, paid: false }];
+      window._enrollRows = [{ sport: m.sport || SPORTS[0], coachId: m.coachId || null, classes: '', price: '', start: TODAY, validity: DEFAULT_VALIDITY, paid: false }];
     }
   } else if (m.enrollments && m.enrollments.length) {
     window._enrollRows = m.enrollments.map(e => {
@@ -3707,10 +3709,10 @@ function showMemberForm(m) {
       originalCoachId: s.coachId,  // v6.504
     }));
     if (!window._enrollRows.length) {
-      window._enrollRows = [{ sport: m.sport || SPORTS[0], coachId: m.coachId || state.coaches[0]?.id, classes: '', price: '', start: m.startDate || TODAY, validity: m.validity || DEFAULT_VALIDITY, paid: false }];
+      window._enrollRows = [{ sport: m.sport || SPORTS[0], coachId: m.coachId || null, classes: '', price: '', start: m.startDate || TODAY, validity: m.validity || DEFAULT_VALIDITY, paid: false }];
     }
   } else {
-    window._enrollRows = [{ sport: m.sport || SPORTS[0], coachId: m.coachId || state.coaches[0]?.id, classes: '', price: '', start: m.startDate || TODAY, validity: m.validity || DEFAULT_VALIDITY, paid: false }];
+    window._enrollRows = [{ sport: m.sport || SPORTS[0], coachId: m.coachId || null, classes: '', price: '', start: m.startDate || TODAY, validity: m.validity || DEFAULT_VALIDITY, paid: false }];
   }
   // Membership expiry: default to auto (latest sport end). If the member already
   // has a stored expiry that differs from the auto value, treat it as a manual
