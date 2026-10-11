@@ -3239,7 +3239,7 @@ function enrollRowHtml(row, idx) {
   }
   const coachOpts =
     `<option value="" ${assignedCoach ? '' : 'selected'}>— Select coach —</option>` +
-    selList.map(c => `<option value="${c.id}" ${assignedCoach && c.id === assignedCoach.id ? 'selected' : ''}>${coachOptionLabel(c, row.sport)}</option>`).join('');
+    coachOptionsHtml(selList, row.sport, assignedCoach ? assignedCoach.id : null);
   // Visual warning: highlight Classes/Price fields if they're empty or zero
   const classesNum = parseInt(row.classes) || 0;
   const priceNum = parseFloat(row.price) || 0;
@@ -4193,7 +4193,7 @@ function showMemberForm(m) {
                 if (typeof audit === 'function') audit('member.sibling_split', 'family:' + famId, `Split ${fmt(familyTotal)} across ${sibs.length} siblings = ${fmt(share)} each`);
                 closeModal();
                 render();
-                if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'members', id: data.id }], okMsg: `${t('Sibling added & saved to cloud', 'تمت إضافة الأخ/الأخت وحُفظ في السحابة')} · family payment ${fmt(familyTotal)} split across ${sibs.length} = ${fmt(share)} each`, afterOk: () => { startMemberAccount(data); showNewMemberWelcomeModal(data.id); } });
+                if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'members', id: data.id }], okMsg: `${t('Sibling added & saved to cloud', 'تمت إضافة الأخ/الأخت وحُفظ في السحابة')} · family payment ${fmt(familyTotal)} split across ${sibs.length} = ${fmt(share)} each`, onOk: (r) => { startMemberAccount(data); if (r && r.slow) showNewMemberWelcomeModal(data.id); }, bigActions: newMemberBigActions(data.id, newInv.id), bigNote: NEW_MEMBER_ACCT_NOTE, afterPopup: () => fillAcctLine(data.id) });
                 else { save(); toast(`Sibling added · family payment ${fmt(familyTotal)} split across ${sibs.length} = ${fmt(share)} each`); }
                 return;
               }
@@ -4213,7 +4213,7 @@ function showMemberForm(m) {
             };
             // verify BOTH the member doc AND the invoice doc are retrievable on the SERVER
             // before showing success + the printable invoice. (v6.332)
-            if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'members', id: data.id }, { collection: 'invoices', id: newInv.id }], onOk: _okNewMemberInv });
+            if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'members', id: data.id }, { collection: 'invoices', id: newInv.id }], onOk: _okNewMemberInv, bigActions: newMemberBigActions(data.id, newInv.id), bigNote: NEW_MEMBER_ACCT_NOTE, afterPopup: () => fillAcctLine(data.id) });
             else { save(); _okNewMemberInv(); }
             return;
           }
@@ -4221,7 +4221,7 @@ function showMemberForm(m) {
           // Close the form and go straight to the loader (don't render the whole list first —
           // that delayed the loader); the list re-renders on OK. (v6.348)
           closeModal();
-          if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'members', id: data.id }], okMsg: t('Member added & saved to cloud', 'تمت إضافة العضو وحُفظ في السحابة'), afterOk: () => { render(); startMemberAccount(data); showNewMemberWelcomeModal(data.id); } });
+          if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'members', id: data.id }], okMsg: t('Member added & saved to cloud', 'تمت إضافة العضو وحُفظ في السحابة'), onOk: (r) => { startMemberAccount(data); if (r && r.slow) showNewMemberWelcomeModal(data.id); }, bigActions: newMemberBigActions(data.id, null), bigNote: NEW_MEMBER_ACCT_NOTE, afterPopup: () => fillAcctLine(data.id), afterOk: () => render() });
           else { save(); render(); toast('Member added'); }
           return;
         }
@@ -11307,9 +11307,7 @@ PAGES.schedule = (main) => {
     const slotLabel = (SLOTS.find(s => s.hour === slot) || {}).label || `${slot}:00`;
     const dayLabel = (DAYS.find(d => d.key === day) || {}).label || day;
     const eligible = coachesForSport(sport, existing && existing.coachId);
-    const opts = eligible.map(c =>
-      `<option value="${c.id}" ${existing && existing.coachId === c.id ? 'selected' : ''}>${coachOptionLabel(c, sport)}</option>`
-    ).join('');
+    const opts = coachOptionsHtml(eligible, sport, existing && existing.coachId);
     // v6.677 — a class can be placed with NO coach (an outside coach, or not decided yet). The option sits LAST so a new class still
     // defaults to a real coach; it is the default only when nobody teaches the sport, or when editing a coach-less class.
     const _noCoachSel = existing ? (existing.coachId == null) : (eligible.length === 0);
@@ -26583,7 +26581,7 @@ window.switchSport = function(memberId) {
     const prev = targets[i].coachId || null;
     const list = coachesForSport(sport, prev);
     coachSel.innerHTML = list.length
-      ? list.map(co => `<option value="${co.id}" ${co.id === prev ? 'selected' : ''}>${coachOptionLabel(co, sport)}</option>`).join('')
+      ? coachOptionsHtml(list, sport, prev)
       : '<option value="">— no active coach teaches this sport —</option>';
     targets[i].coachId = parseInt(coachSel.value) || null;
   }
@@ -26935,7 +26933,7 @@ window.addRenewal = function(memberId) {
   if (m.coachId && !selCoaches.some(c => c.id === m.coachId)) {
     const cur = state.coaches.find(c => c.id === m.coachId); if (cur) selCoaches.push(cur);
   }
-  const coachOpts = c => selCoaches.map(co => `<option value="${co.id}" ${co.id===c?'selected':''}>${escapeHtml(co.name)}${isCoachActive(co)?'':' (inactive)'}</option>`).join('');
+  const coachOpts = c => coachOptionsHtml(selCoaches, null, c, co => escapeHtml(co.name) + (isCoachActive(co) ? '' : ' (inactive)'));
 
   // The member's current enrolled sports (each with coach + class progress)
   const enrolled = (m.enrollments && m.enrollments.length) ? m.enrollments
@@ -30654,7 +30652,14 @@ window.sendWelcomeMessage = async function (id, kind, rerender) {
   if (win) win.location = wa; else window.open(wa, '_blank', 'noopener');
   window.markWelcomed(id, rerender ? { rerender: true } : undefined);
 };
-// Popup after a new member is saved WITHOUT an invoice (no payment / sibling): account status + Send Welcome Message.
+// v6.722 — the big buttons in the "Saved in the cloud" popup after a new member: Send Welcome Message (+ Download Invoice when there is one).
+const NEW_MEMBER_ACCT_NOTE = '<div id="nm-acct" class="text-mute" style="font-size:12px;margin-top:8px">⏳ Creating login…</div>';
+function newMemberBigActions(memberId, invoiceId) {
+  const list = [{ label: '👋 ' + t('Send Welcome Message', 'إرسال رسالة الترحيب'), bg: 'linear-gradient(135deg,#16a34a,#15803d)', onclick: () => sendWelcomeMessage(memberId, 'new') }];
+  if (invoiceId != null) list.push({ label: '⬇ ' + t('Download Invoice', 'تحميل الفاتورة'), bg: 'linear-gradient(135deg,#3b82f6,#4338ca)', onclick: () => printInvoicePDF(invoiceId) });
+  return list;
+}
+// Fallback popup (slow-save path, where the cloud popup is skipped): account status + Send Welcome Message.
 window.showNewMemberWelcomeModal = function (memberId) {
   const m = state.members.find(x => x.id === memberId); if (!m) return;
   showModal({
@@ -31143,7 +31148,7 @@ window.editUserRole = function(email) {
   const map = (state.settings && state.settings.userRoles) || {};
   const existing = email ? map[email] : null;
   const role0 = (existing && existing.role) || 'coach';
-  const coachSel = id => (state.coaches || []).map(c => `<option value="${c.id}" ${id === c.id ? 'selected' : ''}>${escapeHtml(c.name)}${isCoachActive(c) ? '' : ' (inactive)'}</option>`).join('');
+  const coachSel = id => coachOptionsHtml(state.coaches || [], null, id, c => escapeHtml(c.name) + (isCoachActive(c) ? '' : ' (inactive)'));
   // v6.491: a login can be linked to MULTIPLE coaches (tick several) and switch between
   // them from the sidebar. Pre-tick the existing coachIds (or the legacy single coachId).
   const _selCoachIds = (existing && Array.isArray(existing.coachIds) && existing.coachIds.length)
