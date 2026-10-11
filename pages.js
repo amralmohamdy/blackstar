@@ -13152,6 +13152,56 @@ PAGES.invoices = (main) => {
 //   - Product             → POS-style cart with line items + walk-in/member selector
 //   - Rental              → redirects to the Rentals page (facility-specific form)
 // Each invoice still has ONE category — line items only stack within Product type.
+// v6.727 — WALK-IN customers are remembered. Every walk-in typed on an invoice / product sale is kept in state.rentalCustomers (the same list the Rentals
+// screen uses), and typing a known name (or phone) later fills the other field. The suggestion list = that list + every walk-in already on an invoice.
+function walkInDirectory() {
+  const seen = new Map();
+  const add = (name, phone) => {
+    name = String(name || '').trim(); phone = (typeof isRealPhone === 'function' && !isRealPhone(phone)) ? '' : String(phone || '').trim();
+    if (!name) return;
+    const cm = canonicalMobile(phone), key = cm.length >= 6 ? 'p' + cm : 'n' + name.toLowerCase();
+    const e = seen.get(key);
+    if (!e) seen.set(key, { name, phone }); else if (!e.phone && phone) e.phone = phone;
+  };
+  (state.rentalCustomers || []).forEach(c => c && add(c.name, c.phone));
+  (state.invoices || []).forEach(i => { if (i && !i.deleted && i.customerId == null && i.customerName) add(i.customerName, i.customerPhone); });
+  return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+window.walkInRemember = function (name, phone) {
+  name = String(name || '').trim(); phone = String(phone || '').trim();
+  if (!name) return false;
+  if (!Array.isArray(state.rentalCustomers)) state.rentalCustomers = [];
+  const cm = canonicalMobile(phone);
+  if (cm.length >= 6 && (state.members || []).some(m => m && !m.deleted && canonicalMobile(m.phone) === cm)) return false;   // a member — found through the member picker
+  const c = cm.length >= 6 ? state.rentalCustomers.find(x => canonicalMobile(x.phone) === cm)
+    : state.rentalCustomers.find(x => !canonicalMobile(x.phone) && String(x.name || '').trim().toLowerCase() === name.toLowerCase());
+  if (c) { if (!c.name) c.name = name; if (!c.phone && phone) c.phone = phone; return false; }
+  state.rentalCustomers.push({ id: nextId(state.rentalCustomers), name, phone, qid: null, notes: null, source: 'walk-in invoice', createdAt: new Date().toISOString() });
+  return true;
+};
+// phone field adapters: a plain <input id> or the country-code widget (idPrefix-code + idPrefix-digits)
+function walkInPlainIO(id) { return { ids: [id], get: () => ((document.getElementById(id) || {}).value || '').trim(), set: v => { const el = document.getElementById(id); if (el) el.value = v; } }; }
+function walkInPhoneIO(prefix) {
+  return { ids: [prefix + '-digits'], get: () => (typeof readPhoneInput === 'function' ? readPhoneInput(prefix).digits : ''),
+    set: v => { const p = parseStoredPhone(v), c = document.getElementById(prefix + '-code'), d = document.getElementById(prefix + '-digits'); if (c) { c.value = p.code; try { c.dispatchEvent(new Event('change')); } catch (_) {} } if (d) d.value = p.digits; } };
+}
+// name → phone (only into an EMPTY phone box) and phone → name (only into an EMPTY name box)
+function walkInWire(nameId, io) {
+  try { walkInWireRaw(nameId, io); } catch (_) {}   // the suggestions are a convenience — they must never break the invoice dialog
+}
+function walkInWireRaw(nameId, io) {
+  const nameEl = document.getElementById(nameId); if (!nameEl) return;
+  let dl = document.getElementById('walkin-names');
+  if (!dl) { dl = document.createElement('datalist'); dl.id = 'walkin-names'; document.body.appendChild(dl); }
+  dl.innerHTML = walkInDirectory().map(e => '<option value="' + escapeHtml(e.name) + '">' + escapeHtml(e.phone || '') + '</option>').join('');
+  nameEl.setAttribute('list', 'walkin-names'); nameEl.setAttribute('autocomplete', 'off');
+  const byName = () => { const v = nameEl.value.trim().toLowerCase(); return v ? walkInDirectory().find(e => e.name.toLowerCase() === v) : null; };
+  const nameToPhone = () => { const e = byName(); if (e && e.phone && !io.get()) io.set(e.phone); };
+  nameEl.addEventListener('input', nameToPhone); nameEl.addEventListener('change', nameToPhone);
+  const phoneToName = () => { const cm = canonicalMobile(io.get()); if (cm.length < 6 || nameEl.value.trim()) return; const e = walkInDirectory().find(x => canonicalMobile(x.phone) === cm); if (e) nameEl.value = e.name; };
+  (io.ids || []).forEach(id => { const el = document.getElementById(id); if (el) { el.addEventListener('change', phoneToName); el.addEventListener('blur', phoneToName); } });
+}
+
 function addInvoice() {
   const sports = ['MMA','Boxing','Kick Boxing','Karate','Taekwondo','Gymnastic','Football','Swimming','Zumba','Court Rental','Merchandise'];
   const coachOptions = activeCoaches().map(c => c.name).concat(['Yasmin (guest)','Ibrahim (guest)']);
@@ -13256,9 +13306,11 @@ function addInvoice() {
         <div class="field"><label>Paid now (QAR) <span class="text-mute" style="font-size:10px;font-weight:400">(blank = full)</span></label><input id="f-paid" type="number" min="0" step="0.01" placeholder="full amount" /></div>
       </div>
       <div class="field"><label>Match member (optional)</label>${memberPickerHtml('f-cust', { placeholder: '— none —' })}</div>
+      <div class="field" style="margin-top:8px"><label>${t('Walk-in name', 'اسم زائر')} <span class="text-mute" style="font-size:10px">(${t('optional — remembered for next time', 'اختياري — يُحفظ للمرة القادمة')})</span></label><input id="f-wname" placeholder="${t('Type to pick a previous walk-in', 'اكتب لاختيار زائر سابق')}" /></div>
       <div style="margin-top:8px">${phoneInputHtml('f-cust-phone', '', { label: 'Customer mobile (optional, for walk-ins)', required: false, fieldStyle: 'margin:0' })}</div>
     `;
     bindMemberPicker('f-cust', { placeholder: '— none —' });
+    walkInWire('f-wname', walkInPhoneIO('f-cust-phone'));
   }
 
   function renderPosBody() {
@@ -13332,6 +13384,8 @@ function addInvoice() {
     // Customer mobile: a linked member's own phone wins; else the typed walk-in mobile.
     const typedPhone = (typeof readPhoneInput === 'function') ? (readPhoneInput('f-cust-phone').phone || null) : null;
     const customerPhone = (custMember && custMember.phone) || typedPhone || null;
+    const walkName = custMember ? '' : (($('#f-wname') || {}).value || '').trim();
+    if (walkName) walkInRemember(walkName, customerPhone || '');   // v6.727
     const category = $('#f-category').value;
     const mth = date.slice(0, 7);
     const sport = $('#f-sport').value || null;
@@ -13364,7 +13418,7 @@ function addInvoice() {
       coach: $('#f-coach').value || (custMember ? coachName(custMember.coachId) : null),
       coachId: custMember ? custMember.coachId : null,
       customerId: custId,
-      customerName: custMember ? custMember.name : null,
+      customerName: custMember ? custMember.name : (walkName || null),
       customerPhone,
     });
     closeModal();
@@ -16177,6 +16231,7 @@ window.editInvoiceQuick = function(id) {
           const _wp = ($('#ef-wphone') ? $('#ef-wphone').value : '').trim();
           inv.customerName = _wn || null;
           inv.customerPhone = _wp || null;
+          if (_wn) walkInRemember(_wn, _wp);   // v6.727 — remember this walk-in for next time
         }
         inv.method = $('#ef-method').value;
         inv.amount = parseFloat($('#ef-amt').value) || 0;
@@ -16272,6 +16327,7 @@ window.editInvoiceQuick = function(id) {
     ],
   });
   bindMemberPicker('ef-cust', { placeholder: '— none —' });
+  walkInWire('ef-wname', walkInPlainIO('ef-wphone'));
 };
 
 // v6.661 — Review & fix for "the same package billed twice": shows both lines side by side (which one the coach is paid on, what was
@@ -18180,7 +18236,7 @@ window._mrShow = function () {
   const band = document.getElementById('mr-band'); if (band) band.style.background = !R.have ? 'linear-gradient(135deg,#64748b,#475569)' : (R.match ? 'linear-gradient(135deg,#16a34a,#15803d)' : 'linear-gradient(135deg,#dc2626,#b91c1c)');
   return R;
 };
-window._mrReconcile = function () {
+window._mrReconcile = function (checkpoint) {
   if (currentRole() !== 'admin') { toast(t('Admins only', 'للمسؤولين فقط'), 'error'); return; }
   const raw = String((document.getElementById('mr-bank') || {}).value || '').trim(), ym = TODAY.slice(0, 7);
   if (raw === '' || !isFinite(parseFloat(raw))) { toast(t('Type the cash in bank first', 'اكتب الرصيد البنكي أولاً'), 'error'); return; }
@@ -18192,6 +18248,14 @@ window._mrReconcile = function () {
   save();
   const R = monthRecCompute(ym);
   if (R.cash == null) { toast(t('Record a cash count first (Cash in Hand)', 'سجّل جرد النقد أولاً (النقد في الصندوق)'), 'error'); render(); return; }
+  if (checkpoint === true) {   // v6.728 — keep a dated record of these figures
+    if (!Array.isArray(state.settings.monthRecCheckpoints)) state.settings.monthRecCheckpoints = [];
+    state.settings.monthRecCheckpoints.push({ id: Date.now(), ym, at: new Date().toISOString(), by: (typeof currentUserName === 'function') ? currentUserName() : '', cash: R.cash, due: R.due, expenses: R.expenses, citadel: R.citadel, bank: R.bank, total: R.total, revenue: R.revenue, diff: R.diff, match: R.match });
+    if (typeof audit === 'function') audit('month.checkpoint', 'month:' + ym, 'Month reconciliation checkpoint ' + ym + ': ' + (R.match ? 'matched' : 'difference ' + fmt(R.diff)) + ' · bank ' + fmt(R.bank));
+    save();
+    if (!R.match) toast('💾 ' + t('Checkpoint saved — difference ', 'تم حفظ نقطة التحقق — الفرق ') + fmt(Math.abs(R.diff)) + ' QAR', 'info');
+    else toast('💾 ' + t('Checkpoint saved — matched', 'تم حفظ نقطة التحقق — متطابق'), 'success');
+  }
   if (R.match) {
     showModal({
       title: '✅ ' + t('Month reconciled', 'تمت تسوية الشهر'),
@@ -18200,9 +18264,42 @@ window._mrReconcile = function () {
         '<div style="font-size:13px;color:var(--text-mute);margin-top:10px;line-height:1.8">' + t('Cash in hand', 'النقد في الصندوق') + ' ' + fmt(R.cash) + ' + ' + t('Due', 'المستحق') + ' ' + fmt(R.due) + ' + ' + t('Expenses', 'المصروفات') + ' ' + fmt(R.expenses) + ' + ' + t('Bank', 'البنك') + ' ' + fmt(R.bank) + '<br><b>= ' + fmt(R.total) + ' QAR</b> = ' + t('revenue', 'الإيراد') + ' ' + fmt(R.revenue) + ' QAR</div></div>',
       actions: [{ label: t('Close', 'إغلاق'), class: 'btn primary', onclick: closeModal }],
     });
-  } else toast(t('Not matched — difference ', 'غير متطابق — الفرق ') + fmt(Math.abs(R.diff)) + ' QAR', 'error');
+  } else if (checkpoint !== true) toast(t('Not matched — difference ', 'غير متطابق — الفرق ') + fmt(Math.abs(R.diff)) + ' QAR', 'error');
   render();
 };
+window._mrDeleteCheckpoint = function (id) {
+  if (currentRole() !== 'admin') { toast(t('Admins only', 'للمسؤولين فقط'), 'error'); return; }
+  const list = (state.settings && state.settings.monthRecCheckpoints) || [];
+  const c = list.find(x => x.id === id); if (!c) return;
+  if (!confirm(t('Delete this checkpoint (' + fmtMonth(c.ym) + ', ' + fmt(c.revenue) + ' revenue)?', 'حذف نقطة التحقق هذه (' + fmtMonth(c.ym) + ')؟'))) return;
+  state.settings.monthRecCheckpoints = list.filter(x => x.id !== id);
+  if (typeof audit === 'function') audit('month.checkpoint.delete', 'month:' + c.ym, 'Deleted reconciliation checkpoint ' + c.ym + ' (' + c.at + ')');
+  save(); render();
+};
+// the saved checkpoints — the SAME four coloured boxes + result band, smaller, newest first
+function monthRecCheckpointsHtml() {
+  const list = ((state.settings && state.settings.monthRecCheckpoints) || []).slice().sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  if (!list.length) return '';
+  const money = n => fmt(Math.round((Number(n) || 0) * 100) / 100);
+  const mini = (grad, icon, label, val) => '<div style="background:' + grad + ';color:#fff;border-radius:12px;padding:10px 12px"><div style="font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;opacity:.95">' + icon + ' ' + label + '</div><div style="font-size:19px;font-weight:800;margin-top:4px">' + money(val) + '</div></div>';
+  const when = c => { try { const d = new Date(c.at); return fmtDate(c.at.slice(0, 10)) + ' · ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }); } catch (_) { return c.at; } };
+  return '<h3 style="margin:22px 0 10px;font-size:15px">💾 ' + t('Saved checkpoints', 'نقاط التحقق المحفوظة') + ' <span class="text-mute" style="font-size:12px;font-weight:500">(' + list.length + ')</span></h3>' +
+    list.slice(0, 30).map(c => {
+      const bg = c.match ? 'linear-gradient(135deg,#16a34a,#15803d)' : 'linear-gradient(135deg,#dc2626,#b91c1c)';
+      return '<div class="card" style="padding:14px;margin-bottom:12px">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap"><div style="font-weight:700">' + fmtMonth(c.ym) + ' <span class="text-mute" style="font-weight:500;font-size:12px">· ' + when(c) + (c.by ? ' · ' + escapeHtml(c.by) : '') + '</span></div>' +
+        (currentRole() === 'admin' ? '<button class="btn ghost sm" onclick="_mrDeleteCheckpoint(' + c.id + ')" title="' + t('Delete', 'حذف') + '">🗑</button>' : '') + '</div>' +
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:10px">' +
+          mini('linear-gradient(135deg,#10b981,#047857)', '🧮', t('Cash in hand', 'النقد في الصندوق'), c.cash) +
+          mini('linear-gradient(135deg,#f59e0b,#c2410c)', '📋', t('Due', 'المستحق'), c.due) +
+          mini('linear-gradient(135deg,#ef4444,#9f1239)', '💸', t('Expenses', 'المصروفات'), c.expenses) +
+          mini('linear-gradient(135deg,#3b82f6,#4338ca)', '🏦', t('Cash in bank', 'الرصيد البنكي'), c.bank) +
+        '</div>' +
+        '<div style="background:' + bg + ';color:#fff;border-radius:12px;padding:10px 14px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-weight:800">' +
+          '<span>' + t('Sum', 'المجموع') + ' ' + money(c.total) + '</span><span>' + t('Revenue', 'الإيراد') + ' ' + money(c.revenue) + '</span><span>' + (c.match ? '✓ ' + t('Matched', 'متطابق') : (c.diff > 0 ? '▲ ' : '▼ ') + money(Math.abs(c.diff))) + '</span></div>' +
+      '</div>';
+    }).join('');
+}
 PAGES.monthrec = (main) => {
   const ym = TODAY.slice(0, 7);
   if (currentRole() !== 'admin') {
@@ -18220,7 +18317,7 @@ PAGES.monthrec = (main) => {
   const bandBg = !R.have ? 'linear-gradient(135deg,#64748b,#475569)' : (R.match ? 'linear-gradient(135deg,#16a34a,#15803d)' : 'linear-gradient(135deg,#dc2626,#b91c1c)');
   main.innerHTML =
     '<div class="topbar"><div><h1>🧾 ' + t('Month Reconciliation', 'تسوية الشهر') + '</h1><div class="subtitle">' + fmtMonth(ym) + ' · ' + t('does every riyal add up?', 'هل تتطابق كل الأرقام؟') + '</div></div>' +
-      '<div class="topbar-actions"><button class="btn primary" onclick="_mrReconcile()">⚖️ ' + t('Reconcile', 'تسوية') + '</button></div></div>' +
+      '<div class="topbar-actions"><button class="btn ghost" onclick="_mrReconcile(true)" title="' + t('Save these figures as a dated checkpoint', 'احفظ هذه الأرقام كنقطة تحقق مؤرخة') + '">💾 ' + t('Save checkpoint', 'حفظ نقطة تحقق') + '</button><button class="btn primary" onclick="_mrReconcile()">⚖️ ' + t('Reconcile', 'تسوية') + '</button></div></div>' +
     '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:16px">' +
       box('linear-gradient(135deg,#10b981,#047857)', '🧮', t('Cash in hand', 'النقد في الصندوق'), R.cash == null ? '—' : money(R.cash) + ' <span style="font-size:13px;font-weight:600">QAR</span>', R.cash == null ? t('no cash count yet — tap to record one', 'لا يوجد جرد بعد — اضغط لتسجيله') : t('live drawer: last count + cash since · tap to open', 'الصندوق الحالي: آخر جرد + النقد منذ ذلك · اضغط للفتح'), 'cashinhand') +
       box('linear-gradient(135deg,#f59e0b,#c2410c)', '📋', t('Due this month', 'المستحق هذا الشهر'), money(R.due) + ' <span style="font-size:13px;font-weight:600">QAR</span>', t('billed this month, not yet collected', 'مفوتر هذا الشهر ولم يُحصّل بعد')) +
@@ -18232,7 +18329,8 @@ PAGES.monthrec = (main) => {
       '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;opacity:.9">' + t('Total revenue', 'إجمالي الإيراد') + ' · ' + fmtMonth(ym) + '</div><div style="font-size:26px;font-weight:800">' + money(R.revenue) + '</div></div>' +
       '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;opacity:.9">' + t('Difference', 'الفرق') + '</div><div id="mr-diff" style="font-size:26px;font-weight:800">' + (R.have ? (R.match ? '✓ ' + t('Matched', 'متطابق') : (R.diff > 0 ? '▲ ' : '▼ ') + money(Math.abs(R.diff))) : '—') + '</div></div>' +
     '</div>' +
-    '<div class="text-mute" style="font-size:11px;line-height:1.6;margin-top:12px">' + t('Cash in hand + Due + Expenses + Cash in bank = Total revenue. Revenue and due are the Dashboard figures. A gap of less than 1 QAR counts as matched.', 'النقد في الصندوق + المستحق + المصروفات + الرصيد البنكي = إجمالي الإيراد. الإيراد والمستحق هما أرقام لوحة التحكم. فرق أقل من ريال يُعدّ متطابقاً.') + '</div>';
+    '<div class="text-mute" style="font-size:11px;line-height:1.6;margin-top:12px">' + t('Cash in hand + Due + Expenses + Cash in bank = Total revenue. Revenue and due are the Dashboard figures. A gap of less than 1 QAR counts as matched.', 'النقد في الصندوق + المستحق + المصروفات + الرصيد البنكي = إجمالي الإيراد. الإيراد والمستحق هما أرقام لوحة التحكم. فرق أقل من ريال يُعدّ متطابقاً.') + '</div>' +
+    monthRecCheckpointsHtml();
 };
 
 PAGES.bankaccount = (main) => {
@@ -22016,6 +22114,7 @@ function recalcSaleTotals() {
 }
 
 function wireSaleModal() {
+  walkInWire('sale-walkin-name', walkInPhoneIO('sale-walkin-phone'));   // v6.727 — pick a previous walk-in
   // Add line button
   $('#sale-add-line').addEventListener('click', () => {
     window._saleLines.push({ productId: null, name: '', qty: 1, unitPrice: 0 });
@@ -22087,6 +22186,7 @@ function completeSale(onDone) {
     } else {
       customerType = 'walkin';
       customerId = null;
+      walkInRemember(customerName, customerPhone || '');   // v6.727
     }
   }
 
