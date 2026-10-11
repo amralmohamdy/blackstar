@@ -2863,7 +2863,7 @@ function viewMember(id) {
 window.viewMember = viewMember;
 
 function addMember() {
-  showMemberForm({ id: nextId(state.members), name: '', sport: 'MMA', coachId: 1, phone: '', email: '', joinDate: TODAY, status: 'Active' });
+  showMemberForm({ id: nextId(state.members), name: '', sport: 'MMA', coachId: null, phone: '', email: '', joinDate: TODAY, status: 'Active' });
 }
 
 window.editMember = function(id) {
@@ -28935,7 +28935,7 @@ function addTrial() {
   showTrialForm({
     id: nextId(state.trials || []),
     name: '', phone: '', email: '',
-    sport: 'MMA', coachId: 1,
+    sport: 'MMA', coachId: null,
     trialDate: TODAY, followUpDate: '',
     status: 'new', source: '', notes: '',
   });
