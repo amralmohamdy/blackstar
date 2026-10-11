@@ -18743,12 +18743,15 @@ window.exportExpensesPDF = function(rows, meta) {
 };
 
 // ─── Bank commission (auto) ──────────────────────────────────────────────
-// Card payments incur a bank commission of 2.25%. We keep ONE expense row per
+// Card payments incur a bank commission (2.75% from Oct 2026, 2.25% before). We keep ONE expense row per
 // month (category "Bank Commission", method "card"), auto-computed from that
 // month's card-paid total. The admin can edit the amount; once edited, we mark
 // it `edited:true` and stop auto-overwriting it. Recomputes on every Expenses
 // page load so new card payments are reflected until the admin overrides.
-const BANK_COMMISSION_RATE = 2.25;            // percent
+const BANK_COMMISSION_RATE = 2.75;            // percent — the CURRENT rate (v6.726)
+const BANK_COMMISSION_RATE_BEFORE = 2.25;     // the rate for months before BANK_COMMISSION_NEW_FROM — those rows are history, never re-priced
+const BANK_COMMISSION_NEW_FROM = '2026-10';   // first month charged at the current rate
+function bankRateFor(ym) { return String(ym || '') >= BANK_COMMISSION_NEW_FROM ? BANK_COMMISSION_RATE : BANK_COMMISSION_RATE_BEFORE; }
 const BANK_COMMISSION_CATEGORY = 'Bank Commission';
 const CITADEL_SHARE_CATEGORY = 'Citadel Company Share';   // v6.577 — auto-posted facility-company payment
 
@@ -18774,7 +18777,7 @@ function cardPaidForMonth(ym) {
 }
 
 // Ensure each month that has card payments has a (non-edited) Bank Commission
-// expense equal to cardPaid × 2.25%. Returns true if anything changed (so the
+// expense equal to cardPaid × that month's bank rate. Returns true if anything changed (so the
 // caller can save). Never touches rows the admin has edited.
 function syncBankCommission() {
   if (!Array.isArray(state.expenses)) state.expenses = [];
@@ -18792,7 +18795,8 @@ function syncBankCommission() {
   for (const ym of months) {
     if (!ym || ym.length !== 7) continue;
     const cardPaid = cardPaidForMonth(ym);
-    const auto = Math.round(cardPaid * BANK_COMMISSION_RATE) / 100;   // ×2.25/100, 2dp
+    const rate = bankRateFor(ym);
+    const auto = Math.round(cardPaid * rate) / 100;   // ×rate/100, 2dp
     let row = state.expenses.find(e => e.autoBankCommission && e.month === ym);
     if (auto <= 0 && !row) continue;            // nothing to add
     if (!row) {
@@ -18803,11 +18807,12 @@ function syncBankCommission() {
         edited: false,
         date: ym + '-01',
         month: ym,
-        description: `Bank commission (${BANK_COMMISSION_RATE}% of card payments)`,
+        description: `Bank commission (${rate}% of card payments)`,
         category: BANK_COMMISSION_CATEGORY,
         method: 'card',
         amount: auto,
         cardBase: cardPaid,
+        rate,
       };
       state.expenses.push(row);
       changed = true;
@@ -18816,7 +18821,8 @@ function syncBankCommission() {
       if (Math.abs((row.amount || 0) - auto) > 0.001 || (row.cardBase || 0) !== cardPaid) {
         row.amount = auto;
         row.cardBase = cardPaid;
-        row.description = `Bank commission (${BANK_COMMISSION_RATE}% of card payments)`;
+        row.rate = rate;
+        row.description = `Bank commission (${rate}% of card payments)`;
         changed = true;
       }
     }
@@ -18911,7 +18917,7 @@ PAGES.expensereport = (main) => {
   let title, intro, kpis, body, calc;
 
   if (kind === 'bank') {
-    const rate = BANK_COMMISSION_RATE;
+    const rate = bankRateFor(ym);
     const rows = bankCardPaymentsForMonth(ym);
     const cardPaid = cardPaidForMonth(ym);
     calc = Math.round(cardPaid * rate) / 100;
@@ -18998,7 +19004,7 @@ PAGES.expenses = (main) => {
 
   function refresh() {
     saveFilter('expenses', filter);
-    // Keep the auto Bank Commission rows up to date (card payments × 2.25%).
+    // Keep the auto Bank Commission rows up to date (card payments × the month's bank rate).
     // Keep the auto Citadel Company Share rows up to date (Football+Swimming revenue × rate). (v6.577)
     if ([syncBankCommission(), syncCitadelShare()].some(Boolean)) save();
     // Cash collections (owner taking cash out) are tracked on their own Cash
