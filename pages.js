@@ -12075,8 +12075,8 @@ PAGES.schedule = (main) => {
     if (currentRole() !== 'admin') { toast('Only an admin can clear the schedule', 'error'); return; }
     if (!(state.schedule || []).length) { toast('Schedule is already empty'); return; }
     const count = state.schedule.length;
-    // First confirmation.
-    showModal({
+    // v6.734 — the System PIN first, then the two confirmations below.
+    askSystemPin(() => showModal({
       title: '🗑 Clear all classes?',
       body: `<p>This will remove all <b>${count}</b> scheduled classes. This action cannot be undone.</p>`,
       actions: [
@@ -12100,7 +12100,7 @@ PAGES.schedule = (main) => {
           }), 60);
         }},
       ],
-    });
+    }), t('Clearing the whole schedule needs the PIN.', 'مسح الجدول كاملاً يتطلب الرمز.'));
   });
 };
 
