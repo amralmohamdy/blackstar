@@ -11045,11 +11045,42 @@ PAGES.schedule = (main) => {
   const sportColor = sp => (SPORT_THEME[baseSportName(sp)] || SPORT_THEME[sp] || { color: '#5b8def', emoji: '🏃' }).color;
   const sportEmoji = sp => { const e = (SPORT_THEME[baseSportName(sp)] || SPORT_THEME[sp] || { emoji: '🏃' }).emoji; return isPrivateSport(sp) ? e + '🔒' : e; };
 
+  // v6.732 — a CLASS is a sport + its custom name ("Kick Boxing under 13 (boys)"). Each custom class gets its OWN colour: the one picked in the
+  // class dialog, else an automatic one from a wide palette (unused colours first, so two different classes never share one while the palette lasts).
+  // A class with no custom name keeps its sport colour, exactly as before.
+  const SCH_PALETTE = ['#ef4444', '#f97316', '#f59e0b', '#84cc16', '#22c55e', '#10b981', '#14b8a6', '#06b6d4', '#0ea5e9', '#3b82f6', '#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899', '#f43f5e', '#b45309', '#0f766e', '#4d7c0f', '#7e22ce', '#be123c', '#1d4ed8'];
+  const classKey = c => String((c && (c.label || c.labelAr)) || '').trim().toLowerCase();
+  const _hash = s => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
+  let _colorMap = null;
+  function classColorMap() {
+    const m = new Map(), used = new Set(), keys = [...new Set((state.schedule || []).filter(c => !c.color && classKey(c)).map(c => baseSportName(c.sport) + '|' + classKey(c)))].sort();
+    (state.schedule || []).forEach(c => { if (c.color) used.add(String(c.color).toLowerCase()); });
+    for (const k of keys) { let i = _hash(k) % SCH_PALETTE.length, tries = 0; while (used.has(SCH_PALETTE[i].toLowerCase()) && tries++ < SCH_PALETTE.length) i = (i + 1) % SCH_PALETTE.length; m.set(k, SCH_PALETTE[i]); used.add(SCH_PALETTE[i].toLowerCase()); }
+    return m;
+  }
+  const classColor = c => {
+    if (!c) return '#5b8def';
+    if (c.color) return c.color;
+    if (!classKey(c)) return sportColor(c.sport);
+    if (!_colorMap) _colorMap = classColorMap();
+    return _colorMap.get(baseSportName(c.sport) + '|' + classKey(c)) || sportColor(c.sport);
+  };
+  // the custom class names that exist on the schedule → [{ key, name, nameAr, color, count }] (sorted by name)
+  function customClasses() {
+    const m = new Map();
+    for (const c of (state.schedule || [])) {
+      const k = classKey(c); if (!k) continue;
+      const e = m.get(k) || { key: k, name: c.label || c.labelAr, nameAr: c.labelAr || c.label, color: classColor(c), count: 0 };
+      e.count++; m.set(k, e);
+    }
+    return [...m.values()].sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' }));
+  }
+
   // Filter holds ARRAYS of selected coach ids and sport names (empty = "all").
   // For coaches: empty means all; otherwise only listed coach ids match.
   // For sports: empty means all; otherwise only listed sport names match.
   // A signed-in coach is pre-locked to themselves (and the picker is hidden).
-  let filter = { coaches: myCoachId != null ? [myCoachId] : [], sports: [], days: [], memberId: null };   // v6.675: memberId = show only this member's classes
+  let filter = { coaches: myCoachId != null ? [myCoachId] : [], sports: [], classes: [], days: [], memberId: null };   // v6.732: classes = custom class names   // v6.675: memberId = show only this member's classes
   let _memKeys = null;   // the selected member's (sport, coach) pairs — rebuilt on every refresh()
   // Days actually shown in the grid: all of DAYS, narrowed to filter.days when set.
   const visibleDays = () => (filter.days.length ? DAYS.filter(d => filter.days.includes(d.key)) : DAYS);
@@ -11064,6 +11095,7 @@ PAGES.schedule = (main) => {
   function isFiltered(c) {
     if (filter.coaches.length && !filter.coaches.includes(c.coachId)) return false;
     if (filter.sports.length && !filter.sports.includes(c.sport)) return false;
+    if (filter.classes.length && !filter.classes.includes(classKey(c))) return false;   // v6.732
     if (filter.memberId != null && !scheduleClassMatchesMember(c, _memKeys)) return false;   // v6.675
     return true;
   }
@@ -11108,6 +11140,7 @@ PAGES.schedule = (main) => {
   }
 
   function refresh() {
+    _colorMap = null;   // custom classes may have been added / renamed / recoloured
     _memKeys = (filter.memberId != null) ? memberScheduleKeys((state.members || []).find(x => String(x.id) === String(filter.memberId))) : null;
     // Build the grid
     const days = visibleDays();
@@ -11133,7 +11166,7 @@ PAGES.schedule = (main) => {
           const coach = state.coaches.find(x => x.id === c.coachId);
           const warn = (coach && !isCoachActive(coach))
             ? `<span title="${escapeHtml(coach.name)} is now inactive — reassign or remove this class" style="flex-shrink:0">⚠️</span>` : '';
-          return `<div class="sch-class" data-id="${c.id}" data-sport="${escapeHtml(c.sport)}" data-coachid="${c.coachId != null ? c.coachId : ''}" style="background:${sportColor(c.sport)};color:white;padding:6px 8px;border-radius:6px;font-size:11px;font-weight:600;margin:2px 0;display:flex;align-items:center;justify-content:space-between;gap:4px;cursor:pointer;opacity:${dimmed ? '0.18' : '1'};transition:opacity .15s;${coach && !isCoachActive(coach) ? 'outline:2px solid #facc15;outline-offset:-2px' : ''}">
+          return `<div class="sch-class" data-id="${c.id}" data-sport="${escapeHtml(c.sport)}" data-coachid="${c.coachId != null ? c.coachId : ''}" style="background:${classColor(c)};color:white;padding:6px 8px;border-radius:6px;font-size:11px;font-weight:600;margin:2px 0;display:flex;align-items:center;justify-content:space-between;gap:4px;cursor:pointer;opacity:${dimmed ? '0.18' : '1'};transition:opacity .15s;${coach && !isCoachActive(coach) ? 'outline:2px solid #facc15;outline-offset:-2px' : ''}">
             <div style="flex:1;min-width:0;overflow:hidden">
               <div style="display:flex;align-items:center;gap:4px"><span>${sportEmoji(c.sport)}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(t(c.label || c.sport, c.labelAr || c.label || sportNameAR(c.sport)))}</span></div>
               <div style="font-size:9px;font-weight:500;opacity:.95;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(coach ? coach.name : (c.sport === SCHEDULE_EXTERNAL ? t('External booking', 'حجز خارجي') : ''))}${coach && !isCoachActive(coach) ? ' · inactive' : ''}</div>
@@ -11152,6 +11185,7 @@ PAGES.schedule = (main) => {
     }
 
     $('#sch-grid').innerHTML = grid;
+    try { renderClassFilter(); } catch (_) {}
 
     // Wire drag-and-drop on cells (admins only)
     if (canEdit) $$('.sch-cell').forEach(cell => {
@@ -11335,6 +11369,14 @@ PAGES.schedule = (main) => {
           <input id="sch-label" style="width:100%" maxlength="40" value="${escapeHtml((existing && existing.label) || '')}" placeholder="${escapeHtml(sport)}" />
         </div>
         <div class="field" style="margin-top:8px">
+          <label>${t('Class colour', 'لون الحصة')} <span class="text-mute" style="font-size:10px">(${t('Auto = a different colour for each custom class name', 'تلقائي = لون مختلف لكل اسم حصة مخصص')})</span></label>
+          <div id="sch-colors" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">
+            <button type="button" class="sch-sw" data-color="" title="Auto" style="width:30px;height:26px;border-radius:6px;border:2px solid ${existing && existing.color ? 'transparent' : 'var(--text)'};background:var(--surface-2);color:var(--text);font-size:10px;cursor:pointer">${t('Auto', 'تلقائي')}</button>
+            ${SCH_PALETTE.map(col => `<button type="button" class="sch-sw" data-color="${col}" style="width:26px;height:26px;border-radius:6px;border:2px solid ${existing && String(existing.color || '').toLowerCase() === col ? 'var(--text)' : 'transparent'};background:${col};cursor:pointer"></button>`).join('')}
+          </div>
+          <input type="hidden" id="sch-color" value="${escapeHtml((existing && existing.color) || '')}" />
+        </div>
+        <div class="field" style="margin-top:8px">
           <label>${t('Class name — Arabic (optional)', 'اسم الحصة — عربي (اختياري)')}</label>
           <input id="sch-label-ar" dir="rtl" style="width:100%" maxlength="40" value="${escapeHtml((existing && existing.labelAr) || '')}" placeholder="${escapeHtml(sportNameAR(sport))}" />
           <div class="text-mute" style="font-size:11px;margin-top:4px">${t('Custom labels shown on the schedule — e.g. "Kids Kick-Boxing" / «كيك بوكسينغ أطفال». Each language uses its own; leave a field blank to fall back to the sport name in that language.', 'أسماء مخصصة تظهر على الجدول — مثل «Kids Kick-Boxing» / «كيك بوكسينغ أطفال». كل لغة تستخدم اسمها؛ اترك الحقل فارغاً لاستخدام اسم الرياضة بتلك اللغة.')}</div>
@@ -11366,14 +11408,17 @@ PAGES.schedule = (main) => {
           const _label = (_labelRaw && _labelRaw !== sport) ? _labelRaw : '';
           const _labelArRaw = (($('#sch-label-ar') || {}).value || '').trim();
           const _labelAr = (_labelArRaw && _labelArRaw !== sportNameAR(sport)) ? _labelArRaw : '';
+          const _color = (($('#sch-color') || {}).value || '').trim();   // v6.732 — '' = automatic
           if (existing) {
             existing.coachId = coachId;
             if (_label) existing.label = _label; else delete existing.label;
             if (_labelAr) existing.labelAr = _labelAr; else delete existing.labelAr;
+            if (_color) existing.color = _color; else delete existing.color;
           } else {
             const _rec = { id: nextId(state.schedule || []), day, slot, sport, coachId };
             if (_label) _rec.label = _label;
             if (_labelAr) _rec.labelAr = _labelAr;
+            if (_color) _rec.color = _color;
             state.schedule.push(_rec);
           }
           closeModal(); refresh();
@@ -11381,6 +11426,11 @@ PAGES.schedule = (main) => {
         }},
       ],
     });
+    // swatch picker: click a colour (or Auto) → remember it in the hidden field + ring the chosen one
+    $$('.sch-sw').forEach(b => b.addEventListener('click', () => {
+      const hid = $('#sch-color'); if (hid) hid.value = b.dataset.color || '';
+      $$('.sch-sw').forEach(x => { x.style.borderColor = (x === b) ? 'var(--text)' : 'transparent'; });
+    }));
   }
 
   // ─── PNG Export ────────────────────────────────────────────────────
@@ -11502,7 +11552,7 @@ PAGES.schedule = (main) => {
             // Colored block — soft drop shadow gives depth on the light background
             ctx.save();
             ctx.shadowColor = 'rgba(15,23,42,0.20)'; ctx.shadowBlur = 6; ctx.shadowOffsetY = 2;
-            ctx.fillStyle = sportColor(c.sport);
+            ctx.fillStyle = classColor(c);
             ctx.fillRect(bx, by, bw, blockH);
             ctx.restore();
             // Thin dark outline so two same-coloured sports don't blend into one
@@ -11622,7 +11672,7 @@ PAGES.schedule = (main) => {
         // Soft drop shadow gives the coloured chips depth on the light background.
         ctx.save();
         ctx.shadowColor = 'rgba(15,23,42,0.16)'; ctx.shadowBlur = 14; ctx.shadowOffsetY = 5;
-        rr(PAD, y, W - 2 * PAD, cardH, 18); ctx.fillStyle = sportColor(c.sport); ctx.fill();
+        rr(PAD, y, W - 2 * PAD, cardH, 18); ctx.fillStyle = classColor(c); ctx.fill();
         ctx.restore();
         ctx.strokeStyle = 'rgba(0,0,0,0.10)'; ctx.lineWidth = 1.5; rr(PAD, y, W - 2 * PAD, cardH, 18); ctx.stroke();
         const coach = state.coaches.find(co => co.id === c.coachId);
@@ -11789,6 +11839,16 @@ PAGES.schedule = (main) => {
             <div style="border-top:1px solid var(--border);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between"><button type="button" class="btn ghost sm" id="sch-filter-sport-all">All</button><button type="button" class="btn ghost sm" id="sch-filter-sport-clear">Clear</button></div>
           </div>
         </div>
+        <div style="position:relative" id="sch-class-wrap">
+          <button type="button" id="sch-filter-class-btn" class="btn ghost" style="min-width:170px;text-align:left;display:inline-flex;align-items:center;justify-content:space-between;gap:8px" title="${t('Filter by a custom class name, e.g. Kick Boxing under 13 (boys)', 'فلترة باسم حصة مخصص مثل كيك بوكسينغ تحت 13 (أولاد)')}">
+            <span id="sch-filter-class-label">${t('All classes', 'كل الحصص')}</span>
+            <span style="opacity:.6;font-size:10px">▾</span>
+          </button>
+          <div id="sch-filter-class-menu" style="display:none;position:absolute;left:0;top:100%;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-top:4px;padding:8px;min-width:250px;max-height:320px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.4)">
+            <div id="sch-class-list"></div>
+            <div style="border-top:1px solid var(--border);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between"><button type="button" class="btn ghost sm" id="sch-filter-class-all">${t('All', 'الكل')}</button><button type="button" class="btn ghost sm" id="sch-filter-class-clear">${t('Clear', 'مسح')}</button></div>
+          </div>
+        </div>
         <div style="position:relative">
           <button type="button" id="sch-filter-day-btn" class="btn ghost" style="min-width:140px;text-align:left;display:inline-flex;align-items:center;justify-content:space-between;gap:8px" title="Filter by one or more days">
             <span id="sch-filter-day-label">${filter.days.length ? (filter.days.length === 1 ? (DAYS.find(d => d.key === filter.days[0]) || {}).label : filter.days.length + ' days') : 'All days'}</span>
@@ -11804,7 +11864,7 @@ PAGES.schedule = (main) => {
           <div id="sch-member-menu" style="display:none;position:absolute;left:0;top:100%;z-index:60;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-top:4px;min-width:290px;max-height:290px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.4)"></div>
         </div>
         <span id="sch-member-chip"></span>` : ''}
-        ${(filter.coaches.length || filter.sports.length || filter.days.length) ? `<button type="button" class="btn ghost sm" id="sch-filter-reset">✕ ${t('Clear filters', 'مسح الفلاتر')}</button>` : ''}
+        ${(filter.coaches.length || filter.sports.length || filter.classes.length || filter.days.length) ? `<button type="button" class="btn ghost sm" id="sch-filter-reset">✕ ${t('Clear filters', 'مسح الفلاتر')}</button>` : ''}
         <div style="font-size:11px;color:var(--text-mute);margin-left:auto">Filters dim non-matching classes; export honors the filter</div>
       </div>
     </div>
@@ -11844,13 +11904,32 @@ PAGES.schedule = (main) => {
       e.stopPropagation();
       const open = menu.style.display === 'block';
       // Close any other open menus first
-      $$('#sch-filter-coach-menu, #sch-filter-sport-menu').forEach(m => { if (m !== menu) m.style.display = 'none'; });
+      $$('#sch-filter-coach-menu, #sch-filter-sport-menu, #sch-filter-class-menu, #sch-filter-day-menu').forEach(m => { if (m !== menu) m.style.display = 'none'; });
       menu.style.display = open ? 'none' : 'block';
     });
   }
   toggleMenu('sch-filter-coach-btn', 'sch-filter-coach-menu');
   toggleMenu('sch-filter-sport-btn', 'sch-filter-sport-menu');
   toggleMenu('sch-filter-day-btn', 'sch-filter-day-menu');
+  toggleMenu('sch-filter-class-btn', 'sch-filter-class-menu');
+  // v6.732 — the Class dropdown lists the custom class names on the schedule (hidden when there are none); re-built on every refresh
+  function renderClassFilter() {
+    const wrap = $('#sch-class-wrap'), list = $('#sch-class-list'); if (!wrap || !list) return;
+    const cls = customClasses();
+    // a selected class that no longer exists on the schedule drops out of the filter
+    filter.classes = filter.classes.filter(k => cls.some(x => x.key === k));
+    wrap.style.display = cls.length ? '' : 'none';
+    list.innerHTML = cls.map(x => '<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px"><input type="checkbox" class="sch-class-cb" value="' + escapeHtml(x.key) + '" ' + (filter.classes.includes(x.key) ? 'checked' : '') + ' /><span style="width:12px;height:12px;border-radius:3px;background:' + x.color + ';flex:0 0 auto"></span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(t(x.name, x.nameAr)) + '</span><span class="text-mute" style="font-size:10px">' + x.count + '</span></label>').join('');
+    $$('.sch-class-cb').forEach(cb => cb.addEventListener('change', e => {
+      const k = e.target.value;
+      if (e.target.checked) { if (!filter.classes.includes(k)) filter.classes.push(k); } else filter.classes = filter.classes.filter(x => x !== k);
+      updateFilterLabels(); refresh();
+    }));
+    const lab = $('#sch-filter-class-label');
+    if (lab) lab.textContent = filter.classes.length ? (filter.classes.length === 1 ? t((cls.find(x => x.key === filter.classes[0]) || {}).name || '', (cls.find(x => x.key === filter.classes[0]) || {}).nameAr || '') : filter.classes.length + ' ' + t('classes', 'حصص')) : t('All classes', 'كل الحصص');
+  }
+  $('#sch-filter-class-clear')?.addEventListener('click', () => { filter.classes = []; $$('.sch-class-cb').forEach(cb => cb.checked = false); updateFilterLabels(); refresh(); });
+  $('#sch-filter-class-all')?.addEventListener('click', () => { filter.classes = $$('.sch-class-cb').map(cb => cb.value); $$('.sch-class-cb').forEach(cb => cb.checked = true); updateFilterLabels(); refresh(); });
   // v6.575 — searchable coach filter (Arabic + English), focused when the menu opens.
   (() => {
     const sInput = $('#sch-coach-search'), sEmpty = $('#sch-coach-empty');
@@ -11865,16 +11944,22 @@ PAGES.schedule = (main) => {
   })();
   // Click outside closes the menus
   document.addEventListener('click', e => {
-    if (!e.target.closest('#sch-filter-coach-menu, #sch-filter-coach-btn, #sch-filter-sport-menu, #sch-filter-sport-btn, #sch-filter-day-menu, #sch-filter-day-btn')) {
-      $$('#sch-filter-coach-menu, #sch-filter-sport-menu, #sch-filter-day-menu').forEach(m => { if (m) m.style.display = 'none'; });
+    if (!e.target.closest('#sch-filter-coach-menu, #sch-filter-coach-btn, #sch-filter-sport-menu, #sch-filter-sport-btn, #sch-filter-day-menu, #sch-filter-day-btn, #sch-filter-class-menu, #sch-filter-class-btn')) {
+      $$('#sch-filter-coach-menu, #sch-filter-sport-menu, #sch-filter-day-menu, #sch-filter-class-menu').forEach(m => { if (m) m.style.display = 'none'; });
     }
   }, { once: true });
+  function renderClassFilterLabelOnly() {
+    const cls = customClasses(), lab = $('#sch-filter-class-label'); if (!lab) return;
+    const one = filter.classes.length === 1 ? cls.find(x => x.key === filter.classes[0]) : null;
+    lab.textContent = filter.classes.length ? (one ? t(one.name, one.nameAr) : filter.classes.length + ' ' + t('classes', 'حصص')) : t('All classes', 'كل الحصص');
+  }
   function updateFilterLabels() {
     const cL = $('#sch-filter-coach-label');
     if (cL) cL.textContent = filter.coaches.length ? (filter.coaches.length === 1 ? (coachName(filter.coaches[0]) || 'Coach') : filter.coaches.length + ' coaches') : 'All coaches';
     const sL = $('#sch-filter-sport-label');
     if (sL) sL.textContent = filter.sports.length ? (filter.sports.length === 1 ? filter.sports[0] : filter.sports.length + ' sports') : 'All sports';
     $$('.sport-tile').forEach(tl => { const on = filter.sports.includes(tl.dataset.sport); tl.style.outline = on ? '3px solid var(--text)' : ''; tl.style.outlineOffset = on ? '2px' : ''; tl.style.opacity = (filter.sports.length && !on) ? '.55' : ''; });
+    try { renderClassFilterLabelOnly(); } catch (_) {}
     const dL = $('#sch-filter-day-label');
     if (dL) dL.textContent = filter.days.length ? (filter.days.length === 1 ? (DAYS.find(d => d.key === filter.days[0]) || {}).label : filter.days.length + ' days') : 'All days';
   }
@@ -11909,7 +11994,7 @@ PAGES.schedule = (main) => {
   $('#sch-filter-sport-all')?.addEventListener('click', () => { filter.sports = $$('.sch-sport-cb').map(cb => cb.value); $$('.sch-sport-cb').forEach(cb => cb.checked = true); updateFilterLabels(); refresh(); });
   $('#sch-filter-day-all')?.addEventListener('click', () => { $$('.sch-day-cb').forEach(cb => cb.checked = true); filter.days = DAYS.map(d => d.key); updateFilterLabels(); refresh(); });
   // Reset all
-  $('#sch-filter-reset')?.addEventListener('click', () => { filter.coaches = []; filter.sports = []; filter.days = []; filter.memberId = null; if (typeof _renderMemberChip === 'function') _renderMemberChip(); $$('.sch-coach-cb, .sch-sport-cb, .sch-day-cb').forEach(cb => cb.checked = false); updateFilterLabels(); refresh(); });
+  $('#sch-filter-reset')?.addEventListener('click', () => { filter.coaches = []; filter.sports = []; filter.classes = []; filter.days = []; filter.memberId = null; if (typeof _renderMemberChip === 'function') _renderMemberChip(); $$('.sch-coach-cb, .sch-sport-cb, .sch-day-cb').forEach(cb => cb.checked = false); updateFilterLabels(); refresh(); });
 
   // Export PNG (weekly grid)
   $('#sch-png').addEventListener('click', () => exportPng('en'));
@@ -11948,13 +12033,14 @@ PAGES.schedule = (main) => {
     if (!m) {
       if (filter.coaches.length) chips.push(filter.coaches.map(id => coachName(id)).filter(Boolean).join(', '));
       if (filter.sports.length) chips.push(filter.sports.join(', '));
+      if (filter.classes.length) chips.push(customClasses().filter(x => filter.classes.includes(x.key)).map(x => t(x.name, x.nameAr)).join(', '));   // v6.732
     }
     let n = 0;
     const rows = SLOTS.map(slot => `<tr><th>${slot.label}</th>${days.map(day => {
       const items = classesAt(day.key, slot.hour).filter(isFiltered);
       n += items.length;
       return `<td>${items.map(c => { const coach = state.coaches.find(x => x.id === c.coachId);
-        return `<div class="cls" style="background:${sportColor(c.sport)}"><b>${sportEmoji(c.sport)} ${escapeHtml(t(c.label || c.sport, c.labelAr || c.label || sportNameAR(c.sport)))}</b><span>${escapeHtml(coach ? coach.name : (c.sport === SCHEDULE_EXTERNAL ? t('External booking', 'حجز خارجي') : ''))}</span></div>`; }).join('')}</td>`; }).join('')}</tr>`).join('');
+        return `<div class="cls" style="background:${classColor(c)}"><b>${sportEmoji(c.sport)} ${escapeHtml(t(c.label || c.sport, c.labelAr || c.label || sportNameAR(c.sport)))}</b><span>${escapeHtml(coach ? coach.name : (c.sport === SCHEDULE_EXTERNAL ? t('External booking', 'حجز خارجي') : ''))}</span></div>`; }).join('')}</td>`; }).join('')}</tr>`).join('');
     const title = m ? `${escapeHtml(m.name)}${m.nameArabic ? ' · ' + escapeHtml(m.nameArabic) : ''}` : t('Class schedule', 'جدول الحصص');
     const w = window.open('', '_blank');
     if (!w) { toast(t('Popup blocked — please allow popups', 'تم حظر النافذة — اسمح بالنوافذ المنبثقة'), 'error'); return; }
@@ -32470,6 +32556,22 @@ function _chHBars(rows) {
   return `<div>${rows.map((r, i) => `<div style="display:flex;align-items:center;gap:8px;margin-bottom:7px"><div style="width:118px;font-size:12px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(r.label)}">${escapeHtml(r.label)}</div><div style="flex:1;background:var(--surface-2);border-radius:6px;height:16px;overflow:hidden"><div style="width:${(100 * (r.value || 0) / max).toFixed(1)}%;height:100%;background:${r.color || _CH_PALETTE[i % _CH_PALETTE.length]};border-radius:6px"></div></div><div style="width:74px;font-size:12px;font-weight:700;text-align:right">${fmt(r.value)}</div></div>`).join('')}</div>`;
 }
 
+// v6.731 — one bar per MONTH with a value label on top; months in `hi` are drawn solid, the rest (context) faded. unit '' = plain counts.
+function _chMonthBars(labels, values, color, opts) {
+  opts = opts || {};
+  const unit = opts.unit || '', hi = new Set(opts.hi || []), fade = hi.size > 0 && hi.size < labels.length;
+  const W = 720, H = 220, PL = 40, PR = 12, PT = 22, PB = 30, plotW = W - PL - PR, plotH = H - PT - PB, y0 = PT + plotH;
+  const maxV = Math.max(1, ...values.map(v => Number(v) || 0)), niceMax = _chNiceMax(maxV);
+  const gW = plotW / (labels.length || 1), bW = Math.max(6, Math.min(46, gW - 10));
+  const grid = [0, .5, 1].map(f => { const y = PT + plotH * (1 - f); return '<line x1="' + PL + '" y1="' + y + '" x2="' + (W - PR) + '" y2="' + y + '" stroke="currentColor" stroke-opacity=".10"/><text x="' + (PL - 6) + '" y="' + (y + 3) + '" text-anchor="end" font-size="9" fill="currentColor" fill-opacity=".55">' + _chK(niceMax * f) + '</text>'; }).join('');
+  const bars = labels.map((lb, i) => {
+    const v = Number(values[i]) || 0, h = plotH * v / niceMax, x = PL + i * gW + (gW - bW) / 2, on = !fade || hi.has(i);
+    return '<rect x="' + x.toFixed(1) + '" y="' + (y0 - h).toFixed(1) + '" width="' + bW.toFixed(1) + '" height="' + Math.max(h, v > 0 ? 2 : 0).toFixed(1) + '" rx="3" fill="' + color + '" fill-opacity="' + (on ? 1 : .35) + '"><title>' + escapeHtml(lb) + ': ' + fmt(v) + (unit ? ' ' + unit : '') + '</title></rect>' +
+      '<text x="' + (x + bW / 2).toFixed(1) + '" y="' + (y0 - h - 5).toFixed(1) + '" text-anchor="middle" font-size="10" font-weight="700" fill="currentColor" fill-opacity="' + (on ? .9 : .5) + '">' + (opts.money ? _chK(v) : fmt(v)) + '</text>' +
+      '<text x="' + (PL + i * gW + gW / 2).toFixed(1) + '" y="' + (H - 10) + '" text-anchor="middle" font-size="9" fill="currentColor" fill-opacity="' + (on ? .75 : .45) + '">' + escapeHtml(lb) + '</text>';
+  }).join('');
+  return '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;color:var(--text)">' + grid + bars + '</svg>';
+}
 const _CH_CARD = (title, sub, inner) => `<div class="card" style="padding:16px 18px"><div style="font-weight:700;font-size:14px;margin-bottom:2px">${title}</div>${sub ? `<div class="text-mute" style="font-size:11px;margin-bottom:12px">${sub}</div>` : '<div style="margin-bottom:12px"></div>'}${inner}</div>`;
 
 PAGES.charts = (main) => {
@@ -32581,6 +32683,29 @@ PAGES.charts = (main) => {
 // Period-aware: filter by month, year, or all-time. Compute everything
 // (KPIs, revenue by category, sport revenue, expenses, top expenses) for
 // whatever period the user picks.
+// v6.731 — the data behind the three monthly graphs on Reports. period = { type: 'month'|'year'|'all', value, months[] }.
+// 2+ months selected → exactly those; ONE month → it plus the 5 before it (context); year → that year's months; all → every month.
+// new = firstRegistration in the month · renewals = renewal rows starting in the month · revenue = billed (financeAgg) — the SAME definitions as the Reports tiles.
+function reportMonthlyTrend(period, allMonths) {
+  const inSel = (m) => period.type === 'all' ? true : period.type === 'year' ? String(m).startsWith(period.value) : ((period.months || []).length ? period.months.includes(m) : (period.value ? m === period.value : true));
+  let ms;
+  if (period.type === 'year') ms = allMonths.filter(m => String(m).startsWith(period.value));
+  else if (period.type === 'all') ms = allMonths.slice();
+  else {
+    const sel = (period.months || []).filter(m => allMonths.includes(m)).sort();
+    ms = sel.length ? sel : allMonths.slice();
+    if (ms.length === 1) { const i = allMonths.indexOf(ms[0]); ms = allMonths.slice(Math.max(0, i - 5), i + 1); }
+  }
+  const members = (state.members || []).filter(m => !m.deleted);
+  return {
+    months: ms,
+    hi: ms.map((m, i) => inSel(m) ? i : -1).filter(i => i >= 0),
+    labels: ms.map(m => (typeof _chMonthShort === 'function' ? _chMonthShort(m) : fmtMonth(m))),
+    newBy: ms.map(mk => members.filter(m => String(m.firstRegistration || '').slice(0, 7) === mk).length),
+    renewBy: ms.map(mk => members.reduce((n, m) => n + (m.renewals || []).filter(r => String(r.start || r.createdAt || '').slice(0, 7) === mk).length, 0)),
+    revenueBy: ms.map(mk => financeAgg([mk]).revenue),
+  };
+}
 PAGES.reports = (main) => {
   // period = { type: 'month'|'year'|'all', value: '2026-05' | '2026' | null, months: [] }
   // v6.547: Month mode is now MULTI-select — `months` holds the chosen YYYY-MM set (empty = all months),
@@ -32716,6 +32841,19 @@ PAGES.reports = (main) => {
       </div>
     `;
 
+    // v6.731 — MONTHLY GRAPHS: new members, renewals, revenue — one bar per month. Same definitions as the tiles above, so the selected months add up to
+    // the tile figures. 2+ months selected → exactly those months; ONE month → it plus the 5 before it for context (selected one solid); a year / all time → every month.
+    const _tr = reportMonthlyTrend(period, allMonths);
+    const _trendMonths = _tr.months, _tHi = _tr.hi, _tLabels = _tr.labels, _tNew = _tr.newBy, _tRen = _tr.renewBy, _tRev = _tr.revenueBy;
+    const _tSum = (arr) => _tHi.reduce((s, i) => s + (Number(arr[i]) || 0), 0);
+    const _tSub = (arr, money) => { const s = _tSum(arr), n = _tHi.length || 1; return t('Selected months', 'الأشهر المحددة') + ': <b>' + fmt(Math.round(s)) + (money ? ' QAR' : '') + '</b> · ' + t('Avg / month', 'المتوسط شهرياً') + ' <b>' + fmt(Math.round(s / n)) + '</b>'; };
+    const _trendHTML = _trendMonths.length ? `
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:16px;margin:16px 0">
+        ${_CH_CARD('🆕 ' + t('New members per month', 'الأعضاء الجدد شهرياً'), _tSub(_tNew, false), _chMonthBars(_tLabels, _tNew, '#10b981', { hi: _tHi }))}
+        ${_CH_CARD('🔄 ' + t('Renewals per month', 'التجديدات شهرياً'), _tSub(_tRen, false), _chMonthBars(_tLabels, _tRen, '#8b5cf6', { hi: _tHi }))}
+      </div>
+      <div style="margin-bottom:16px">${_CH_CARD('💰 ' + t('Revenue per month', 'الإيراد شهرياً'), _tSub(_tRev, true) + (_trendMonths.length > _tHi.length ? ' <span class="text-mute">· ' + t('faded = earlier months, for context', 'الباهت = أشهر سابقة للمقارنة') + '</span>' : ''), _chMonthBars(_tLabels, _tRev, '#5b8def', { hi: _tHi, money: true, unit: 'QAR' }))}</div>` : '';
+
     $('#rep-body').innerHTML = `
       <div class="kpi-grid">
         <div class="kpi">
@@ -32739,6 +32877,8 @@ PAGES.reports = (main) => {
           <div class="kpi-delta flat">${d.activeMembers} ${t('active overall', 'نشط إجمالاً')} · ${_repRenewals} ${_repRenewals === 1 ? t('renewal', 'تجديد') : t('renewals', 'تجديدات')}</div>
         </div>
       </div>
+
+      ${_trendHTML}
 
       <div class="card">
         <div class="card-header"><div><div class="card-title">Revenue by Category</div><div class="card-subtitle">Memberships · Court Rental · Boxing Room · Product · ${escapeHtml(periodLabel())}</div></div></div>
