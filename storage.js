@@ -107,6 +107,18 @@
   // them as members or they'd load none of the club's data (0 invoices, etc.). Only a
   // digit-only local part on a member domain is treated as a member/portal login.
   const _isMemberEmail = em => typeof em === 'string' && /^[0-9]+@(blackstars[.]com|members[.]blackstars[.]qa)$/i.test(em);
+  // COACH scope (v6.739). A login the role map marks as 'coach' loads ONLY the records stamped with its own
+  // coach ids (`coachIds`, written by the stamp pass below from app.js coachAccessStamps) — never whole
+  // collections. true = also the shared 'M' stamp (a live Mixed member / Mixed invoice: any coach may mark Mixed).
+  // Everything else (expenses, salaries of others, sales, rentals, cash counts, families, notes, audit…) is never
+  // fetched for a coach and is denied by firestore.rules. `coaches` is read by id (own profile only).
+  const COACH_QUERY = { members: true, invoices: true, schedule: false, trials: false, salaries: false, advices: false, posts: false, expenses: false };
+  const COACH_STAMPED_COLS = ['members', 'invoices', 'schedule', 'trials', 'salaries', 'advices', 'posts', 'expenses'];
+  // What a coach login may WRITE: attendance on his students, his own advice / posts / trials. Anything else the
+  // app computes in the background (auto-heal, status refresh) is dropped client-side, never sent — one denied
+  // op would otherwise fail the whole atomic batch and lose the attendance mark with it.
+  const COACH_WRITABLE = new Set(['members', 'advices', 'posts', 'trials']);
+  let _scopedLogin = false;   // a coach/member login holds only part of the club — never judge "data went missing" from it
   const DEVICE_ONLY = ['user', 'route', 'session'];
   const MAX_BATCH_OPS = 400;   // Firestore hard limit is 500 ops/batch.
 
@@ -202,6 +214,7 @@
     const c = _counts(state);
     if (force) return null;
     if (cloudReadFailed) return 'cloud not confirmed (working from offline copy)';
+    if (_scopedLogin) return null;
     if (c.m + c.i === 0 && (lastKnownGood > 0 || loadErrored)) return 'whole dataset is empty';
     if (lkgInvoices > 5 && c.i === 0) return `invoices went to 0 (had ${lkgInvoices})`;
     if (lkgMembers > 5 && c.m === 0) return `members went to 0 (had ${lkgMembers})`;
@@ -364,6 +377,71 @@
     const _live = {};                  // collection → Map<id, record> (for realtime delivery)
     for (const name of COLLECTIONS) _live[name] = new Map();
     let _liveMeta = {};
+    let _coachScope = null;            // { ids:[…] } while a coach-mapped login is signed in (v6.739)
+    let _stampBusy = false;
+    const _stampKnown = {};            // collection → Map<id, JSON of the stored coachIds | 'null'>
+    for (const name of COACH_STAMPED_COLS) _stampKnown[name] = new Map();
+    // The stamp is a storage detail: strip it before the app sees a record (so it never shows up in state, exports
+    // or the delta writer) and remember what the server holds so the stamp pass only writes real differences.
+    function _ingest(name, data, docId) {
+      if (!data || !_stampKnown[name]) return data;
+      const id = String(docId != null ? docId : data.id);
+      if (Object.prototype.hasOwnProperty.call(data, 'coachIds')) {
+        _stampKnown[name].set(id, JSON.stringify(Array.isArray(data.coachIds) ? data.coachIds : null));
+        const rest = Object.assign({}, data); delete rest.coachIds; return rest;
+      }
+      _stampKnown[name].set(id, 'null');
+      return data;
+    }
+    function _detectCoachScope(parent) {
+      try {
+        const em = ((auth.currentUser && auth.currentUser.email) || '').toLowerCase();
+        const e = (parent && parent.settings && parent.settings.userRoles) ? parent.settings.userRoles[em] : null;
+        if (!e || e.role !== 'coach') return null;
+        let ids = (Array.isArray(e.coachIds) && e.coachIds.length) ? e.coachIds : (e.coachId != null ? [e.coachId] : []);
+        ids = ids.map(Number).filter(n => isFinite(n));
+        return { ids };
+      } catch (_) { return null; }
+    }
+    // The Firestore query a coach uses for one collection (null → nothing readable / nothing mapped).
+    function _coachQuery(name) {
+      const ids = _coachScope.ids;
+      if (!ids.length) return null;
+      if (name === 'coaches') return colRef(name).where('id', 'in', ids.slice(0, 30));
+      if (!Object.prototype.hasOwnProperty.call(COACH_QUERY, name)) return null;
+      return colRef(name).where('coachIds', 'array-contains-any', (COACH_QUERY[name] ? ids.concat(['M']) : ids).slice(0, 30));
+    }
+    const _readRef = name => _coachScope ? _coachQuery(name) : colRef(name);
+    // Write the missing/changed coachIds stamps (full-access staff only). One update() per record, a few at a time:
+    // update() — never a merge-set — so a record deleted meanwhile is not resurrected as a stub.
+    async function _stampPass(src) {
+      if (_stampBusy || _coachScope || _scopedLogin || !src || typeof window === 'undefined' || typeof window.coachAccessStamps !== 'function') return;
+      _stampBusy = true;
+      try {
+        const stamps = window.coachAccessStamps(src);
+        const todo = [];
+        for (const name of COACH_STAMPED_COLS) {
+          if (!Array.isArray(src[name])) continue;
+          const known = _stampKnown[name];
+          stamps[name].forEach((arr, id) => { const s = JSON.stringify(arr); if (known.get(id) !== s) todo.push({ name, id, arr, s }); });
+        }
+        if (!todo.length) return;
+        let i = 0, done = 0, fail = 0;
+        const worker = async () => {
+          while (i < todo.length) {
+            const t = todo[i++];
+            try { await colRef(t.name).doc(t.id).update({ coachIds: t.arr }); _stampKnown[t.name].set(t.id, t.s); done++; }
+            catch (e) { fail++; if (fail === 1) console.warn('[Storage] coach-access stamp skipped ' + t.name + '/' + t.id + ':', (e && e.code) || e, (e && e.message) || ''); }
+          }
+        };
+        await Promise.all([worker(), worker(), worker(), worker(), worker(), worker()]);
+        console.log('[Storage] coach-access stamps: ' + done + ' written' + (fail ? ', ' + fail + ' skipped' : ''));
+        try { if (typeof window.__onCoachStamps === 'function') window.__onCoachStamps({ done, fail, total: todo.length }); } catch (_) {}
+      } catch (e) { console.warn('[Storage] coach-access stamp pass failed (non-fatal):', e); }
+      finally { _stampBusy = false; }
+    }
+    let _stampTimer = null;
+    function _scheduleStamp(src) { if (_stampTimer) clearTimeout(_stampTimer); _stampTimer = setTimeout(() => { _stampTimer = null; _stampPass(src); }, 1500); }
     const _seeded = {}; let _metaSeeded = false;
     const _unsubs = [];
     let writeInFlight = false, pendingAfterWrite = null, lastWriteFailed = false, needsMigrationFlag = false;
@@ -509,7 +587,7 @@
             ops.push({ kind: 'set', name, id, data: rec, _audit: true });
             continue;
           }
-          if (prevStr === undefined) { ops.push({ kind: 'set', name, id, data: rec }); continue; }
+          if (prevStr === undefined) { ops.push({ kind: 'set', name, id, data: rec, isNew: true }); continue; }
           const prev = JSON.parse(prevStr);
           const delta = fieldDelta(prev, rec);
           // If the delta touches a LIST field, Firestore's merge would REPLACE the
@@ -548,13 +626,29 @@
           } else { for (var di = 0; di < delIds.length; di++) ops.push({ kind: 'del', name, id: delIds[di] }); }
         }
       }
+      // COACH LOGIN (v6.739): send only what a coach may write — attendance on his students, his own advice /
+      // posts / trials (a new one carries its own stamp; he may delete his own), the audit trail. No member deletes, no new members, no
+      // settings. Mirrors firestore.rules; anything else a coach session changes in memory is not persisted.
+      if (_coachScope) {
+        for (let oi = ops.length - 1; oi >= 0; oi--) {
+          const o = ops[oi];
+          if (o._audit) continue;
+          const ok = COACH_WRITABLE.has(o.name) && !(o.name === 'members' && (o.kind === 'del' || o.isNew));
+          if (!ok) { console.warn('[Storage] coach login — not persisted: ' + o.kind + ' ' + o.name + '/' + o.id); ops.splice(oi, 1); continue; }
+          if (o.isNew && typeof window !== 'undefined' && typeof window.coachAccessStamps === 'function') {
+            const one = {}; one[o.name] = [o.data];
+            const st = window.coachAccessStamps(one)[o.name].get(String(o.data.id));
+            o.data = Object.assign({}, o.data, { coachIds: st || [] });
+          }
+        }
+      }
       // Compare meta WITHOUT the always-changing _updatedAt so the shared parent doc
       // (clubs/blackstars) is written ONLY when a real settings/version/meta field
       // changes — not on every attendance mark or payment. Writing that one shared doc
       // on every save would, with many simultaneous users, exceed Firestore's ~1
       // write/sec/document soft limit → contention, latency and failed writes.
       const meta = pickMeta(state);
-      const metaStr = _stable(meta); const metaChanged = metaStr !== _baseMeta;
+      const metaStr = _stable(meta); const metaChanged = !_coachScope && metaStr !== _baseMeta;
       // Write only the CHANGED meta leaves, and FieldValue.delete() for any REMOVED key, so a
       // deleted settings entry (e.g. a user-role mapping) actually disappears from Firestore
       // instead of being re-merged back. (v6.330)
@@ -675,8 +769,9 @@
           // was silently swallowing in-flight edits (same-day data loss). Anything edited during the
           // round-trip stays "dirty" vs this base, so the follow-up flush below really writes it. (v6.368)
           for (const name of COLLECTIONS) _base[name] = sentBase[name] || new Map();
-          _baseMeta = metaStr;
+          if (!_coachScope) _baseMeta = metaStr;
           _lastFlushResult = { ok: true, records: ops.length };
+          if (!_coachScope) _scheduleStamp(state);   // v6.739 — keep coachIds stamps current
           console.log(`%c[Storage] ✅ stored in Firestore — ${nSet} written, ${nDel} deleted${metaChanged ? ', settings updated' : ''} @ ${new Date().toLocaleTimeString()}`, 'color:#16a34a;font-weight:700');
           try { if (typeof window !== 'undefined') { const L = window.__cloudWriteLog; if (L && L.length) L[L.length - 1].ok = true; if (typeof window.__onCloudSaveStatus === 'function') window.__onCloudSaveStatus({ phase: 'saved', records: ops.length, at: Date.now(), byCollection: perCol }); } } catch (_) {}
         })
@@ -745,18 +840,36 @@
           const _roleEntry = (parent && parent.settings && parent.settings.userRoles) ? parent.settings.userRoles[_email] : null;
           const _mappedStaff = !!(_roleEntry && ['coach', 'admin', 'receptionist'].indexOf(_roleEntry.role) !== -1);
           const memberScope = _isMemberEmail(_email) && !_mappedStaff;
+          // COACH scope (v6.739): a coach-mapped login reads only its own records (stamped coachIds) + its own coach profile.
+          _coachScope = memberScope ? null : _detectCoachScope(parent);
+          // ROLLOUT SAFETY: while the records are not stamped yet AND the old (permissive) rules are still live, a coach-scoped
+          // query would return nothing. A plain one-record read succeeds only under the old rules; if what it returns carries
+          // no coachIds, keep the previous behaviour (load everything, the screens scope client-side) until the stamp pass has
+          // run. Under the new rules the probe is DENIED, so a coach is never widened once the rules are deployed.
+          if (_coachScope) {
+            try {
+              const probe = await colRef('members').limit(1).get({ source: 'server' });
+              let unstamped = false; probe.forEach(d => { if (!Object.prototype.hasOwnProperty.call(d.data() || {}, 'coachIds')) unstamped = true; });
+              if (unstamped) { console.warn('[Storage] coach login: records not stamped yet and rules still open → legacy full load (client-side scoping)'); _coachScope = null; }
+            } catch (_) { /* denied → the new rules are live: stay scoped */ }
+          }
+          _scopedLogin = !!(memberScope || _coachScope);
           // Load the HOT collections only — auditLog is lazy (fetched on demand, see loadAuditLog).
-          const readCols = memberScope ? HOT_COLLECTIONS.filter(c => MEMBER_READABLE.has(c)) : HOT_COLLECTIONS;
-          const colResults = await Promise.all(readCols.map(name =>
-            colRef(name).get({ source: 'server' })
-              .then(qs => { const arr = []; qs.forEach(d => arr.push(d.data())); return [name, arr]; })
-              .catch(e => { console.warn('[Storage:firebase] read ' + name + ' failed:', (e && e.code) || e); return [name, null]; })
-          ));
+          const readCols = memberScope ? HOT_COLLECTIONS.filter(c => MEMBER_READABLE.has(c))
+            : _coachScope ? HOT_COLLECTIONS.filter(c => c === 'coaches' || Object.prototype.hasOwnProperty.call(COACH_QUERY, c))
+            : HOT_COLLECTIONS;
+          const colResults = await Promise.all(readCols.map(name => {
+            const q = _readRef(name);
+            if (!q) return Promise.resolve([name, []]);
+            return q.get({ source: 'server' })
+              .then(qs => { const arr = []; qs.forEach(d => arr.push(_ingest(name, d.data(), d.id))); return [name, arr]; })
+              .catch(e => { console.warn('[Storage:firebase] read ' + name + ' failed:', (e && e.code) || e); return [name, null]; });
+          }));
           const assembled = {}; let anySubData = false, anyReadFail = false;
           for (const [name, arr] of colResults) { if (arr === null) { anyReadFail = true; continue; } assembled[name] = arr; if (arr.length) anySubData = true; }
           // Collections a member is not allowed to read are present as empty arrays,
           // so the app has a consistent shape (and never shows stale local copies).
-          if (memberScope) for (const name of COLLECTIONS) if (!(name in assembled)) assembled[name] = [];
+          if (memberScope || _coachScope) for (const name of COLLECTIONS) if (!(name in assembled)) assembled[name] = [];
 
           // A partial/failed SERVER read → don't trust it, block writes (read-only). The PARENT
           // read already succeeded here (auth was fine), so a failed SUBcollection read is a
@@ -788,6 +901,7 @@
           _liveMeta = pickMeta(result);
           noteAuditFromServer(result.auditLog);   // never re-write an audit row the server has (v6.393)
           for (const name of COLLECTIONS) { _live[name] = new Map(); for (const r of (assembled[name] || [])) if (r && r.id != null) _live[name].set(String(r.id), r); }
+          if (!memberScope && !_coachScope) _scheduleStamp(result);   // v6.739 — first full-access login stamps every record
           return result;
         } catch (e) {
           // Distinguish a SESSION problem from a NETWORK problem. The parent-doc read requires
@@ -954,9 +1068,11 @@
       async readCloud() {
         const parentSnap = await parentRef().get({ source: 'server' });
         const parent = parentSnap.exists ? (parentSnap.data() || {}) : null;
-        const colResults = await Promise.all(COLLECTIONS.map(name =>
-          colRef(name).get({ source: 'server' }).then(qs => { const arr = []; qs.forEach(d => arr.push(d.data())); return [name, arr]; })
-        ));
+        const colResults = await Promise.all(COLLECTIONS.map(name => {
+          const q = _readRef(name);
+          if (!q) return Promise.resolve([name, []]);
+          return q.get({ source: 'server' }).then(qs => { const arr = []; qs.forEach(d => arr.push(_ingest(name, d.data(), d.id))); return [name, arr]; });
+        }));
         const result = {};
         if (parent) for (const k of Object.keys(parent)) { if (!isCollectionKey(k)) result[k] = parent[k]; }
         for (const [name, arr] of colResults) result[name] = arr;
@@ -984,13 +1100,24 @@
         // over thousands of append-only rows open for the whole session). It is fetched on demand.
         for (const name of HOT_COLLECTIONS) {
           _seeded[name] = false;
-          const unsub = colRef(name).onSnapshot(qs => {
+          // A coach login listens only to its own (stamped) records; a collection a coach may not read has no listener.
+          const _q = _readRef(name);
+          if (!_q) continue;
+          const unsub = _q.onSnapshot(qs => {
+            let _real = false;   // v6.739 — a stamp-only change (coachIds) is invisible to the app: don't wake it
             qs.docChanges().forEach(ch => {
               const id = String(ch.doc.id);
-              if (_seeded[name]) (_pending[name] = _pending[name] || new Set()).add(id);   // v6.646: track what changed (not the initial seed)
-              if (ch.type === 'removed') _live[name].delete(id);
+              if (ch.type === 'removed') {
+                if (_seeded[name]) (_pending[name] = _pending[name] || new Set()).add(id);
+                _live[name].delete(id); _real = true;
+                if (_coachScope && _base[name]) _base[name].delete(id);   // left this coach's scope — never write it back
+              }
               else {
-                _live[name].set(id, ch.doc.data());
+                const _cur = _ingest(name, ch.doc.data(), ch.doc.id);
+                const _prev = _live[name].get(id);
+                const _same = !!_prev && _stable(_prev) === _stable(_cur);
+                if (!_same) { _real = true; if (_seeded[name]) (_pending[name] = _pending[name] || new Set()).add(id); }   // v6.646: track what changed (not the initial seed)
+                _live[name].set(id, _cur);
                 // THIS is the path that caused the frequent permission-denied: a colleague's
                 // audit row arrives here, gets merged into local state, and our next save
                 // re-sent it as an update — which the immutable-auditLog rule denies, failing
@@ -1002,6 +1129,7 @@
             const fromLocalWrite = qs.metadata && qs.metadata.hasPendingWrites;
             if (!_seeded[name]) { _seeded[name] = true; return; }
             if (fromLocalWrite) return;
+            if (!_real) return;
             deliver();
           }, err => console.warn('[Storage:firebase] ' + name + ' listener error:', err));
           _unsubs.push(unsub);

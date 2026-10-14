@@ -37,6 +37,52 @@ service cloud.firestore {
     function isAdmin() {
       return _mappedRole() == 'admin';
     }
+
+    // ── COACH ROLE (v6.739) ─────────────────────────────────────────────────────────────────
+    // A login the role map (settings.userRoles) marks 'coach' is NOT full staff. It may read and write
+    // ONLY records stamped with its own coach ids (`coachIds`, written by the app's stamp pass), plus
+    // the shared 'M' stamp that marks a live Mixed member / Mixed invoice (any coach may mark Mixed).
+    // Admin / receptionist / any other staff login keeps exactly the access it had (isFullStaff()).
+    function isCoach() {
+      return _mappedRole() == 'coach';
+    }
+    function isFullStaff() {
+      return request.auth != null && !isMember() && !isCoach();
+    }
+    function _myCoachIds() {
+      let r = _userRoles()[request.auth.token.email.lower()];
+      return (r.get('coachIds', []).size() > 0) ? r.get('coachIds', []) : [r.get('coachId', -1)];
+    }
+    function coachMine(d) {
+      return d.get('coachIds', []).hasAny(_myCoachIds());
+    }
+    function coachMineOrMixed(d) {
+      return d.get('coachIds', []).hasAny(_myCoachIds().concat(['M']));
+    }
+    function coachCanRead(collection, d) {
+      return (collection in ['members', 'invoices']) ? coachMineOrMixed(d)
+        : (collection in ['schedule', 'trials', 'salaries', 'advices', 'posts', 'expenses']) ? coachMine(d)
+        : (collection == 'coaches') ? (d.get('id', -1) in _myCoachIds())
+        : false;
+    }
+    // A coach may add his own advice / posts / trials (stamped with his id) — never members, invoices, anything else.
+    function coachCanCreate(collection, nd) {
+      return (collection in ['advices', 'posts', 'trials']) && coachMine(nd);
+    }
+    // Updates keep the stamp untouched (a coach cannot hand a record to another coach or claim one).
+    // On a member a coach may change ONLY what marking attendance touches: the two attendance maps, the
+    // package/renewal rows whose counters and first-class start date it moves, the dates/status derived from
+    // them, and the who/when stamp. Name, phone, QID, family, notes, … are not his to edit.
+    function coachMemberFieldsOnly(od, nd) {
+      return nd.diff(od).affectedKeys().hasOnly(['dailyAttendance', 'mixedAttendance', 'subscriptions', 'renewals',
+        'enrollments', 'startDate', 'expiryDate', 'status', 'months', 'updatedAt', 'updatedBy', 'updatedByName',
+        'createdAt', 'createdBy', 'createdByName']);
+    }
+    function coachCanUpdate(collection, od, nd) {
+      return nd.get('coachIds', []) == od.get('coachIds', [])
+        && (((collection == 'members') && coachMineOrMixed(od) && coachMemberFieldsOnly(od, nd))
+            || ((collection in ['advices', 'posts', 'trials']) && coachMine(od)));
+    }
     // The ROLE MAP (settings.userRoles) decides who is admin/receptionist/coach. If ANY staff
     // could rewrite it, a receptionist could promote themselves to admin or lock everyone out —
     // a privilege-escalation hole. This returns true when a write leaves the role map untouched,
@@ -68,13 +114,15 @@ service cloud.firestore {
       allow read:  if request.auth != null;   // parent meta doc (settings / camp schedule)
       // Staff may write the club meta doc (settings, camp schedule, sport list, prices…), BUT
       // changing the ROLE MAP is admin-only — otherwise any staff login could escalate itself.
-      allow write: if isStaff() && (_rolesUnchanged() || isAdmin() || _rolesEmptyBefore());
+      // A coach never writes the club meta doc (settings, prices, the role map…).
+      allow write: if isFullStaff() && (_rolesUnchanged() || isAdmin() || _rolesEmptyBefore());
 
       // AUDIT TRAIL is IMMUTABLE (req #8): STAFF may CREATE + READ audit entries, but
       // NOBODY may update or delete, and MEMBERS may not read it at all. Declared
       // BEFORE the generic rule (Firestore grants if ANY rule matches).
+      // A coach may only CREATE its own trail entries (every change is audited) — never read the trail.
       match /auditLog/{docId} {
-        allow read:   if isStaff();
+        allow read:   if isFullStaff();
         allow create: if isStaff();
         allow update, delete: if false;
       }
@@ -82,20 +130,26 @@ service cloud.firestore {
       // v6.611 — Logins Logs Audit. ANY signed-in user (incl. members) records their OWN sign-in,
       // so all logins are captured; only STAFF can read the log; append-only (no edits/deletes).
       match /loginLogs/{docId} {
-        allow read:   if isStaff();
+        allow read:   if isFullStaff();
         allow create: if request.auth != null;
         allow update, delete: if false;
       }
 
-      // Every OTHER per-record subcollection: staff read/write; members read ONLY
+      // Every OTHER per-record subcollection: full staff read/write; members read ONLY
       // the portal collections (memberReadable) — the club's financial/operational
-      // data is never exposed to a member login.
+      // data is never exposed to a member login; a COACH reads/writes only his own stamped records.
       match /{collection}/{docId} {
-        allow read:  if isStaff() || (isMember() && memberReadable(collection));
+        allow read:   if isFullStaff() || (isMember() && memberReadable(collection))
+                      || (isCoach() && coachCanRead(collection, resource.data));
         // v6.634 (#13) — exclude loginLogs too (like auditLog): the specific match above makes it
         // append-only, but Firestore UNIONS rules, so this generic write would otherwise re-grant staff
         // update/delete on the login audit. Keep both append-only logs out of the generic write.
-        allow write: if isStaff() && collection != 'auditLog' && collection != 'loginLogs';
+        allow create: if (isFullStaff() && collection != 'auditLog' && collection != 'loginLogs')
+                      || (isCoach() && coachCanCreate(collection, request.resource.data));
+        allow update: if (isFullStaff() && collection != 'auditLog' && collection != 'loginLogs')
+                      || (isCoach() && coachCanUpdate(collection, resource.data, request.resource.data));
+        allow delete: if (isFullStaff() && collection != 'auditLog' && collection != 'loginLogs')
+                      || (isCoach() && (collection in ['advices', 'posts', 'trials']) && coachMine(resource.data));
       }
     }
 

@@ -11069,6 +11069,7 @@ PAGES.schedule = (main) => {
   function customClasses() {
     const m = new Map();
     for (const c of (state.schedule || [])) {
+      if (myCoachId != null && String(c.coachId) !== String(myCoachId)) continue;   // v6.739 — a coach lists only his own classes
       const k = classKey(c); if (!k) continue;
       const e = m.get(k) || { key: k, name: c.label || c.labelAr, nameAr: c.labelAr || c.label, color: classColor(c), count: 0 };
       e.count++; m.set(k, e);
@@ -26317,6 +26318,19 @@ window.switchSport = function(memberId) {
     return total;
   }
 
+  // v6.740 — a switch is REFUSED (nothing changes) when the source package was already switched away. (An EXPIRED
+  // package can still be switched: the new record keeps the ORIGINAL expiry and is simply not active — never extended.)
+  function switchBlockReason(from, switchDate) {
+    const same = (a, b) => String(a) === String(b);
+    const subs = (m.subscriptions || []).filter(s => (s.activity || '') === from.sport && same(s.coachId, from.coachId));
+    const live = subs.filter(s => s.status !== 'completed' && !s.switchedAwayTo);
+    if (subs.length && !live.length && subs.some(s => s.switchedAwayTo)) return { kind: 'already' };
+    return null;
+  }
+  function switchBlockToast(r, from, switchDate) {
+    toast(t('This package (' + from.sport + ' with ' + coachName(from.coachId) + ') was already switched — nothing left to switch.', 'هذه الباقة (' + from.sport + ' مع ' + coachName(from.coachId) + ') تم تبديلها مسبقاً — لا يوجد ما يُبدَّل.'), 'error');
+  }
+
   // Switch targets — one by default; admin can distribute into several sports.
   let targets = [{ sport: defaultToSport, coachId: defaultFrom.coachId, classes: null }];
 
@@ -26364,8 +26378,13 @@ window.switchSport = function(memberId) {
         // ROLLS BACK to this snapshot and saves nothing, so a bad switch can never corrupt the data.
         const _snapMember = JSON.stringify(m);
         const _snapInvoices = JSON.stringify(state.invoices || []);
-        const commitSwitch = (msg) => {
-          const prob = (typeof switchResultProblem === 'function') ? switchResultProblem(m) : null;
+        const commitSwitch = (msg, info) => {
+          let prob = (typeof switchResultProblem === 'function') ? switchResultProblem(m) : null;
+          // v6.740 — verify the switch itself (remaining classes, transferred amount, expiry, links, money) — all or nothing
+          if (!prob && info && typeof switchInvariantProblem === 'function') {
+            let paidBefore = 0; try { for (const v of JSON.parse(_snapInvoices)) if (!v.deleted && v.customerId === m.id) paidBefore += (v.payments || []).reduce((a, p) => a + (Number(p.amount) || 0), 0); } catch (_) {}
+            prob = switchInvariantProblem(m, Object.assign({ paidBefore }, info));
+          }
           if (prob) {
             const idx = state.members.findIndex(x => x.id === m.id);
             if (idx >= 0) state.members[idx] = JSON.parse(_snapMember);
@@ -26400,6 +26419,7 @@ window.switchSport = function(memberId) {
           }
           if (new Set(tgs.map(t => t.sport)).size !== tgs.length) { toast('Each new sport must be different', 'error'); return; }
           if (isCampSport(from.sport)) { toast('Distribution isn\'t available when switching FROM Summer Camp.', 'error'); return; }
+          { const _bk = switchBlockReason(from, switchDate); if (_bk) { switchBlockToast(_bk, from, switchDate); return; } }
           const sumClasses = tgs.reduce((s, t) => s + (t.classes || 0), 0);
           if (sumClasses <= 0) { toast('Allocate the remaining classes across the new sports', 'error'); return; }
           if (sumClasses !== remaining) { toast('Allocated ' + sumClasses + ' but ' + remaining + ' classes remain — they must match.', 'error'); return; }
@@ -26447,8 +26467,16 @@ window.switchSport = function(memberId) {
             const _dEnd = _dSrc ? _dSrc.end : null;
             if (_dSrc) { _dSrc.status = 'completed'; _dSrc.switchedAwayTo = tgs.map(t => t.sport).join(', '); _dSrc.switchedAt = switchDate; _dSrc.totalClasses = attendedA; _dSrc.amountPaid = aShare; }
             // v6.571: don't inherit an expired/last-day end (backwards window → rollback). v6.645: use a fresh window instead of leaving it open.
-            const _dEndSafe = (_dEnd && String(_dEnd) > String(switchDate)) ? _dEnd : addDays(switchDate, (_dSrc && parseInt(_dSrc.validity)) || DEFAULT_VALIDITY);
-            resolved.forEach((tr, i) => m.subscriptions.push({ activity: tr.sport, coachId: tr.coachId, totalClasses: tr.classes, start: switchDate, end: _dEndSafe, status: 'active', switchFunded: true, amountPaid: tr.value, _sid: 's' + Date.now() + '_swd' + i }));
+            // v6.740 — the ORIGINAL expiry for every target; an already-expired source gives expired (not active) records
+            const _dEndSafe = _dEnd ? _dEnd : addDays(switchDate, (_dSrc && parseInt(_dSrc.validity)) || DEFAULT_VALIDITY);
+            const _dExpired = !!(_dEnd && String(_dEnd) < String(switchDate));
+            const _dRef = 'SWR' + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36);
+            if (_dSrc && !_dSrc._sid) _dSrc._sid = 's' + Date.now() + '_src';
+            const _newDst = [];
+            resolved.forEach((tr, i) => { const ds = { activity: tr.sport, coachId: tr.coachId, totalClasses: tr.classes, start: _dExpired ? _dEnd : switchDate, end: _dEndSafe, status: _dExpired ? 'expired' : 'active', switchFunded: true, amountPaid: tr.value, _sid: 's' + Date.now() + '_swd' + i,
+              createdVia: 'switch', switchRef: _dRef, switchedFromSid: _dSrc ? _dSrc._sid : null, originalExpiry: _dEnd || null, transferredAmount: Math.round(tr.value * 100) / 100 }; _newDst.push(ds); m.subscriptions.push(ds); });
+            if (_dSrc) { Object.assign(_dSrc, { switched: true, switchStatus: 'Switched', consumedClasses: attendedA, transferredClasses: remaining, originalClasses: planned, switchRef: _dRef, switchedToSid: _newDst.map(x => x._sid).join(',') });
+              const _drec = m.sportSwitches[m.sportSwitches.length - 1]; if (_drec) Object.assign(_drec, { ref: _dRef, fromSid: _dSrc._sid, toSid: _newDst.map(x => x._sid), consumed: attendedA, transferred: remaining, originalExpiry: _dEnd || null }); }
           }
           audit('sport.switch', 'member:' + m.id, 'Distributed ' + from.sport + ' → ' + tgs.map(t => t.sport).join(', ') + ' for ' + (m.name || m.nameArabic), { memberId: m.id });
           // v6.567: validate the result; rolls back + saves nothing if it would be structurally broken.
@@ -26513,6 +26541,17 @@ window.switchSport = function(memberId) {
         const bPrice = skipReconciliation ? (parseFloat(from.price) || 0)
           : (Number.isFinite(_enteredPrice) && _enteredPrice >= 0 ? Math.round(_enteredPrice * 100) / 100 : Math.round(bShare * 100) / 100);   // v6.532: carried classes are a FREE bonus — default charges only the remaining (bShare), so money stays conserved
 
+        // v6.740 — only REMAINING classes can move: a fully used package has nothing to transfer.
+        if (!skipReconciliation && totalClasses > 0 && remaining <= 0) {
+          toast(t('Nothing to switch: ' + from.sport + ' with ' + coachName(from.coachId) + ' has no classes left (' + attendedA + '/' + totalClasses + ' attended). To start a NEW package with the new coach use Renew.', 'لا يوجد ما يُبدَّل: ' + from.sport + ' مع ' + coachName(from.coachId) + ' لا توجد حصص متبقية (' + attendedA + '/' + totalClasses + '). لبدء باقة جديدة مع المدرب الجديد استخدم «تجديد».'), 'error');
+          return;
+        }
+        if (!skipReconciliation) { const _bk = switchBlockReason(from, switchDate); if (_bk) { switchBlockToast(_bk, from, switchDate); return; } }
+        // …and the same switch (same package → same destination, same day) pressed twice never runs twice.
+        if ((m.sportSwitches || []).some(sw => sw.fromSport === from.sport && String(sw.fromCoachId) === String(from.coachId) && sw.toSport === toSport && String(sw.toCoachId) === String(toCoachId) && sw.date === switchDate && (Date.now() - Date.parse(sw.createdAt || 0)) < 120000)) {
+          toast(t('This switch was just made — not repeated.', 'تم هذا التبديل للتو — لن يتكرر.'), 'error');
+          return;
+        }
         // v6.673 — SWITCH GUARDS (nothing is changed yet). A switch moves the REMAINING classes; when a class-based package is fully
         // used there is nothing to move, so a priced "switch" is really a NEW SALE (Kenan / Rashed Al Hout: a 13/13 package was
         // "switched" to Aziz with a 500 line, then renewed the same minute → billed twice). Block it and point to Renew.
@@ -26533,6 +26572,8 @@ window.switchSport = function(memberId) {
         // chosen by cycle; when the current cycle's invoice was dated AFTER the switch (a back-dated
         // switch or a later-dated renewal) the two DIVERGED — the OLD cycle's paid invoice got split
         // while the current sub was capped, so Charged ≠ Paid and the dest line/classes were wrong.
+        const _swRef = 'SWR' + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36);
+        let _dstSub = null;
         const _sameCoachId = (a, b) => String(a) === String(b);
         const _srcCycleCands = (m.subscriptions || []).filter(s => (s.activity || '') === from.sport && _sameCoachId(s.coachId, from.coachId) && s.status !== 'completed' && !s.switchedAwayTo);
         // v6.566: when MORE THAN ONE cycle covers the switch date — an old cycle ending that very day AND
@@ -26686,6 +26727,11 @@ window.switchSport = function(memberId) {
             // could NOT cap here; this model can and must.)
             srcSub.totalClasses = attendedA;
             srcSub.amountPaid = aShare;
+            // v6.740 — the ORIGINAL record: Switched, what it consumed / handed over, its original expiry kept
+            if (!srcSub._sid) srcSub._sid = 's' + Date.now() + '_src';
+            srcSub.switched = true; srcSub.switchStatus = 'Switched';
+            srcSub.consumedClasses = attendedA; srcSub.transferredClasses = moved; srcSub.originalClasses = totalClasses;
+            srcSub.switchRef = _swRef;
           }
           // v6.520 (F1): only REUSE a destination sub that is a switch placeholder or an empty/unpaid
           // stub. A GENUINE existing paid package for the same sport+coach (v6.504 two-package model)
@@ -26698,6 +26744,12 @@ window.switchSport = function(memberId) {
             destSub.amountPaid = _destPrice;
             destSub.status = 'active';
             destSub.switchFunded = true;
+            if (srcSub) {   // v6.740 — the original expiry; an already-expired source gives an expired (not active) record
+              const _ex = !!(srcSub.end && String(srcSub.end) < String(switchDate));
+              destSub.end = srcSub.end || destSub.end || addDays(switchDate, parseInt(srcSub.validity) || DEFAULT_VALIDITY);
+              destSub.start = _ex ? srcSub.end : switchDate; if (_ex) destSub.status = 'expired';
+            }
+            _dstSub = destSub;
           } else if (srcSub) {
             // v6.571 — don't inherit an EXPIRED/last-day source end: if srcSub.end is on/before the switch
             // date the destination window would be backwards (start>end) or zero-day, which the v6.567
@@ -26705,11 +26757,24 @@ window.switchSport = function(memberId) {
             // switched). Leave the end OPEN (null) in that case; a later renewal sets a real end.
             // v6.645: …but never leave it open-ended (it would never expire): give it a fresh window from the
             // switch date (the source's validity), exactly like a renewal.
-            const _destEnd = (srcSub.end && String(srcSub.end) > String(switchDate)) ? srcSub.end
-              : addDays(switchDate, parseInt(srcSub.validity) || DEFAULT_VALIDITY);
-            m.subscriptions.push({ activity: toSport, coachId: finalToCoachId, totalClasses: _remainingCls,
-              start: switchDate, end: _destEnd, status: 'active', switchFunded: true, amountPaid: _destPrice, ...privateCarryOnSwitch(srcSub, toSport, finalToCoachId),
-              _sid: 's' + Date.now() + '_sw' });
+            // v6.740 — exactly the ORIGINAL expiry (an expired package is refused above, so it is always in the future);
+            // a package with no end date keeps the standard validity so it can never run open-ended.
+            const _destEnd = srcSub.end ? srcSub.end : addDays(switchDate, parseInt(srcSub.validity) || DEFAULT_VALIDITY);
+            const _srcExpired = !!(srcSub.end && String(srcSub.end) < String(switchDate));   // the source had already expired → the new record is NOT active
+            _dstSub = { activity: toSport, coachId: finalToCoachId, totalClasses: _remainingCls,
+              start: _srcExpired ? srcSub.end : switchDate, end: _destEnd, status: _srcExpired ? 'expired' : 'active', switchFunded: true, amountPaid: _destPrice, ...privateCarryOnSwitch(srcSub, toSport, finalToCoachId),
+              _sid: 's' + Date.now() + '_sw' };
+            m.subscriptions.push(_dstSub);
+          }
+          // v6.740 — the NEW record: created through a switch, linked both ways to the original
+          if (srcSub && _dstSub) {
+            _dstSub.createdVia = 'switch'; _dstSub.switchRef = _swRef; _dstSub.switchedFromSid = srcSub._sid;
+            _dstSub.originalExpiry = srcSub.end || null; _dstSub.transferredAmount = Math.round(bShare * 100) / 100; _dstSub.transferredFromSport = _fromSport; _dstSub.transferredFromCoachId = _fromCoachId;
+            if (!_dstSub._sid) _dstSub._sid = 's' + Date.now() + '_sw';
+            srcSub.switchedToSid = _dstSub._sid;
+            const _rec = (m.sportSwitches || [])[(m.sportSwitches || []).length - 1];
+            if (_rec) Object.assign(_rec, { ref: _swRef, fromSid: srcSub._sid, toSid: _dstSub._sid, consumed: attendedA, transferred: moved, amountPerClass: Math.round(aRate * 100) / 100,
+              consumedValue: Math.round(aShare * 100) / 100, transferredValue: Math.round(bShare * 100) / 100, chargedValue: bPrice, originalExpiry: srcSub.end || null });
           }
         }
 
@@ -26738,7 +26803,8 @@ window.switchSport = function(memberId) {
           const _recon = Math.abs(_delta) < 0.01 ? '' : _delta > 0 ? ` · owes +${fmt(_delta)}` : ` · credit ${fmt(-_delta)}`;
           msg = `Switched · ${coachName(_fromCoachId)} ${attendedA}/${attendedA} keeps ${fmt(aShare)} · ${coachName(toCoachId)} ${moved} cls @ ${fmt(bPrice)}${_recon}`;
         }
-        commitSwitch(msg);
+        commitSwitch(msg, skipReconciliation ? null : { kind: 'single', srcSid: _srcSubCycle && _srcSubCycle._sid, consumed: attendedA, moved, expectedEnd: _srcSubCycle ? (_srcSubCycle.end || null) : null,
+          price, aShare, bPrice, repriced: Math.abs(bPrice - Math.round(bShare * 100) / 100) > 0.01, hasSrc: !!_srcSubCycle });
       }},
     ],
   });
@@ -28961,10 +29027,15 @@ Waab, Doha`;
 
 PAGES.trials = (main) => {
   let filter = { status: 'all', search: '', sport: 'all' };
+  // v6.739 — a coach sees only the trials booked with him (primary or second coach)
+  const _isCoachView = currentRole() === 'coach';
+  const _myTrialCoaches = _isCoachView ? (typeof effectiveCoachIds === 'function' ? effectiveCoachIds() : []).map(String) : null;
+  const _myTrial = (t) => !_isCoachView || _myTrialCoaches.includes(String(t.coachId)) || _myTrialCoaches.includes(String(t.coachId2));
   const pg = makePager(10);
 
   function applyFilter() {
     return (state.trials || []).filter(t => {
+      if (!_myTrial(t)) return false;
       if (filter.status !== 'all' && t.status !== filter.status) return false;
       if (filter.sport !== 'all' && t.sport !== filter.sport && t.sport2 !== filter.sport) return false;
       if (filter.search) {
@@ -29004,20 +29075,20 @@ PAGES.trials = (main) => {
           <td class="text-right" style="white-space:nowrap">
             ${phone ? `<a class="btn ghost sm" href="https://wa.me/${phone.replace(/[^\d]/g, '')}?text=${encodeURIComponent(buildTrialFollowupMessage(t))}" target="_blank" title="${t.status === 'converted' ? 'WhatsApp' : 'Send an encouraging follow-up to join'}" onclick="event.stopPropagation();_logTrialFollowup(${t.id})">💬</a>` : ''}
             <button class="btn ghost sm" onclick="editTrial(${t.id})" title="Edit">✏️</button>
-            <button class="btn primary sm" onclick="convertTrialToMember(${t.id})" title="Convert to member">→ Convert</button>
+            ${_isCoachView ? '' : `<button class="btn primary sm" onclick="convertTrialToMember(${t.id})" title="Convert to member">→ Convert</button>`}
             <button class="btn ghost sm" onclick="deleteTrial(${t.id})" title="Delete">🗑</button>
           </td>
         </tr>
       `;
     }).join('') : `<tr><td colspan="8" class="empty"><div class="empty-icon">🎁</div>No trial entries yet. Click + Add Trial to record someone.</td></tr>`;
 
-    $('#trial-count').textContent = `${allTrials.length} of ${(state.trials || []).length}`;
+    $('#trial-count').textContent = `${allTrials.length} of ${(state.trials || []).filter(_myTrial).length}`;
     $('#trial-pagination').innerHTML = paginationBar(pg, allTrials.length, 'trial');
     bindPagination('trial', pg, allTrials.length, refresh);
   }
 
   // Compute KPIs
-  const all = state.trials || [];
+  const all = (state.trials || []).filter(_myTrial);
   const newCount = all.filter(t => !t.status || t.status === 'new').length;
   const followCount = all.filter(t => t.status === 'follow-up').length;
   const convertedCount = all.filter(t => t.status === 'converted').length;
@@ -29111,7 +29182,7 @@ PAGES.trials = (main) => {
   $('#add-trial').addEventListener('click', () => addTrial());
   $('#export-trials')?.addEventListener('click', () => {   // hidden for viewer/reception role
     const rows = [['Name','Name Arabic','Mobile','Email','Sport','Coach','2nd Sport','2nd Coach','Trial Date','Follow-up Date','Status','Source','Notes']];
-    for (const t of (state.trials || [])) {
+    for (const t of (state.trials || []).filter(_myTrial)) {
       rows.push([t.name, t.nameArabic || '', t.phone || '', t.email || '', t.sport || '',
                  t.coachId ? coachName(t.coachId) : '', t.sport2 || '', t.coachId2 ? coachName(t.coachId2) : '',
                  t.trialDate || '', t.followUpDate || '',
@@ -29871,38 +29942,21 @@ PAGES.coachhome = (main) => {
           ${expected.length ? `<div style="margin-top:6px;font-size:12px" class="text-mute">${expected.map(r => escapeHtml(r.name)).join(' · ')}</div>` : `<div style="margin-top:6px;font-size:12px" class="text-mute">${t('No active students enrolled in this class yet.', 'لا يوجد طلاب نشطون في هذه الحصة بعد.')}</div>`}
         </div>`).join('') : `<div class="text-mute" style="font-size:13px">${t('You have no classes scheduled for today.', 'لا توجد حصص مجدولة لك اليوم.')}</div>`}
     </div>`;
-  // v6.680 — this month's rank among the coaches (new/renew packages), as motivation.
+  // v6.739 — the coach sees only HIS OWN new/renew count here. The rank among the other coaches needed every coach's
+  // invoices, which a coach login no longer receives (each coach is limited to his own students' data).
   let rankCard = '';
   {
-    const board = coachRanking(currentMonth());
-    const mine = board.find(r => String(r.id) === String(coach.id));
-    if (mine) {
-      const medal = r => r === 1 ? '🥇' : r === 2 ? '🥈' : r === 3 ? '🥉' : '🏅';
-      const leader = board[0];
-      const ahead = board.filter(r => r.count > mine.count).sort((a, b) => a.count - b.count)[0];
-      const tied = board.filter(r => r.count === mine.count && r.id !== mine.id).length;
-      let line;
-      if (!leader.count) line = t('No new/renew yet this month — be the first on the board!', 'لا توجد باقات جديدة/تجديد بعد هذا الشهر — كن الأول على اللوحة!');
-      else if (mine.rank === 1) line = t('You are leading — keep it up!', 'أنت في الصدارة — واصل!') + (tied ? ' ' + t('(tied with ' + tied + ')', '(متعادل مع ' + tied + ')') : '');
-      else {
-        const gap = ahead.count - mine.count;
-        line = t(gap + ' more new/renew to reach #' + ahead.rank, 'تحتاج ' + gap + ' جديد/تجديد للوصول إلى المركز ' + ahead.rank) + (tied ? ' · ' + t('tied with ' + tied, 'متعادل مع ' + tied) : '');
-      }
-      // The board shows ranks and counts only — a coach never sees another coach's name.
-      const podium = board.filter(r => r.rank <= 3 && r.count > 0).slice(0, 5).map(r => { const me = String(r.id) === String(coach.id); return `<span style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:12px;background:${me ? 'rgba(245,158,11,.22)' : 'var(--surface-2)'};font-weight:${me ? 800 : 500}">${medal(r.rank)} #${r.rank} · <b class="num">${r.count}</b> ${t('new/renew', 'جديد/تجديد')}${me ? ' · ' + t('you', 'أنت') : ''}</span>`; }).join('');
-      rankCard = `<div class="card" style="margin-bottom:16px;border:1px solid rgba(245,158,11,.4);background:linear-gradient(135deg,rgba(245,158,11,.14),rgba(245,158,11,.02))">
-        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-          <div style="font-size:42px;line-height:1">${leader.count ? medal(mine.rank) : '🏅'}</div>
-          <div style="flex:1;min-width:190px">
-            <div class="text-mute" style="font-size:11px;text-transform:uppercase;letter-spacing:.5px">${t('Your rank this month', 'ترتيبك هذا الشهر')} · ${escapeHtml(fmtMonth(currentMonth()))}</div>
-            <div style="font-size:26px;font-weight:800">${leader.count ? '#' + mine.rank : '—'} <span style="font-size:13px;font-weight:500" class="text-mute">${t('of', 'من')} ${board.length} ${t('coaches', 'مدربين')} · ${mine.count} ${t('new/renew', 'جديد/تجديد')}</span></div>
-            <div style="font-size:13px;margin-top:2px">${line}</div>
-          </div>
-          <button class="btn ghost sm" onclick="navigate('targets')">🎯 ${t('My target', 'هدفي')} →</button>
+    const cnt = coachNewRenewCount(coach.id, currentMonth());
+    rankCard = `<div class="card" style="margin-bottom:16px;border:1px solid rgba(245,158,11,.4);background:linear-gradient(135deg,rgba(245,158,11,.14),rgba(245,158,11,.02))">
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+        <div style="font-size:42px;line-height:1">🏅</div>
+        <div style="flex:1;min-width:190px">
+          <div class="text-mute" style="font-size:11px;text-transform:uppercase;letter-spacing:.5px">${t('Your new / renew this month', 'جديد / تجديد هذا الشهر')} · ${escapeHtml(fmtMonth(currentMonth()))}</div>
+          <div style="font-size:26px;font-weight:800">${cnt} <span style="font-size:13px;font-weight:500" class="text-mute">${t('new/renew', 'جديد/تجديد')}</span></div>
         </div>
-        ${podium ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px">${podium}</div>` : ''}
-      </div>`;
-    }
+        <button class="btn ghost sm" onclick="navigate('targets')">🎯 ${t('My target', 'هدفي')} →</button>
+      </div>
+    </div>`;
   }
   const nxWhen = nx ? (nx.delta === 0 ? t('Today', 'اليوم') : nx.delta === 1 ? t('Tomorrow', 'غداً') : t('in', 'خلال') + ' ' + nx.delta + ' ' + t('days', 'أيام')) : '';
   const nextClassCard = nx ? `
