@@ -12699,6 +12699,21 @@ function invoiceProductSummaryHtml(inv) {
 }
 
 // ─── INVOICES ──────────────────────────────────────────────────
+// v6.744 — the Invoices list shows the package START date (not the invoice date) and, separately, when it was PAID
+function invoiceStartDate(i) {
+  const ds = [];
+  if (i.ref && i.customerId != null) {
+    const m = (state.members || []).find(x => x.id === i.customerId);
+    if (m) for (const s of (m.subscriptions || [])) if (s.start && String(s.invoiceNumber || '') === String(i.ref)) ds.push(String(s.start).slice(0, 10));
+  }
+  if (!ds.length) for (const li of (i.lineItems || [])) if (li && li.issueDate) ds.push(String(li.issueDate).slice(0, 10));
+  ds.sort();
+  return ds[0] || String(i.date || '').slice(0, 10);
+}
+function invoicePaymentDates(i) {
+  const ds = (Array.isArray(i.payments) ? i.payments : []).filter(p => p && (Number(p.amount) || 0) > 0).map(p => String(p.date || i.date || '').slice(0, 10)).filter(Boolean).sort();
+  return ds;
+}
 PAGES.invoices = (main) => {
   // Treat every "Summer Camp · <duration>" variant as Summer Camp for filtering.
   const _isCampActivity = s => typeof s === 'string' && (isCampSport(s) || s.indexOf(SUMMER_CAMP) === 0 || s.indexOf(WINTER_CAMP) === 0);
@@ -12836,7 +12851,8 @@ PAGES.invoices = (main) => {
         <td style="text-align:center" onclick="event.stopPropagation()"><input type="checkbox" class="inv-cb" value="${i.id}" data-cust="${i.customerId || ''}" ${selected.has(i.id) ? 'checked' : ''} style="cursor:pointer"></td>
         <td class="text-mute" style="text-align:center;font-size:12px">${_n + 1}</td>
         <td class="font-mono" style="font-size:11px">${i.ref || `#${i.id}`}</td>
-        <td class="text-dim" style="white-space:nowrap">${fmtDate(i.date)}</td>
+        <td class="text-dim" style="white-space:nowrap" title="${t('Invoice date', 'تاريخ الفاتورة')}: ${fmtDate(i.date)}">${fmtDate(invoiceStartDate(i))}</td>
+        <td class="text-dim" style="white-space:nowrap">${(() => { const pd = invoicePaymentDates(i); if (!pd.length) return '<span class="text-mute">—</span>'; const last = fmtDate(pd[pd.length - 1]); return pd.length > 1 ? `<span title="${pd.map(fmtDate).join(' · ')}">${last} <span class="badge" style="font-size:9px">+${pd.length - 1}</span></span>` : last; })()}</td>
         <td>${custCell}</td>
         <td>${i.category ? `<span class="badge ${i.category==='Court Rental'||i.category==='Boxing Room'?'pending':i.category==='Product'?'purple':'green'}" style="font-size:10px">${escapeHtml(i.category)}</span>` : '<span class="text-mute">—</span>'}</td>
         <td>${i.sport
@@ -12895,7 +12911,7 @@ PAGES.invoices = (main) => {
           <button class="btn ghost sm" onclick="deleteInvoice(${i.id})" title="${t('Delete (archive — recoverable by an admin)', 'حذف (أرشفة — يمكن للمشرف الاسترجاع)')}">🗑</button>`}
         </td>
       </tr>`;
-    }).join('') : `<tr><td colspan="11" class="empty"><div class="empty-icon">📄</div>No invoices match</td></tr>`;
+    }).join('') : `<tr><td colspan="12" class="empty"><div class="empty-icon">📄</div>No invoices match</td></tr>`;
     // The headline number is total CHARGED (billed) across the filtered invoices,
     // all-time — distinct from the Dashboard's "Total Revenue", which is cash
     // COLLECTED in a given month. Show collected + outstanding too so the figures
@@ -13006,7 +13022,8 @@ PAGES.invoices = (main) => {
               <th style="width:34px;text-align:center"><input type="checkbox" id="inv-select-all" title="Select/clear all on this page" style="cursor:pointer"></th>
               <th style="width:36px;text-align:center">#</th>
               <th>Ref</th>
-              <th>Date</th>
+              <th>${t('Start date', 'تاريخ البدء')}</th>
+              <th>${t('Paid on', 'تاريخ الدفع')}</th>
               <th>Customer</th>
               <th>Category</th>
               <th>Activity</th>
@@ -27034,7 +27051,8 @@ window.switchSport = function(memberId) {
 // Produces ONE combined receipt with a per-sport line item so commission still splits
 // per coach, plus one subscription + renewal record per selected sport. Carry-forward
 // credit and post-expiry deductions are applied per sport (one global toggle).
-window.addRenewalMulti = function(m, picks) {
+window.addRenewalMulti = function(m, picks, opts) {
+  opts = opts || {};
   if (!m) return;
   // v6.738 — MULTI-SPORT RENEWAL. One row per sport the member is enrolled in; tick the ones to renew (unticked sports are NEVER touched), and set each
   // sport's coach, classes, validity and price on its own. The START date of every sport is calculated by computeRenewalStart (first class attended in
@@ -27067,20 +27085,23 @@ window.addRenewalMulti = function(m, picks) {
     const s = (m.subscriptions || []).filter(x => x.activity === sport && (coachId == null || String(x.coachId) === String(coachId)) && x.validity).sort((a, b) => String(a.start || '').localeCompare(String(b.start || ''))).pop();
     return s ? (parseInt(s.validity) || DEFAULT_VALIDITY) : DEFAULT_VALIDITY;
   };
-  const rows = picks.map((e, i) => ({
+  const mkRow = (e, i) => ({
+    isNew: !!e.isNew,
     sport: e.sport, coachId: e.coachId, originalCoachId: e.coachId, classes: parseInt(e.classes) || 0, i,
     price: smartPrice(e.sport, Number(e.price) || 0),
     validity: parseInt(e.validity) || lastValidity(e.sport, e.coachId),
     pv: privateDefaultFor(m, e.sport, e.coachId),   // v6.660
     carry: (typeof carryForwardCredit === 'function') ? (carryForwardCredit(m, e.sport) || 0) : 0,
     deduct: (() => { const le = getLastSportExpiry(e.sport); return le ? countAttendedAfter(e.sport, le) : 0; })(),
-  }));
+  });
+  const rows = picks.map(mkRow);
+  let _recalc = () => {};
   const reqId = 'rq' + Date.now() + Math.random().toString(36).slice(2, 7);   // a second submit of THIS dialog is refused by commitRenewals
   let _busy = false;
   const noCoach = r => isCampSport(r.sport) || r.sport === MIXED;
   const fD = d => (typeof fmtDate === 'function' && d) ? fmtDate(d) : (d || '');
 
-  const rowHtml = rows.map(r => {
+  const rowHtmlOf = r => {
     const coachCell = noCoach(r)
       ? `<div class="text-mute" style="font-size:12px;padding-top:6px">—</div>`
       : `<select id="rnm-coach-${r.i}" style="width:100%">${coachOptionsHtml(coachesForSport(r.sport, r.coachId), r.sport, r.coachId)}</select>`;
@@ -27089,7 +27110,9 @@ window.addRenewalMulti = function(m, picks) {
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
         <input type="checkbox" id="rnm-pick-${r.i}" class="rnm-pick" checked />
         <div style="flex:1;min-width:110px">
-          <div style="font-weight:700;font-size:14px">${escapeHtml(r.sport)} <span class="text-mute" style="font-weight:400">· ${escapeHtml(coachName(r.coachId) || '—')}</span></div>
+          ${r.isNew
+            ? `<div style="display:flex;align-items:center;gap:8px"><span class="badge green" style="font-size:10px">${t('NEW SPORT', 'رياضة جديدة')}</span><select id="rnm-sport-${r.i}" style="font-weight:700;padding:5px 8px">${(typeof SPORTS !== 'undefined' ? SPORTS : []).map(s => `<option ${s === r.sport ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}</select><button type="button" class="btn ghost sm" id="rnm-del-${r.i}" title="${t('Remove this row', 'إزالة هذا السطر')}">✕</button></div>`
+            : `<div style="font-weight:700;font-size:14px">${escapeHtml(r.sport)} <span class="text-mute" style="font-weight:400">· ${escapeHtml(coachName(r.coachId) || '—')}</span></div>`}
           <div class="text-dim" style="font-size:11px">${progressFor(r.sport, r.coachId)}${r.carry ? ` · 🎁 +${r.carry} carry` : ''}${r.deduct ? ` · ⚠ −${r.deduct} post-expiry` : ''}</div>
         </div>
       </div>
@@ -27108,7 +27131,8 @@ window.addRenewalMulti = function(m, picks) {
           <option value="reception" ${r.pv.approach === 'reception' ? 'selected' : ''}>${t('By reception', 'عن طريق الاستقبال')}</option></select>
       </div>`}
     </div>`;
-  }).join('');
+  };
+  const rowHtml = rows.map(rowHtmlOf).join('');
 
   showModal({
     title: `${t('Renew Subscription', 'تجديد الاشتراك')} — ${escapeHtml(m.name)}`,
@@ -27116,7 +27140,8 @@ window.addRenewalMulti = function(m, picks) {
     body: `
       <div style="margin-bottom:10px">
         <div style="font-size:11px;color:var(--blue);text-transform:uppercase;letter-spacing:.6px;font-weight:600;margin-bottom:6px">${t('Which sports to renew?', 'أي الرياضات تريد تجديدها؟')}</div>
-        ${rowHtml}
+        <div id="rnm-rows">${rowHtml}</div>
+        <button type="button" class="btn ghost sm" id="rnm-add" style="margin:2px 0 8px;font-weight:700">➕ ${t('Add another sport', 'إضافة رياضة أخرى')}</button>
         <div class="text-mute" style="font-size:10px">${t('Untick a sport to leave it exactly as it is. Each sport renews with its OWN coach, classes, validity, price and start date — nothing is bundled.', 'ألغِ اختيار رياضة لتبقى كما هي تماماً. كل رياضة تُجدَّد بمدربها وحصصها ومدتها وسعرها وتاريخ بدايتها الخاص — لا شيء مُجمَّع.')}</div>
       </div>
       <div class="form-row">
@@ -27154,7 +27179,7 @@ window.addRenewalMulti = function(m, picks) {
           const on = !noCoach(r) && !!(document.getElementById(`rnm-priv-${r.i}`) || {}).checked;
           const ap = (document.getElementById(`rnm-app-${r.i}`) || {}).value || '';
           if (on && !(ap === 'coach' || ap === 'reception')) { toast(r.sport + ' — ' + t('Private: choose who approached the customer (coach or reception)', 'خاص: اختر من أحضر العميل (المدرب أو الاستقبال)'), 'error'); return; }
-          input.push({ sport: r.sport, coachId, originalCoachId: r.originalCoachId, classes, price, validity, pv: privFlags(on, ap), carried, deducted });
+          input.push({ sport: r.sport, coachId, originalCoachId: r.originalCoachId, classes, price, validity, pv: privFlags(on, ap), carried, deducted, isNew: !!r.isNew });
         }
         // v6.661 — one confirmation per sport that is already billed around its start date (nothing is saved until all are answered)
         for (const x of input) { const st = computeRenewalStart(m, x.sport).start; const _bh = billedSameLines(m, x.sport, x.coachId, st); if (_bh.length && !confirm(billedSameWarning(m, x.sport, _bh, st))) return; }
@@ -27206,8 +27231,36 @@ ${t('Add another identical period anyway?', 'إضافة فترة مطابقة أ
       if (sm) sm.innerHTML = lines.length ? `<div style="font-weight:700;margin-bottom:4px">${lines.length} ${lines.length === 1 ? t('sport selected', 'رياضة محددة') : t('sports selected', 'رياضات محددة')}</div>${lines.join('')}` : `<span style="color:var(--accent-2)">${t('No sport selected — tick at least one to renew.', 'لم تُحدَّد أي رياضة — اختر واحدة على الأقل.')}</span>`;
       const tt = document.getElementById('rnm-total'); if (tt) tt.textContent = fmt(total);
     };
-    rows.forEach(r => ['pick', 'cls', 'val', 'amt'].forEach(k => { const el = document.getElementById(`rnm-${k}-${r.i}`); if (el) { el.addEventListener('change', recalc); el.addEventListener('input', recalc); } }));
+    _recalc = recalc;
+    const bindRow = (r) => {
+      ['pick', 'cls', 'val', 'amt'].forEach(k => { const el = document.getElementById(`rnm-${k}-${r.i}`); if (el) { el.addEventListener('change', recalc); el.addEventListener('input', recalc); } });
+      if (!r.isNew) return;
+      const sel = document.getElementById(`rnm-sport-${r.i}`), del = document.getElementById(`rnm-del-${r.i}`);
+      if (sel) sel.addEventListener('change', () => {   // a different sport → rebuild the row (coach list, carry, last price)
+        const e = { sport: sel.value, coachId: null, classes: 0, price: 0, isNew: true };
+        const fresh = mkRow(e, r.i); const first = coachesForSport(fresh.sport, null)[0]; fresh.coachId = first ? first.id : null; fresh.pv = privateDefaultFor(m, fresh.sport, fresh.coachId);
+        rows[rows.indexOf(r)] = fresh;
+        const host = document.getElementById(`rnm-row-${r.i}`); if (host) host.outerHTML = rowHtmlOf(fresh);
+        bindRow(fresh); recalc();
+      });
+      if (del) del.addEventListener('click', () => { const k = rows.indexOf(r); if (k >= 0) rows.splice(k, 1); const host = document.getElementById(`rnm-row-${r.i}`); if (host) host.remove(); recalc(); });
+    };
+    let _nextI = rows.length ? Math.max(...rows.map(r => r.i)) + 1 : 0;
+    const addRow = () => {
+      const taken = new Set(rows.map(r => r.sport));
+      const sp = (typeof SPORTS !== 'undefined' ? SPORTS : []).find(s => !taken.has(s) && !isPrivateSport(s)) || (SPORTS || [])[0];
+      if (!sp) return;
+      const first = coachesForSport(sp, null)[0];
+      const r = mkRow({ sport: sp, coachId: first ? first.id : null, classes: 0, price: 0, isNew: true }, _nextI++);
+      rows.push(r);
+      const host = document.getElementById('rnm-rows'); if (host) host.insertAdjacentHTML('beforeend', rowHtmlOf(r));
+      bindRow(r); recalc();
+      const el = document.getElementById(`rnm-cls-${r.i}`); if (el) el.focus();
+    };
+    const addBtn = document.getElementById('rnm-add'); if (addBtn) addBtn.addEventListener('click', addRow);
+    rows.forEach(bindRow);
     recalc();
+    if (opts.addNew) addRow();
   }, 30);
 };
 
@@ -27269,6 +27322,7 @@ window.addRenewal = function(memberId) {
         ${quickPicks}
         <div class="text-mute" style="font-size:10px">This member is enrolled in ${enrolledUnique.length} sports. Pick one to renew — you can renew it even if the classes aren't finished yet.</div>
       </div>` : ''}
+      <div style="margin:-4px 0 10px"><button type="button" class="btn ghost sm" id="rn-addmore" style="font-weight:700" onclick="closeModal();window.addRenewalMulti(state.members.find(x => x.id === ${m.id}), ${JSON.stringify(enrolledUnique).replace(/"/g, '&quot;')}, { addNew: true })">➕ ${t('Add another sport to this renewal', 'إضافة رياضة أخرى إلى هذا التجديد')}</button></div>
       <div class="form-row">
         <div class="field"><label>Activity</label><select id="rn-act">${[...new Set([...enrolledUnique.map(e => e.sport), m.sport, ...sports].filter(Boolean))].map(s => `<option ${s===(enrolledUnique[0]?.sport||m.sport)?'selected':''}>${escapeHtml(s)}</option>`).join('')}</select></div>
         <div class="field" id="rn-coach-field" style="${isCampSport((enrolledUnique[0]?.sport || m.sport)) ? 'display:none' : ''}"><label>Coach</label><select id="rn-coach">${coachOpts(enrolledUnique[0]?.coachId || m.coachId)}</select></div>
