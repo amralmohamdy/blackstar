@@ -26929,9 +26929,11 @@ window.switchSport = function(memberId) {
 // credit and post-expiry deductions are applied per sport (one global toggle).
 window.addRenewalMulti = function(m, picks) {
   if (!m) return;
-  // Smart price per sport: what was actually BILLED as membership for that sport last
-  // (the most recent Membership invoice LINE), so a contaminated enrolment price doesn't
-  // carry forward. Falls back to the enrolment price, then the pick's price.
+  // v6.738 — MULTI-SPORT RENEWAL. One row per sport the member is enrolled in; tick the ones to renew (unticked sports are NEVER touched), and set each
+  // sport's coach, classes, validity and price on its own. The START date of every sport is calculated by computeRenewalStart (first class attended in
+  // that sport after its previous expiry, else today) and shown here exactly as it will be saved; commitRenewals saves everything or nothing.
+  // Smart price per sport: what was actually BILLED as membership for that sport last (the most recent Membership invoice LINE), so a contaminated
+  // enrolment price doesn't carry forward. Falls back to the enrolment price, then the pick's price.
   const smartPrice = (sp, fallback) => {
     const invs = (state.invoices || []).filter(iv => !iv.deleted && iv.customerId === m.id
       && (iv.category || 'Membership') === 'Membership' && !iv.switchCredit)
@@ -26944,151 +26946,131 @@ window.addRenewalMulti = function(m, picks) {
     }
     return fallback;
   };
-  const getLastSportExpiry = (sport) => { const s = (m.subscriptions || []).filter(x => x.activity === sport && x.end); return s.length ? s.map(x => x.end).sort().pop() : null; };
+  const getLastSportExpiry = (sport) => renewalPreviousExpiry(m, sport);
   const countAttendedAfter = (sport, after) => {
-    if (!m.dailyAttendance || !after) return 0; let tot = 0;
-    for (const mk of Object.keys(m.dailyAttendance)) {
-      const sm = m.dailyAttendance[mk] && m.dailyAttendance[mk][sport]; if (!sm) continue;
-      for (const d of Object.keys(sm)) { if (sm[d] === 'Y' && `${mk}-${String(d).padStart(2, '0')}` > after) tot++; }
-    }
-    return tot;
+    if (!after) return 0;
+    return renewalAttendanceDates(m, sport).filter(d => d > after).length;
   };
   const progressFor = (sport, coachId) => {
     const subs = (m.subscriptions || []).filter(s => s.activity === sport && (coachId == null || s.coachId === coachId));
     let att = 0, tot = 0; subs.forEach(s => { att += s.attendedClasses || 0; tot += s.totalClasses || 0; });
     return tot ? `${att}/${tot} classes${att < tot ? ' · not finished' : ' · finished'}` : '';
   };
+  const lastValidity = (sport, coachId) => {
+    const s = (m.subscriptions || []).filter(x => x.activity === sport && (coachId == null || String(x.coachId) === String(coachId)) && x.validity).sort((a, b) => String(a.start || '').localeCompare(String(b.start || ''))).pop();
+    return s ? (parseInt(s.validity) || DEFAULT_VALIDITY) : DEFAULT_VALIDITY;
+  };
   const rows = picks.map((e, i) => ({
-    sport: e.sport, coachId: e.coachId, classes: parseInt(e.classes) || 0, i,
+    sport: e.sport, coachId: e.coachId, originalCoachId: e.coachId, classes: parseInt(e.classes) || 0, i,
     price: smartPrice(e.sport, Number(e.price) || 0),
+    validity: parseInt(e.validity) || lastValidity(e.sport, e.coachId),
     pv: privateDefaultFor(m, e.sport, e.coachId),   // v6.660
     carry: (typeof carryForwardCredit === 'function') ? (carryForwardCredit(m, e.sport) || 0) : 0,
     deduct: (() => { const le = getLastSportExpiry(e.sport); return le ? countAttendedAfter(e.sport, le) : 0; })(),
   }));
+  const reqId = 'rq' + Date.now() + Math.random().toString(36).slice(2, 7);   // a second submit of THIS dialog is refused by commitRenewals
+  let _busy = false;
+  const noCoach = r => isCampSport(r.sport) || r.sport === MIXED;
+  const fD = d => (typeof fmtDate === 'function' && d) ? fmtDate(d) : (d || '');
 
-  const rowHtml = rows.map(r => `
-    <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px">
-      <input type="checkbox" id="rnm-pick-${r.i}" class="rnm-pick" checked />
-      <div style="flex:1;min-width:110px">
-        <div style="font-weight:600;font-size:13px">${escapeHtml(r.sport)} <span class="text-mute" style="font-weight:400">· ${escapeHtml(coachName(r.coachId) || '—')}</span></div>
-        <div class="text-dim" style="font-size:11px">${progressFor(r.sport, r.coachId)}${r.carry ? ` · 🎁 +${r.carry} carry` : ''}${r.deduct ? ` · ⚠ −${r.deduct} post-expiry` : ''}</div>
+  const rowHtml = rows.map(r => {
+    const coachCell = noCoach(r)
+      ? `<div class="text-mute" style="font-size:12px;padding-top:6px">—</div>`
+      : `<select id="rnm-coach-${r.i}" style="width:100%">${coachOptionsHtml(coachesForSport(r.sport, r.coachId), r.sport, r.coachId)}</select>`;
+    return `
+    <div class="rnm-row" id="rnm-row-${r.i}" style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <input type="checkbox" id="rnm-pick-${r.i}" class="rnm-pick" checked />
+        <div style="flex:1;min-width:110px">
+          <div style="font-weight:700;font-size:14px">${escapeHtml(r.sport)} <span class="text-mute" style="font-weight:400">· ${escapeHtml(coachName(r.coachId) || '—')}</span></div>
+          <div class="text-dim" style="font-size:11px">${progressFor(r.sport, r.coachId)}${r.carry ? ` · 🎁 +${r.carry} carry` : ''}${r.deduct ? ` · ⚠ −${r.deduct} post-expiry` : ''}</div>
+        </div>
       </div>
-      <div class="field" style="margin:0;width:78px"><label style="font-size:10px">${t('Classes', 'الحصص')}</label><input id="rnm-cls-${r.i}" type="number" min="0" step="1" value="${r.classes || ''}" /></div>
-      <div class="field" style="margin:0;width:104px"><label style="font-size:10px">${t('Amount', 'المبلغ')}</label><input id="rnm-amt-${r.i}" class="rnm-amt" type="number" min="0" step="0.01" value="${r.price || ''}" /></div>
-    </div>
-    ${(isCampSport(r.sport) || r.sport === MIXED) ? '' : `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:-2px 0 8px 30px">
-      <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;cursor:pointer"><input type="checkbox" id="rnm-priv-${r.i}" ${r.pv.private ? 'checked' : ''} onchange="var s=document.getElementById('rnm-app-${r.i}');if(s){s.style.display=this.checked?'':'none';if(!this.checked)s.value='';}" /> 🔒 ${t('Private', 'خاص')}</label>
-      <select id="rnm-app-${r.i}" style="padding:6px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text);font-size:12px;display:${r.pv.private ? '' : 'none'}">
-        <option value="" ${r.pv.approach ? '' : 'selected'}>${t('— Approached by… —', '— تم التواصل عن طريق… —')}</option>
-        <option value="coach" ${r.pv.approach === 'coach' ? 'selected' : ''}>${t('By the coach', 'عن طريق المدرب')}</option>
-        <option value="reception" ${r.pv.approach === 'reception' ? 'selected' : ''}>${t('By reception', 'عن طريق الاستقبال')}</option></select>
-    </div>`}`).join('');
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px">
+        <div class="field" style="margin:0"><label style="font-size:10px">${t('Coach', 'المدرب')}</label>${coachCell}</div>
+        <div class="field" style="margin:0"><label style="font-size:10px">${t('Classes', 'الحصص')}</label><input id="rnm-cls-${r.i}" type="number" min="1" step="1" value="${r.classes || ''}" /></div>
+        <div class="field" style="margin:0"><label style="font-size:10px">${t('Validity', 'المدة')}</label><select id="rnm-val-${r.i}">${validityOptionsHtml(r.validity)}</select></div>
+        <div class="field" style="margin:0"><label style="font-size:10px">${t('Price (QAR)', 'السعر (ر.ق)')}</label><input id="rnm-amt-${r.i}" class="rnm-amt" type="number" min="0" step="0.01" value="${r.price || ''}" /></div>
+      </div>
+      <div id="rnm-dates-${r.i}" style="margin-top:8px;padding:7px 10px;border-radius:8px;background:rgba(91,141,239,.10);font-size:12px;line-height:1.5"></div>
+      ${noCoach(r) ? '' : `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;cursor:pointer"><input type="checkbox" id="rnm-priv-${r.i}" ${r.pv.private ? 'checked' : ''} onchange="var s=document.getElementById('rnm-app-${r.i}');if(s){s.style.display=this.checked?'':'none';if(!this.checked)s.value='';}" /> 🔒 ${t('Private', 'خاص')}</label>
+        <select id="rnm-app-${r.i}" style="padding:6px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text);font-size:12px;display:${r.pv.private ? '' : 'none'}">
+          <option value="" ${r.pv.approach ? '' : 'selected'}>${t('— Approached by… —', '— تم التواصل عن طريق… —')}</option>
+          <option value="coach" ${r.pv.approach === 'coach' ? 'selected' : ''}>${t('By the coach', 'عن طريق المدرب')}</option>
+          <option value="reception" ${r.pv.approach === 'reception' ? 'selected' : ''}>${t('By reception', 'عن طريق الاستقبال')}</option></select>
+      </div>`}
+    </div>`;
+  }).join('');
 
   showModal({
     title: `${t('Renew Subscription', 'تجديد الاشتراك')} — ${escapeHtml(m.name)}`,
+    size: 'lg',
     body: `
       <div style="margin-bottom:10px">
         <div style="font-size:11px;color:var(--blue);text-transform:uppercase;letter-spacing:.6px;font-weight:600;margin-bottom:6px">${t('Which sports to renew?', 'أي الرياضات تريد تجديدها؟')}</div>
         ${rowHtml}
-        <div class="text-mute" style="font-size:10px">${t('Untick a sport to leave it out. Each renews at its OWN amount — nothing is bundled.', 'ألغِ اختيار رياضة لاستثنائها. كل رياضة تُجدَّد بمبلغها الخاص — لا شيء مُجمَّع.')}</div>
+        <div class="text-mute" style="font-size:10px">${t('Untick a sport to leave it exactly as it is. Each sport renews with its OWN coach, classes, validity, price and start date — nothing is bundled.', 'ألغِ اختيار رياضة لتبقى كما هي تماماً. كل رياضة تُجدَّد بمدربها وحصصها ومدتها وسعرها وتاريخ بدايتها الخاص — لا شيء مُجمَّع.')}</div>
       </div>
       <div class="form-row">
-        <div class="field"><label>${t('Start / renewal date', 'تاريخ البداية / التجديد')} <span class="text-mute" style="font-size:10px;font-weight:400">${t('(moves to the first attended class)', '(يتحول لأول حصة حضرها)')}</span></label><input id="rnm-start" type="date" value="${TODAY}" /></div>
-        <div class="field"><label>${t('Validity', 'المدة')}</label><select id="rnm-validity">${validityOptionsHtml(DEFAULT_VALIDITY)}</select></div>
         <div class="field"><label>${t('Status', 'الحالة')}</label><select id="rnm-status"><option value="active">${t('Active', 'نشط')}</option><option value="expired">${t('Expired', 'منتهٍ')}</option></select></div>
       </div>
       <label style="display:flex;align-items:center;gap:6px;margin:6px 0;cursor:pointer;font-size:12px"><input type="checkbox" id="rnm-adjust" checked /> <span>${t('Apply carry-forward credit & deduct post-expiry classes per sport', 'تطبيق رصيد الحصص المُرحَّلة وخصم حصص ما بعد الانتهاء لكل رياضة')}</span></label>
+      <div id="rnm-summary" style="margin-top:8px;padding:10px 12px;background:var(--surface-2);border-radius:8px;font-size:13px;line-height:1.6"></div>
       <div style="margin-top:8px;padding:9px 11px;background:var(--surface-2);border-radius:8px;font-weight:700;font-size:14px">${t('Total to renew', 'إجمالي التجديد')}: <span id="rnm-total">0</span> ${t('QAR', 'ر.ق')}</div>
     `,
     actions: [
       { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
-      { label: t('Save Renewal', 'حفظ التجديد'), class: 'btn primary', onclick: () => {
-        const start = document.getElementById('rnm-start').value;
-        if (!start) { toast(t('Start date required', 'تاريخ البداية مطلوب'), 'error'); return; }
-        const validity = parseInt(document.getElementById('rnm-validity').value) || DEFAULT_VALIDITY;
-        const status = document.getElementById('rnm-status').value;
-        const applyAdj = document.getElementById('rnm-adjust').checked;
+      { id: 'rnm-save', label: t('Save Renewal', 'حفظ التجديد'), class: 'btn primary', onclick: () => {
+        if (_busy) return;                       // double click / repeated request
         const selected = rows.filter(r => document.getElementById(`rnm-pick-${r.i}`)?.checked);
         if (!selected.length) { toast(t('Tick at least one sport to renew', 'اختر رياضة واحدة على الأقل للتجديد'), 'error'); return; }
-        // v6.660 — Private decision per sport, validated before anything is saved
-        const _pvBy = {};
+        const status = document.getElementById('rnm-status').value;
+        const applyAdj = document.getElementById('rnm-adjust').checked;
+        // read + validate every selected row BEFORE anything is saved
+        const input = [];
         for (const r of selected) {
-          const camp = isCampSport(r.sport) || r.sport === MIXED;
-          const on = !camp && !!(document.getElementById(`rnm-priv-${r.i}`) || {}).checked;
+          const coachEl = document.getElementById(`rnm-coach-${r.i}`);
+          const coachId = noCoach(r) ? (r.coachId != null ? r.coachId : null) : ((coachEl && coachEl.value !== '' && coachEl.value != null) ? (parseInt(coachEl.value) || null) : r.coachId);
+          const classesIn = parseInt(document.getElementById(`rnm-cls-${r.i}`).value) || 0;
+          const price = parseFloat(document.getElementById(`rnm-amt-${r.i}`).value);
+          const validity = parseInt(document.getElementById(`rnm-val-${r.i}`).value) || r.validity || 0;
+          let classes = classesIn, carried = 0, deducted = 0;
+          if (applyAdj && classesIn > 0) {
+            if (r.carry > 0) { carried = r.carry; classes += carried; }
+            if (r.deduct > 0) { deducted = Math.min(r.deduct, classes); classes -= deducted; }
+          }
+          if (!(classesIn > 0)) { toast(r.sport + ' — ' + t('enter the number of classes', 'أدخل عدد الحصص'), 'error'); return; }
+          if (!(coachId != null) && !noCoach(r)) { toast(r.sport + ' — ' + t('pick a coach', 'اختر المدرب'), 'error'); return; }
+          if (!isFinite(price) || price < 0) { toast(r.sport + ' — ' + t('enter a valid price', 'أدخل سعراً صحيحاً'), 'error'); return; }
+          if (!(validity > 0)) { toast(r.sport + ' — ' + t('pick the validity', 'اختر المدة'), 'error'); return; }
+          const on = !noCoach(r) && !!(document.getElementById(`rnm-priv-${r.i}`) || {}).checked;
           const ap = (document.getElementById(`rnm-app-${r.i}`) || {}).value || '';
           if (on && !(ap === 'coach' || ap === 'reception')) { toast(r.sport + ' — ' + t('Private: choose who approached the customer (coach or reception)', 'خاص: اختر من أحضر العميل (المدرب أو الاستقبال)'), 'error'); return; }
-          _pvBy[r.i] = privFlags(on, ap);
+          input.push({ sport: r.sport, coachId, originalCoachId: r.originalCoachId, classes, price, validity, pv: privFlags(on, ap), carried, deducted });
         }
-        // v6.661 — one confirmation per sport that is already billed around this date
-        for (const r of selected) { const _bh = billedSameLines(m, r.sport, r.coachId, start); if (_bh.length && !confirm(billedSameWarning(m, r.sport, _bh, start))) return; }
+        // v6.661 — one confirmation per sport that is already billed around its start date (nothing is saved until all are answered)
+        for (const x of input) { const st = computeRenewalStart(m, x.sport).start; const _bh = billedSameLines(m, x.sport, x.coachId, st); if (_bh.length && !confirm(billedSameWarning(m, x.sport, _bh, st))) return; }
         if (typeof assertCloudWritable === 'function' && !assertCloudWritable('record this renewal', 'تسجيل هذا التجديد')) return;
-
-        const ref = nextInvoiceRef();
-        const invLines = []; let invAmount = 0; const created = []; let maxEnd = null;
-        const _stamp = Date.now();
-        for (const r of selected) {
-          const amount = parseFloat(document.getElementById(`rnm-amt-${r.i}`).value) || 0;
-          let classes = parseInt(document.getElementById(`rnm-cls-${r.i}`).value) || 0;
-          let carried = 0, deducted = 0;
-          if (applyAdj) {
-            if (r.carry > 0 && classes > 0) { carried = r.carry; classes += carried; }
-            if (r.deduct > 0 && classes > 0) { deducted = Math.min(r.deduct, classes); classes -= deducted; }
-          }
-          const isCamp = isCampSport(r.sport);
-          // Camp renewal expires on the Nth camp-day (its class-day count) — same rule as booking a
-          // Custom pass; for a preset the class count already equals the window. Business-day fallback
-          // (campEndDate) when no class count is known. (v6.458)
-          const end = isCamp
-            ? ((typeof campEndDateFromClasses === 'function' && parseInt(classes) > 0) ? campEndDateFromClasses(start, classes)
-               : (typeof campEndDate === 'function' ? campEndDate(start, validity) : addDays(start, validity)))
-            : addDays(start, validity);
-          // Duplicate-period guard (same sport / coach / start) — the usual cause of twin rows.
-          const dup = (m.subscriptions || []).find(s => (s.activity || '') === r.sport && (s.start || '') === start && (s.coachId || null) === (r.coachId || null) && s.status !== 'Withdrawn');
-          if (dup && !confirm(`⚠ ${m.name} ${t('already has an identical', 'لديه بالفعل فترة مطابقة')} ${r.sport} ${t('period starting', 'تبدأ في')} ${fmtDate(start)}.\n\n${t('Add another identical period anyway?', 'إضافة فترة مطابقة أخرى على أي حال؟')}`)) return;
-          const _rid = 'r' + _stamp + '_' + r.i;
-          if (!m.renewals) m.renewals = [];
-          m.renewals.push({ _rid, activity: r.sport, coach: coachName(r.coachId), coachId: r.coachId, start, end: end || null, validity, totalClasses: classes || null, amountPaid: amount, status, manual: true, createdAt: new Date().toISOString() });
-          if (!m.subscriptions) m.subscriptions = [];
-          m.subscriptions.push({ _sid: 's' + _stamp + '_' + r.i, _rid, ..._pvBy[r.i], month: ymToShort(start.slice(0, 7)) || start.slice(0, 7), activity: r.sport, coach: coachName(r.coachId), coachId: r.coachId, firstRegistration: m.firstRegistration || null, start, end: end || null, validity, status, totalClasses: classes || null, attendedClasses: 0, priceCompleted: null, amountPaid: amount, invoiceNumber: ref, manual: true });
-          { const _en = (m.enrollments || []).find(e => e.sport === r.sport && String(e.coachId) === String(r.coachId)); if (_en && !isCampSport(r.sport) && r.sport !== MIXED) { _en.private = !!(_pvBy[r.i] && _pvBy[r.i].private); _en.approach = (_pvBy[r.i] && _pvBy[r.i].private) ? _pvBy[r.i].approach : null; } }   // v6.660
-          m.renewalsBySport = m.renewalsBySport || {}; m.renewalsBySport[r.sport] = (m.renewalsBySport[r.sport] || 0) + 1;
-          m.renewalCount = (m.renewalCount || 0) + 1;
-          if (amount > 0) {
-            const dl = (isCamp && classes && typeof campLabelForClasses === 'function') ? (campLabelForClasses(classes) || '') : '';
-            invLines.push({ sport: r.sport, coach: coachName(r.coachId), coachId: r.coachId, classes, price: amount, ..._pvBy[r.i], durationLabel: dl || null, billMonth: start.slice(0, 7) });
-            invAmount += amount;
-          }
-          if (!maxEnd || (end && end > maxEnd)) maxEnd = end;
-          created.push({ sport: r.sport, carried, deducted });
+        _busy = true; const btn = document.getElementById('rnm-save'); if (btn) btn.disabled = true;
+        let res = commitRenewals(m, input, { reqId, status });
+        if (!res.ok && res.error === 'duplicate-period') {
+          if (confirm(`⚠ ${m.name} ${t('already has an identical', 'لديه بالفعل فترة مطابقة')} ${res.detail} ${t('period starting on the same date', 'تبدأ في نفس التاريخ')}.\
+\
+${t('Add another identical period anyway?', 'إضافة فترة مطابقة أخرى على أي حال؟')}`)) res = commitRenewals(m, input, { reqId, status, allowDuplicates: true });
+          else { _busy = false; if (btn) btn.disabled = false; return; }
         }
-
-        let _invId = null;
-        if (invAmount > 0) {
-          const sportLabel = (typeof sportListWithDuration === 'function' && sportListWithDuration(invLines)) || invLines.map(l => l.sport).join(', ');
-          const inv = {
-            id: (_invId = nextId(state.invoices)), date: start,
-            description: `${sportLabel} renewal — ${m.name}`,
-            amount: invAmount, method: 'cash', month: start.slice(0, 7), ref,
-            sport: sportLabel, coach: invLines.length === 1 ? invLines[0].coach : '', coachId: invLines.length === 1 ? invLines[0].coachId : null,
-            customerId: m.id, customerName: m.name, category: 'Membership', activityType: 'subscription',
-            lineItems: invLines,
-          };
-          stampUpdate(inv); state.invoices.push(inv);
+        if (!res.ok) {
+          _busy = false; if (btn) btn.disabled = false;
+          if (res.duplicate) { toast(t('This renewal was already saved', 'تم حفظ هذا التجديد بالفعل'), 'info'); return; }
+          toast(t('Renewal not saved: ', 'لم يُحفظ التجديد: ') + res.error + (res.detail ? ' (' + res.detail + ')' : ''), 'error'); return;
         }
-        m.startDate = start;
-        if (maxEnd && (!m.expiryDate || maxEnd > m.expiryDate)) m.expiryDate = maxEnd;
-        // v6.714 — classes already attended on a renewed package → it starts on the first of them
-        (m.subscriptions || []).filter(s => s._rid && created.length && String(s._sid || '').startsWith('s' + _stamp + '_')).forEach(s => { const _pl = renewalStartPlan(m, s); if (_pl && !_pl.blocked) applyRenewalStart(m, s, _pl); });
-        if (status === 'active') m.status = 'Active';
-        if (m.status === 'Withdrawn') m.status = (status === 'active' ? 'Active' : 'Expired');
-
-        audit('subscription.renew', `member:${m.id}`,
-          `Renewed ${created.map(c => c.sport).join(', ')} for ${m.name || m.nameArabic}`,
-          { memberId: m.id, name: m.name, sports: created.map(c => c.sport), amount: invAmount, start, invoiceRef: ref });
-
+        const _invId = res.invoice ? res.invoice.id : null, ref = res.ref, invAmount = res.total;
+        audit('subscription.renew', `member:${m.id}`, `Renewed ${res.created.map(c => c.sport).join(', ')} for ${m.name || m.nameArabic}`,
+          { memberId: m.id, name: m.name, sports: res.created.map(c => c.sport), amount: invAmount, starts: res.created.map(c => c.sport + ':' + c.start + (c.source === 'attendance' ? '(class)' : '(today)')), invoiceRef: ref });
         closeModal(); render();
-        const parts = created.map(c => c.sport + (c.carried ? ` +${c.carried}` : '') + (c.deducted ? ` −${c.deducted}` : ''));
-        const msg = `${t('Renewed', 'تم تجديد')} ${created.length} ${created.length === 1 ? t('sport', 'رياضة') : t('sports', 'رياضات')} · ${parts.join(', ')} · ${t('invoice', 'فاتورة')} ${ref}${invAmount > 0 ? ' · ' + fmt(invAmount) + ' QAR' : ''}`;
+        const parts = res.created.map(c => { const x = input.find(i => i.sport === c.sport && String(i.coachId) === String(c.coachId)) || {}; return c.sport + ' ' + fD(c.start) + (x.carried ? ` +${x.carried}` : '') + (x.deducted ? ` −${x.deducted}` : ''); });
+        const msg = `${t('Renewed', 'تم تجديد')} ${res.created.length} ${res.created.length === 1 ? t('sport', 'رياضة') : t('sports', 'رياضات')} · ${parts.join(', ')} · ${t('invoice', 'فاتورة')} ${ref}${invAmount > 0 ? ' · ' + fmt(invAmount) + ' QAR' : ''}`;
         const verify = [{ collection: 'members', id: m.id }]; if (_invId != null) verify.push({ collection: 'invoices', id: _invId });
         if (_invId != null && typeof pushInvoiceNotif === 'function') pushInvoiceNotif(_invId, m.id, m.name, 'renewal');   // bell → download later (v6.469)
         if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify, okMsg: msg }); else { save(); toast(msg); }
@@ -27096,20 +27078,28 @@ window.addRenewalMulti = function(m, picks) {
     ],
   });
 
-  // Live total = sum of the CHECKED sports' amounts.
+  // Live figures: each sport's start (the rule's answer) + expiry, the summary of the ticked sports and the total price.
   setTimeout(() => {
+    const val = (id) => { const el = document.getElementById(id); return el ? el.value : ''; };
     const recalc = () => {
-      let s = 0;
+      let total = 0; const lines = [];
       for (const r of rows) {
-        const c = document.getElementById(`rnm-pick-${r.i}`), a = document.getElementById(`rnm-amt-${r.i}`);
-        if (c && c.checked && a) s += parseFloat(a.value) || 0;
+        const on = !!document.getElementById(`rnm-pick-${r.i}`)?.checked;
+        const row = document.getElementById(`rnm-row-${r.i}`); if (row) row.style.opacity = on ? '1' : '.5';
+        const cls = parseInt(val(`rnm-cls-${r.i}`)) || 0, validity = parseInt(val(`rnm-val-${r.i}`)) || r.validity, price = parseFloat(val(`rnm-amt-${r.i}`)) || 0;
+        const d = computeRenewalDates(m, r.sport, validity, cls);
+        const why = d.source === 'attendance'
+          ? t('first class attended after expiry', 'أول حصة حضرها بعد الانتهاء') + ' (' + fD(d.firstClass) + ')'
+          : (d.prevExpiry ? t('no class after expiry (' + fD(d.prevExpiry) + ') → today', 'لا حضور بعد الانتهاء (' + fD(d.prevExpiry) + ') ← اليوم') : t('no previous package → today', 'لا باقة سابقة ← اليوم'));
+        const el = document.getElementById(`rnm-dates-${r.i}`);
+        if (el) el.innerHTML = `📅 ${t('Starts', 'تبدأ')} <b>${fD(d.start)}</b> <span class="text-mute">· ${why}</span><br>⏳ ${t('Expires', 'تنتهي')} <b>${fD(d.end)}</b>`;
+        if (on) { total += price; lines.push(`<div>• <b>${escapeHtml(r.sport)}</b> — ${fD(d.start)} → ${fD(d.end)} · ${cls} ${t('classes', 'حصة')} · ${fmt(price)} QAR</div>`); }
       }
-      const el = document.getElementById('rnm-total'); if (el) el.textContent = fmt(s);
+      const sm = document.getElementById('rnm-summary');
+      if (sm) sm.innerHTML = lines.length ? `<div style="font-weight:700;margin-bottom:4px">${lines.length} ${lines.length === 1 ? t('sport selected', 'رياضة محددة') : t('sports selected', 'رياضات محددة')}</div>${lines.join('')}` : `<span style="color:var(--accent-2)">${t('No sport selected — tick at least one to renew.', 'لم تُحدَّد أي رياضة — اختر واحدة على الأقل.')}</span>`;
+      const tt = document.getElementById('rnm-total'); if (tt) tt.textContent = fmt(total);
     };
-    rows.forEach(r => {
-      document.getElementById(`rnm-pick-${r.i}`)?.addEventListener('change', recalc);
-      document.getElementById(`rnm-amt-${r.i}`)?.addEventListener('input', recalc);
-    });
+    rows.forEach(r => ['pick', 'cls', 'val', 'amt'].forEach(k => { const el = document.getElementById(`rnm-${k}-${r.i}`); if (el) { el.addEventListener('change', recalc); el.addEventListener('input', recalc); } }));
     recalc();
   }, 30);
 };
@@ -27182,7 +27172,7 @@ window.addRenewal = function(memberId) {
         <div class="field"><label>Amount / Fee (QAR)</label><input id="rn-amount" type="number" step="0.01" min="0" value="${enrolledUnique[0]?.price || ''}" /></div>
       </div>
       <div class="form-row">
-        <div class="field"><label>Start / renewal date <span class="text-mute" style="font-size:10px;font-weight:400">(moves to the first attended class)</span></label><input id="rn-start" type="date" value="${TODAY}" /></div>
+        <div class="field"><label>Start / renewal date <span class="text-mute" style="font-size:10px;font-weight:400">(moves to the first attended class)</span></label><input id="rn-start" type="date" value="${computeRenewalStart(m, (enrolledUnique[0]?.sport || m.sport)).start}" /><div id="rn-start-hint" class="text-mute" style="font-size:10px;margin-top:3px"></div></div>
         <div class="field"><label>Expiry date <span class="text-mute" style="font-size:10px;font-weight:400">(auto · override allowed)</span></label><input id="rn-end" type="date" /><div id="rn-end-hint" class="text-mute" style="font-size:10px;margin-top:3px"></div></div>
       </div>
       <div id="rn-priv-box" style="margin-top:6px;padding:9px 12px;border:1px dashed var(--border);border-radius:8px;display:grid;gap:6px">
@@ -27277,6 +27267,7 @@ window.addRenewal = function(memberId) {
           status: $('#rn-status').value,
           manual: true,
           createdAt: new Date().toISOString(),
+          ...(_rnRule && start === _rnRule.start ? { _startSource: _rnRule.source, _prevExpiry: _rnRule.prevExpiry || null, ...(_rnRule.source === 'attendance' ? { _startLock: true } : {}) } : { _startSource: 'manual' }),
         });
 
         // 2) Also push to subscriptions[] so it shows up in Subscription History,
@@ -27302,6 +27293,7 @@ window.addRenewal = function(memberId) {
           amountPaid: amount,
           invoiceNumber: ref,
           manual: true,                            // distinguishes from initial registration
+          ...(_rnRule && start === _rnRule.start ? { _startSource: _rnRule.source, _prevExpiry: _rnRule.prevExpiry || null, ...(_rnRule.source === 'attendance' ? { _startLock: true } : {}) } : { _startSource: 'manual' }),
         });
         { const _en = (m.enrollments || []).find(e => e.sport === renewedSport && String(e.coachId) === String(coachId));
           if (_en && !isCampSport(renewedSport) && renewedSport !== MIXED) {
@@ -27478,6 +27470,17 @@ window.addRenewal = function(memberId) {
         : `Manual override · auto would be ${fmtDate(auto)}`;
     }
   }
+  // v6.738 — the start date comes from the renewal rule (first class attended after expiry, else today — never the payment date); the reason is shown under it
+  let _rnStartTouched = false, _rnRule = null;
+  function applyRnStartRule(force) {
+    const sp = (document.getElementById('rn-act') || {}).value || (enrolledUnique[0]?.sport || m.sport), st = document.getElementById('rn-start'), hint = document.getElementById('rn-start-hint');
+    _rnRule = computeRenewalStart(m, sp);
+    if (st && (force || !_rnStartTouched)) st.value = _rnRule.start;
+    if (hint) hint.textContent = (_rnRule.source === 'attendance' ? t('first class attended after expiry (' + fmtDate(_rnRule.firstClass) + ')', 'أول حصة حضرها بعد الانتهاء (' + fmtDate(_rnRule.firstClass) + ')') : (_rnRule.prevExpiry ? t('no class after expiry (' + fmtDate(_rnRule.prevExpiry) + ') → today', 'لا حضور بعد الانتهاء (' + fmtDate(_rnRule.prevExpiry) + ') ← اليوم') : t('no previous package → today', 'لا باقة سابقة ← اليوم'))) + (st && st.value !== _rnRule.start ? ' · ' + t('edited by hand', 'عُدّل يدوياً') : '');
+  }
+  document.getElementById('rn-start')?.addEventListener('input', () => { _rnStartTouched = true; applyRnStartRule(false); });
+  document.getElementById('rn-act')?.addEventListener('change', () => { _rnStartTouched = false; applyRnStartRule(true); recalcRnExpiry(); });
+  applyRnStartRule(true);
   document.getElementById('rn-start')?.addEventListener('change', recalcRnExpiry);
   document.getElementById('rn-validity')?.addEventListener('change', recalcRnExpiry);
   document.getElementById('rn-classes')?.addEventListener('input', recalcRnExpiry);
@@ -30755,7 +30758,7 @@ const MEMBER_PORTAL_URL = 'https://www.blackstarssports.com';
 function welcomeLoginBlock(m, kind) {
   const digits = canonicalMobile(m && m.phone);
   if (!digits || digits.length < 6) return { ar: '', en: '' };
-  const email = phoneToMemberEmail(m.phone), withPw = kind !== 'renewal';
+  const email = phoneToMemberEmail(m.phone), withPw = true;   // v6.736 — renewals carry the password too (default = the mobile number)
   return {
     ar: '🌐 الموقع: ' + MEMBER_PORTAL_URL + '\n👤 اسم المستخدم: ' + email + (withPw ? '\n🔑 كلمة المرور: ' + digits + '\n(يرجى تغيير كلمة المرور بعد أول تسجيل دخول)' : ''),
     en: '🌐 Website: ' + MEMBER_PORTAL_URL + '\n👤 Username: ' + email + (withPw ? '\n🔑 Password: ' + digits + '\n(Please change your password after your first login)' : ''),
@@ -30811,7 +30814,22 @@ async function ensureMemberPortalAccount(m) {
   if (!m.portalAccount.status) m.portalAccount.status = 'Created';
   if (!state.settings) state.settings = {};
   if (!state.settings.userRoles) state.settings.userRoles = {};
-  if (!state.settings.userRoles[email]) { const entry = { role: 'student', memberId: m.id }; stampUpdate(entry); state.settings.userRoles[email] = entry; }
+  // v6.737 — FAMILY: members who share this mobile (siblings) share ONE login, so it is mapped to their FAMILY (the parent logs in once and
+  // switches between the children). No family yet → one is made from the members sharing the number (same as "Add Sibling"). A member whose own
+  // mobile is unique keeps a login that sees only himself, even if he belongs to a family.
+  const sharing = (state.members || []).filter(x => x && !x.deleted && canonicalMobile(x.phone) === digits);
+  let entry = state.settings.userRoles[email];
+  if (sharing.length > 1) {
+    let famId = m.familyId != null ? m.familyId : ((sharing.find(x => x.familyId != null) || {}).familyId);
+    if (famId == null) {
+      if (!Array.isArray(state.families)) state.families = [];
+      const fam = { id: nextId(state.families), name: ((String(m.name || '').trim().split(/\s+/).slice(-1)[0]) || 'Family') + ' family', phone: m.phone || null, createdAt: new Date().toISOString() };
+      state.families.push(fam); famId = fam.id;
+    }
+    sharing.forEach(x => { if (x.familyId == null) { x.familyId = famId; stampUpdate(x); } });
+    if (!entry) { entry = { role: 'student', memberId: m.id, familyId: famId }; stampUpdate(entry); state.settings.userRoles[email] = entry; }
+    else if (entry.familyId == null && entry.role === 'student') { entry.familyId = famId; stampUpdate(entry); }
+  } else if (!entry) { entry = { role: 'student', memberId: m.id }; stampUpdate(entry); state.settings.userRoles[email] = entry; }
   stampUpdate(m);
   if (typeof audit === 'function') audit('member.account', 'member:' + m.id, (res === 'created' ? 'Portal login created for ' : 'Portal login already existed for ') + (m.name || m.nameArabic) + ' (' + email + ')', { memberId: m.id, account: email, created: res === 'created' });
   save();
@@ -30891,7 +30909,7 @@ window.previewWelcome = function(id, kind) {
       <div class="text-mute" style="font-size:11px;margin-top:8px">${wa ? t('Opens WhatsApp with this text pre-filled. Add a photo or tweak before hitting send.', 'يفتح واتساب بهذا النص جاهزاً. يمكنك التعديل أو إضافة صورة قبل الإرسال.') : t('This member has no valid phone number.', 'لا يوجد رقم هاتف صالح لهذا العضو.')}</div>`,
     actions: [
       { label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal },
-      { label: '📋 ' + t('Copy', 'نسخ'), class: 'btn ghost', onclick: () => { try { navigator.clipboard.writeText(window._welcomeMsgCache || msg); toast(t('Copied', 'تم النسخ'), 'success'); } catch (_) { toast(t('Copy failed', 'تعذر النسخ'), 'error'); } } },
+      { label: '📋 ' + t('Copy', 'نسخ'), class: 'btn ghost', onclick: () => { try { ensureMemberPortalAccount(m); /* v6.736 — copying the text must also create the login it promises */ navigator.clipboard.writeText(window._welcomeMsgCache || msg); toast(t('Copied', 'تم النسخ'), 'success'); } catch (_) { toast(t('Copy failed', 'تعذر النسخ'), 'error'); } } },
       ...(wa ? [{ label: '💬 ' + t('Send on WhatsApp', 'إرسال عبر واتساب'), class: 'btn primary', onclick: () => { closeModal(); sendWelcomeMessage(id, kind, true); } }] : []),
     ],
   });
