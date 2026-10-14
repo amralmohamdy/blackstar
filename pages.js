@@ -26357,6 +26357,15 @@ window.switchSport = function(memberId) {
     toast(t('This package (' + from.sport + ' with ' + coachName(from.coachId) + ') was already switched — nothing left to switch.', 'هذه الباقة (' + from.sport + ' مع ' + coachName(from.coachId) + ') تم تبديلها مسبقاً — لا يوجد ما يُبدَّل.'), 'error');
   }
 
+  function markedOnDate(sport, dateStr, coachId) {
+    if (!m.dailyAttendance) return false;
+    const key = (coachId != null && typeof attendanceKeyFor === 'function') ? attendanceKeyFor(m, sport, coachId) : sport;
+    const mo = m.dailyAttendance[dateStr.slice(0, 7)];
+    const cell = mo && typeof mo === 'object' ? mo[key] : null;
+    if (!cell) return false;
+    return Object.keys(cell).some(d => cell[d] === 'Y' && parseInt(d, 10) === parseInt(dateStr.slice(8, 10), 10));
+  }
+
   // Switch targets — one by default; admin can distribute into several sports.
   let targets = [{ sport: defaultToSport, coachId: defaultFrom.coachId, classes: null }];
 
@@ -26528,6 +26537,8 @@ window.switchSport = function(memberId) {
         const skipReconciliation = fromIsCamp || toIsCamp;
 
         const attendedA = countAttendedUpTo(from.sport, switchDate, from.coachId);
+        // v6.743 — a class ALREADY marked on the switch date (counted as attended above) stays with the old coach
+        const _boundaryMarked = markedOnDate(from.sport, switchDate, from.coachId);
         const totalClasses = parseInt(from.classes) || 0;
         // Base the reconciliation on what coach A was ACTUALLY credited for this
         // sport (the amount shown in the revenue report), NOT the nominal
@@ -26560,7 +26571,10 @@ window.switchSport = function(memberId) {
         //  • the ONE invoice is SPLIT (no separate net-zero switch-credit); the new total may differ
         //    from what was paid → a top-up due (owes) or an over-payment credit.
         const aRate = totalClasses > 0 ? price / totalClasses : 0;
-        const carried = (typeof carryForwardCredit === 'function') ? Math.max(0, Math.round(carryForwardCredit(m, from.sport) || 0)) : 0;
+        // v6.743 — ONLY the unused classes of THIS package move. The renewal carry-forward (≤ 2 unused classes of an EARLIER
+        // package) was added on top here — a 12-class package with 5 attended moved 9, and switching an expired package counted
+        // its own unused classes twice. Carry belongs to Renew, not to a switch.
+        const carried = 0;
         const remaining = Math.max(0, totalClasses - attendedA);
         const moved = remaining + carried;
         const _enteredPrice = parseFloat(($('#sw-price') || {}).value);
@@ -26795,6 +26809,7 @@ window.switchSport = function(memberId) {
           // v6.740 — the NEW record: created through a switch, linked both ways to the original
           if (srcSub && _dstSub) {
             _dstSub.createdVia = 'switch'; _dstSub.switchRef = _swRef; _dstSub.switchedFromSid = srcSub._sid;
+            if (_boundaryMarked && srcSub.activity === _dstSub.activity) { srcSub.attTo = switchDate; _dstSub.attFrom = addDays(switchDate, 1); }   // v6.743
             _dstSub.originalExpiry = srcSub.end || null; _dstSub.transferredAmount = Math.round(bShare * 100) / 100; _dstSub.transferredFromSport = _fromSport; _dstSub.transferredFromCoachId = _fromCoachId;
             if (!_dstSub._sid) _dstSub._sid = 's' + Date.now() + '_sw';
             srcSub.switchedToSid = _dstSub._sid;
@@ -26976,7 +26991,7 @@ window.switchSport = function(memberId) {
       // the moved classes (remaining + carry-forward) go to the new coach at the RE-PRICED amount;
       // the invoice is re-totalled → member owes a top-up or holds a refundable credit.
       const aRate = totalClasses > 0 ? price / totalClasses : 0;
-      const carried = (typeof carryForwardCredit === 'function') ? Math.max(0, Math.round(carryForwardCredit(m, from.sport) || 0)) : 0;
+      const carried = 0;   // v6.743 — carry-forward is not part of a switch
       const moved = remaining + carried;
       const enteredPrice = (() => { const v = parseFloat($('#sw-price')?.value); return Number.isFinite(v) && v >= 0 ? v : destPriceDefault(); })();
       const newTotal = aShare + enteredPrice;
