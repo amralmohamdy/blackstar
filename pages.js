@@ -2700,6 +2700,7 @@ function viewMember(id) {
           <tbody>${subs || `<tr><td colspan="${isViewerRole() ? 7 : 8}" class="text-mute" style="padding:16px">No subscription records</td></tr>`}</tbody>
         </table>
       </div>
+      ${isViewerRole() ? '' : _paymentListHtml(m, false)}
       ${(() => {
         // v6.715 — month-by-month attendance summary (all packages) right in the card
         const am = memberAttendanceByMonth(m), keys = Object.keys(am).sort().reverse();
@@ -6537,6 +6538,30 @@ window._reconcileInvoicesFromSubs = function (memberId) {
 // netted so they always reconcile) + a per-sport list + one "Collect" action that appends a payment via
 // the SAFE append-only recordPayment (no data restructuring, no migration). The full price editor lives
 // on as "Edit prices" (editMemberPricing). Reads existing data — nothing here deletes or rewrites it.
+// v6.741 — every payment a member made, newest first: date, amount, method, invoice, sport (membership invoices only)
+function _memberPaymentList(m) {
+  const out = [];
+  for (const i of (state.invoices || [])) {
+    if (i.deleted || i.customerId !== m.id || (i.category || 'Membership') !== 'Membership' || i.switchCredit || i.activityType === 'switch-credit') continue;
+    const pays = Array.isArray(i.payments) ? i.payments : [];
+    if (pays.length) {
+      for (const p of pays) { const a = Number(p.amount) || 0; if (a > 0) out.push({ date: String(p.date || i.date || '').slice(0, 10), amount: a, method: p.method || i.method || '', ref: i.ref || '', sport: p.sport || '' }); }
+    } else if ((Number(i.amountPaid) || 0) > 0) {
+      out.push({ date: String(i.date || '').slice(0, 10), amount: Number(i.amountPaid), method: i.method || '', ref: i.ref || '', sport: '' });   // legacy: no ledger → invoice date
+    }
+  }
+  return out.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || b.amount - a.amount);
+}
+function _paymentListHtml(m, compact) {
+  const list = _memberPaymentList(m);
+  if (!list.length) return '';
+  const ic = { cash: '💵', card: '💳', transfer: '🏦', fawran: '📲' };
+  const lab = { cash: t('Cash', 'نقدي'), card: t('Card', 'بطاقة'), transfer: t('Transfer', 'تحويل'), fawran: 'Fawran' };
+  const total = Math.round(list.reduce((s, p) => s + p.amount, 0) * 100) / 100;
+  const rows = list.map(p => { const mk = String(p.method || '').toLowerCase(); return `<tr><td style="white-space:nowrap">${p.date ? fmtDate(p.date) : '—'}</td><td class="num" style="font-weight:700;color:var(--green)">${fmt(p.amount)}</td><td>${ic[mk] || ''} ${escapeHtml(lab[mk] || p.method || '—')}</td>${compact ? '' : `<td class="text-mute" style="font-size:11px">${escapeHtml(p.ref)}${p.sport ? ' · ' + escapeHtml(p.sport) : ''}</td>`}</tr>`; }).join('');
+  return `<div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-mute);margin:14px 2px 4px">${t('Payments', 'الدفعات')} (${list.length}) · ${fmt(total)} QAR</div>
+    <div class="table-wrap" style="max-height:${compact ? 170 : 260}px;overflow:auto"><table style="font-size:12px"><thead><tr><th>${t('Date', 'التاريخ')}</th><th>${t('Amount', 'المبلغ')}</th><th>${t('Method', 'الطريقة')}</th>${compact ? '' : `<th>${t('Invoice', 'الفاتورة')}</th>`}</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
 function _memberMoneyRows(m) {
   const memberId = m.id;
   const realInvs = (state.invoices || []).filter(i => !i.deleted && i.customerId === memberId
@@ -6745,6 +6770,7 @@ window.moneyPanel = function(memberId) {
       </div>
       <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-mute);margin:14px 2px 2px">${t('Sports', 'الرياضات')}</div>
       <div>${md.rows.map(sportRow).join('')}</div>
+      ${_paymentListHtml(m, true)}
       <div class="card" style="background:var(--surface-2);padding:13px;margin-top:14px">
         <div style="font-size:12.5px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:6px">➕ ${t('Collect a payment', 'تحصيل دفعة')}${target ? `<span style="margin-left:auto;font-weight:500;font-size:11px;color:var(--text-mute)">${t('applies to', 'للرياضة')} <b style="color:var(--accent-2)">${escapeHtml(sportName(target))}</b></span>` : ''}</div>
         <input type="hidden" id="mp-method" value="cash" />
