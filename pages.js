@@ -2387,6 +2387,10 @@ window.exportMemberAttendance = function(id) {
 function viewMember(id) {
   const m = state.members.find(x => x.id === id);
   if (!m) return;
+  // v6.749 — an automatic renewal whose triggering class was removed by a coach login is cancelled when reception / admin opens the profile
+  if (['admin', 'receptionist'].includes(currentRole()) && typeof reconcileAutoRenewals === 'function' && (m.subscriptions || []).some(s => s && s.createdVia === 'auto-renew')) {
+    try { const rr = reconcileAutoRenewals(m).filter(x => x.ok); if (rr.length) { save(); toast(t('↩ Automatic renewal cancelled — its class was removed', '↩ أُلغي التجديد التلقائي — أُزيلت حصته'), 'info'); } } catch (_) {}
+  }
   // Track in recently-viewed list (top 5 in sessionStorage)
   pushRecentMember(id);
   // Merge subscriptions + standalone renewals (older imports). New renewals
@@ -12512,9 +12516,14 @@ function multiFilterHTML(id, options, selected, o) {
         <button type="button" class="mf-all" style="background:none;border:none;color:var(--accent);font-size:12px;cursor:pointer;font-weight:600">${t('All', 'الكل')}</button>
         <button type="button" class="mf-none" style="background:none;border:none;color:var(--text-mute);font-size:12px;cursor:pointer">${t('Clear', 'مسح')}</button>
       </div>
-      ${(pairs.length >= 8 || o.search) ? `<input type="text" class="mf-search" placeholder="🔍 ${t('Search…', 'بحث…')}" style="width:100%;box-sizing:border-box;margin:0 0 6px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px" />` : ''}
-      <div class="mf-list" style="display:flex;flex-direction:column">${pairs.map(([v, lab]) => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px;white-space:nowrap">
-        <input type="checkbox" class="mf-cb" value="${escapeHtml(String(v))}" ${sel.has(String(v)) ? 'checked' : ''} /> ${escapeHtml(String(lab))}</label>`).join('')}
+      ${(o.search !== false) ? `<input type="text" class="mf-search" placeholder="🔍 ${t('Search…', 'بحث…')}" style="width:100%;box-sizing:border-box;margin:0 0 6px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px" />` : ''}
+      <div class="mf-list" style="display:flex;flex-direction:column">${(() => {
+        const row = ([v, lab]) => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px;white-space:nowrap">
+        <input type="checkbox" class="mf-cb" value="${escapeHtml(String(v))}" ${sel.has(String(v)) ? 'checked' : ''} /> ${escapeHtml(String(lab))}</label>`;
+        const grp = txt => `<div class="mf-grp" style="padding:7px 6px 3px;margin-top:4px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-mute);border-top:1px solid var(--border)">${txt}</div>`;
+        const sp = (typeof coachSplitPairs === 'function') ? coachSplitPairs(pairs) : null;
+        return sp ? grp(t('Active coaches', 'المدربون النشطون')) + sp.act.map(row).join('') + grp(t('Inactive coaches', 'المدربون غير النشطين')) + sp.off.map(row).join('') : pairs.map(row).join('');
+      })()}
       <div class="mf-empty text-mute" style="display:none;padding:8px 6px;font-size:12px">${t('No matches', 'لا نتائج')}</div></div>
     </div>
   </div>`;
@@ -12550,6 +12559,10 @@ function bindMultiFilter(id, onChange, o) {
     const q = norm((search && search.value || '').trim());
     let shown = 0;
     boxes().forEach(b => { const lab = b.parentElement; if (!lab) return; const hit = !q || norm(lab.textContent).includes(q); lab.style.display = hit ? '' : 'none'; if (hit) shown++; });
+    // v6.747 — hide a section header (Active / Inactive coaches) when none of its rows match
+    let hdr = null, any = false;
+    [...wrap.querySelectorAll('.mf-list > *')].forEach(el => { if (el.classList.contains('mf-grp')) { if (hdr) hdr.style.display = any ? '' : 'none'; hdr = el; any = false; } else if (el.style.display !== 'none' && !el.classList.contains('mf-empty')) any = true; });
+    if (hdr) hdr.style.display = any ? '' : 'none';
     if (empty) empty.style.display = shown ? 'none' : '';
   };
   if (search) {
@@ -12564,7 +12577,7 @@ function bindMultiFilter(id, onChange, o) {
     if (open && search) { search.value = ''; applySearch(); setTimeout(() => { try { search.focus(); } catch (_) {} }, 0); }
   });
   document.addEventListener('click', e => { if (!wrap.contains(e.target)) pop.style.display = 'none'; });
-  wrap.querySelector('.mf-all')?.addEventListener('click', e => { e.stopPropagation(); boxes().forEach(b => b.checked = true); fire(); });
+  wrap.querySelector('.mf-all')?.addEventListener('click', e => { e.stopPropagation(); boxes().forEach(b => { const l = b.parentElement; if (!l || l.style.display !== 'none') b.checked = true; }); fire(); });   // v6.747: only the rows the search leaves visible
   wrap.querySelector('.mf-none')?.addEventListener('click', e => { e.stopPropagation(); boxes().forEach(b => b.checked = false); fire(); });
 }
 // A saved filter may still hold the OLD single value (or the 'all' sentinel). Normalise it to an
@@ -24151,6 +24164,28 @@ PAGES.attendance = (main) => {
     // v6.714 — the first class of a renewal becomes its start date (expiry follows)
     const _anch = (next === 'Y' && typeof anchorRenewalOnMark === 'function') ? anchorRenewalOnMark(m, String(sport).replace(/ \d+$/, ''), `${mo}-${String(day).padStart(2, '0')}`) : null;
     if (_anch) toast(t(`Renewal start set to the first class: ${fmtDate(_anch.plan.first)}` + (_anch.plan.newEnd ? ` · expires ${fmtDate(_anch.plan.newEnd)}` : ''), `بداية التجديد = أول حصة: ${fmtDate(_anch.plan.first)}` + (_anch.plan.newEnd ? ` · ينتهي ${fmtDate(_anch.plan.newEnd)}` : '')));
+    // v6.748 — all the classes of this sport are used and one more was attended → renew THAT sport only, as Due.
+    // (Coach logins can't create invoices, so the automatic renewal is for reception / admin marking only.)
+    let _auto = null;
+    // v6.749 — a class that was removed / set to absent cancels the automatic renewal it caused (unless paid or already used)
+    if (['admin', 'receptionist'].includes(currentRole()) && typeof reconcileAutoRenewals === 'function') {
+      try {
+        for (const r of reconcileAutoRenewals(m)) {
+          const sp = String(r.sub.activity || '');
+          if (r.ok) { toast(t(`↩ ${sp} automatic renewal cancelled — the class on ${r.mark} was removed${r.amount ? ' · ' + fmt(r.amount) + ' QAR removed from Due' : ''}`, `↩ أُلغي التجديد التلقائي لـ ${sp} — أُزيلت حصة ${r.mark}${r.amount ? ' · أُزيل ' + fmt(r.amount) + ' ر.ق من المستحقات' : ''}`), 'info');
+            audit('subscription.auto-renew-cancel', `member:${m.id}`, `Auto-renewal of ${sp} cancelled for ${m.name}: the class on ${r.mark} was removed`, { memberId: m.id, name: m.name, sport: sp, mark: r.mark, invoiceRef: r.invoiceRef, amount: r.amount }); }
+          else if (r.reason === 'error') toast(t('Could not cancel the automatic renewal: ' + r.error, 'تعذّر إلغاء التجديد التلقائي: ' + r.error), 'error');
+          else toast(t(`⚠ The class that triggered the automatic ${sp} renewal was removed, but the renewal is kept — ${r.reason === 'paid' ? 'a payment was recorded on it' : r.reason === 'used' ? 'its classes were already used' : r.reason === 'followed' ? 'a later package follows it' : 'its commission was already settled'}. Cancel it manually if it is wrong.`, `⚠ حُذفت الحصة التي سبّبت تجديد ${sp} التلقائي لكن التجديد باقٍ — ${r.reason === 'paid' ? 'سُجّلت عليه دفعة' : r.reason === 'used' ? 'استُخدمت حصصه' : r.reason === 'followed' ? 'يليه اشتراك لاحق' : 'سُوّيت عمولته'}. ألغِه يدوياً إن كان خطأ.`), 'error');
+        }
+      } catch (e) { console.error('auto-renew reconcile failed', e); }
+    }
+    if (next === 'Y' && typeof autoRenewOnExtraAttendance === 'function' && ['admin', 'receptionist'].includes(currentRole())) {
+      try { _auto = autoRenewOnExtraAttendance(m, sport, `${mo}-${String(day).padStart(2, '0')}`); } catch (e) { _auto = null; console.error('auto-renew failed', e); }
+      if (_auto && _auto.ok) {
+        toast(t(`🔁 ${String(sport).replace(/ \d+$/, '')} renewed automatically — ${fmt(_auto.price)} QAR due (invoice ${_auto.ref})`, `🔁 تم تجديد ${String(sport).replace(/ \d+$/, '')} تلقائياً — ${fmt(_auto.price)} ر.ق مستحق (فاتورة ${_auto.ref})`), 'info');
+        audit('subscription.auto-renew', `member:${m.id}`, `Auto-renewed ${_auto.activity} for ${m.name} after an extra class on ${_auto.start} — ${fmt(_auto.price)} due`, { memberId: m.id, name: m.name, sport: _auto.activity, start: _auto.start, amount: _auto.price, invoiceRef: _auto.ref, fromSid: _auto.fromSid });
+      } else if (_auto && !_auto.ok) toast(t('Automatic renewal was not created: ' + _auto.error, 'لم يتم إنشاء التجديد التلقائي: ' + _auto.error), 'error');
+    }
     // Stamp + audit the attendance change (req #5 last-updated, #8 audit trail —
     // attendance was previously NOT logged).
     const _markISO = `${mo}-${String(day).padStart(2, '0')}`;
@@ -27400,7 +27435,10 @@ window.addRenewal = function(memberId) {
         let deductedCount = 0;
         const applyDeduction = document.getElementById('rn-apply-deduction')?.checked;
         const pending = window._rnPendingDeduction || 0;
-        if (applyDeduction && pending > 0 && classesRaw > 0) {
+        // v6.750 — a NEW coach: the classes attended after the old package ended were the OLD coach's → split below instead of deducting here
+        const _prevCoachSub = (m.subscriptions || []).filter(s => s && (s.activity || '') === renewedSport && s.start && String(s.start) < String(start) && s.createdVia !== 'overflow-split').sort((x, y) => String(x.start).localeCompare(String(y.start))).pop();
+        const _coachChanges = !!(_prevCoachSub && coachId != null && String(_prevCoachSub.coachId) !== String(coachId));
+        if (applyDeduction && pending > 0 && classesRaw > 0 && !_coachChanges) {
           deductedCount = Math.min(pending, classesRaw);
           classes = classesRaw - deductedCount;
         }
@@ -27526,6 +27564,9 @@ window.addRenewal = function(memberId) {
         if (end && (!m.expiryDate || end > m.expiryDate)) m.expiryDate = end;
         // v6.714 — classes already attended on this package (renewing late) → it starts on the first of them
         { const _ns = m.subscriptions[m.subscriptions.length - 1], _pl = renewalStartPlan(m, _ns); if (_pl && !_pl.blocked) applyRenewalStart(m, _ns, _pl); }
+        // v6.750 — split the new package when the member kept attending the PREVIOUS coach after his package ended
+        { const _ns2 = m.subscriptions[m.subscriptions.length - 1]; let _sp = null; try { _sp = splitOverflowToOldCoach(m, _ns2); } catch (e) { console.error('overflow split failed', e); }
+          if (_sp && _sp.ok) { toast(t(`${_sp.n} class${_sp.n > 1 ? 'es' : ''} attended with ${coachName(_sp.oldCoachId)} after his package ended → recorded for ${coachName(_sp.oldCoachId)} (${fmt(_sp.oldPrice)} QAR); the rest is ${coachName(coachId)}'s`, `${_sp.n} حصة بعد انتهاء باقة ${coachName(_sp.oldCoachId)} سُجّلت له (${fmt(_sp.oldPrice)} ر.ق)، والباقي لـ${coachName(coachId)}`), 'info'); audit('subscription.overflow-split', `member:${m.id}`, `${_sp.n} extra ${_sp.activity} class(es) assigned to ${coachName(_sp.oldCoachId)}`, { memberId: m.id, sport: _sp.activity, oldCoachId: _sp.oldCoachId, marks: _sp.marks }); } }
         if ($('#rn-status').value === 'active') m.status = 'Active';
         // Renewing re-activates a withdrawn member (Withdrawn is terminal otherwise).
         if (m.status === 'Withdrawn') m.status = ($('#rn-status').value === 'active' ? 'Active' : 'Expired');
@@ -36364,11 +36405,13 @@ function multiSelectHtml(id, label, options, selected) {
           <button type="button" class="msel-all" data-id="${id}" style="background:none;border:none;color:var(--accent);font-size:12px;cursor:pointer;font-weight:600">${t('All', 'الكل')}</button>
           <button type="button" class="msel-none" data-id="${id}" style="background:none;border:none;color:var(--text-mute);font-size:12px;cursor:pointer">${t('Clear', 'مسح')}</button>
         </div>
-        ${options.map(o => `
+        <input type="text" class="msel-search" placeholder="🔍 ${t('Search…', 'بحث…')}" autocomplete="off" style="width:calc(100% - 4px);box-sizing:border-box;margin:0 2px 6px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:inherit;font-size:13px" />
+        <div class="msel-list">${(() => { let lastG = null; return options.map(o => { const head = (o.group && o.group !== lastG) ? `<div class="msel-grp" style="padding:7px 8px 3px;margin-top:4px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-mute);border-top:1px solid var(--border)">${escapeHtml(o.group)}</div>` : ''; lastG = o.group || null; return head + `
           <label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;font-size:13px" onmouseover="this.style.background='var(--surface-2)'" onmouseout="this.style.background=''">
             <input type="checkbox" class="msel-cb" data-id="${id}" value="${escapeHtml(String(o.value))}" ${sel.includes(String(o.value)) ? 'checked' : ''} style="cursor:pointer" />
             <span>${escapeHtml(o.label)}</span>
-          </label>`).join('')}
+          </label>`; }).join(''); })()}
+        <div class="msel-empty text-mute" style="display:none;padding:8px;font-size:12px">${t('No matches', 'لا نتائج')}</div></div>
       </div>
     </div>`;
 }
@@ -36388,11 +36431,29 @@ function bindMultiSelect(id, onChange) {
     isOpen ? close() : open();
   });
   panel.addEventListener('click', (e) => e.stopPropagation());
+  // v6.747 — type-to-search (Arabic-folded); section headers hide when none of their rows match
+  const msearch = panel.querySelector('.msel-search');
+  if (msearch) {
+    const _n = s => (typeof normalizeArabicForSearch === 'function') ? normalizeArabicForSearch(String(s || '')) : String(s || '').toLowerCase();
+    const applyM = () => {
+      const q = _n(msearch.value.trim()); let shown = 0, hdr = null, any = false;
+      [...panel.querySelectorAll('.msel-list > *')].forEach(el => {
+        if (el.classList.contains('msel-grp')) { if (hdr) hdr.style.display = any ? '' : 'none'; hdr = el; any = false; return; }
+        if (el.classList.contains('msel-empty')) return;
+        const hit = !q || _n(el.textContent).includes(q); el.style.display = hit ? '' : 'none'; if (hit) { shown++; any = true; }
+      });
+      if (hdr) hdr.style.display = any ? '' : 'none';
+      const em = panel.querySelector('.msel-empty'); if (em) em.style.display = shown ? 'none' : '';
+    };
+    msearch.addEventListener('input', applyM);
+    msearch.addEventListener('keydown', e => e.stopPropagation());
+    btn.addEventListener('click', () => { setTimeout(() => { if (panel.style.display === 'block') { msearch.value = ''; applyM(); try { msearch.focus(); } catch (_) {} } }, 0); });
+  }
   const current = () => Array.from(panel.querySelectorAll('.msel-cb')).filter(cb => cb.checked).map(cb => cb.value);
   panel.querySelectorAll('.msel-cb').forEach(cb => cb.addEventListener('change', () => onChange(current())));
   const allBtn = panel.querySelector('.msel-all');
   const noneBtn = panel.querySelector('.msel-none');
-  if (allBtn) allBtn.addEventListener('click', () => { panel.querySelectorAll('.msel-cb').forEach(cb => cb.checked = true); onChange(current()); });
+  if (allBtn) allBtn.addEventListener('click', () => { panel.querySelectorAll('.msel-cb').forEach(cb => { const l = cb.parentElement; if (!l || l.style.display !== 'none') cb.checked = true; }); onChange(current()); });   // v6.747: only the rows the search leaves visible
   if (noneBtn) noneBtn.addEventListener('click', () => { panel.querySelectorAll('.msel-cb').forEach(cb => cb.checked = false); onChange(current()); });
   // Close on outside click (registered once per page render).
   if (!window._mselOutsideBound) {
@@ -36768,7 +36829,8 @@ PAGES.transactions = (main) => {
           [{ value: 'cash', label: t('Cash', 'نقداً') }, { value: 'card', label: t('Card', 'بطاقة') }, { value: 'fawran', label: t('Fawran', 'فوران') }, { value: 'transfer', label: t('Transfer', 'تحويل') }],
           st.methods)}
         ${multiSelectHtml('txn-coach', t('Coach', 'المدرب'),
-          coaches.map(c => ({ value: String(c.id), label: c.name })),
+          coaches.slice().sort((x, y) => (isCoachActive(y) ? 1 : 0) - (isCoachActive(x) ? 1 : 0) || String(x.name || '').localeCompare(String(y.name || ''), undefined, { sensitivity: 'base' }))
+            .map(c => ({ value: String(c.id), label: c.name, group: coaches.some(z => !isCoachActive(z)) ? (isCoachActive(c) ? t('Active coaches', 'المدربون النشطون') : t('Inactive coaches', 'المدربون غير النشطين')) : '' })),
           st.coachIds)}
         <label class="btn ghost" style="display:flex;align-items:center;gap:6px;cursor:pointer" title="${t('Show only transactions with a due balance', 'إظهار العمليات التي عليها مبلغ متبقٍ فقط')}">
           <input type="checkbox" id="txn-hasdue" ${st.hasDue ? 'checked' : ''} style="cursor:pointer" />
