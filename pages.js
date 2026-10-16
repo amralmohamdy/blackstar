@@ -12561,7 +12561,7 @@ function bindMultiFilter(id, onChange, o) {
   const applySearch = () => {
     const q = norm((search && search.value || '').trim());
     let shown = 0;
-    boxes().forEach(b => { const lab = b.parentElement; if (!lab) return; const hit = !q || norm(lab.textContent).includes(q); lab.style.display = hit ? '' : 'none'; if (hit) shown++; });
+    boxes().forEach(b => { const lab = b.parentElement; if (!lab) return; const hit = !q || norm(lab.textContent).includes(q); lab.style.display = hit ? 'flex' : 'none'; if (hit) shown++; });   // v6.764 — 'flex' not '' (clearing the inline display made the rows flow sideways)
     // v6.747 — hide a section header (Active / Inactive coaches) when none of its rows match
     let hdr = null, any = false;
     [...wrap.querySelectorAll('.mf-list > *')].forEach(el => { if (el.classList.contains('mf-grp')) { if (hdr) hdr.style.display = any ? '' : 'none'; hdr = el; any = false; } else if (el.style.display !== 'none' && !el.classList.contains('mf-empty')) any = true; });
@@ -19465,7 +19465,7 @@ PAGES.expenses = (main) => {
     const applySearch = () => {
       const q = norm((search && search.value || '').trim());
       let shown = 0;
-      boxes().forEach(b => { const l = b.parentElement; if (!l) return; const hit = !q || norm(l.textContent).includes(q); l.style.display = hit ? '' : 'none'; if (hit) shown++; });
+      boxes().forEach(b => { const l = b.parentElement; if (!l) return; const hit = !q || norm(l.textContent).includes(q); l.style.display = hit ? 'flex' : 'none'; if (hit) shown++; });   // v6.764 — 'flex' not ''
       if (empty) empty.style.display = shown ? 'none' : '';
     };
     if (search) { search.addEventListener('click', e => e.stopPropagation()); search.addEventListener('keydown', e => e.stopPropagation()); search.addEventListener('input', applySearch); }
@@ -36543,6 +36543,9 @@ function bindMultiSelect(id, onChange) {
   const btn = document.getElementById(`${id}-btn`);
   const panel = document.getElementById(`${id}-panel`);
   if (!btn || !panel) return;
+  // v6.764 — the button shows how many are ticked ("Sport (2)"), so an active filter is visible with the list closed
+  { const _sp = btn.querySelector('span'), _base = _sp ? _sp.textContent.replace(/\s*\(\d+\)\s*$/, '') : '', _next = onChange;
+    onChange = vals => { if (_sp) _sp.textContent = vals.length ? _base + ' (' + vals.length + ')' : _base; _next(vals); }; }
   const close = () => { panel.style.display = 'none'; };
   const open = () => { panel.style.display = 'block'; };
   btn.addEventListener('click', (e) => {
@@ -36562,7 +36565,7 @@ function bindMultiSelect(id, onChange) {
       [...panel.querySelectorAll('.msel-list > *')].forEach(el => {
         if (el.classList.contains('msel-grp')) { if (hdr) hdr.style.display = any ? '' : 'none'; hdr = el; any = false; return; }
         if (el.classList.contains('msel-empty')) return;
-        const hit = !q || _n(el.textContent).includes(q); el.style.display = hit ? '' : 'none'; if (hit) { shown++; any = true; }
+        const hit = !q || _n(el.textContent).includes(q); el.style.display = hit ? 'flex' : 'none'; if (hit) { shown++; any = true; }   // v6.764 — 'flex' not '' (rows were flowing sideways)
       });
       if (hdr) hdr.style.display = any ? '' : 'none';
       const em = panel.querySelector('.msel-empty'); if (em) em.style.display = shown ? 'none' : '';
@@ -36976,7 +36979,7 @@ PAGES.transactions = (main) => {
         ${multiSelectHtml('txn-cat', t('Category', 'الفئة'),
           [...new Set((state.invoices || []).filter(i => !i.deleted).map(i => i.category || 'Membership'))].sort().map(c => ({ value: c, label: c })),
           st.categories)}
-        ${multiSelectHtml('txn-activity', t('Activity', 'النشاط'),
+        ${multiSelectHtml('txn-activity', t('Sport', 'الرياضة'),   // v6.764 — named after the Sport column it filters
           (() => {
             const opts = [{ value: '__camp__', label: '🌞 ' + t('Summer Camp', 'المعسكر الصيفي') }];
             const sportSet = new Set();
