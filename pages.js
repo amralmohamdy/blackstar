@@ -23878,6 +23878,21 @@ PAGES.attendance = (main) => {
     const list = SPORTS.filter(s => set.has(s));
     return list.length ? list : SPORTS;
   })();
+  // v6.763 — is this attendance row a PRIVATE package? (the package is flagged private, or its coach is a "(private)" coach)
+  // Returns { approach } or null; shown as a purple 🔒 Private label next to the sport.
+  function rowPrivate(m, sport, coachId) {
+    if (!sport || isCampSport(sport) || sport === MIXED) return null;
+    const subs = (m.subscriptions || []).filter(su => (su.activity || '') === sport && (coachId == null || su.coachId == null || String(su.coachId) === String(coachId)))
+      .sort((a, b) => String(a.start || '').localeCompare(String(b.start || '')));
+    const sub = subs.slice(-1)[0] || null;
+    if (sub && sub.private && (sub.approach === 'coach' || sub.approach === 'reception')) return { approach: sub.approach };
+    if (sub && sub.privateNo) return null;
+    if (coachId != null && typeof isPrivateCoachId === 'function' && isPrivateCoachId(coachId)) return { approach: '' };
+    return null;
+  }
+  const attPrivTag = (pv, plain) => !pv ? '' : plain
+    ? ' · ' + t('Private', 'خاص')
+    : ` <span class="badge" style="background:rgba(139,92,246,.14);color:#7c3aed;font-weight:700;font-size:9px;padding:1px 6px" title="${t('Private package', 'باقة خاصة')}${pv.approach === 'coach' ? ' · ' + t('approached by the coach', 'عن طريق المدرب') : pv.approach === 'reception' ? ' · ' + t('approached by reception', 'عن طريق الاستقبال') : ''}">🔒 ${t('Private', 'خاص')}</span>`;
   // Does the member hold a LIVE (not completed/withdrawn/switched) Mixed package? Any coach may mark it.
   function memberHasLiveMixed(m) {
     return (m.subscriptions || []).some(s => (s.activity || '') === MIXED
@@ -24609,7 +24624,7 @@ PAGES.attendance = (main) => {
             <td class="att-name-cell" title="${escapeHtml(m.name)} · ${escapeHtml(sport)}${_due2 > 0.5 ? ' · ' + fmt(_due2) + ' QAR due' : ''}">
               <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isExpired || hist ? 'color:var(--text-mute)' : ''}">${escapeHtml(m.name)}${statusBadge}${histBadge}${renewBadge2}${unpaidBadge2}</div>
               ${m.nameArabic ? `<div dir="rtl" style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isExpired ? 'color:var(--text-mute)' : ''}">${escapeHtml(m.nameArabic)}</div>` : ''}
-              <div class="text-mute" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(sport)}${_isMixedRow ? ' · ' + escapeHtml(t('multi-coach', 'عدة مدربين')) : (!isCampSport(sport) ? ' · ' + escapeHtml(coachName(coachId)) : '')}</div>
+              <div class="text-mute" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(sport)}${_isMixedRow ? ' · ' + escapeHtml(t('multi-coach', 'عدة مدربين')) : (!isCampSport(sport) ? ' · ' + escapeHtml(coachName(coachId)) : '')}${attPrivTag(rowPrivate(m, sport, coachId))}</div>
             </td>
             ${cells}
             <td class="att-total"><span style="color:var(--green);font-weight:700">${grandY}</span></td>
@@ -24753,7 +24768,7 @@ PAGES.attendance = (main) => {
           <td class="att-name-cell" title="${escapeHtml(m.name)} · ${escapeHtml(sport)}${_isMixedRow ? ' · ' + escapeHtml(t('multi-coach', 'عدة مدربين')) : (!isCampSport(sport) ? ' · ' + escapeHtml(coachName(coachId)) : '')}${isExpired ? ' · expired ' + fmtDate(m.expiryDate) : ''}${_due > 0.5 ? ' · ' + fmt(_due) + ' QAR due' : ''}">
             <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isExpired || hist ? 'color:var(--text-mute)' : ''}">${escapeHtml(m.name)}${_isMixedRow ? ' <span class="badge" style="font-size:9px;padding:1px 6px;background:rgba(59,130,246,.15);color:var(--blue)">🎯 ' + t('Mixed', 'مختلط') + '</span>' : ''}${statusBadge}${histBadge}${campOverBadge}${sportOverBadge}${renewBadge}${unpaidBadge}</div>
             ${m.nameArabic ? `<div dir="rtl" style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isExpired ? 'color:var(--text-mute)' : ''}">${escapeHtml(m.nameArabic)}</div>` : ''}
-            <div class="text-mute" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(sport)}${_isMixedRow ? ' · ' + escapeHtml(t('pick sport + coach per class', 'اختر الرياضة والمدرب لكل حصة')) : (!isCampSport(sport) ? ' · ' + escapeHtml(coachName(coachId)) : '')}</div>
+            <div class="text-mute" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(sport)}${_isMixedRow ? ' · ' + escapeHtml(t('pick sport + coach per class', 'اختر الرياضة والمدرب لكل حصة')) : (!isCampSport(sport) ? ' · ' + escapeHtml(coachName(coachId)) : '')}${attPrivTag(rowPrivate(m, sport, coachId))}</div>
           </td>
           ${cells}
           <td class="att-total"><span style="color:var(--green);font-weight:600">${y}</span><span class="text-mute"> / ${total || '—'}</span></td>
@@ -25160,7 +25175,7 @@ PAGES.attendance = (main) => {
       const _period = (_start || _exp) ? `<div class="period">📅 ${t('Membership', 'الاشتراك')}: <b>${_start ? fmtDate(_start) : '—'}</b> → <b>${_exp ? fmtDate(_exp) : '—'}</b></div>` : '';
       const _coachLine = _mix ? t('multi-coach', 'عدة مدربين') : (!isCampSport(sport) ? coachName(coachId) : '');
       return `<tr class="${ri % 2 ? 'odd' : ''}">
-        <td class="scell"><div class="sname">${escapeHtml(m.name)}</div><div class="ssport">${escapeHtml(sport)}${_coachLine ? ' · ' + escapeHtml(_coachLine) : ''}</div>${_period}</td>
+        <td class="scell"><div class="sname">${escapeHtml(m.name)}</div><div class="ssport">${escapeHtml(sport)}${_coachLine ? ' · ' + escapeHtml(_coachLine) : ''}${attPrivTag(rowPrivate(m, sport, coachId), true)}</div>${_period}</td>
         ${cells}
         <td class="tcell"><span class="tpill">${rowY}</span></td>
       </tr>`;
