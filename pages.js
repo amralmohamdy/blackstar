@@ -2465,7 +2465,8 @@ function viewMember(id) {
     // duplicate never loses attendance — it stays on the surviving twin.
     const hasTwin = allSubs.some(o => o !== s && (o.activity || '') === (s.activity || '') && (o.start || '') === (s.start || '') && (o.end || '') === (s.end || '') && (o.coachId || null) === (s.coachId || null));
     const pct = total && attended != null ? Math.min(100, Math.round((attended / total) * 100)) : null;
-    const attCell = total ? `
+    const _swInfo = (s.switchedAwayTo && s.consumedClasses != null) ? { used: s.consumedClasses, orig: s.originalClasses != null ? s.originalClasses : (s.consumedClasses + (s.transferredClasses || 0)), moved: s.transferredClasses || 0 } : null;
+    const attCell = _swInfo ? `<div style="min-width:140px;font-size:11px"><span class="font-bold">${_swInfo.used} / ${_swInfo.orig}</span> ${t('used', 'مستخدمة')}<div class="text-mute" style="margin-top:2px">${_swInfo.moved} ${t('classes moved →', 'حصة نُقلت ←')} ${escapeHtml(s.switchedAwayTo)}</div></div>` : total ? `
       <div style="min-width:140px">
         <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px">
           <span class="font-bold">${attended ?? 0} / ${total}${isLive ? ' <span style="color:var(--green);font-weight:400" title="From attendance grid">●</span>' : ''}</span>
@@ -2490,7 +2491,7 @@ function viewMember(id) {
           return (s.month || '').toUpperCase();
         })()}</span></td>
         <td>${escapeHtml(s.activity || '—')}${(s.private && (s.approach === 'coach' || s.approach === 'reception')) ? `<div style="margin-top:3px"><span class="badge" style="background:rgba(139,92,246,.14);color:#7c3aed;font-weight:700;font-size:10px" title="${t('Private package', 'باقة خاصة')} · ${s.approach === 'coach' ? t('approached by the coach', 'عن طريق المدرب') : t('approached by reception', 'عن طريق الاستقبال')}">🔒 ${s.approach === 'coach' ? t('Private · coach', 'خاص · مدرب') : t('Private · reception', 'خاص · استقبال')}</span></div>` : ''}${isCampSport(s.activity) && s.durationLabel ? ` <span class="badge" style="background:rgba(245,158,11,.15);color:var(--accent-2);font-size:9px;padding:1px 6px">🌞 ${escapeHtml(s.durationLabel)}</span>` : ''}${s.activity === MIXED ? ` <span class="badge" style="background:rgba(59,130,246,.15);color:var(--blue);font-size:9px;padding:1px 6px">🎯 ${t('Mixed', 'مختلط')}</span>${_mixBreak && _mixBreak.length ? `<div class="text-mute" style="font-size:10px;margin-top:3px">${_mixBreak.map(x => escapeHtml(x)).join(' · ')}</div>` : ''}` : ''}</td>
-        <td>${(isCampSport(s.activity) || s.activity === MIXED) ? `<span class="text-mute" style="font-size:11px;font-style:italic">${s.activity === MIXED ? escapeHtml(t('multi-coach', 'عدة مدربين')) : 'no coach'}</span>` : escapeHtml(s.coach || '—')}</td>
+        <td>${(isCampSport(s.activity) || s.activity === MIXED) ? `<span class="text-mute" style="font-size:11px;font-style:italic">${s.activity === MIXED ? escapeHtml(t('multi-coach', 'عدة مدربين')) : 'no coach'}</span>` : escapeHtml(s.coach || ((s.coachId != null && typeof coachName === 'function') ? coachName(s.coachId) : '') || '—')}</td>
         <td>${s.start ? fmtDate(s.start) : '—'}</td>
         <td>${s.end ? fmtDate(s.end) : '—'}</td>
         <td>${attCell}</td>
@@ -5124,6 +5125,7 @@ window.transferCoachStudents = function(fromId) {
             const sport = sub.activity;
             if (!_sportMatch(sport)) continue;   // v6.503: single-sport transfer skips the other sports
             // v6.691 — the split itself is shared (handOverSubToCoach): old coach keeps the attended classes, new coach takes the rest.
+            try { pinAttendanceCells(m, sport); } catch (_) {}   // v6.757 — two simultaneous coaches of one sport keep reading their own attendance cell after the hand-over
             const r = handOverSubToCoach(m, sub, to.id, eff);
             if (r.mode === 'split') split++; else if (r.mode === 'whole') moved++;
           }
@@ -9996,7 +9998,7 @@ function computeDashboard(ymSel) {
   const cashInHand = cashCollected - cashExpenses;
   // The ACTUAL physically-counted drawer (latest cash count) — this is the real
   // "cash in hand". The figure above is a computed net cash flow, not the drawer.
-  const _counts = (state.cashCounts || []).slice()
+  const _counts = (state.cashCounts || []).filter(c => c && c.kind !== 'deposit').slice()
     .sort((a, b) => String(b.createdAt || b.date || '').localeCompare(String(a.createdAt || a.date || '')));
   const countedCash = _counts.length ? (Number(_counts[0].amount) || 0) : null;
 
@@ -18039,7 +18041,7 @@ window.deleteCashCollection = function(id) {
 // restored. Derived, never stored. Rule for "since": a later DATE counts; on the count's own day only a timestamp after the count does (rows with no
 // timestamp are taken as already in the count). Returns null with no count yet.
 function cashDrawerNow() {
-  const counts = (state.cashCounts || []).slice().sort((a, b) => String(b.createdAt || b.date || '').localeCompare(String(a.createdAt || a.date || '')));
+  const counts = (state.cashCounts || []).filter(c => c && c.kind !== 'deposit').slice().sort((a, b) => String(b.createdAt || b.date || '').localeCompare(String(a.createdAt || a.date || '')));
   const c = counts[0];
   if (!c) return null;
   const cDate = String(c.date || String(c.createdAt || '').slice(0, 10)).slice(0, 10), cAt = c.createdAt ? String(c.createdAt) : '';
@@ -18069,6 +18071,12 @@ function cashDrawerNow() {
     if (!e || e.deleted || (e.category || '') !== CASH_COLLECTION_CATEGORY) continue;
     const amt = Number(e.amount) || 0;
     if (amt > 0 && after(e.date || (e.month ? e.month + '-01' : ''), e.createdAt || e.at)) moves.push({ when: e.createdAt || e.at || e.date, amount: -amt, label: t('Cash collected by owner', 'نقد استلمه المالك'), ref: e.description || e.note || '', kind: 'collection', exp: e.id });
+  }
+  // v6.757 — cash the OWNER put INTO the drawer (the mirror of "collected by owner"): a deposit, so it is expected — counting it later is not an "over"
+  for (const d of (state.cashCounts || [])) {
+    if (!d || d.kind !== 'deposit') continue;
+    const amt = Number(d.amount) || 0;
+    if (amt > 0 && after(d.date, d.createdAt)) moves.push({ when: d.createdAt || d.date, amount: amt, label: t('Cash added by owner', 'نقد أضافه المالك للصندوق') + (d.note ? ' — ' + d.note : ''), ref: d.note || '', kind: 'deposit', dep: d.id });
   }
   const r2 = x => Math.round(x * 100) / 100;
   // Order for the running credit: by day; inside a day the entries WITH a time go by time, a payment with no time goes first and a collection with no time goes last
@@ -18114,7 +18122,8 @@ PAGES.cashinhand = (main) => {
       <div class="card"><div class="text-mute" style="font-size:13px">${t('Only staff can view or update the cash count.', 'يمكن للموظفين فقط عرض أو تحديث جرد النقد.')}</div></div>`;
     return;
   }
-  const counts = (state.cashCounts || []).slice().sort((a, b) => (b.createdAt || b.date || '').localeCompare(a.createdAt || a.date || ''));
+  const allRecs = (state.cashCounts || []).slice().sort((a, b) => (b.createdAt || b.date || '').localeCompare(a.createdAt || a.date || ''));
+  const counts = allRecs.filter(c => c.kind !== 'deposit');   // v6.757 — owner deposits are listed in the history but are never "the last count"
   const latest = counts[0] || null;
   const prev = counts[1] || null;
   const delta = latest && prev ? (Number(latest.amount) || 0) - (Number(prev.amount) || 0) : null;
@@ -18145,6 +18154,7 @@ PAGES.cashinhand = (main) => {
       <div style="display:flex;gap:8px;justify-content:center;align-items:center;margin-top:16px;flex-wrap:wrap">
         <input id="cih-quick" type="number" inputmode="decimal" min="0" step="0.01" placeholder="${t('Enter today\u2019s count…', 'أدخل جرد اليوم…')}" style="max-width:180px;text-align:center;padding:9px 12px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:15px" />
         <button class="btn primary" id="cih-quick-save">✓ ${t('Update', 'تحديث')}</button>
+        <button class="btn ghost" id="cih-deposit" title="${t('Cash the owner put INTO the drawer — so it is expected, not an over', 'نقد وضعه المالك في الصندوق — فيُحسب متوقعاً وليس زيادة')}">➕ ${t('Cash added by owner', 'نقد أضافه المالك')}</button>
       </div>
       <div class="text-mute" style="font-size:11px;margin-top:6px">${t('The figure above goes up with every cash payment a member makes and down with every cash collection by the owner. Expenses, salaries and refunds are NOT deducted — count the drawer and enter it here: the screen tells you if it is short or over.', 'الرقم أعلاه يزيد مع كل دفعة نقدية من عضو وينقص مع كل استلام نقدي للمالك. المصروفات والرواتب والمبالغ المستردة لا تُخصم — عُدّ الصندوق وأدخله هنا: ستظهر لك الشاشة إن كان هناك عجز أو زيادة.')}</div>
     </div>
@@ -18155,14 +18165,16 @@ PAGES.cashinhand = (main) => {
 
     <div class="card">
       <div class="card-header"><div><div class="card-title">🧾 ${t('Count history', 'سجل الجرد')}</div><div class="card-subtitle">${t('Every cash count you have recorded, newest first', 'كل عمليات جرد النقد المسجّلة، الأحدث أولاً')}</div></div></div>
-      ${counts.length ? `<div style="overflow:auto"><table class="data-table" style="width:100%"><thead><tr>
+      ${allRecs.length ? `<div style="overflow:auto"><table class="data-table" style="width:100%"><thead><tr>
         <th>${t('Date', 'التاريخ')}</th><th class="text-right">${t('Amount', 'المبلغ')}</th><th class="text-right">${t('Change', 'التغير')}</th><th class="text-right">${t('Expected', 'المتوقع')}</th><th class="text-right">${t('Short / over', 'عجز / زيادة')}</th><th>${t('Counted by', 'الجرد بواسطة')}</th><th>${t('Note', 'ملاحظة')}</th><th></th>
       </tr></thead><tbody>
-      ${counts.map((c, i) => {
-        const p = counts[i + 1];
+      ${allRecs.map((c, i) => {
+        if (c.kind === 'deposit') return `<tr style="background:rgba(59,130,246,.06)"><td>${fmtDate(c.date)}</td><td class="text-right num font-bold" style="color:var(--blue)">+${fmtMoney(c.amount)}</td><td class="text-mute" colspan="3">💵 ${t('Cash added to the drawer by the owner', 'نقد أضافه المالك للصندوق')}</td><td class="text-mute">${c.by ? escapeHtml(c.by) : '—'}</td><td class="text-mute">${c.note ? escapeHtml(c.note) : '—'}</td><td class="text-right">${currentRole() === 'admin' ? `<button class="btn ghost sm" onclick="window.deleteCashCount('${c.id}')" title="${t('Delete this entry', 'حذف هذا السجل')}">🗑</button>` : ''}</td></tr>`;
+        const p = allRecs.slice(i + 1).find(x => x.kind !== 'deposit');
         const d = p ? (Number(c.amount) || 0) - (Number(p.amount) || 0) : null;
-        return `<tr${i === 0 ? ' style="background:rgba(16,185,129,.06)"' : ''}>
-          <td>${fmtDate(c.date)}${i === 0 ? ` <span class="badge active" style="font-size:9px">${t('current', 'الحالي')}</span>` : ''}</td>
+        const _cur = c === latest;
+        return `<tr${_cur ? ' style="background:rgba(16,185,129,.06)"' : ''}>
+          <td>${fmtDate(c.date)}${_cur ? ` <span class="badge active" style="font-size:9px">${t('current', 'الحالي')}</span>` : ''}</td>
           <td class="text-right num font-bold">${fmtMoney(c.amount)}</td>
           <td class="text-right num" style="${d == null ? 'color:var(--text-mute)' : d >= 0 ? 'color:var(--green)' : 'color:var(--red)'}">${d == null ? '—' : (d >= 0 ? '+' : '−') + fmtMoney(Math.abs(d))}</td>
           <td class="text-right num text-mute">${c.expected != null ? fmtMoney(c.expected) : '—'}</td>
@@ -18177,6 +18189,7 @@ PAGES.cashinhand = (main) => {
   `;
 
   $('#cih-add')?.addEventListener('click', () => openCashCountDialog());
+  $('#cih-deposit')?.addEventListener('click', () => window.openCashDepositDialog());
   const quickSave = () => {
     const el = document.getElementById('cih-quick');
     const amount = parseFloat(el && el.value);
@@ -18195,6 +18208,30 @@ PAGES.cashinhand = (main) => {
   $('#cih-quick')?.addEventListener('keydown', e => { if (e.key === 'Enter') quickSave(); });
 };
 
+// v6.757 — the owner PUTS cash into the drawer (the opposite of "collected by owner"): it joins the expected figure, so counting it later is not an "over".
+window.openCashDepositDialog = function() {
+  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast('Staff only', 'error'); return; }
+  showModal({
+    title: '➕ ' + t('Cash added by owner', 'نقد أضافه المالك للصندوق'),
+    body: `<div class="field"><label>${t('Amount put in the drawer (QAR)', 'المبلغ الذي وُضع في الصندوق (ريال)')} <span style="color:var(--accent)">*</span></label><input id="cd-amount" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00" /></div>
+      <div class="field"><label>${t('Note', 'ملاحظة')}</label><input id="cd-note" type="text" placeholder="${t('e.g. change money / float', 'مثلاً فكّة / عهدة')}" /></div>
+      <div class="text-mute" style="font-size:11px">${t('This is NOT income. It only raises what the drawer should hold, so the next count matches.', 'هذا ليس إيراداً. فقط يرفع ما يجب أن يحويه الصندوق ليتطابق الجرد التالي.')}</div>`,
+    actions: [
+      { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
+      { label: '✓ ' + t('Add', 'إضافة'), class: 'btn primary', onclick: () => {
+        const amount = parseFloat(document.getElementById('cd-amount').value);
+        if (!(amount > 0)) { toast(t('Enter a valid amount', 'أدخل مبلغاً صحيحاً'), 'error'); return; }
+        const note = (document.getElementById('cd-note').value || '').trim();
+        const entry = { id: 'cd_' + Date.now(), kind: 'deposit', amount, date: TODAY, by: (typeof currentUserName === 'function' ? currentUserName() : ''), note, createdAt: new Date().toISOString() };
+        if (!Array.isArray(state.cashCounts)) state.cashCounts = [];
+        state.cashCounts.push(entry);
+        if (typeof audit === 'function') audit('cash.deposit', 'cashinhand', 'Cash added to the drawer by the owner: ' + fmt(amount) + ' QAR' + (note ? ' — ' + note : ''));
+        closeModal(); render();
+        confirmSaved('✓ ' + t('Cash added', 'أُضيف النقد') + ': ' + fmt(amount) + ' QAR');
+      } },
+    ],
+  });
+};
 window.openCashCountDialog = function(existingId) {
   if (currentRole() !== 'admin') { toast('Admins only', 'error'); return; }
   // When an id is passed, EDIT that existing count instead of creating a new one.
@@ -24024,6 +24061,16 @@ PAGES.attendance = (main) => {
         const rowCoachId = (enr && enr.coachId != null) ? enr.coachId
           : (sub && sub.coachId != null) ? sub.coachId
           : m.coachId;
+        // v6.754 — every package of this sport was switched away (no live one left): the row is HISTORY — past attendance is kept, but no new class can be marked on it after the switch day
+        { const _all = (m.subscriptions || []).filter(s => (s.activity || '') === sp && String(s.status || '').toLowerCase() !== 'withdrawn');
+          const _live = _all.filter(s => String(s.status || '').toLowerCase() !== 'completed' && !s.switchedAwayTo);
+          const _sw = _all.filter(s => s.switchedAwayTo);
+          if (_all.length && !_live.length && _sw.length) {
+            const _last = _sw.slice().sort((a, b) => String(a.switchedAt || a.end || '').localeCompare(String(b.switchedAt || b.end || ''))).pop();
+            const _to = _last.switchedAt || null;
+            rows.push({ m, sport: sp, coachId: rowCoachId, window: { from: null, to: _to }, attKey: sp, hist: true, switchedAway: true, histTo: _last.switchedAwayTo });
+            continue;
+          } }
         rows.push({ m, sport: sp, coachId: rowCoachId, window: null, attKey: sp });
       }
     }
@@ -24425,7 +24472,13 @@ PAGES.attendance = (main) => {
     // only pick the sport and hit Save. Without this the coach dropdown defaulted to blank and Save
     // failed with "Pick the coach" — which read to coaches as "I can't mark Mixed attendance". An
     // existing record still wins (keeps the coach it was credited to); admins still get the blank default.
-    const _selfCoach = (typeof currentRole === 'function' && currentRole() === 'coach' && typeof effectiveCoachId === 'function') ? effectiveCoachId() : null;
+    let _selfCoach = (typeof currentRole === 'function' && currentRole() === 'coach' && typeof effectiveCoachId === 'function') ? effectiveCoachId() : null;
+    // v6.760 — a multi-coach login switched to a coach who has LEFT (e.g. "Ahmed (private)") is not in the list above →
+    // blank dropdown + "Pick the coach". Fall back to the account's first ACTIVE coach (then to the only one listed).
+    if (_selfCoach != null && !coaches.some(c => String(c.id) === String(_selfCoach))) {
+      const _alt = (typeof effectiveCoachIds === 'function' ? effectiveCoachIds() : []).find(id => coaches.some(c => String(c.id) === String(id)));
+      _selfCoach = _alt != null ? _alt : (coaches.length === 1 ? coaches[0].id : null);
+    }
     const _defCoach = rec ? rec.coachId : _selfCoach;
     const sportOpts = `<option value="">${t('— pick sport —', '— اختر الرياضة —')}</option>` + sportChoices.map(s => `<option value="${escapeHtml(s)}" ${rec && rec.sport === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('');
     const coachOpts = `<option value="">${t('— pick coach —', '— اختر المدرب —')}</option>` + coaches.map(c => `<option value="${c.id}" ${_defCoach != null && String(_defCoach) === String(c.id) ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
@@ -24459,9 +24512,11 @@ PAGES.attendance = (main) => {
     const sportEsc = sport.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
     return `window._attMark(${memberId}, '${sportEsc}', ${day}, ${mark ? `'${mark}'` : 'null'})`;
   };
-  function cellRender(memberId, sport, day, mark, warn) {
+  function cellRender(memberId, sport, day, mark, warn, lock) {
     const cls = mark === 'Y' ? 'att-y' : mark === 'N' ? 'att-n' : 'att-empty';
     const txt = mark || '·';
+    // v6.754 — a package that was SWITCHED AWAY can't take new classes after the switch day (an existing mark can still be corrected)
+    if (lock && !mark) return `<td class="att-cell att-empty att-outside att-locked" data-am="${memberId}|${encodeURIComponent(sport)}|${day}" style="opacity:.4;cursor:not-allowed;background:rgba(120,120,140,.12)" title="${escapeHtml(lock)}">·</td>`;
     const style = warn ? ' style="opacity:.55;background:rgba(245,158,11,.10)"' : '';
     const title = warn ? ` title="${escapeHtml(warn)}"` : '';
     return `<td class="att-cell ${cls}${warn ? ' att-outside' : ''}" data-am="${memberId}|${encodeURIComponent(sport)}|${day}"${style}${title} onclick="${_attOnclick(memberId, sport, day, mark)}">${txt}</td>`;
@@ -24600,7 +24655,7 @@ PAGES.attendance = (main) => {
         ? cellRenderMixed(m.id, d, (m.mixedAttendance && m.mixedAttendance[gMonth] && m.mixedAttendance[gMonth][String(d)]) || null)
         : (inWin(window, gMonth, d)
           ? cellRender(m.id, aKey, d, dayData[String(d)])
-          : cellRender(m.id, aKey, d, dayData[String(d)], `Outside ${coachName(coachId)}'s period for this membership — logging is allowed; check the dates (Switch review / Edit) if this looks wrong.`))).join('');
+          : cellRender(m.id, aKey, d, dayData[String(d)], `Outside ${coachName(coachId)}'s period for this membership — logging is allowed; check the dates (Switch review / Edit) if this looks wrong.`, (hist && switchedAway) ? t('This package was switched to ' + (histTo || 'another sport') + ' — mark the new package instead.', 'تم تبديل هذه الباقة إلى ' + (histTo || 'رياضة أخرى') + ' — سجّل الحضور على الباقة الجديدة.') : null))).join('');
       // v6.570: a Mixed row's Total shows attended / package classes (it has no 'N'); rate = attended/planned.
       const _mixPlanned = _isMixedRow ? (((m.subscriptions || []).filter(s => (s.activity || '') === MIXED).slice(-1)[0] || {}).totalClasses || 0) : 0;
       const total = _isMixedRow ? (parseInt(_mixPlanned) || y) : (y + n);
@@ -26302,6 +26357,9 @@ window.withdrawSport = function(memberId, sport) {
 window.switchSport = function(memberId) {
   const m = state.members.find(x => x.id === memberId);
   if (!m) return;
+  // v6.753 — a withdrawn member has no running package to switch (renew first)
+  if (String(m.status || '').toLowerCase() === 'withdrawn') { toast(t('This member is withdrawn — renew the membership first, then switch.', 'هذا العضو منسحب — جدّد العضوية أولاً ثم بدّل.'), 'error'); return; }
+  const _noCoachSport = s => isCampSport(s) || s === MIXED;   // v6.753 — a Mixed package has no single coach (like a camp)
 
   // One switch per membership cycle. Count switches made on/after the current
   // cycle start (renewing resets the allowance). If they've already switched,
@@ -26353,6 +26411,16 @@ window.switchSport = function(memberId) {
   // Helper: count attended Y marks for a sport up to (inclusive) a given date.
   // Reads m.dailyAttendance[YYYY-MM][sportName] = {day: 'Y'|'N'} structure.
   function countAttendedUpTo(sport, untilDateStr, coachId) {
+    // v6.753 — a MIXED package keeps its classes in m.mixedAttendance (one mark per day, any coach/sport); the plain cell is empty, so the whole package "moved"
+    if (sport === MIXED) {
+      const _ms = (m.subscriptions || []).filter(s => (s.activity || '') === MIXED && s.status !== 'completed' && s.status !== 'withdrawn' && !s.switchedAwayTo);
+      const _cov = _ms.filter(s => (s.start || '') <= untilDateStr && (!s.end || untilDateStr <= s.end));
+      const _cur = (_cov.length ? _cov : _ms).slice().sort((a, b) => (a.start || '').localeCompare(b.start || '')).slice(-1)[0];
+      const _since = _cur && _cur.start ? String(_cur.start).slice(0, 10) : '';
+      let n = 0;
+      for (const mo of Object.keys(m.mixedAttendance || {})) { const dd = (m.mixedAttendance || {})[mo] || {}; for (const d of Object.keys(dd)) { if (dd[d] && dd[d].mark === 'N') continue; if (!dd[d]) continue; const iso = mo + '-' + String(parseInt(d, 10)).padStart(2, '0'); if (iso <= untilDateStr && (!_since || iso >= _since)) n++; } }
+      return n;
+    }
     if (!m.dailyAttendance) return 0;
     // v6.544: read the attendance CELL for THIS coach (attendanceKeyFor). For a member who ALREADY held
     // two coaches on the sport, the extra coach's marks live under `sport <coachId>`, so reading only the
@@ -26403,9 +26471,12 @@ window.switchSport = function(memberId) {
     const subs = (m.subscriptions || []).filter(s => (s.activity || '') === from.sport && same(s.coachId, from.coachId));
     const live = subs.filter(s => s.status !== 'completed' && !s.switchedAwayTo);
     if (subs.length && !live.length && subs.some(s => s.switchedAwayTo)) return { kind: 'already' };
+    // v6.753 — a switch cannot be dated before the package it switches even began
+    { const _lv = live.slice().sort((a, b) => (a.start || '').localeCompare(b.start || '')); const _first = _lv[0]; if (_first && _first.start && !live.some(s => (s.start || '') <= switchDate) ) return { kind: 'before', start: _first.start }; }
     return null;
   }
   function switchBlockToast(r, from, switchDate) {
+    if (r.kind === 'before') { toast(t('The switch date is before this package starts (' + fmtDate(r.start) + ') — pick a date on or after the start.', 'تاريخ التبديل قبل بداية هذه الباقة (' + fmtDate(r.start) + ') — اختر تاريخاً في أو بعد البداية.'), 'error'); return; }
     toast(t('This package (' + from.sport + ' with ' + coachName(from.coachId) + ') was already switched — nothing left to switch.', 'هذه الباقة (' + from.sport + ' مع ' + coachName(from.coachId) + ') تم تبديلها مسبقاً — لا يوجد ما يُبدَّل.'), 'error');
   }
 
@@ -26511,6 +26582,7 @@ window.switchSport = function(memberId) {
           if (sumClasses <= 0) { toast('Allocate the remaining classes across the new sports', 'error'); return; }
           if (sumClasses !== remaining) { toast('Allocated ' + sumClasses + ' but ' + remaining + ' classes remain — they must match.', 'error'); return; }
 
+          pinAttendanceCells(m, from.sport);   // v6.755
           const split = computeSwitchSplit(priceBase, attendedA, planned);
           const aShare = split.aShare, bShare = split.bShare;
           const resolved = tgs.map(t => ({ ...t, value: remaining > 0 ? bShare * (t.classes / remaining) : 0 }));
@@ -26560,7 +26632,7 @@ window.switchSport = function(memberId) {
             const _dRef = 'SWR' + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36);
             if (_dSrc && !_dSrc._sid) _dSrc._sid = 's' + Date.now() + '_src';
             const _newDst = [];
-            resolved.forEach((tr, i) => { const ds = { activity: tr.sport, coachId: tr.coachId, totalClasses: tr.classes, start: _dExpired ? _dEnd : switchDate, end: _dEndSafe, status: _dExpired ? 'expired' : 'active', switchFunded: true, amountPaid: tr.value, _sid: 's' + Date.now() + '_swd' + i,
+            resolved.forEach((tr, i) => { const ds = { activity: tr.sport, coach: coachName(tr.coachId), coachId: tr.coachId, totalClasses: tr.classes, start: _dExpired ? _dEnd : switchDate, end: _dEndSafe, status: _dExpired ? 'expired' : 'active', switchFunded: true, amountPaid: tr.value, _sid: 's' + Date.now() + '_swd' + i,
               createdVia: 'switch', switchRef: _dRef, switchedFromSid: _dSrc ? _dSrc._sid : null, originalExpiry: _dEnd || null, transferredAmount: Math.round(tr.value * 100) / 100 }; _newDst.push(ds); m.subscriptions.push(ds); });
             if (_dSrc) { Object.assign(_dSrc, { switched: true, switchStatus: 'Switched', consumedClasses: attendedA, transferredClasses: remaining, originalClasses: planned, switchRef: _dRef, switchedToSid: _newDst.map(x => x._sid).join(',') });
               const _drec = m.sportSwitches[m.sportSwitches.length - 1]; if (_drec) Object.assign(_drec, { ref: _dRef, fromSid: _dSrc._sid, toSid: _newDst.map(x => x._sid), consumed: attendedA, transferred: remaining, originalExpiry: _dEnd || null }); }
@@ -26575,7 +26647,7 @@ window.switchSport = function(memberId) {
         const toSport = tgs[0].sport;
         const toCoachId = tgs[0].coachId;
         if (!toSport) { toast('Pick the new sport', 'error'); return; }
-        if (!isCampSport(toSport) && !toCoachId) { toast('Pick the new coach', 'error'); return; }
+        if (!_noCoachSport(toSport) && !toCoachId) { toast('Pick the new coach', 'error'); return; }
         if (from.sport === toSport && from.coachId === toCoachId) {
           toast('No change — same sport and coach', 'error');
           return;
@@ -26677,6 +26749,8 @@ window.switchSport = function(memberId) {
         const _srcSubCycle = ((_covering.length ? _covering : _srcCycleCands)
           .slice().sort((a, b) => (a.start || '').localeCompare(b.start || '')).slice(-1)[0]) || null;
 
+        // v6.755 — every guard passed: freeze the attendance cell of each package of this sport before the switch changes who is "first" among two simultaneous coaches
+        pinAttendanceCells(m, from.sport);
         // ─── SPLIT THE ONE MEMBERSHIP INVOICE (v6.520) ─────────────
         // No separate net-zero switch-credit any more. The member's membership invoice is split in
         // place: the source (Sport A) line is capped to attended/aShare, and a Sport B line is ADDED
@@ -26769,7 +26843,7 @@ window.switchSport = function(memberId) {
           m.enrollments = enrolled.map(e => ({ ...e }));
         }
         // Summer Camp has no coach — force null when switching TO camp
-        const finalToCoachId = toIsCamp ? null : toCoachId;
+        const finalToCoachId = _noCoachSport(toSport) ? null : toCoachId;
         // v6.436 — the destination sport carries the REMAINING classes and the TRANSFERRED
         // value (bShare), and the source sport is left at what was actually used (attended
         // classes / aShare). So a switch splits ONE package instead of leaving two full-price
@@ -26835,7 +26909,7 @@ window.switchSport = function(memberId) {
             destSub.totalClasses = _remainingCls;
             destSub.amountPaid = _destPrice;
             destSub.status = 'active';
-            destSub.switchFunded = true;
+            destSub.switchFunded = true; destSub.coach = coachName(finalToCoachId);
             if (srcSub) {   // v6.740 — the original expiry; an already-expired source gives an expired (not active) record
               const _ex = !!(srcSub.end && String(srcSub.end) < String(switchDate));
               destSub.end = srcSub.end || destSub.end || addDays(switchDate, parseInt(srcSub.validity) || DEFAULT_VALIDITY);
@@ -26853,7 +26927,7 @@ window.switchSport = function(memberId) {
             // a package with no end date keeps the standard validity so it can never run open-ended.
             const _destEnd = srcSub.end ? srcSub.end : addDays(switchDate, parseInt(srcSub.validity) || DEFAULT_VALIDITY);
             const _srcExpired = !!(srcSub.end && String(srcSub.end) < String(switchDate));   // the source had already expired → the new record is NOT active
-            _dstSub = { activity: toSport, coachId: finalToCoachId, totalClasses: _remainingCls,
+            _dstSub = { activity: toSport, coach: coachName(finalToCoachId), coachId: finalToCoachId, totalClasses: _remainingCls,
               start: _srcExpired ? srcSub.end : switchDate, end: _destEnd, status: _srcExpired ? 'expired' : 'active', switchFunded: true, amountPaid: _destPrice, ...privateCarryOnSwitch(srcSub, toSport, finalToCoachId),
               _sid: 's' + Date.now() + '_sw' };
             m.subscriptions.push(_dstSub);
@@ -26930,7 +27004,7 @@ window.switchSport = function(memberId) {
     const sportSel = $('#sw-sport-' + i), coachSel = $('#sw-coach-' + i);
     if (!sportSel || !coachSel) return;
     const sport = sportSel.value;
-    if (isCampSport(sport)) { coachSel.innerHTML = '<option value="">— none (camp) —</option>'; targets[i].coachId = null; return; }
+    if (_noCoachSport(sport)) { coachSel.innerHTML = '<option value="">— none (' + (sport === MIXED ? 'mixed' : 'camp') + ') —</option>'; targets[i].coachId = null; return; }
     const prev = targets[i].coachId || null;
     const list = coachesForSport(sport, prev);
     coachSel.innerHTML = list.length
@@ -28554,6 +28628,38 @@ PAGES.completed = (main) => {
   refresh();
 };
 
+// v6.758 — UNRENEWED ATTENDANCE: members who finished all the classes of a sport and kept attending it without renewing. One click renews that sport (as DUE).
+window._unrenewedGo = function(memberId, activity) {
+  if (!['admin', 'receptionist'].includes(currentRole())) { toast(t('Admins or reception only', 'للمدير أو الاستقبال فقط'), 'error'); return; }
+  const m = (state.members || []).find(x => x.id === memberId); if (!m) return;
+  const ux = unrenewedExtraFor(m, activity, null);
+  if (!ux) { toast(t('Nothing to renew any more', 'لا يوجد ما يُجدَّد'), 'info'); render(); return; }
+  const r = autoRenewOnExtraAttendance(m, activity, ux.extra[0]);
+  if (r && r.ok) {
+    audit('subscription.auto-renew', `member:${m.id}`, `Renewed ${activity} for ${m.name} from the Unrenewed attendance list — ${fmt(r.price)} due`, { memberId: m.id, name: m.name, sport: activity, start: r.start, amount: r.price, invoiceRef: r.ref });
+    render();
+    if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'members', id: m.id }], okMsg: t(`${activity} renewed — ${fmt(r.price)} QAR due (${r.ref})`, `تم تجديد ${activity} — ${fmt(r.price)} ر.ق مستحق (${r.ref})`) }); else { save(); toast(t(`${activity} renewed — ${fmt(r.price)} QAR due`, `تم تجديد ${activity}`)); }
+  } else toast(t('Not renewed' + (r && r.error ? ': ' + r.error : ''), 'لم يُجدَّد' + (r && r.error ? ': ' + r.error : '')), 'error');
+};
+PAGES.unrenewed = (main) => {
+  const list = (typeof unrenewedAttendanceList === 'function') ? unrenewedAttendanceList() : [];
+  const can = ['admin', 'receptionist'].includes(currentRole());
+  const total = Math.round(list.reduce((s, x) => s + (Number(x.price) || 0), 0) * 100) / 100;
+  main.innerHTML = `
+    <div class="topbar"><div><h1>🔁 ${t('Unrenewed attendance', 'حضور بلا تجديد')}</h1>
+      <div class="subtitle">${list.length} ${t('sport(s) used up and attended again without a renewal', 'رياضة انتهت حصصها وحضر العضو بعدها دون تجديد')} · ${fmt(total)} ${t('QAR would become due', 'ر.ق ستصبح مستحقة')}</div></div></div>
+    <div class="card"><div class="table-wrap"><table>
+      <thead><tr><th>${t('Member', 'العضو')}</th><th>${t('Sport · coach', 'الرياضة · المدرب')}</th><th>${t('Package', 'الباقة')}</th><th>${t('Classes after it ended', 'حصص بعد انتهائها')}</th><th class="text-right">${t('Renewal price', 'سعر التجديد')}</th><th class="text-right"></th></tr></thead>
+      <tbody>${list.length ? list.map(x => `<tr>
+        <td><div class="font-bold">${escapeHtml(x.m.name || '')}</div>${x.m.phone ? `<div class="text-mute" style="font-size:11px">${escapeHtml(x.m.phone)}</div>` : ''}</td>
+        <td>${escapeHtml(x.activity)} · ${escapeHtml(coachName(x.coachId) || '—')}</td>
+        <td>${x.limit} ${t('classes', 'حصة')}</td>
+        <td><b>${x.extra.length}</b> <span class="text-mute" style="font-size:11px">· ${x.extra.slice(0, 6).map(d => fmtDate(d)).join(', ')}${x.extra.length > 6 ? '…' : ''}</span></td>
+        <td class="text-right num">${fmt(x.price)}</td>
+        <td class="text-right">${can ? `<button class="btn primary sm" onclick="_unrenewedGo(${x.m.id}, ${JSON.stringify(x.activity).replace(/"/g, '&quot;')})">🔁 ${t('Renew (as Due)', 'جدّد (مستحق)')}</button>` : ''}<button class="btn ghost sm" onclick="viewMember(${x.m.id})">${t('Open', 'فتح')}</button></td></tr>`).join('') : `<tr><td colspan="6" class="empty"><div class="empty-icon">✅</div>${t('Everyone who kept attending has a running package.', 'كل من استمر في الحضور لديه باقة جارية.')}</td></tr>`}</tbody>
+    </table></div>
+    <div class="text-mute" style="font-size:11px;margin-top:8px">${t('Renewing creates a new package for that sport only — same coach, classes, validity and price — starting on the first extra class, recorded as DUE (nothing is marked paid).', 'التجديد ينشئ باقة جديدة لهذه الرياضة فقط — نفس المدرب والحصص والمدة والسعر — تبدأ من أول حصة زائدة، وتُسجَّل مستحقة (لا شيء يُعتبر مدفوعاً).')}</div></div>`;
+};
 PAGES.expiring = (main) => {
   const threshold = state.settings?.expiringSoonDays || 3;
   // Average renewal value used to estimate potential revenue (per KPI card + per section).
@@ -36665,7 +36771,7 @@ PAGES.transactions = (main) => {
         const phoneHit = phoneQueryMatches(cust.phone, st.search) || phoneQueryMatches(cust.phone2, st.search) || phoneQueryMatches(inv.customerPhone, st.search);
         if (!(customer.toLowerCase().includes(q) || ref.toLowerCase().includes(q) || sport.toLowerCase().includes(q) || phoneHit)) continue;
       }
-      txns.push({ id: inv.id, ref, date: (inv.date || '').slice(0, 10), category: cat, customer, sport, coach: coachName(displayCoachId) || '—', amount: invAmount, paid, due, netDue, method: inv.method || '' });
+      txns.push({ id: inv.id, ref, date: (inv.date || '').slice(0, 10), payDates: (Array.isArray(inv.payments) ? inv.payments : []).filter(p => p && (Number(p.amount) || 0) > 0 && !p._recon).map(p => String(p.date || inv.date || '').slice(0, 10)).filter(Boolean).sort(), category: cat, customer, sport, coach: coachName(displayCoachId) || '—', amount: invAmount, paid, due, netDue, method: inv.method || '' });
       byCategory[cat] = byCategory[cat] || { total: 0, count: 0, due: 0, netDue: 0 };
       byCategory[cat].total += invAmount; byCategory[cat].count += 1;
       byCategory[cat].due += due; byCategory[cat].netDue += netDue;
@@ -36673,12 +36779,54 @@ PAGES.transactions = (main) => {
       grandPaid += paid; grandDue += due; grandNetDue += netDue;
     }
     txns.sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
-    return { txns, byCategory, grand, grandPaid, grandDue, grandNetDue, range };
+    // v6.759 — money RECEIVED in this period on invoices dated BEFORE it (a member paying an old month's due today): those invoices are not in the list above
+    // (they are dated outside the period), so their payments would be invisible. Listed apart — the totals above are untouched.
+    const latePays = [];
+    if (!st.sportKey) {
+      const inP = d => { d = String(d || '').slice(0, 10); if (!d) return false; if (scoped) return monthScopes.includes(d.slice(0, 7)); if (range.from && d < range.from) return false; if (range.to && d > range.to) return false; return true; };
+      const catSel2 = st.categories || [], actSel2 = st.activities || [], methSel2 = st.methods || [], coachSel2 = (st.coachIds || []).map(String);
+      for (const inv of (state.invoices || [])) {
+        if (inv.deleted || inv.switchCredit || inv.activityType === 'switch-credit' || inRange(inv)) continue;
+        const cat = inv.category || 'Membership';
+        if (catSel2.length && !catSel2.includes(cat)) continue;
+        const lines = (inv.lineItems && inv.lineItems.length) ? inv.lineItems : [{ sport: inv.sport || null, coachId: inv.coachId || null }];
+        if (actSel2.length && !lines.some(li => actSel2.some(a => a === '__camp__' ? isCampSport(li.sport || '') : (li.sport || '') === a))) continue;
+        if (coachSel2.length && !(lines.some(li => coachSel2.includes(String(li.coachId || inv.coachId || ''))) || coachSel2.includes(String(inv.coachId || '')))) continue;
+        const cust = customerInfo(inv);
+        const customer = inv.customerName || inv.customer || (cust && cust.name) || '—';
+        const sport = lines.map(li => li.sport).filter(Boolean).join(', ') || (cat !== 'Membership' ? cat : '—');
+        const ref = inv.ref || ('#' + inv.id);
+        if (st.search) {
+          const q = st.search.toLowerCase();
+          const phoneHit = phoneQueryMatches(cust.phone, st.search) || phoneQueryMatches(cust.phone2, st.search) || phoneQueryMatches(inv.customerPhone, st.search);
+          if (!(customer.toLowerCase().includes(q) || ref.toLowerCase().includes(q) || sport.toLowerCase().includes(q) || phoneHit)) continue;
+        }
+        for (const p of (Array.isArray(inv.payments) ? inv.payments : [])) {
+          if (!p || p._recon) continue;
+          const amt = Number(p.amount) || 0; if (!(amt > 0)) continue;
+          if (!inP(p.date || inv.date)) continue;
+          const meth = normalizeMethod(p.method || inv.method);
+          if (methSel2.length && !methSel2.includes(meth) && !methSel2.includes(p.method || inv.method || '')) continue;
+          latePays.push({ id: inv.id, date: String(p.date || inv.date || '').slice(0, 10), customer, ref, invDate: String(inv.date || '').slice(0, 10), sport, method: meth, amount: amt });
+        }
+      }
+      latePays.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || b.amount - a.amount);
+    }
+    return { txns, byCategory, grand, grandPaid, grandDue, grandNetDue, range, latePays };
   }
 
   function refresh() {
-    const { txns, byCategory, grand, grandPaid, grandDue, grandNetDue } = build();
+    const { txns, byCategory, grand, grandPaid, grandDue, grandNetDue, latePays } = build();
     const rows = paginate(txns, pg);
+    { const lp = $('#txn-latepay'); if (lp) {
+      const tot = Math.round((latePays || []).reduce((s, x) => s + x.amount, 0) * 100) / 100;
+      lp.innerHTML = (latePays && latePays.length) ? `<div style="border:1px solid rgba(16,185,129,.4);background:rgba(16,185,129,.06);border-radius:10px;padding:10px 12px;margin:0 2px 12px">
+        <div style="font-weight:800;font-size:13px;margin-bottom:6px">💰 ${t('Payments received in this period for EARLIER invoices', 'دفعات مُستلمة في هذه الفترة عن فواتير سابقة')} · ${latePays.length} · <span style="color:var(--green)">${fmt(tot)} QAR</span></div>
+        <div class="text-mute" style="font-size:11px;margin-bottom:6px">${t('Members who paid an older month’s due. These invoices are dated before the period so they are not in the list below — the totals below are unchanged.', 'أعضاء سدّدوا مستحقات شهور سابقة. هذه الفواتير بتاريخ قبل الفترة فلا تظهر في القائمة أدناه — والإجماليات أدناه لم تتغيّر.')}</div>
+        <div style="overflow:auto;max-height:240px"><table style="width:100%;font-size:12px"><thead><tr><th>${t('Paid on', 'تاريخ الدفع')}</th><th>${t('Customer', 'العميل')}</th><th>${t('Invoice', 'الفاتورة')}</th><th>${t('Invoice date', 'تاريخ الفاتورة')}</th><th>${t('Sport', 'الرياضة')}</th><th>${t('Method', 'الطريقة')}</th><th class="text-right">${t('Amount', 'المبلغ')}</th></tr></thead><tbody>
+        ${latePays.slice(0, 200).map(x => `<tr><td style="white-space:nowrap">${fmtDate(x.date)}${x.date === TODAY ? ` <span class="badge active" style="font-size:9px">${t('today', 'اليوم')}</span>` : ''}</td><td>${escapeHtml(x.customer)}</td><td class="font-mono" style="font-size:11px">${escapeHtml(x.ref)}</td><td class="text-mute" style="white-space:nowrap">${x.invDate ? fmtDate(x.invDate) : '—'}</td><td class="text-mute">${escapeHtml(x.sport)}</td><td>${escapeHtml(x.method)}</td><td class="text-right num font-bold" style="color:var(--green)">${fmt(x.amount)}</td></tr>`).join('')}
+        </tbody></table></div></div>` : '';
+    } }
     const catRows = Object.entries(byCategory).sort((a, b) =>
       st.hasDue ? (b[1].netDue - a[1].netDue) : (b[1].total - a[1].total));
 
@@ -36711,7 +36859,7 @@ PAGES.transactions = (main) => {
         <td>${tx.method ? `<span class="badge ${tx.method === 'card' ? 'blue' : tx.method === 'transfer' ? 'cyan' : ''}">${escapeHtml(tx.method)}</span>` : '—'}</td>
         <td class="text-mute font-mono" style="font-size:11px">${escapeHtml(tx.ref)}</td>
         <td class="text-right num font-bold">${fmt(tx.amount)}</td>
-        <td class="text-right num" style="color:var(--green)">${fmt(tx.paid)}</td>
+        <td class="text-right num" style="color:var(--green)">${fmt(tx.paid)}${(() => { const pd = tx.payDates || []; if (!pd.length) return ''; const last = pd[pd.length - 1]; const today = pd.includes(TODAY); return `<div style="font-size:10px;font-weight:600;white-space:nowrap;color:${today ? 'var(--green)' : 'var(--text-mute)'}" title="${escapeHtml(pd.map(d => fmtDate(d)).join(' · '))}">${today ? '💰 ' + t('paid today', 'دُفع اليوم') : t('paid', 'دُفع') + ' ' + fmtDate(last)}${pd.length > 1 ? ' +' + (pd.length - 1) : ''}</div>`; })()}</td>
         <td class="text-right num" style="color:${(st.dueMode === 'net' ? tx.netDue : tx.due) > 0 ? 'var(--red)' : 'var(--text-mute)'};font-weight:${(st.dueMode === 'net' ? tx.netDue : tx.due) > 0 ? '700' : '400'}" title="${(st.dueMode === 'net' && tx.netDue !== tx.due) ? t('Gross', 'إجمالي') + ': ' + fmt(tx.due) : ''}">${(st.dueMode === 'net' ? tx.netDue : tx.due) > 0 ? fmt(st.dueMode === 'net' ? tx.netDue : tx.due) : '—'}</td>
       </tr>`).join('') : `<tr><td colspan="10" class="empty"><div class="empty-icon">🧾</div>${t('No transactions match', 'لا توجد عمليات مطابقة')}</td></tr>`;
 
@@ -36845,6 +36993,7 @@ PAGES.transactions = (main) => {
       </div>
       <div id="txn-kpis" style="display:flex;flex-wrap:wrap;gap:10px;margin:0 2px 12px"></div>
       <div id="txn-linkbanner"></div>
+      <div id="txn-latepay"></div>
       <div id="txn-summary" style="display:flex;flex-wrap:wrap;gap:6px;padding:0 2px 12px"></div>
       <div class="table-wrap">
         <table>
