@@ -4448,7 +4448,7 @@ function showMemberForm(m) {
               description: `${existing.name} — ${sportListLabel} subscription`,
               amount: totalNew,
               amountPaid: totalNew,
-              payments: [{ date: payDate, month: monthKey, amount: totalNew, method: 'cash' }],
+              payments: [{ date: payDate, month: monthKey, amount: totalNew, method: 'cash', at: new Date().toISOString() }],
               method: 'cash',
               month: monthKey,
               ref,
@@ -18025,6 +18025,7 @@ window.openCashCollectionModal = function(existingId) {
             collectedBy: by,
             note,
             createdBy: (state.session && state.session.role) || 'admin',
+            createdAt: new Date().toISOString(), at: new Date().toISOString(),   // v6.767 — the drawer needs a time to know it came AFTER the last count
           };
           (state.expenses || (state.expenses = [])).push(row);
           if (typeof audit === 'function') audit('cash.collection.create', 'expense:' + row.id, `Cash collected ${fmt(amt)} QAR${by ? ' by ' + by : ''}`);
@@ -19669,7 +19670,7 @@ function showExpenseForm(id) {
         if (salaryCoachId != null) data.coachId = salaryCoachId;
         if (salaryCoachName) data.coachName = salaryCoachName;
         if (isNew) {
-          var _expNew = { id: nextId(state.expenses), ...data };
+          var _expNew = { id: nextId(state.expenses), ...data, createdAt: new Date().toISOString() };   // v6.767 — timestamp (the drawer orders a cash collection by it)
           state.expenses.push(_expNew);
           var _expId = _expNew.id;
           var _expMsg = t('Expense added & saved to cloud', 'أُضيف المصروف وحُفظ في السحابة');
@@ -35002,6 +35003,15 @@ function rentalFormHtml(r) {
       </select></div>` : ''}
       <div class="field" style="flex:2"><label>Notes</label><input type="text" id="r-notes" value="${escapeHtml(r.notes || '')}" placeholder="e.g. Birthday party, weekly booking, etc." /></div>
     </div>
+    ${!r.id ? `<div id="r-split-wrap" style="margin-top:6px;padding:10px 12px;border:1px solid var(--border);border-radius:8px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600"><input type="checkbox" id="r-split" /> 🔀 ${t('Split the payment across methods (part cash, part card…)', 'تقسيم الدفع على عدة طرق (جزء نقداً وجزء بطاقة…)')}</label>
+      <div id="r-split-boxes" style="display:none;margin-top:8px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px">
+          ${[['cash', t('Cash', 'نقداً')], ['card', t('Card', 'بطاقة')], ['fawran', t('Fawran', 'فوران')], ['transfer', t('Transfer', 'تحويل')]].map(([m, l]) => `<div class="field" style="margin:0"><label style="font-size:11px">${l}</label><input type="number" min="0" step="0.01" class="r-sp" data-m="${m}" placeholder="0" /></div>`).join('')}
+        </div>
+        <div id="r-split-sum" style="margin-top:6px;font-size:12px;font-weight:700"></div>
+      </div>
+    </div>` : ''}
     <div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.25);border-radius:8px;padding:10px;margin-top:8px;font-size:12px">
       💡 An invoice will be created automatically when this booking is saved.
     </div>
@@ -35026,8 +35036,28 @@ function wireRentalForm() {
     const hrs = parseFloat(hoursInp.value) || 0;
     const rate = parseFloat(rateInp.value) || 0;
     amtInp.value = (hrs * rate).toFixed(2).replace(/\.00$/, '');
+    splitUpdate();
   }
 
+  // v6.766 — split the payment across methods: boxes per method, live "entered / total / remaining"
+  const splitCb = $('#r-split'), splitBoxes = $('#r-split-boxes'), splitSum = $('#r-split-sum');
+  function splitUpdate() {
+    if (!splitCb || !splitSum) return;
+    const total = parseFloat(amtInp.value) || 0;
+    const got = Math.round([...document.querySelectorAll('.r-sp')].reduce((x, i) => x + (parseFloat(i.value) || 0), 0) * 100) / 100;
+    const rest = Math.round((total - got) * 100) / 100;
+    splitSum.style.color = rest < -0.009 ? 'var(--red)' : (rest > 0.009 ? 'var(--accent-2)' : 'var(--green)');
+    splitSum.textContent = t('Entered', 'المُدخل') + ' ' + fmt(got) + ' / ' + fmt(total) + ' QAR · ' + (rest < -0.009 ? t('over by', 'زيادة') + ' ' + fmt(-rest) : rest > 0.009 ? t('still due', 'متبقي') + ' ' + fmt(rest) : '✓ ' + t('paid in full', 'مدفوع بالكامل'));
+  }
+  if (splitCb) {
+    splitCb.addEventListener('change', () => {
+      splitBoxes.style.display = splitCb.checked ? '' : 'none';
+      const ms = $('#r-method'); if (ms) ms.disabled = splitCb.checked;
+      const ps = $('#r-paystatus'); if (ps) { if (splitCb.checked) ps.value = 'paid'; ps.disabled = splitCb.checked; }
+      splitUpdate();
+    });
+    document.querySelectorAll('.r-sp').forEach(i => i.addEventListener('input', splitUpdate));
+  }
   facSel.addEventListener('change', autoFillRate);
   hoursInp.addEventListener('input', recalc);
   rateInp.addEventListener('input', () => { rateInp.dataset.auto = 'manual'; recalc(); });
@@ -35458,7 +35488,7 @@ function saveRental(existingId, onDone) {
     if (clash) { toast(`${facility} is already booked at ${clash.startTime} on ${fmtDate(date)} — overlapping bookings aren\u2019t allowed.`, 'error'); return; }
   }
   const qid = $('#r-qid').value.trim() || null;
-  const method = $('#r-method').value || 'cash';
+  let method = $('#r-method').value || 'cash';
   const notes = $('#r-notes').value.trim() || null;
 
   // CHECK FIRST: does this phone match an existing MEMBER?
@@ -35543,7 +35573,14 @@ function saveRental(existingId, onDone) {
   // balance and shows up in Due Payment (member renter) / the Rentals due list (walk-in). Default = paid in
   // full (a real payment row, so it never relies on the "legacy = fully paid" convention).
   const payStatus = ($('#r-paystatus') || {}).value || 'paid';
-  const paidNow = payStatus === 'due' ? 0 : amount;
+  // v6.766 — SPLIT: one payment row per method (cash / card / fawran / transfer); less than the total leaves the rest due
+  const splitOn = !!(($('#r-split') || {}).checked);
+  const splitParts = splitOn ? [...document.querySelectorAll('.r-sp')].map(i => ({ method: i.dataset.m, amount: Math.round((parseFloat(i.value) || 0) * 100) / 100 })).filter(p => p.amount > 0) : [];
+  const splitTotal = Math.round(splitParts.reduce((x, p) => x + p.amount, 0) * 100) / 100;
+  if (splitOn && !splitParts.length) { toast(t('Enter an amount for at least one payment method', 'أدخل مبلغاً لطريقة دفع واحدة على الأقل'), 'error'); return; }
+  if (splitOn && splitTotal > amount + 0.009) { toast(t('The split amounts are more than the rental total', 'مجموع المبالغ المقسّمة أكبر من إجمالي الحجز'), 'error'); return; }
+  if (splitOn) method = splitParts.slice().sort((a, b) => b.amount - a.amount)[0].method;   // headline method = the biggest part
+  const paidNow = splitOn ? splitTotal : (payStatus === 'due' ? 0 : amount);
   const newInv = {
     id: nextId(state.invoices),
     date, description: desc, amount, method, month, ref,
@@ -35555,7 +35592,8 @@ function saveRental(existingId, onDone) {
     customerName: name,
     customerPhone: phone,              // so a walk-in renter's due keeps their phone
     amountPaid: paidNow,
-    payments: paidNow > 0 ? [{ amount: paidNow, method, date, month }] : [],
+    payments: (() => { const _at = new Date().toISOString(), _by = (typeof currentUserId === 'function' ? currentUserId() : undefined), _bn = (typeof currentUserName === 'function' ? currentUserName() : undefined);   // v6.767 — "at" lets Cash in Hand count it on a count day
+      return (splitOn ? splitParts : (paidNow > 0 ? [{ amount: paidNow, method }] : [])).map(p => ({ amount: p.amount, method: p.method, date, month, by: _by, byName: _bn, at: _at })); })(),
     rentalId,                          // back-reference to the rental
   };
   stampUpdate(newInv); state.invoices.push(newInv);
@@ -35598,17 +35636,31 @@ window.collectRental = function(rentalId) {
         <div class="field"><label>${t('Method', 'الطريقة')}</label><select id="cr-mth"><option value="cash">Cash</option><option value="card">Card</option><option value="fawran">Fawran</option><option value="transfer">Transfer</option></select></div>
       </div>
       <div class="field"><label>${t('Date', 'التاريخ')}</label><input id="cr-date" type="date" value="${TODAY}" /></div>
+      <div style="margin-top:6px;padding:10px 12px;border:1px solid var(--border);border-radius:8px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600"><input type="checkbox" id="cr-split" /> 🔀 ${t('Split across methods (part cash, part card…)', 'تقسيم على عدة طرق (جزء نقداً وجزء بطاقة…)')}</label>
+        <div id="cr-split-boxes" style="display:none;margin-top:8px">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px">
+            ${[['cash', t('Cash', 'نقداً')], ['card', t('Card', 'بطاقة')], ['fawran', t('Fawran', 'فوران')], ['transfer', t('Transfer', 'تحويل')]].map(([m, l]) => `<div class="field" style="margin:0"><label style="font-size:11px">${l}</label><input type="number" min="0" step="0.01" class="cr-sp" data-m="${m}" placeholder="0" /></div>`).join('')}
+          </div>
+          <div id="cr-split-sum" style="margin-top:6px;font-size:12px;font-weight:700"></div>
+        </div>
+      </div>
     `,
     actions: [
       { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
       { label: '💵 ' + t('Collect', 'تحصيل'), class: 'btn primary', onclick: () => {
-        const amt = Math.round((parseFloat(($('#cr-amt') || {}).value) || 0) * 100) / 100;
+        // v6.766 — split: one payment per method (recordPayment each), the total is the sum of the boxes
+        const _split = !!(($('#cr-split') || {}).checked);
+        const _parts = _split ? [...document.querySelectorAll('.cr-sp')].map(i => ({ method: i.dataset.m, amount: Math.round((parseFloat(i.value) || 0) * 100) / 100 })).filter(p => p.amount > 0) : [];
+        const amt = _split ? Math.round(_parts.reduce((x, p) => x + p.amount, 0) * 100) / 100 : Math.round((parseFloat(($('#cr-amt') || {}).value) || 0) * 100) / 100;
         if (!(amt > 0)) { toast(t('Enter an amount', 'أدخل مبلغاً'), 'error'); return; }
         if (amt > bal + 0.01 && !confirm(t(`This is more than the ${fmt(bal)} QAR due — record anyway?`, `أكثر من ${fmt(bal)} ر.ق المستحقة — تسجيل على أي حال؟`))) return;
-        const mth = ($('#cr-mth') || {}).value || 'cash';
+        const mth = _split ? _parts.map(p => p.method).join('+') : (($('#cr-mth') || {}).value || 'cash');
         const d = ($('#cr-date') || {}).value || TODAY;
-        if (typeof recordPayment === 'function') recordPayment(inv, { amount: amt, method: mth, date: d });
-        else { if (!Array.isArray(inv.payments)) inv.payments = []; inv.payments.push({ amount: amt, method: mth, date: d, month: String(d).slice(0, 7) }); inv.amountPaid = inv.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0); }
+        for (const p of (_split ? _parts : [{ method: mth, amount: amt }])) {
+          if (typeof recordPayment === 'function') recordPayment(inv, { amount: p.amount, method: p.method, date: d });
+          else { if (!Array.isArray(inv.payments)) inv.payments = []; inv.payments.push({ amount: p.amount, method: p.method, date: d, month: String(d).slice(0, 7), at: new Date().toISOString() }); inv.amountPaid = inv.payments.reduce((s, q) => s + (Number(q.amount) || 0), 0); }
+        }
         if (typeof audit === 'function') audit('rental.collect', 'rental:' + r.id, `collected ${fmt(amt)} · ${mth}`, { recordName: r.customerName || '' });
         closeModal();
         if (typeof confirmSaved === 'function') confirmSaved(t('Collected', 'تم التحصيل') + ' ' + fmt(amt)); else { save(); toast(t('Collected', 'تم التحصيل')); }
@@ -35616,6 +35668,18 @@ window.collectRental = function(rentalId) {
       } },
     ],
   });
+  setTimeout(() => {
+    const cb = $('#cr-split'), boxes = $('#cr-split-boxes'), sum = $('#cr-split-sum');
+    if (!cb) return;
+    const upd = () => {
+      const got = Math.round([...document.querySelectorAll('.cr-sp')].reduce((x, i) => x + (parseFloat(i.value) || 0), 0) * 100) / 100;
+      const rest = Math.round((bal - got) * 100) / 100;
+      sum.style.color = rest < -0.009 ? 'var(--red)' : (rest > 0.009 ? 'var(--accent-2)' : 'var(--green)');
+      sum.textContent = t('Entered', 'المُدخل') + ' ' + fmt(got) + ' / ' + fmt(bal) + ' QAR · ' + (rest < -0.009 ? t('over by', 'زيادة') + ' ' + fmt(-rest) : rest > 0.009 ? t('still due after', 'يتبقى بعد') + ' ' + fmt(rest) : '✓ ' + t('clears the due', 'تسدد المتبقي'));
+    };
+    cb.addEventListener('change', () => { boxes.style.display = cb.checked ? '' : 'none'; const a = $('#cr-amt'), m = $('#cr-mth'); if (a) a.disabled = cb.checked; if (m) m.disabled = cb.checked; upd(); });
+    document.querySelectorAll('.cr-sp').forEach(i => i.addEventListener('input', upd));
+  }, 50);
 };
 
 // Edit default hourly rates per facility
