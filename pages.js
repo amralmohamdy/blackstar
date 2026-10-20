@@ -24261,6 +24261,7 @@ PAGES.attendance = (main) => {
     }
     const m = state.members.find(x => x.id === memberId);
     if (!m) return;
+    const _g0 = (next === 'Y' && currentRole() === 'coach' && typeof coachPayGross === 'function') ? coachPayGross(effectiveCoachId(), mo) : null;   // v6.770 — his pay BEFORE this class
     if (!m.dailyAttendance) m.dailyAttendance = {};
     if (!m.dailyAttendance[mo]) m.dailyAttendance[mo] = {};
     if (!m.dailyAttendance[mo][sport]) m.dailyAttendance[mo][sport] = {};
@@ -24306,6 +24307,10 @@ PAGES.attendance = (main) => {
       name: m.name, memberId: m.id, mobile: m.phone || '', sport, date: _markISO,
       old: _prevMark, new: next || 'cleared',
     });
+    // v6.770 — a coach marking a class that earns him nothing (package ended / its paid classes used up) is told why, instead of silently seeing no change in his pay
+    if (next === 'Y' && _g0 != null) {
+      try { const _cid = effectiveCoachId(); if (coachPayGross(_cid, mo) - _g0 < 0.005) toast('⚠ ' + coachNoPayReason(_cid, m, String(sport).replace(/ \d+$/, ''), _markISO), 'info'); } catch (e) { console.error(e); }
+    }
     // Write-through: confirm the mark reached the cloud; if not, warn loudly (the mark
     // is safe locally + auto-retries, but the marker must KNOW it isn't synced yet).
     if (typeof saveConfirmed === 'function') {
@@ -24511,6 +24516,7 @@ PAGES.attendance = (main) => {
     }
     const m = state.members.find(x => x.id === memberId);
     if (!m) return;
+    const _g0 = (!clear && currentRole() === 'coach' && typeof coachPayGross === 'function') ? coachPayGross(effectiveCoachId(), mo) : null;   // v6.770 — his pay BEFORE this class
     if (!m.mixedAttendance) m.mixedAttendance = {};
     if (!m.mixedAttendance[mo]) m.mixedAttendance[mo] = {};
     const prev = m.mixedAttendance[mo][String(day)] || null;
@@ -24518,6 +24524,10 @@ PAGES.attendance = (main) => {
     else m.mixedAttendance[mo][String(day)] = { coachId: (coachId != null ? coachId : null), sport: sport || null, mark: 'Y' };
     const iso = `${mo}-${String(day).padStart(2, '0')}`;
     stampUpdate(m);
+    // v6.770 — same warning for a Mixed class that earns the coach nothing
+    if (!clear && _g0 != null) {
+      try { const _iso = `${mo}-${String(day).padStart(2, '0')}`; const _cid = effectiveCoachId(); if (coachPayGross(_cid, mo) - _g0 < 0.005) toast('⚠ ' + coachNoPayReason(_cid, m, MIXED, _iso), 'info'); } catch (e) { console.error(e); }
+    }
     if (typeof audit === 'function') audit('attendance.mark', `member:${m.id}`,
       `Mixed attendance ${clear ? 'cleared' : 'present'}: ${m.name}${clear ? '' : ' · ' + (sport || '') + ' · ' + (coachName(coachId) || '')} · ${iso}`,
       { name: m.name, memberId: m.id, sport: MIXED, mixedSport: sport || null, coachId: coachId != null ? coachId : null, date: iso, old: prev ? 'Y' : 'cleared', new: clear ? 'cleared' : 'Y' });
@@ -30437,6 +30447,19 @@ PAGES.coachsalary = (main) => {
         </tr>`).join('')}
         </tbody></table></div>` : `<div class="text-mute" style="font-size:13px">${t('No commission-earning attendance this month.', 'لا حضور مكسِب للعمولة هذا الشهر.')}</div>`}
     </div>
+
+    ${(() => {
+      // v6.770 — classes the coach marked that did NOT add to his pay, and why
+      const _un = (typeof coachUnpaidMarks === 'function') ? coachUnpaidMarks(coach.id, sel) : [];
+      if (!_un.length) return '';
+      return `<div class="card" style="margin-bottom:16px;border:1px solid rgba(239,68,68,.35)">
+        <div class="card-header"><div><div class="card-title">⚠ ${t('Marked, but not paid', 'حضور مسجّل لكن غير مدفوع')} · ${fmtMonth(sel)}</div><div class="card-subtitle">${t('These classes were attended after the package ended or beyond its paid classes, so they do not change your pay until the member renews.', 'هذه الحصص حضرها العضو بعد انتهاء الباقة أو بعد استهلاك حصصها المدفوعة، فلا تؤثر على راتبك حتى يجدّد العضو.')}</div></div></div>
+        <div style="overflow:auto"><table class="data-table" style="width:100%"><thead><tr>
+          <th>${t('Member', 'العضو')}</th><th>${t('Sport', 'الرياضة')}</th><th>${t('Days', 'الأيام')}</th><th>${t('Why', 'السبب')}</th>
+        </tr></thead><tbody>
+        ${_un.map(r => `<tr><td>${escapeHtml(r.m.name || '—')}</td><td class="text-mute">${escapeHtml(r.sport)}</td><td>${r.days.map(d => escapeHtml(fmtDate(d))).join(' · ')}</td><td style="font-size:12px;color:var(--red)">${escapeHtml(coachUnpaidText(r))}</td></tr>`).join('')}
+        </tbody></table></div></div>`;
+    })()}
 
     ${pend.length ? `<div class="card" style="margin-bottom:16px;border:1px solid rgba(245,158,11,.35)">
       <div class="card-header"><div><div class="card-title">⏳ ${t('Pending — paid but not yet attended', 'معلّق — مدفوع ولم يُحضر بعد')}</div><div class="card-subtitle">${t('You earn these as the member attends, or when their membership ends', 'تكسبها عند حضور العضو أو عند انتهاء اشتراكه')}</div></div></div>
