@@ -6583,7 +6583,8 @@ function _paymentListHtml(m, compact) {
 function _memberMoneyRows(m) {
   const memberId = m.id;
   const realInvs = (state.invoices || []).filter(i => !i.deleted && i.customerId === memberId
-    && (i.category || 'Membership') === 'Membership' && !i.switchCredit && i.activityType !== 'switch-credit');
+    && (i.category || 'Membership') === 'Membership' && !i.switchCredit && i.activityType !== 'switch-credit')
+    .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')) || (a.id - b.id));   // v6.773 — oldest first
   // Group real invoice lines by sport (+coach) → the CHARGE per sport, and remember which invoice carries it.
   const groups = new Map();
   for (const iv of realInvs) {
@@ -6600,8 +6601,9 @@ function _memberMoneyRows(m) {
     for (const li of lis) {
       const sport = li.sport || '—';
       const key = sport + '|' + String(li.coachId);
-      const g = groups.get(key) || { sport, coachId: li.coachId, coach: li.coach || (li.coachId != null ? coachName(li.coachId) : ''), price: 0, invId: iv.id, ref: iv.ref };
+      const g = groups.get(key) || { sport, coachId: li.coachId, coach: li.coach || (li.coachId != null ? coachName(li.coachId) : ''), price: 0, invId: iv.id, ref: iv.ref, parts: [] };
       g.price = Math.round((g.price + (Number(li.price) || 0)) * 100) / 100;
+      let _pt = g.parts.find(p => p.invId === iv.id); if (!_pt) g.parts.push(_pt = { invId: iv.id, ref: iv.ref, line: 0 }); _pt.line = Math.round((_pt.line + (Number(li.price) || 0)) * 100) / 100;   // v6.773 — which invoices carry this sport
       groups.set(key, g);
     }
   }
@@ -6689,6 +6691,84 @@ window._moneySplitSum = function() {
   document.querySelectorAll('.mp-sp').forEach(i => { tot += Math.max(0, parseFloat(i.value) || 0); });
   const el = document.getElementById('mp-split-sum'); if (el) el.textContent = fmt(Math.round(tot * 100) / 100);
 };
+// v6.773 — a sport+coach group pools EVERY invoice of that sport (a renewal included). A payment must land on the invoice that still carries the balance,
+// not on the oldest one (that overpaid the old invoice while the renewal stayed unpaid). Returns [{ invId, cap }] oldest → newest; the caps add up to g.remaining.
+function _groupInvoiceCaps(g) {
+  const parts = (g.parts && g.parts.length) ? g.parts : [{ invId: g.invId, line: g.price }];
+  let left = Math.round((Number(g.remaining) || 0) * 100) / 100;
+  const caps = parts.map(p => {
+    const inv = (state.invoices || []).find(i => i.id === p.invId);
+    const paid = inv ? invoicePaidForSport(inv, g.sport === '—' ? undefined : g.sport) : 0;
+    let cap = Math.max(0, Math.round((p.line - paid) * 100) / 100);
+    cap = Math.min(cap, left); left = Math.round((left - cap) * 100) / 100;
+    return { invId: p.invId, cap };
+  });
+  if (left > 0.005) caps[caps.length - 1].cap = Math.round((caps[caps.length - 1].cap + left) * 100) / 100;   // pooled netting left a difference no single invoice shows: the newest takes it
+  return caps;
+}
+// v6.773 — a payment that sits on the WRONG invoice: one invoice paid MORE than it costs while another invoice of the same member is still unpaid
+// (what the old Collect did on a renewed sport). Returns [{ from, to, amount }] — oldest first — that would settle both.
+function _memberMisallocations(m) {
+  const invs = (state.invoices || []).filter(i => i && !i.deleted && i.customerId === m.id && (i.category || 'Membership') === 'Membership' && !i.switchCredit && i.activityType !== 'switch-credit')
+    .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')) || (a.id - b.id));
+  const over = invs.filter(i => Array.isArray(i.payments) && i.payments.length).map(i => ({ inv: i, rem: Math.round((invoicePaid(i) - invoiceTotal(i)) * 100) / 100 })).filter(x => x.rem > 0.5);
+  const short = invs.map(i => ({ inv: i, rem: Math.round(invoiceBalance(i) * 100) / 100 })).filter(x => x.rem > 0.5);
+  const out = [];
+  for (const o of over) for (const sh of short) {
+    if (o.inv.id === sh.inv.id || o.rem <= 0.005 || sh.rem <= 0.005) continue;
+    const amount = Math.round(Math.min(o.rem, sh.rem) * 100) / 100;
+    out.push({ from: o.inv, to: sh.inv, amount }); o.rem = Math.round((o.rem - amount) * 100) / 100; sh.rem = Math.round((sh.rem - amount) * 100) / 100;
+  }
+  return out;
+}
+// Move the money: a negative correction row on the overpaid invoice + the same payment (same date / method / sport) on the unpaid one. Net zero for the member.
+// A cash row moved this way is flagged noDrawer on the receiving invoice — the cash already entered the drawer when it was first taken.
+function _applyMisallocation(mv) {
+  let need = mv.amount; const now = new Date().toISOString();
+  const by = (typeof currentUserId === 'function') ? currentUserId() : undefined, byName = (typeof currentUserName === 'function') ? currentUserName() : undefined;
+  const toHasSport = sp => !!sp && (mv.to.lineItems || []).some(l => l && l.sport === sp);
+  const src = mv.from.payments;
+  for (let k = src.length - 1; k >= 0 && need > 0.005; k--) {
+    const p = src[k]; const a = Number(p.amount) || 0;
+    if (a <= 0 || p._correction || p._recon) continue;
+    const take = Math.round(Math.min(a, need) * 100) / 100; need = Math.round((need - take) * 100) / 100;
+    const date = p.date || String(p.month || TODAY).slice(0, 7) + '-01', month = p.month || String(date).slice(0, 7);
+    const sport = toHasSport(p.sport) ? p.sport : undefined;
+    const base = { method: p.method, date, month, by, byName, at: now };
+    src.push(Object.assign({}, base, { amount: -take, _correction: true, note: 'Moved to ' + (mv.to.ref || ('#' + mv.to.id)) + ' (payment was on the wrong invoice)', sport: p.sport || undefined }));
+    if (!Array.isArray(mv.to.payments)) mv.to.payments = [];
+    const row = Object.assign({}, base, { amount: take, moved: true, note: 'Moved from ' + (mv.from.ref || ('#' + mv.from.id)) });
+    if (sport) row.sport = sport;
+    if (normalizeMethod(p.method) === 'cash') { row.noDrawer = true; row.noDrawerAt = now; row.noDrawerBy = byName || ''; }
+    mv.to.payments.push(row);
+  }
+  for (const inv of [mv.from, mv.to]) { inv.amountPaid = Math.round(inv.payments.reduce((x, q) => x + (Number(q.amount) || 0), 0) * 100) / 100; stampUpdate(inv); }
+  if (typeof audit === 'function') audit('payment.rebalance', 'invoice:' + mv.from.id, 'Moved ' + fmt(mv.amount) + ' QAR from ' + (mv.from.ref || mv.from.id) + ' to ' + (mv.to.ref || mv.to.id) + ' (payment was on the wrong invoice)', { memberId: mv.from.customerId, name: mv.from.customerName || '', amount: mv.amount });
+}
+window._moneyRebalance = function(memberId) {
+  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast('Admins or receptionists only', 'error'); return; }
+  const m = (state.members || []).find(x => x.id === memberId); if (!m) return;
+  const mvs = _memberMisallocations(m);
+  if (!mvs.length) { toast(t('Nothing to move', 'لا شيء لنقله')); return; }
+  const txt = mvs.map(x => fmt(x.amount) + ' QAR  ' + (x.from.ref || x.from.id) + ' → ' + (x.to.ref || x.to.id)).join('\n');
+  if (!confirm(t('Move these payments to the invoice that is still unpaid?\n\n' + txt + '\n\nThe member\'s total paid does not change.', 'نقل هذه الدفعات إلى الفاتورة التي لم تُدفع بعد؟\n\n' + txt + '\n\nإجمالي ما دفعه العضو لا يتغير.'))) return;
+  mvs.forEach(_applyMisallocation);
+  if (typeof saveConfirmed === 'function') saveConfirmed().then(r => { if (r && !r.ok) toast('⚠ ' + t('Saved on this device but not yet in the cloud', 'محفوظ على الجهاز لكن لم يصل السحابة'), 'error'); }); else save();
+  toast(t('Payment moved', 'تم نقل الدفعة'));
+  if (typeof render === 'function') render();
+  window.moneyPanel(memberId);
+};
+window._rebalanceAllMembers = function() {
+  if (currentRole() !== 'admin') { toast('Admins only', 'error'); return; }
+  const all = []; for (const m of (state.members || [])) { if (m.deleted) continue; _memberMisallocations(m).forEach(x => all.push(x)); }
+  if (!all.length) { toast(t('Nothing to move', 'لا شيء لنقله')); return; }
+  const total = Math.round(all.reduce((x, y) => x + y.amount, 0) * 100) / 100;
+  if (!confirm(t('Move ' + all.length + ' payment(s) (' + fmt(total) + ' QAR) from an overpaid invoice to the unpaid invoice of the same member?\nEach member\'s total paid does not change.', 'نقل ' + all.length + ' دفعة (' + fmt(total) + ' ر.ق) من فاتورة مدفوعة بزيادة إلى فاتورة غير مدفوعة لنفس العضو؟\nإجمالي ما دفعه كل عضو لا يتغير.'))) return;
+  all.forEach(_applyMisallocation);
+  if (typeof saveConfirmed === 'function') saveConfirmed().then(r => { if (r && !r.ok) toast('⚠ ' + t('Saved on this device but not yet in the cloud', 'محفوظ على الجهاز لكن لم يصل السحابة'), 'error'); }); else save();
+  toast(t('Moved ' + all.length + ' payment(s)', 'تم نقل ' + all.length + ' دفعة'));
+  if (typeof render === 'function') render();
+};
 window._moneyCollect = function(memberId) {
   if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast('Admins or receptionists only', 'error'); return; }
   const m = (state.members || []).find(x => x.id === memberId); if (!m) return;
@@ -6721,7 +6801,13 @@ window._moneyCollect = function(memberId) {
   }
   // Allocation targets: each due row's invoice up to its remaining; the LAST entry is the overflow sink
   // (takes any leftover, including a confirmed overpayment). Falls back to the target when nothing is due.
-  const alloc = (dueRows.length ? dueRows : [target]).map(g => ({ invId: g.invId, sport: g.sport, cap: dueRows.length ? g.remaining : Infinity }));
+  const alloc = [];
+  const _newest = g => ((g.parts && g.parts.length) ? g.parts[g.parts.length - 1].invId : g.invId);
+  if (dueRows.length) {
+    for (const g of dueRows) for (const c of _groupInvoiceCaps(g)) if (c.cap > 0.001) alloc.push({ invId: c.invId, sport: g.sport, cap: c.cap });
+    const _lg = dueRows[dueRows.length - 1];
+    if (!alloc.length || alloc[alloc.length - 1].invId !== _newest(_lg)) alloc.push({ invId: _newest(_lg), sport: _lg.sport, cap: 0 });   // the overflow (a confirmed overpayment) goes to the NEWEST invoice
+  } else alloc.push({ invId: _newest(target), sport: target.sport, cap: Infinity });
   const _recordOne = (invId, sport, amount, method) => {
     const inv = (state.invoices || []).find(i => i.id === invId);
     if (!inv) return;
@@ -6786,6 +6872,7 @@ window.moneyPanel = function(memberId) {
         <div style="display:flex;background:var(--surface-2)">${kpi(t('Charged', 'المُحتسب'), md.charged, '')}${kpi(t('Paid', 'المدفوع'), md.paidTotal, 'var(--green)')}${kpi(t('Due', 'المستحق'), md.due, md.due > 0.5 ? 'var(--accent-2)' : 'var(--green)')}</div>
         <div style="display:flex;align-items:center;justify-content:center;gap:6px;font-size:11.5px;font-weight:600;padding:6px;color:${reconciles ? 'var(--green)' : 'var(--red)'};background:${reconciles ? 'rgba(16,185,129,.08)' : 'rgba(242,96,96,.08)'};border-top:1px solid var(--border)">${reconciles ? '✓' : '⚠'} ${t('Reconciles', 'متطابق')} <span style="color:var(--text-mute);font-weight:500">${t('Charged = Paid + Due', 'المُحتسب = المدفوع + المستحق')}</span></div>
       </div>
+      ${(() => { const mv = _memberMisallocations(m); return mv.length ? `<div style="margin-top:12px;padding:10px 12px;border:1px solid rgba(245,158,11,.5);background:rgba(245,158,11,.08);border-radius:10px;font-size:12px;line-height:1.6">⚠ ${t('A payment sits on the wrong invoice', 'دفعة على الفاتورة الخطأ')}: ${mv.map(x => '<b>' + fmt(x.amount) + '</b> ' + escapeHtml(x.from.ref || String(x.from.id)) + ' → ' + escapeHtml(x.to.ref || String(x.to.id))).join(' · ')} <button class="btn sm" style="margin-inline-start:8px" onclick="window._moneyRebalance(${m.id})">${t('Move it', 'انقلها')}</button></div>` : ''; })()}
       <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-mute);margin:14px 2px 2px">${t('Sports', 'الرياضات')}</div>
       <div>${md.rows.map(sportRow).join('')}</div>
       ${_paymentListHtml(m, true)}
@@ -8804,6 +8891,7 @@ Black Stars Academy`;
         <div class="subtitle">${list.length} ${t('of', 'من')} ${all.length} ${t('customers with an outstanding balance (members + walk-ins)', 'عميلاً عليه مبلغ مستحق (أعضاء + غير أعضاء)')}${filtersOn ? '' : ` · ${fmt(grandTotal)} QAR`}</div>
       </div>
     </div>
+    ${(() => { if (currentRole() !== 'admin') return ''; let n = 0, amt = 0; for (const mm of (state.members || [])) { if (mm.deleted) continue; for (const x of _memberMisallocations(mm)) { n++; amt += x.amount; } } return n ? `<div style="margin-bottom:12px;padding:10px 14px;border:1px solid rgba(245,158,11,.5);background:rgba(245,158,11,.08);border-radius:10px;font-size:12.5px">⚠ ${n} ${t('payment(s) sit on the wrong invoice', 'دفعة على فاتورة خطأ')} (${fmt(amt)} QAR) — ${t('an invoice is overpaid while another invoice of the same member is unpaid.', 'فاتورة مدفوعة بزيادة بينما فاتورة أخرى لنفس العضو غير مدفوعة.')} <button class="btn sm" style="margin-inline-start:8px" onclick="window._rebalanceAllMembers()">${t('Move them', 'انقلها')}</button></div>` : ''; })()}
     <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
       <div class="kpi" style="border-color:var(--red);background:rgba(239,68,68,.06)"><div class="kpi-label" style="color:var(--red)">⚠ ${t('Total due (shown)', 'إجمالي المستحق (المعروض)')}</div><div class="kpi-value num" style="color:var(--red)">${fmt(grandTotal)}</div><div class="kpi-sub">QAR · ${list.length} ${t('customers', 'عميل')}</div></div>
       <div class="kpi"><div class="kpi-label">${t('Total due (all)', 'إجمالي المستحق (الكل)')}</div><div class="kpi-value num">${fmt(overallTotal)}</div><div class="kpi-sub">QAR · ${all.length} ${t('customers', 'عميل')}</div></div>
@@ -20028,7 +20116,7 @@ PAGES.salaries = (main) => {
       <div style="font-size:12px;color:var(--text-dim);line-height:1.5">
         Salaries = <b>Fixed monthly</b> (set per person on the Team page) + <b>Commission</b>, on one of two bases:
         <br>• <b>By attendance</b> (current) — <b>fee ÷ total classes × rate%</b> for <b>each class a student attends</b>, counted in the month attended; the unattended remainder stays <span style="color:var(--accent-2)">⏳ Pending</span> and is <b>trued-up</b> in the month the membership expires.
-        <br>• <b>By payment</b> — <b>rate% × the amount PAID</b>, at full rate (attendance ignored), with <b>no carry-forward</b>: the paid amount is credited in the membership's own (billing) month, so a membership paid across two months still pays the coach fully in its start month — nothing splits into the next month. Unpaid amounts earn nothing. (Used for private coaches paid a full monthly fee.)
+        <br>• <b>By payment</b> — <b>rate% × the FULL fee</b> of the membership (attendance ignored, <b>whether or not the member has paid</b>), with <b>no carry-forward</b>: credited in the membership's own (billing) month. (Used for private coaches paid a full monthly fee.)
         <br>Frozen memberships don't true-up until they end. Summer Camp earns no commission.
       </div>
     </div>
@@ -20039,7 +20127,7 @@ PAGES.salaries = (main) => {
         <span class="badge active" style="font-size:11px" title="The club-wide default. Individual coaches can override it on the Team page (Commission basis). This badge is locked to prevent accidental changes — use ‘change…’.">🔒 ${(state.settings?.commissionBasis === 'payment') ? t('By payment (full amount, in the membership\'s month)', 'بالدفع (المبلغ الكامل، في شهر الاشتراك)') : t('By attendance (per class attended)', 'بالحضور (لكل حصة)')}</span>
         <button id="sal-basis-change" class="btn ghost sm" style="font-size:10px;opacity:.6" title="Admin: switch the club-wide default (each coach can still override it on the Team page)">change…</button>
         <select id="sal-basis" class="btn ghost" style="display:none">
-          <option value="payment" ${(state.settings?.commissionBasis || 'payment') === 'payment' ? 'selected' : ''}>By payment (full rate on amount paid, in the membership's month)</option>
+          <option value="payment" ${(state.settings?.commissionBasis || 'payment') === 'payment' ? 'selected' : ''}>By payment (the full fee, in the membership's month — paid or not)</option>
           <option value="attendance" ${state.settings?.commissionBasis === 'attendance' ? 'selected' : ''}>By attendance (per class attended)</option>
         </select>
         <label id="sal-attended-only" style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-mute);cursor:pointer" title="${t('When ON, an EXPIRED membership pays the coach ONLY for classes actually attended — no true-up of carried-forward / unused sessions. Applies to every coach except those overridden on the Team page. (Attendance basis only.)', 'عند التفعيل، العضوية المنتهية تدفع للمدرب مقابل الحصص المحضورة فقط — دون احتساب الحصص المُرحّلة/غير المحضورة. تنطبق على كل المدربين إلا من له إعداد خاص في صفحة الفريق. (أساس الحضور فقط.)')}">
@@ -20098,7 +20186,7 @@ PAGES.salaries = (main) => {
     const next = e.target.value === 'attendance' ? 'attendance' : 'payment';
     // Switching away from attendance changes how every coach is paid — confirm.
     if (next === 'payment') {
-      if (!confirm('Switch to "By payment"? This pays each coach rate% of the amount ACTUALLY PAID, credited in the membership\'s own (billing) month — full rate, attendance ignored, no carry-forward across months — used for private coaches on a full monthly fee. It replaces the attendance basis + expiry true-up for everyone.\n\nAre you sure?')) {
+      if (!confirm('Switch to "By payment"? This pays each coach rate% of the FULL fee (whether or not it has been paid), credited in the membership\'s own (billing) month — full rate, attendance ignored, no carry-forward across months — used for private coaches on a full monthly fee. It replaces the attendance basis + expiry true-up for everyone.\n\nAre you sure?')) {
         e.target.value = 'attendance';   // revert the select
         return;
       }
@@ -21289,12 +21377,10 @@ window.showRevenueDetail = function(coachId, monthKey) {
       const ratio = coachFee / totalFee;
       // sum ALL positive payments on this (billing-month) invoice — the whole paid amount is credited in
       // its billing month (never split by payment date).
-      let paidThisMonth = 0;
-      let _rp = (Array.isArray(inv.payments) ? inv.payments : []).filter(p => (Number(p.amount) || 0) > 0);
-      if (!_rp.length && (Number(inv.amountPaid) || 0) > 0) _rp = [{ amount: Number(inv.amountPaid) }];
-      const _commStartP = (state.settings && state.settings.commissionStartDate) || '';   // v6.572: match computeMonthlyPay — payments before the commission start date don't count
-      for (const p of _rp) { const amt = Number(p.amount) || 0; if (amt <= 0) continue; const _pDate = p.date || (p.month ? p.month + '-01' : (inv.date || '')); if (_commStartP && _pDate && String(_pDate).slice(0, 10) < _commStartP) continue; paidThisMonth += amt; }
-      const share = Math.round(paidThisMonth * ratio * 100) / 100;
+      // v6.772 — the FULL fee (every coach earns his whole percentage whatever was paid), mirroring computeMonthlyPay; the commission start date still applies (to the invoice date)
+      const _commStartP = (state.settings && state.settings.commissionStartDate) || '';
+      const _invD = String(inv.date || (inv.month ? inv.month + '-01' : '')).slice(0, 10);
+      const share = (_commStartP && _invD && _invD < _commStartP) ? 0 : Math.round(coachFee * 100) / 100;
       if (Math.abs(share) < 0.005) continue;
       rebuilt.push({
         memberName: mem ? mem.name : (inv.customerName || '— deleted member —'), memberId: mem ? mem.id : null,
@@ -21477,12 +21563,10 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
       const ratio = coachFee / totalFee;
       // sum ALL positive payments on this (billing-month) invoice — the whole paid amount is credited in
       // its billing month (never split by payment date).
-      let paidThisMonth = 0;
-      let _rp = (Array.isArray(inv.payments) ? inv.payments : []).filter(p => (Number(p.amount) || 0) > 0);
-      if (!_rp.length && (Number(inv.amountPaid) || 0) > 0) _rp = [{ amount: Number(inv.amountPaid) }];
-      const _commStartP = (state.settings && state.settings.commissionStartDate) || '';   // v6.572: match computeMonthlyPay — payments before the commission start date don't count
-      for (const p of _rp) { const amt = Number(p.amount) || 0; if (amt <= 0) continue; const _pDate = p.date || (p.month ? p.month + '-01' : (inv.date || '')); if (_commStartP && _pDate && String(_pDate).slice(0, 10) < _commStartP) continue; paidThisMonth += amt; }
-      const share = Math.round(paidThisMonth * ratio * 100) / 100;
+      // v6.772 — the FULL fee (every coach earns his whole percentage whatever was paid), mirroring computeMonthlyPay; the commission start date still applies (to the invoice date)
+      const _commStartP = (state.settings && state.settings.commissionStartDate) || '';
+      const _invD = String(inv.date || (inv.month ? inv.month + '-01' : '')).slice(0, 10);
+      const share = (_commStartP && _invD && _invD < _commStartP) ? 0 : Math.round(coachFee * 100) / 100;
       if (Math.abs(share) < 0.005) continue;
       rebuilt.push({
         memberName: mem ? mem.name : (inv.customerName || '— deleted member —'),
@@ -23178,7 +23262,7 @@ PAGES.settings = (main, section) => {
       <div style="background:var(--surface-2);border-radius:8px;padding:12px;margin-bottom:14px">
         <label style="font-weight:600;font-size:13px;display:block;margin-bottom:6px">Commission basis</label>
         <select id="pref-commbasis" style="min-width:300px">
-          <option value="payment" ${(cur.commissionBasis || 'payment') === 'payment' ? 'selected' : ''}>By payment — amount paid counts in the membership's month (current)</option>
+          <option value="payment" ${(cur.commissionBasis || 'payment') === 'payment' ? 'selected' : ''}>By payment — the full fee counts in the membership's month, paid or not (current)</option>
           <option value="attendance" ${cur.commissionBasis === 'attendance' ? 'selected' : ''}>By attendance — per class attended; the rest shows as pending</option>
         </select>
         <div class="text-mute" style="font-size:11px;margin-top:6px;line-height:1.5">
