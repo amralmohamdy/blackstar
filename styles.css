@@ -1904,3 +1904,8 @@ html { -webkit-text-size-adjust: 100%; }
 .topbar { flex-wrap: wrap; }
 .topbar > div:first-child { min-width: 0; }
 .topbar-actions { flex-wrap: wrap; justify-content: flex-end; min-width: 0; max-width: 100%; }
+/* v6.776 — phones/iPad portrait: the popup is full-screen, so the backdrop must not add its 5vh top padding (it pushed the popup's footer — Save / Confirm — 40 px below the screen) */
+@media (max-width: 900px) {
+  .modal-backdrop { padding: 0 !important; place-items: stretch center; }
+}
+body.modal-open #bs-notif-float { z-index: 60 !important; }   /* v6.776 — below the popup (z 100): the bell no longer covers the popup's ✕ close button */

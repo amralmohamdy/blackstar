@@ -23859,6 +23859,7 @@ function showModal({ title, body, actions = [], size }) {
   backdrop.addEventListener('click', e => { if (e.target === backdrop) tryCloseModal(); });
   document.addEventListener('keydown', escClose);
   document.body.style.overflow = 'hidden';
+  document.body.classList.add('modal-open');   // v6.776 — the floating bell drops BEHIND the popup (it sat on top of the popup's ✕ on phones)
   // Snapshot initial form values for dirty-check
   setTimeout(() => { window._modalInitialState = snapshotModalState(modal); }, 0);
 }
@@ -23906,6 +23907,7 @@ function closeModal() {
   if (b) b.remove();
   document.removeEventListener('keydown', escClose);
   document.body.style.overflow = '';
+  document.body.classList.remove('modal-open');
   window._modalInitialState = null;
 }
 
