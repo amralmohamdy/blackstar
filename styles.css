@@ -1856,3 +1856,51 @@ tr.member-archived:hover { opacity: 0.85 !important; }
 .msel-panel { animation: mselIn .12s ease; }
 @keyframes mselIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 .msel-panel label:hover { background: var(--surface-2); }
+
+/* ═══════════════════════════════════════════════════════════════════
+   v6.774 — PHONE / iPAD HARDENING (coaches could not always tap or reach things)
+   • iOS Safari only fires `click` on elements that look clickable — document-level handlers (close the
+     notification bell, close a filter list) never ran, so panels stayed open over the buttons.
+   • 100vh includes the browser's bottom bar on iPad/iPhone → the drawer's last items and a tall popup's
+     Save button sat under the bar. Use dynamic viewport units.
+   • The fixed 🔔 sat on top of the page's top-right buttons (and under the notch).
+   ═══════════════════════════════════════════════════════════════════ */
+html { -webkit-text-size-adjust: 100%; }
+@media (hover: none) and (pointer: coarse) {
+  body { cursor: pointer; }                                   /* makes iOS deliver clicks to document-level listeners */
+  input, textarea, select, [contenteditable="true"] { cursor: auto; }
+  button, a, [onclick], label, select, summary, .btn, .nav-item, .att-cell, .th-sort {
+    touch-action: manipulation;                                /* no 300 ms double-tap-zoom wait */
+    -webkit-tap-highlight-color: transparent;
+  }
+  .btn, button.btn { min-height: 40px; }
+  .btn.sm, button.btn.sm { min-height: 36px; }
+  select.btn, select.input, .field select { min-height: 40px; }
+  .nav-item { min-height: 44px; }
+  .recent-chip, .recent-chip-clear { min-height: 34px; padding-top: 6px; padding-bottom: 6px; }
+  td a[href^="tel"], td a[href*="wa.me"] { display: inline-block; padding: 8px 2px; }
+  .mobile-menu-btn { width: 48px; height: 48px; }
+  .modal-close { min-width: 40px; min-height: 40px; }
+}
+/* the floating bell + menu button respect the notch / home bar */
+#bs-notif-float { top: calc(12px + env(safe-area-inset-top, 0px)) !important; right: calc(16px + env(safe-area-inset-right, 0px)) !important; }
+.mobile-menu-btn { top: calc(12px + env(safe-area-inset-top, 0px)); left: calc(12px + env(safe-area-inset-left, 0px)); }
+/* the page's own top-right buttons never sit under the bell */
+.main .topbar { padding-right: 62px; }
+@media (max-width: 900px) {
+  .main .topbar { padding-right: 0; }                          /* phones/iPad portrait: the topbar already starts below the bell row (.main padding-top) */
+  .sidebar { height: 100vh; height: 100dvh; padding-bottom: env(safe-area-inset-bottom, 0px); overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+  .modal { max-height: 100vh !important; max-height: 100dvh !important; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+  .modal-footer { padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+  .main { padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px)) !important; }
+}
+.modal-backdrop { overscroll-behavior: contain; }
+@supports (height: 100dvh) {
+  body, #app { min-height: 100dvh; }
+  .modal { max-height: 90dvh; }
+}
+/* v6.774 — a long row of page buttons (Attendance has 7) must wrap, not run off the right edge of an iPad in landscape */
+.main { min-width: 0; }
+.topbar { flex-wrap: wrap; }
+.topbar > div:first-child { min-width: 0; }
+.topbar-actions { flex-wrap: wrap; justify-content: flex-end; min-width: 0; max-width: 100%; }

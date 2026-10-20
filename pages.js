@@ -25031,6 +25031,13 @@ PAGES.attendance = (main) => {
       }
       tbody tr:hover .att-name-cell,
       tbody tr:hover .att-total { background: var(--surface-2); }
+      /* v6.774 — phones: a narrow student column and a non-sticky Total, so today's cell is never hidden under them (it was, on a 320–360 px phone) */
+      @media (max-width: 600px) {
+        .att-name-h, .att-name-cell { width: 130px; min-width: 110px; max-width: 140px; padding: 6px 8px; }
+        .att-total-h, .att-total { position: static; }
+        .att-day-active { width: 64px; min-width: 64px; }
+      }
+      @media (hover: none) and (pointer: coarse) { .att-cell { min-width: 44px; height: 44px; } }
     </style>
 
     <div class="topbar">
