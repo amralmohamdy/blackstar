@@ -8614,6 +8614,20 @@ PAGES.duepayment = (main) => {
     all.push({ m, total, bySport, st: memberStatus(m), expiry: m.expiryDate, lastReminded: m.lastRemindedAt || null, remind: reminderInfo(m) });
   }
 
+  // v6.769 — EVERY due: also the invoices of people who are NOT members (walk-in rentals, hall, products, an archived member).
+  // One row per invoice; Collect opens that invoice's payment dialog. (Reconciliation's "Due" already counts them.)
+  const _liveMember = id => id != null && (state.members || []).some(m => m && m.id === id && !m.deleted);
+  for (const inv of (state.invoices || [])) {
+    if (!inv || inv.deleted || inv.switchCredit || inv.activityType === 'switch-credit' || _liveMember(inv.customerId)) continue;
+    if (f.months.length && !f.months.includes(inv.month || String(inv.date || '').slice(0, 7))) continue;
+    const bal = Math.round(invoiceBalance(inv) * 100) / 100;
+    if (bal < 0.5) continue;
+    const info = (typeof customerInfo === 'function' ? (customerInfo(inv) || {}) : {});
+    const nm = inv.customerName || info.name || inv.description || '—';
+    const cat = inv.category || inv.sport || 'Other';
+    all.push({ walk: true, inv, m: { id: null, name: nm, nameArabic: '', phone: inv.customerPhone || info.phone || '' }, total: bal, bySport: { [cat]: bal }, st: 'Walk-in', expiry: null, lastReminded: null, remind: { count: 0, last: null } });
+  }
+
   // Apply filters
   const list = all.filter(r => {
     if (f.status !== 'all' && r.st !== f.status) return false;
@@ -8750,19 +8764,19 @@ Black Stars Academy`;
   };
 
   const rowHtml = list.length ? list.map((r, i) => {
-    const wa = waLink(r.m, r.total);
+    const wa = r.walk ? null : waLink(r.m, r.total);
     const sportChips = Object.entries(r.bySport).map(([sp, amt]) => `<span class="badge" style="font-size:10px;background:rgba(242,163,60,.15);color:var(--accent-2)" title="${escapeHtml(sp)}: ${fmt(amt)} QAR due">${escapeHtml(sp)} · ${fmt(amt)}</span>`).join(' ');
     return `<tr>
       <td class="text-mute" style="text-align:center;font-size:12px">${i + 1}</td>
-      <td><div class="font-bold">${escapeHtml(r.m.name)}</div>${r.m.nameArabic ? `<div class="text-mute" style="font-size:11px" dir="rtl">${escapeHtml(r.m.nameArabic)}</div>` : ''}</td>
-      <td style="font-size:12px">${phoneCell(r.m.phone)}</td>
+      <td><div class="font-bold">${escapeHtml(r.m.name)}</div>${r.m.nameArabic ? `<div class="text-mute" style="font-size:11px" dir="rtl">${escapeHtml(r.m.nameArabic)}</div>` : ''}${r.walk ? `<div class="text-mute font-mono" style="font-size:10px">${escapeHtml(r.inv.ref || '#' + r.inv.id)}${r.inv.date ? ' · ' + fmtDate(r.inv.date) : ''}</div>` : ''}</td>
+      <td style="font-size:12px">${r.m.phone ? phoneCell(r.m.phone) : '—'}</td>
       <td><span class="badge ${r.st.toLowerCase()}" style="font-size:10px">${r.st}</span></td>
       <td>${r.expiry ? fmtDate(r.expiry) : '—'}</td>
       <td><div style="display:flex;flex-wrap:wrap;gap:4px">${sportChips}</div></td>
       <td class="text-right num" style="color:var(--red);font-weight:800;font-size:14px">${fmt(r.total)} <span class="text-mute" style="font-size:10px;font-weight:400">QAR</span></td>
       <td style="font-size:11px">${r.remind.count ? `<span class="badge ${r.remind.count >= 3 ? '' : 'active'}" style="font-size:10px;${r.remind.count >= 3 ? 'background:rgba(120,120,140,.15);color:var(--text-mute)' : ''}">✓ ${r.remind.count}/3${r.remind.last === TODAY ? ' · ' + t('today', 'اليوم') : r.remind.last ? ' · ' + fmtDate(r.remind.last) : ''}</span>` : '<span class="text-mute">—</span>'}</td>
       <td class="text-right" style="white-space:nowrap">
-        ${editable ? `<button class="btn primary sm" onclick="moneyPanel(${r.m.id})" title="${t('Record a payment / edit pricing', 'تسجيل دفعة / تعديل السعر')}">💰 ${t('Collect', 'تحصيل')}</button>` : ''}
+        ${editable ? (r.walk ? `<button class="btn primary sm" onclick="${r.inv.rentalId ? 'collectRental(' + r.inv.rentalId + ')' : 'recordPaymentUI(' + r.inv.id + ')'}" title="${t('Collect this invoice', 'تحصيل هذه الفاتورة')} · ${escapeHtml(r.inv.ref || '')}">💰 ${t('Collect', 'تحصيل')}</button>` : `<button class="btn primary sm" onclick="moneyPanel(${r.m.id})" title="${t('Record a payment / edit pricing', 'تسجيل دفعة / تعديل السعر')}">💰 ${t('Collect', 'تحصيل')}</button>`) : ''}
         ${(() => {
           if (!wa) return '';
           const sent = r.remind.count || 0;
@@ -8778,7 +8792,7 @@ Black Stars Academy`;
             ? `<span class="btn ghost sm" style="opacity:.5;cursor:default" title="${t('All 3 reminders sent this cycle', 'تم إرسال 3 تذكيرات هذه الدورة')}">✓ ${t('Reminded', 'تم التذكير')}</span>`
             : `<a class="btn ghost sm" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;${lvlColor}" href="${wa}" target="_blank" rel="noopener" onclick="markReminded(${r.m.id})" title="${t('Send', 'إرسال')}: ${lvlLabel}">${lvlIcon} ${lvlLabel}</a>`;
         })()}
-        <button class="btn ghost sm" onclick="viewMember(${r.m.id})" title="${t('Open profile', 'فتح الملف')}">👁</button>
+        ${r.walk ? '' : `<button class="btn ghost sm" onclick="viewMember(${r.m.id})" title="${t('Open profile', 'فتح الملف')}">👁</button>`}
       </td>
     </tr>`;
   }).join('') : `<tr><td colspan="9" class="empty"><div class="empty-icon">🎉</div>${filtersOn ? t('No members match these filters', 'لا يوجد أعضاء يطابقون المرشحات') : t('All settled — no outstanding balances', 'كل شيء مسوّى — لا توجد مبالغ مستحقة')}</td></tr>`;
@@ -8787,13 +8801,13 @@ Black Stars Academy`;
     <div class="topbar">
       <div>
         <h1>💰 ${t('Due Payment', 'المدفوعات المستحقة')}</h1>
-        <div class="subtitle">${list.length} ${t('of', 'من')} ${all.length} ${t('members with an outstanding balance', 'عضواً عليه مبلغ مستحق')}${filtersOn ? '' : ` · ${fmt(grandTotal)} QAR`}</div>
+        <div class="subtitle">${list.length} ${t('of', 'من')} ${all.length} ${t('customers with an outstanding balance (members + walk-ins)', 'عميلاً عليه مبلغ مستحق (أعضاء + غير أعضاء)')}${filtersOn ? '' : ` · ${fmt(grandTotal)} QAR`}</div>
       </div>
     </div>
     <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
-      <div class="kpi" style="border-color:var(--red);background:rgba(239,68,68,.06)"><div class="kpi-label" style="color:var(--red)">⚠ ${t('Total due (shown)', 'إجمالي المستحق (المعروض)')}</div><div class="kpi-value num" style="color:var(--red)">${fmt(grandTotal)}</div><div class="kpi-sub">QAR · ${list.length} ${t('members', 'عضو')}</div></div>
-      <div class="kpi"><div class="kpi-label">${t('Total due (all)', 'إجمالي المستحق (الكل)')}</div><div class="kpi-value num">${fmt(overallTotal)}</div><div class="kpi-sub">QAR · ${all.length} ${t('members', 'عضو')}</div></div>
-      <div class="kpi" style="cursor:pointer" onclick="window._dueFilter={...window._dueFilter,range:window._dueFilter.range==='1000+'?'all':'1000+'};render()" title="${t('Click to show only large balances', 'اضغط لإظهار المبالغ الكبيرة فقط')}"><div class="kpi-label">${t('Big balances (≥1000)', 'مبالغ كبيرة (≥1000)')}</div><div class="kpi-value num">${all.filter(r => r.total >= 1000).length}</div><div class="kpi-sub">${t('members', 'عضو')} · ${fmt(all.filter(r => r.total >= 1000).reduce((s, r) => s + r.total, 0))} QAR</div></div>
+      <div class="kpi" style="border-color:var(--red);background:rgba(239,68,68,.06)"><div class="kpi-label" style="color:var(--red)">⚠ ${t('Total due (shown)', 'إجمالي المستحق (المعروض)')}</div><div class="kpi-value num" style="color:var(--red)">${fmt(grandTotal)}</div><div class="kpi-sub">QAR · ${list.length} ${t('customers', 'عميل')}</div></div>
+      <div class="kpi"><div class="kpi-label">${t('Total due (all)', 'إجمالي المستحق (الكل)')}</div><div class="kpi-value num">${fmt(overallTotal)}</div><div class="kpi-sub">QAR · ${all.length} ${t('customers', 'عميل')}</div></div>
+      <div class="kpi" style="cursor:pointer" onclick="window._dueFilter={...window._dueFilter,range:window._dueFilter.range==='1000+'?'all':'1000+'};render()" title="${t('Click to show only large balances', 'اضغط لإظهار المبالغ الكبيرة فقط')}"><div class="kpi-label">${t('Big balances (≥1000)', 'مبالغ كبيرة (≥1000)')}</div><div class="kpi-value num">${all.filter(r => r.total >= 1000).length}</div><div class="kpi-sub">${t('customers', 'عميل')} · ${fmt(all.filter(r => r.total >= 1000).reduce((s, r) => s + r.total, 0))} QAR</div></div>
     </div>
     <div class="card">
       <div class="filter-bar" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">
@@ -8831,7 +8845,7 @@ Black Stars Academy`;
           </tr></thead>
           <tbody>${rowHtml}</tbody>
           ${list.length ? `<tfoot><tr style="border-top:2px solid var(--border);font-weight:800">
-            <td colspan="6">${t('Total', 'الإجمالي')} (${list.length} ${t('members', 'عضو')})</td>
+            <td colspan="6">${t('Total', 'الإجمالي')} (${list.length} ${t('customers', 'عميل')})</td>
             <td class="text-right num" style="color:var(--red);font-size:15px">${fmt(grandTotal)} QAR</td>
             <td colspan="2"></td>
           </tr></tfoot>` : ''}
@@ -18416,10 +18430,32 @@ function monthRecCompute(ym, bankOverride) {
   const bank = bankOverride != null ? bankOverride : (stored != null && stored !== '' ? Number(stored) : null);
   const X = monthRecExpenses(ym);
   const cash = D ? D.expected : null, revenue = r2(F.revenue), due = r2(F.due), expenses = X.total;
+  // v6.768 — THIS month's due split: members (the Due Payment list) vs walk-in rentals / hall / products (not on that list)
+  let dueMem = 0, dueOth = 0; const othRows = [];
+  for (const i of (state.invoices || [])) {
+    if (!i || i.deleted) continue;
+    const b = invoiceBilledInMonth(i, ym); if (b <= 0) continue;
+    const d = Math.max(0, b - invoicePaidInMonth(i, ym)); if (d < 0.005) continue;
+    const isMem = i.customerId != null && (state.members || []).some(m => m && m.id === i.customerId && !m.deleted);
+    if (isMem) dueMem += d; else { dueOth += d; othRows.push({ ref: i.ref || ('#' + i.id), cat: i.category || 'Membership', who: i.customerName || (typeof customerInfo === 'function' ? (customerInfo(i) || {}).name : '') || '—', due: r2(d), date: String(i.date || '').slice(0, 10) }); }
+  }
   const have = cash != null && bank != null && isFinite(bank);
   const total = r2((cash || 0) + due + expenses + (have ? bank : 0)), diff = r2(revenue - total);
-  return { ym, revenue, cash, due, expenses, citadel: X.citadel, bankComm: X.bankComm, bank, have, total, diff, match: have && Math.abs(diff) < 1 };
+  return { ym, revenue, cash, due, dueMem: r2(dueMem), dueOth: r2(dueOth), dueOthRows: othRows.sort((a, b) => b.due - a.due), expenses, citadel: X.citadel, bankComm: X.bankComm, bank, have, total, diff, match: have && Math.abs(diff) < 1 };
 }
+window._mrDueDetail = function () {
+  const ym = TODAY.slice(0, 7), R = monthRecCompute(ym), money = n => fmt(Math.round(n * 100) / 100);
+  const oth = R.dueOthRows.length ? '<table style="width:100%;font-size:12.5px;margin-top:6px"><thead><tr><th style="text-align:left">' + t('Customer', 'العميل') + '</th><th style="text-align:left">' + t('Invoice', 'الفاتورة') + '</th><th style="text-align:left">' + t('Category', 'الفئة') + '</th><th class="text-right">' + t('Due', 'المتبقي') + '</th></tr></thead><tbody>' +
+    R.dueOthRows.map(r => '<tr><td>' + escapeHtml(r.who) + '</td><td class="font-mono" style="font-size:11px">' + escapeHtml(r.ref) + '</td><td>' + escapeHtml(r.cat) + '</td><td class="text-right num" style="color:var(--red);font-weight:700">' + money(r.due) + '</td></tr>').join('') + '</tbody></table>' : '<div class="text-mute" style="font-size:12px;margin-top:6px">—</div>';
+  showModal({
+    title: '📋 ' + t('Due this month', 'المستحق هذا الشهر') + ' · ' + fmtMonth(ym) + ' · ' + money(R.due) + ' QAR',
+    size: 'lg',
+    body: '<div style="font-size:12.5px;line-height:1.7"><div>' + t('Only invoices billed in', 'فقط الفواتير المفوترة في') + ' <b>' + fmtMonth(ym) + '</b> ' + t('(older months are NOT in this figure).', '(الأشهر الأقدم ليست ضمن هذا الرقم).') + '</div>' +
+      '<div style="margin-top:8px"><b>' + t('Members', 'الأعضاء') + ':</b> ' + money(R.dueMem) + ' QAR — <a href="#duepayment" onclick="closeModal()">' + t('open Due Payment', 'افتح المستحقات') + '</a> <span class="text-mute">(' + t('that screen also lists older months', 'وتلك الشاشة تعرض الأشهر الأقدم أيضاً') + ')</span></div>' +
+      '<div style="margin-top:8px"><b>' + t('Rentals / hall / products (not members):', 'إيجارات / قاعة / منتجات (غير أعضاء):') + '</b> ' + money(R.dueOth) + ' QAR — ' + t('not on the Due Payment screen', 'غير ظاهرة في شاشة المستحقات') + '</div>' + oth + '</div>',
+    actions: [{ label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal }],
+  });
+};
 window._mrShow = function () {
   const v = String((document.getElementById('mr-bank') || {}).value || '').trim(), ym = TODAY.slice(0, 7);
   const R = monthRecCompute(ym, v === '' ? null : parseFloat(v));
@@ -18502,7 +18538,7 @@ PAGES.monthrec = (main) => {
   const R = monthRecCompute(ym), money = n => fmt(Math.round(n * 100) / 100);
   // one colourful box; `link` makes the whole box open its source screen
   const box = (grad, icon, label, valueHtml, note, link) =>
-    '<div' + (link ? ' onclick="navigate(\'' + link + '\')" style="cursor:pointer;' : ' style="') + 'background:' + grad + ';color:#fff;border-radius:16px;padding:18px 20px;min-height:150px;display:flex;flex-direction:column;justify-content:space-between;box-shadow:0 6px 18px rgba(0,0,0,.18)">' +
+    '<div' + (link ? ' onclick="' + (/^js:/.test(link) ? link.slice(3) : 'navigate(\'' + link + '\')') + '" style="cursor:pointer;' : ' style="') + 'background:' + grad + ';color:#fff;border-radius:16px;padding:18px 20px;min-height:150px;display:flex;flex-direction:column;justify-content:space-between;box-shadow:0 6px 18px rgba(0,0,0,.18)">' +
       '<div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;opacity:.95"><span style="font-size:22px">' + icon + '</span>' + label + '</div>' +
       '<div style="font-size:30px;font-weight:800;line-height:1.1;margin:10px 0 6px">' + valueHtml + '</div>' +
       '<div style="font-size:11px;opacity:.88;line-height:1.5">' + note + '</div></div>';
@@ -18513,7 +18549,7 @@ PAGES.monthrec = (main) => {
       '<div class="topbar-actions"><button class="btn ghost" onclick="_mrReconcile(true)" title="' + t('Save these figures as a dated checkpoint', 'احفظ هذه الأرقام كنقطة تحقق مؤرخة') + '">💾 ' + t('Save checkpoint', 'حفظ نقطة تحقق') + '</button><button class="btn primary" onclick="_mrReconcile()">⚖️ ' + t('Reconcile', 'تسوية') + '</button></div></div>' +
     '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:16px">' +
       box('linear-gradient(135deg,#10b981,#047857)', '🧮', t('Cash in hand', 'النقد في الصندوق'), R.cash == null ? '—' : money(R.cash) + ' <span style="font-size:13px;font-weight:600">QAR</span>', R.cash == null ? t('no cash count yet — tap to record one', 'لا يوجد جرد بعد — اضغط لتسجيله') : t('live drawer: last count + cash since · tap to open', 'الصندوق الحالي: آخر جرد + النقد منذ ذلك · اضغط للفتح'), 'cashinhand') +
-      box('linear-gradient(135deg,#f59e0b,#c2410c)', '📋', t('Due this month', 'المستحق هذا الشهر'), money(R.due) + ' <span style="font-size:13px;font-weight:600">QAR</span>', t('billed this month, not yet collected', 'مفوتر هذا الشهر ولم يُحصّل بعد')) +
+      box('linear-gradient(135deg,#f59e0b,#c2410c)', '📋', t('Due this month', 'المستحق هذا الشهر'), money(R.due) + ' <span style="font-size:13px;font-weight:600">QAR</span>', t('billed THIS month, not yet collected', 'مفوتر هذا الشهر ولم يُحصّل بعد') + ' · ' + t('members', 'أعضاء') + ' ' + money(R.dueMem) + (R.dueOth > 0.5 ? ' + ' + t('rentals / others', 'إيجارات / أخرى') + ' ' + money(R.dueOth) : '') + ' · ' + t('tap for the list', 'اضغط للقائمة'), 'js:_mrDueDetail()') +
       box('linear-gradient(135deg,#ef4444,#9f1239)', '💸', t('Expenses', 'المصروفات'), money(R.expenses) + ' <span style="font-size:13px;font-weight:600">QAR</span>', t('all expenses + bank commission + salary payments', 'كل المصروفات + عمولة البنك + دفعات الرواتب') + (R.citadel ? ' · ' + t('Citadel share', 'حصة سيتاديل') + ' ' + money(R.citadel) + ' ' + t('not counted', 'غير محتسبة') : '') + ' · ' + t('tap to open', 'اضغط للفتح'), 'expenses') +
       box('linear-gradient(135deg,#3b82f6,#4338ca)', '🏦', t('Cash in bank', 'الرصيد البنكي'), '<input id="mr-bank" type="number" step="0.01" min="0" inputmode="decimal" value="' + (R.bank != null ? R.bank : '') + '" oninput="_mrShow()" onclick="event.stopPropagation()" placeholder="0.00" style="width:100%;font-size:26px;font-weight:800;padding:6px 10px;border:2px solid rgba(255,255,255,.55);border-radius:10px;background:rgba(255,255,255,.16);color:#fff;outline:none" />', t('type the bank balance by hand', 'اكتب رصيد البنك يدوياً')) +
     '</div>' +
