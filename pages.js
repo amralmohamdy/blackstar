@@ -18327,8 +18327,11 @@ function cashDrawerNow() {
 function cashDrawerFrom(c, upper) {
   const cDate = cashCountDay(c), cAt = c.createdAt ? String(c.createdAt) : '';
   const afterOf = (cd, ca) => (date, ts) => { const d = String(date || '').slice(0, 10); if (!d) return false; if (d !== cd) return d > cd; return !!(ts && ca && String(ts) > ca); };
-  const afterC = afterOf(cDate, cAt), afterU = upper ? afterOf(cashCountDay(upper), upper.createdAt ? String(upper.createdAt) : '') : null;
-  const after = (date, ts) => afterC(date, ts) && !(afterU && afterU(date, ts));
+  const uDate = upper ? cashCountDay(upper) : '', uAt = upper && upper.createdAt ? String(upper.createdAt) : '';
+  const afterC = afterOf(cDate, cAt);
+  // up to the later count: an earlier day, or its own day with a timestamp up to the count — a row with NO time on that day belongs to the count of that day (it is absorbed, as for the base)
+  const beforeU = (date, ts) => { if (!upper) return true; const d = String(date || '').slice(0, 10); if (d !== uDate) return d < uDate; return !!(ts && uAt && String(ts) <= uAt); };
+  const after = (date, ts) => afterC(date, ts) && beforeU(date, ts);
   const moves = [], hidden = [];
   for (const i of (state.invoices || [])) {
     if (!i || i.deleted || i.switchCredit || i.activityType === 'switch-credit') continue;   // a switch-credit memo is an offset, not drawer cash
