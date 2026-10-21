@@ -24662,8 +24662,8 @@ PAGES.attendance = (main) => {
     try {
       const td = document.querySelector('td[data-am="' + memberId + '|' + encodeURIComponent(sport) + '|' + day + '"]');
       if (!td) return;
-      td.className = 'att-cell ' + (mark === 'Y' ? 'att-y' : mark === 'N' ? 'att-n' : 'att-empty') + (/\batt-outside\b/.test(td.className) ? ' att-outside' : '');
-      td.textContent = mark || '·';
+      td.className = 'att-cell ' + (mark === 'Y' ? 'att-y' : 'att-empty') + (/\batt-outside\b/.test(td.className) ? ' att-outside' : '');
+      td.textContent = mark === 'Y' ? 'Y' : '·';
       td.setAttribute('onclick', _attOnclick(memberId, sport, day, mark));
     } catch (_) {}
   }
@@ -24800,28 +24800,27 @@ PAGES.attendance = (main) => {
   // cloud-confirmed write uses, so there is exactly one implementation to trust. (v6.344)
   const _attendanceModal = (o) => window.showLockedModal(o);
   function markCell(memberId, sport, day, current) {
-    const next = current === 'Y' ? 'N' : current === 'N' ? null : 'Y';
+    const next = current === 'Y' ? null : 'Y';   // v6.803 — only Y and blank (blank = did not come); an old N counts as blank
     // First mark (empty → present) stays one-click for fast roll-call.
-    // Changing an EXISTING mark (Y→N, or clearing) asks to confirm, so a stray
-    // tap can't silently flip someone's record.
-    if (current === 'Y' || current === 'N') {
+    // Removing an EXISTING present mark asks to confirm, so a stray tap can't silently erase someone's class.
+    if (current === 'Y') {
       const m = state.members.find(x => x.id === memberId);
       const name = m ? m.name : 'this member';
-      const fromLabel = current === 'Y' ? 'Present (Y)' : 'Absent (N)';
-      const toLabel = next === 'Y' ? 'Present (Y)' : next === 'N' ? 'Absent (N)' : 'cleared (blank)';
+      const fromLabel = 'Present (Y)';
+      const toLabel = 'blank (did not come)';
       // storage key may be coach-qualified ("Kick Boxing 1786…") for a same-sport two-coach row;
       // show only the sport name (no real sport ends in " <number>").
       const dispSport = String(sport).replace(/ \d+$/, '');
       const badge = (txt, kind) => `<span class="badge" style="background:${kind==='Y'?'rgba(16,185,129,.15)':kind==='N'?'rgba(242,96,96,.15)':'rgba(120,120,140,.15)'};color:${kind==='Y'?'var(--green)':kind==='N'?'var(--red)':'var(--text-mute)'}">${txt}</span>`;
       showModal({
-        title: 'Change attendance?',
+        title: 'Remove this attendance?',
         body: `<div style="font-size:13px;line-height:1.7">
-            <p>Change <b>${escapeHtml(name)}</b> · ${escapeHtml(dispSport)} on <b>day ${day}</b> of ${fmtMonth(gridMonth())}?</p>
+            <p>Remove <b>${escapeHtml(name)}</b> · ${escapeHtml(dispSport)} on <b>day ${day}</b> of ${fmtMonth(gridMonth())}?</p>
             <p style="margin-top:8px">${badge(fromLabel, current)} <span style="opacity:.6">→</span> ${badge(toLabel, next)}</p>
           </div>`,
         actions: [
           { label: 'Cancel', class: 'btn ghost', onclick: closeModal },
-          { label: 'Change it', class: 'btn primary', onclick: () => { closeModal(); applyMark(memberId, sport, day, next); } },
+          { label: 'Remove it', class: 'btn primary', onclick: () => { closeModal(); applyMark(memberId, sport, day, next); } },
         ],
       });
       return;
@@ -24944,11 +24943,11 @@ PAGES.attendance = (main) => {
   // silently blocked. Marking still writes THIS row's own cell key, so no double-count.
   const _attOnclick = (memberId, sport, day, mark) => {
     const sportEsc = sport.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
-    return `window._attMark(${memberId}, '${sportEsc}', ${day}, ${mark ? `'${mark}'` : 'null'})`;
+    return `window._attMark(${memberId}, '${sportEsc}', ${day}, ${mark === 'Y' ? "'Y'" : 'null'})`;
   };
   function cellRender(memberId, sport, day, mark, warn, lock) {
-    const cls = mark === 'Y' ? 'att-y' : mark === 'N' ? 'att-n' : 'att-empty';
-    const txt = mark || '·';
+    const cls = mark === 'Y' ? 'att-y' : 'att-empty';   // v6.803 — an old N shows as blank
+    const txt = mark === 'Y' ? 'Y' : '·';
     // v6.754 — a package that was SWITCHED AWAY can't take new classes after the switch day (an existing mark can still be corrected)
     if (lock && !mark) return `<td class="att-cell att-empty att-outside att-locked" data-am="${memberId}|${encodeURIComponent(sport)}|${day}" style="opacity:.4;cursor:not-allowed;background:rgba(120,120,140,.12)" title="${escapeHtml(lock)}">·</td>`;
     const style = warn ? ' style="opacity:.55;background:rgba(245,158,11,.10)"' : '';
@@ -25094,8 +25093,8 @@ PAGES.attendance = (main) => {
           : cellRender(m.id, aKey, d, dayData[String(d)], `Outside ${coachName(coachId)}'s period for this membership — logging is allowed; check the dates (Switch review / Edit) if this looks wrong.`, (hist && switchedAway) ? t('This package was switched to ' + (histTo || 'another sport') + ' — mark the new package instead.', 'تم تبديل هذه الباقة إلى ' + (histTo || 'رياضة أخرى') + ' — سجّل الحضور على الباقة الجديدة.') : null))).join('');
       // v6.570: a Mixed row's Total shows attended / package classes (it has no 'N'); rate = attended/planned.
       const _mixPlanned = _isMixedRow ? (((m.subscriptions || []).filter(s => (s.activity || '') === MIXED).slice(-1)[0] || {}).totalClasses || 0) : 0;
-      const total = _isMixedRow ? (parseInt(_mixPlanned) || y) : (y + n);
-      const rate = total ? Math.round(y/total*100) : 0;
+      let total = _isMixedRow ? (parseInt(_mixPlanned) || y) : 0;   // v6.803 — regular rows: the package's classes (set below), no N to divide by
+      let rate = 0;
       const sportEsc = sport.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
       const status = memberStatus(m);
       const isExpired = status === 'Expired';
@@ -25144,6 +25143,8 @@ PAGES.attendance = (main) => {
           sportOver = _ended || (sportPlanned > 0 && sportMarked >= sportPlanned);
         }
       }
+      if (!_isMixedRow && sportPlanned > 0) total = sportPlanned;
+      rate = total ? Math.round(y / total * 100) : 0;
       const _due = (currentRole() === 'coach' || typeof memberOutstanding !== 'function' || hist) ? 0 : memberOutstanding(m.id);
       // Expired but fully paid → a renewal candidate: highlight in amber so reception
       // is prompted to extend the membership (distinct from the red UNPAID case).
@@ -25373,8 +25374,7 @@ PAGES.attendance = (main) => {
         <div style="min-width:260px;flex:1;max-width:340px">${memberPickerHtml('att-student', { placeholder: t('All students (type to search)', 'كل الطلاب (اكتب للبحث)') })}${recentSearchChipsHtml('attendance', 'att-recent-search', 3)}</div>
         <div class="text-mute" style="margin-left:auto;font-size:11px;align-self:center">
           <span class="att-cell att-y" style="display:inline-block;padding:2px 6px;border-radius:3px">Y</span> ${t('present', 'حاضر')} ·
-          <span class="att-cell att-n" style="display:inline-block;padding:2px 6px;border-radius:3px">N</span> ${t('absent', 'غائب')} ·
-          <span class="text-mute">·</span> ${t('not marked', 'غير مسجّل')}
+          <span class="text-mute">·</span> ${t('blank = did not come', 'فارغ = لم يحضر')}
         </div>
       </div>
       <div style="overflow-x:auto;max-height:70vh;overflow-y:auto" id="att-table-wrap"></div>
@@ -25692,11 +25692,11 @@ PAGES.attendance = (main) => {
       baseDays.forEach(d => { const v = dd[String(d)]; if (v === 'Y') y++; if (v === 'N') n++; });   // totals over full scope
       const cells = dayCols.map(d => {
         const v = dd[String(d)];
-        const bg = v==='Y'?'#d1fae5':v==='N'?'#fee2e2':'#fff';
-        const col = v==='Y'?'#065f46':v==='N'?'#991b1b':'#ccc';
-        return `<td style="border:1px solid #eee;text-align:center;font-size:8px;background:${bg};color:${col};font-weight:600">${v||'·'}</td>`;
+        const bg = v==='Y'?'#d1fae5':'#fff';
+        const col = v==='Y'?'#065f46':'#ccc';
+        return `<td style="border:1px solid #eee;text-align:center;font-size:8px;background:${bg};color:${col};font-weight:600">${v==='Y'?'Y':'·'}</td>`;
       }).join('');
-      const tot = y+n; const rate = tot?Math.round(y/tot*100):0;
+      const tot = 0; const rate = 0;   // v6.803 — no N: attended count only
       grandY += y; grandSlots += tot;
       const rcol = rate>=75?'#059669':rate>=40?'#d97706':rate>0?'#dc2626':'#999';
       return `<tr>
@@ -25745,7 +25745,7 @@ PAGES.attendance = (main) => {
         <div><div class="brand">Black <span>Stars</span> Sports Club</div><div class="sub">Waab, Doha · Attendance Report</div></div>
         <div style="text-align:right;font-size:11px;color:#777">Generated<br><b>${fmtDate(TODAY)}</b></div>
       </div>
-      <div class="meta"><b>${fmtMonth(gM)}</b>${attLabel} · ${escapeHtml(coachLabel)} · ${escapeHtml(sportLabel)} · <b>${distinctMembers}</b> student${distinctMembers===1?'':'s'} · <b>${rows.length}</b> row${rows.length===1?'':'s'} · overall <b>${overallRate}%</b></div>
+      <div class="meta"><b>${fmtMonth(gM)}</b>${attLabel} · ${escapeHtml(coachLabel)} · ${escapeHtml(sportLabel)} · <b>${distinctMembers}</b> student${distinctMembers===1?'':'s'} · <b>${rows.length}</b> row${rows.length===1?'':'s'} · <b>${grandY}</b> classes attended</div>
       <table>
         ${colgroup}
         <thead><tr><th style="border:1px solid #e5e5ea;padding:4px 6px;font-size:9px;color:#777;text-align:left">Student · Sport</th>${dayHeads}<th style="border:1px solid #e5e5ea;font-size:9px;color:#777">Y/Tot</th><th style="border:1px solid #e5e5ea;font-size:9px;color:#777">Rate</th></tr></thead>
@@ -25796,11 +25796,11 @@ PAGES.attendance = (main) => {
       baseDays.forEach(d => { const v = dd[String(d)]; if (v === 'Y') y++; if (v === 'N') n++; });
       const cells = dayCols.map(d => {
         const v = dd[String(d)];
-        const bg = v === 'Y' ? '#d1fae5' : v === 'N' ? '#fee2e2' : '#fff';
-        const col = v === 'Y' ? '#065f46' : v === 'N' ? '#991b1b' : '#ccc';
-        return `<td style="border:1px solid #eee;text-align:center;font-size:8px;background:${bg};color:${col};font-weight:600">${v || '·'}</td>`;
+        const bg = v === 'Y' ? '#d1fae5' : '#fff';
+        const col = v === 'Y' ? '#065f46' : '#ccc';
+        return `<td style="border:1px solid #eee;text-align:center;font-size:8px;background:${bg};color:${col};font-weight:600">${v === 'Y' ? 'Y' : '·'}</td>`;
       }).join('');
-      const tot = y + n; const rate = tot ? Math.round(y / tot * 100) : 0;
+      const tot = 0; const rate = 0;   // v6.803 — no N: attended count only
       grandY += y; grandSlots += tot;
       const rcol = rate >= 75 ? '#059669' : rate >= 40 ? '#d97706' : rate > 0 ? '#dc2626' : '#999';
       const sportCoach = escapeHtml(sport) + (!isCampSport(sport) ? ' · ' + escapeHtml(coachName(coachId)) : '');
@@ -25826,7 +25826,7 @@ PAGES.attendance = (main) => {
           <div><div style="font-size:18px;font-weight:800">${L.brand}</div><div style="color:#777;font-size:11px;margin-top:2px">${L.sub}</div></div>
           <div style="text-align:${ar ? 'left' : 'right'};font-size:11px;color:#777">${L.generated}<br/><b>${fmtDate(TODAY)}</b></div>
         </div>
-        <div style="font-size:11px;color:#555;margin-bottom:10px"><b>${monthLabel}</b> · ${escapeHtml(coachLabel)} · ${escapeHtml(sportLabel)} · <b>${distinctMembers}</b> ${L.students} · <b>${rows.length}</b> ${L.rows} · ${L.overall} <b>${overallRate}%</b></div>
+        <div style="font-size:11px;color:#555;margin-bottom:10px"><b>${monthLabel}</b> · ${escapeHtml(coachLabel)} · ${escapeHtml(sportLabel)} · <b>${distinctMembers}</b> ${L.students} · <b>${rows.length}</b> ${L.rows} · <b>${grandY}</b> ✓</div>
         <table style="border-collapse:collapse;width:100%">
           <thead><tr><th style="border:1px solid #e5e5ea;padding:4px 6px;font-size:9px;color:#777;text-align:${align}">${L.student}</th>${dayHeads}<th style="border:1px solid #e5e5ea;font-size:9px;color:#777">${L.yTot}</th><th style="border:1px solid #e5e5ea;font-size:9px;color:#777">${L.rate}</th></tr></thead>
           <tbody>${bodyRows}</tbody>
