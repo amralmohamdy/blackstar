@@ -24754,7 +24754,7 @@ PAGES.attendance = (main) => {
     const sfx = k => (String(k).indexOf('_') > 0 ? parseInt(String(k).split('_')[1], 10) || 2 : 1);
     return Object.keys(src).filter(k => parseInt(k, 10) === parseInt(day, 10) && src[k] && src[k].mark !== 'N').sort((a, b) => sfx(a) - sfx(b)).map(k => ({ key: k, rec: src[k] }));
   }
-  function applyMixedMark(memberId, day, coachId, sport, clear, clearKey) {
+  function applyMixedMark(memberId, day, coachId, sport, clear, clearKey, extra) {   // v6.798 — `extra` = more {sport, coachId} classes of the SAME day, saved in one go
     const mo = gridMonth();
     if (typeof currentRole === 'function' && currentRole() === 'coach') {
       const markISO = `${mo}-${String(day).padStart(2, '0')}`;
@@ -24770,6 +24770,7 @@ PAGES.attendance = (main) => {
     const prev = m.mixedAttendance[mo][_key] || null;
     if (clear) delete m.mixedAttendance[mo][_key];
     else m.mixedAttendance[mo][_key] = { coachId: (coachId != null ? coachId : null), sport: sport || null, mark: 'Y' };
+    if (!clear) (extra || []).forEach(e => { let k2 = String(day); for (let n = 2; m.mixedAttendance[mo][k2] && m.mixedAttendance[mo][k2].mark !== 'N'; n++) k2 = String(day) + '_' + n; m.mixedAttendance[mo][k2] = { coachId: (e.coachId != null ? e.coachId : null), sport: e.sport || null, mark: 'Y' }; });
     const iso = `${mo}-${String(day).padStart(2, '0')}`;
     stampUpdate(m);
     // v6.770 — same warning for a Mixed class that earns the coach nothing
@@ -24777,7 +24778,7 @@ PAGES.attendance = (main) => {
       try { const _iso = `${mo}-${String(day).padStart(2, '0')}`; const _cid = effectiveCoachId(); if (coachPayGross(_cid, mo) - _g0 < 0.005) toast('⚠ ' + coachNoPayReason(_cid, m, MIXED, _iso), 'info'); } catch (e) { console.error(e); }
     }
     if (typeof audit === 'function') audit('attendance.mark', `member:${m.id}`,
-      `Mixed attendance ${clear ? 'cleared' : 'present'}: ${m.name}${clear ? '' : ' · ' + (sport || '') + ' · ' + (coachName(coachId) || '')} · ${iso}`,
+      `Mixed attendance ${clear ? 'cleared' : 'present'}: ${m.name}${clear ? '' : ' · ' + (sport || '') + ' · ' + (coachName(coachId) || '')}${(!clear && extra || []).map(e => ' + ' + (e.sport || '') + ' · ' + (coachName(e.coachId) || '')).join('')} · ${iso}`,
       { name: m.name, memberId: m.id, sport: MIXED, mixedSport: sport || null, coachId: coachId != null ? coachId : null, date: iso, old: prev ? 'Y' : 'cleared', new: clear ? 'cleared' : 'Y' });
     if (typeof saveConfirmed === 'function') {
       saveConfirmed().then(r => { if (r && !r.ok) { try { toast('⚠ ' + t('Attendance saved on this device but NOT yet in the cloud — check your connection', 'الحضور محفوظ على هذا الجهاز لكن لم يصل السحابة بعد — تحقق من الاتصال'), 'error'); } catch (_) {} } });
@@ -24805,13 +24806,32 @@ PAGES.attendance = (main) => {
     const _defCoach = rec ? rec.coachId : _selfCoach;
     const sportOpts = `<option value="">${t('— pick sport —', '— اختر الرياضة —')}</option>` + sportChoices.map(s => `<option value="${escapeHtml(s)}" ${rec && rec.sport === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('');
     const coachOpts = `<option value="">${t('— pick coach —', '— اختر المدرب —')}</option>` + coaches.map(c => `<option value="${c.id}" ${_defCoach != null && String(_defCoach) === String(c.id) ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+    let _mixRow = 1;
+    window._mixAddRow = function() {   // v6.798 — one more sport + coach for the SAME day, in the same dialog
+      if (_mixRow >= 6) return;
+      _mixRow++;
+      const host = document.getElementById('mix-extra'); if (!host) return;
+      const div = document.createElement('div');
+      div.style.cssText = 'margin-top:12px;padding-top:10px;border-top:1px dashed var(--border)';
+      div.innerHTML = `<div class="field"><label>${t('Sport', 'الرياضة')} #${_mixRow}</label><select id="mix-sport-${_mixRow}">${sportOpts}</select></div><div class="field" style="margin-top:8px"><label>${t('Coach', 'المدرب')} #${_mixRow}</label><select id="mix-coach-${_mixRow}">${coachOpts}</select></div>`;
+      host.appendChild(div);
+      if (_mixRow >= 6) { const b = document.getElementById('mix-add-row'); if (b) b.style.display = 'none'; }
+    };
     const actions = [{ label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal }];
     actions.push({ label: (_ents.length ? '＋ ' + t('Add this class', 'إضافة هذه الحصة') : '✓ ' + t('Save', 'حفظ')), class: 'btn primary', onclick: () => {
       const sp = (document.getElementById('mix-sport') || {}).value || '';
       const cid = parseInt((document.getElementById('mix-coach') || {}).value) || null;
       if (!sp) { toast(t('Pick the sport', 'اختر الرياضة'), 'error'); return; }
       if (!cid) { toast(t('Pick the coach', 'اختر المدرب'), 'error'); return; }
-      closeModal(); applyMixedMark(memberId, day, cid, sp, false);
+      const _more = [];   // v6.798 — the extra sport rows of the same day (an empty row is ignored; a half-filled one is refused)
+      for (let n = 2; n <= _mixRow; n++) {
+        const s2 = (document.getElementById('mix-sport-' + n) || {}).value || '', c2 = parseInt((document.getElementById('mix-coach-' + n) || {}).value) || null;
+        if (!s2 && !c2) continue;
+        if (!s2) { toast(t('Pick the sport', 'اختر الرياضة') + ' (#' + n + ')', 'error'); return; }
+        if (!c2) { toast(t('Pick the coach', 'اختر المدرب') + ' (#' + n + ')', 'error'); return; }
+        _more.push({ sport: s2, coachId: c2 });
+      }
+      closeModal(); applyMixedMark(memberId, day, cid, sp, false, null, _more);
     } });
     showModal({
       title: '🎯 ' + t('Log a Mixed class', 'تسجيل حصة مختلط'),
@@ -24821,6 +24841,8 @@ PAGES.attendance = (main) => {
           <p style="margin-top:4px;color:var(--text-mute);font-size:12px">${t('Which sport did they try, and with which coach? The class is credited to that coach.', 'ما الرياضة التي جربها ومع أي مدرب؟ تُحتسب الحصة لذلك المدرب.')}</p>
           <div class="field" style="margin-top:10px"><label>${t('Sport', 'الرياضة')}</label><select id="mix-sport">${sportOpts}</select></div>
           <div class="field" style="margin-top:8px"><label>${t('Coach', 'المدرب')}</label><select id="mix-coach">${coachOpts}</select></div>
+          <div id="mix-extra"></div>
+          <button type="button" id="mix-add-row" class="btn ghost sm" style="margin-top:12px" onclick="window._mixAddRow()">＋ ${t('Another sport (same day)', 'رياضة أخرى (نفس اليوم)')}</button>
         </div>`,
       actions,
     });
