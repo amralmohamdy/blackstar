@@ -1909,3 +1909,14 @@ html { -webkit-text-size-adjust: 100%; }
   .modal-backdrop { padding: 0 !important; place-items: stretch center; }
 }
 body.modal-open #bs-notif-float { z-index: 60 !important; }   /* v6.776 — below the popup (z 100): the bell no longer covers the popup's ✕ close button */
+
+/* v6.785 — the New Sale dialog (items | customer) kept two columns on a phone: the customer column was off-screen */
+@media (max-width: 700px) {
+  .modal [style*="grid-template-columns:1.4fr 1fr"] { grid-template-columns: 1fr !important; }
+}
+
+/* v6.786 — the Data Health dialog table (label | status chip) was 480px wide on a phone: let its text wrap */
+@media (max-width: 700px) {
+  .modal table[style*="width:100%;border-collapse:collapse"] { table-layout: fixed; min-width: 0 !important; }
+  .modal table[style*="width:100%;border-collapse:collapse"] td { overflow-wrap: anywhere; }
+}
