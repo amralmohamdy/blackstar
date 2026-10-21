@@ -3620,6 +3620,29 @@ window.removeEnrollmentMistake = function(memberId, sport) {
   }
 };
 
+// v6.793 — payment choice for a renewal / an added sport: paid in full (any method), part paid, or LEAVE DUE. These flows always recorded "paid in full, cash" with no way to change it.
+function payChoiceHtml(p, hint) {
+  return '<div id="' + p + '-box" style="margin-top:8px;padding:10px 12px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.30);border-radius:8px">'
+    + '<div style="font-size:11px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">💳 ' + t('Payment', 'الدفع') + (hint ? ' <span class="text-mute" style="font-weight:400;text-transform:none">' + hint + '</span>' : '') + '</div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+    + '<select id="' + p + '-mode" onchange="document.getElementById(\'' + p + '-amt\').style.display=this.value===\'part\'?\'\':\'none\';document.getElementById(\'' + p + '-method\').style.display=this.value===\'due\'?\'none\':\'\'">'
+    + '<option value="full">' + t('Paid in full', 'مدفوع بالكامل') + '</option><option value="part">' + t('Part paid…', 'دفع جزئي…') + '</option><option value="due">' + t('Leave due (pay later)', 'اتركه مستحقاً (يُدفع لاحقاً)') + '</option></select>'
+    + '<select id="' + p + '-method"><option value="cash">' + t('Cash', 'نقدي') + '</option><option value="card">' + t('Card', 'بطاقة') + '</option><option value="fawran">Fawran</option><option value="transfer">' + t('Transfer', 'تحويل') + '</option></select>'
+    + '<input id="' + p + '-amt" type="number" min="0" step="1" inputmode="numeric" placeholder="' + t('paid now', 'المدفوع الآن') + '" style="display:none;width:120px" />'
+    + '</div></div>';
+}
+function readPayChoice(p, total) {
+  const el = id => document.getElementById(p + '-' + id);
+  const mode = (el('mode') || {}).value || 'full', method = (el('method') || {}).value || 'cash';
+  if (mode === 'due') return { ok: true, mode, method, amount: 0 };
+  if (mode === 'part') {
+    const amt = Math.round((parseFloat((el('amt') || {}).value) || 0) * 100) / 100;
+    if (!(amt > 0)) return { ok: false, error: t('Enter the amount paid now (or choose Leave due)', 'أدخل المبلغ المدفوع الآن (أو اختر اتركه مستحقاً)') };
+    if (amt > total + 0.001) return { ok: false, error: t('Paid amount exceeds the total — reduce it', 'المبلغ المدفوع يتجاوز الإجمالي — قلّله') };
+    return { ok: true, mode, method, amount: amt };
+  }
+  return { ok: true, mode: 'full', method, amount: total };
+}
 function showMemberForm(m) {
   window._classesConfirmed = false;   // reset fat-finger confirmation per form open
   const isNew = !state.members.find(x => x.id === m.id);
@@ -3838,7 +3861,7 @@ function showMemberForm(m) {
         </div>
         <div id="f-paidnow-hint" style="font-size:11px;margin-top:8px;text-align:center"></div>
       </div>
-      ` : ''}
+      ` : payChoiceHtml('f-addpay', t('applies only if you add a NEW sport in this save', 'تُطبَّق فقط إذا أضفت رياضة جديدة في هذا الحفظ'))}
     `,
     actions: [
       { label: 'Cancel', class: 'btn ghost', onclick: closeModal },
@@ -4076,6 +4099,17 @@ function showMemberForm(m) {
           enrollments: enrollments.map(({ _originalSport, _originalCoachId, _paid, _attended, ...e }) => e),                        // <-- all concurrent sports stored here
         };
 
+        // v6.792 — validate the PAYMENT before anything is saved. The "exceeds the total" check used to run AFTER the member was already added: the form stayed open with a half-saved member
+        // (no invoice) and a retry created a DUPLICATE member. Same arithmetic as the invoice block below; nothing is written until it passes.
+        if (isNew) {
+          const _preTotal = enrollments.reduce((s, e) => s + e.price, 0);
+          if (_preTotal > 0) {
+            let _preEntered = 0;
+            document.querySelectorAll('.f-pay-m').forEach(mi => { if (mi.value !== '' && mi.value != null) _preEntered += Math.max(0, parseFloat(mi.value) || 0); });
+            if (_preEntered > _preTotal + 0.001) { toast(t('Paid amount exceeds the total — reduce it', 'المبلغ المدفوع يتجاوز الإجمالي — قلّله'), 'error'); return; }
+          }
+        }
+
         if (isNew) {
           // OFFLINE GUARD (v6.331): never create a member (+ invoice + PDF) when the cloud is
           // unwritable — it would only live in this browser and vanish on refresh.
@@ -4250,6 +4284,9 @@ function showMemberForm(m) {
         // wipe dailyAttendance, freezes, currentFreezeUntil, renewalsBySport, etc.
         const idx = state.members.findIndex(x => x.id === m.id);
         const existing = state.members[idx];
+        // v6.793 — payment choice for a NEW sport added in this save: validated before anything is changed
+        let _addPay = { ok: true, mode: 'full', method: 'cash', amount: Infinity };
+        if (enrollments.some(e => !e._originalSport && e.price > 0 && !e.switchedInto && !e.switchFunded)) { _addPay = readPayChoice('f-addpay', Infinity); if (!_addPay.ok) { toast(_addPay.error, 'error'); return; } }
         // Sync enrollment edits and detect new sports added during edit.
         const subs = (existing.subscriptions || []).slice();
         const newSubs = [];          // newly-added enrollments to invoice
@@ -4386,6 +4423,7 @@ function showMemberForm(m) {
           const payDate = TODAY;                                  // payment/invoice date
           const monthKey = payDate.slice(0, 7);
           const totalNew = newSubs.reduce((s, e) => s + e.price, 0);
+          const _paidNew = _addPay.mode === 'due' ? 0 : (_addPay.mode === 'part' ? Math.min(_addPay.amount, totalNew) : totalNew), _methNew = _addPay.method || 'cash';   // v6.793
           const sportList = newSubs.map(e => e.sport).join(', ');
           const sportListLabel = sportListWithDuration(newSubs) || sportList;
           const primaryNew = newSubs[0];
@@ -4431,7 +4469,7 @@ function showMemberForm(m) {
               const prior = existingInv.amountPaid != null ? existingInv.amountPaid : (existingInv.amount - totalNew);
               existingInv.payments = prior > 0 ? [{ date: existingInv.date || payDate, month: existingInv.month || (existingInv.date || payDate).slice(0, 7), amount: prior, method: existingInv.method || 'cash', pid: 'recon:' + existingInv.id, _recon: true }] : [];
             }
-            existingInv.payments.push({ date: payDate, month: monthKey, amount: totalNew, method: 'cash', at: new Date().toISOString() });
+            if (_paidNew > 0) existingInv.payments.push({ date: payDate, month: monthKey, amount: _paidNew, method: _methNew, at: new Date().toISOString() });   // v6.793 — nothing recorded when left DUE; the invoice total already grew
             existingInv.amountPaid = existingInv.payments.reduce((s, p) => s + (p.amount || 0), 0);
             // Refresh the headline sport label + description to include all sports.
             const allLabel = sportListWithDuration(existingInv.lineItems) || existingInv.lineItems.map(li => li.sport).join(', ');
@@ -4447,9 +4485,9 @@ function showMemberForm(m) {
               date: payDate,
               description: `${existing.name} — ${sportListLabel} subscription`,
               amount: totalNew,
-              amountPaid: totalNew,
-              payments: [{ date: payDate, month: monthKey, amount: totalNew, method: 'cash', at: new Date().toISOString() }],
-              method: 'cash',
+              amountPaid: _paidNew,
+              payments: _paidNew > 0 ? [{ date: payDate, month: monthKey, amount: _paidNew, method: _methNew, at: new Date().toISOString() }] : [],
+              method: _methNew,
               month: monthKey,
               ref,
               sport: sportListLabel,
@@ -4498,7 +4536,7 @@ function showMemberForm(m) {
             if (!data.expiryDate || latest > data.expiryDate) data.expiryDate = latest;
           }
 
-          toast(`Member updated · ${newSubs.length} new sport${newSubs.length===1?'':'s'} added · invoice ${ref}`, 'success');
+          toast(`Member updated · ${newSubs.length} new sport${newSubs.length===1?'':'s'} added · invoice ${ref}` + (_paidNew < totalNew - 0.001 ? ` · ${fmt(totalNew - _paidNew)} QAR due` : ''), 'success');
         } else {
           toast('Member updated');
         }
@@ -6164,6 +6202,29 @@ window.toggleCampTransport = function(id) {
 // and either deletes invoices fully OR shrinks them when other sports remain.
 // This deducts from coach commission / Club Revenue Summary automatically
 // because revenue & coach attribution flow from invoice line items.
+// v6.795 — which payment money goes with a DELETED sport. It used to multiply EVERY payment row by (remaining ÷ old total): rows that paid the surviving sport shrank too and every row became a
+// fraction (paid 400 → 177.78). Now: rows TAGGED to the deleted sport go entirely; the proportional share of the untagged money is taken from the newest untagged rows (whole rows first, the last
+// one partly); rows tagged to the surviving sports are never touched. The amount is the same one the preview shows. And money RECEIVED is not destroyed: a part-payment that the surviving lines can still use stays.
+function sportDeletePaidShare(inv, sport, removedAmt, grossAmt) {
+  const paid = invoicePaid(inv);
+  const tagged = (Array.isArray(inv.payments) ? inv.payments : []).filter(x => x && x.sport === sport && !x._correction).reduce((s, x) => s + (Number(x.amount) || 0), 0);
+  // money received is real: only what is tagged to the deleted sport, plus any amount ABOVE what the remaining lines can still owe, goes with it (a part-payment stays with the invoice)
+  const left = Math.max(0, grossAmt - removedAmt);
+  const extra = Math.max(0, (paid - tagged) - left);
+  return Math.max(0, Math.min(paid, tagged + extra));
+}
+function applySportDeletePayments(inv, sport, share) {
+  const r2 = n => Math.round(n * 100) / 100;
+  if (!(Array.isArray(inv.payments) && inv.payments.length)) { if (inv.amountPaid != null) inv.amountPaid = Math.max(0, r2(inv.amountPaid - share)); return; }
+  let need = share;
+  inv.payments = inv.payments.filter(x => { if (x && x.sport === sport && !x._correction) { need -= Number(x.amount) || 0; return false; } return true; });
+  if (need > 0.005) {
+    const rows = inv.payments.map((x, i) => [x, i]).filter(([x]) => x && !x.sport).sort((a, b) => String(b[0].date || '').localeCompare(String(a[0].date || '')) || b[1] - a[1]);
+    for (const [x] of rows) { if (need <= 0.005) break; const am = Number(x.amount) || 0; if (am <= 0) continue; const take = Math.min(am, need); x.amount = r2(am - take); need -= take; }
+    inv.payments = inv.payments.filter(x => Math.abs(Number(x.amount) || 0) > 0.001);
+  }
+  inv.amountPaid = r2(inv.payments.reduce((s, x) => s + (Number(x.amount) || 0), 0));
+}
 window.deleteMemberSport = function(memberId, sport) {
   if (currentRole() !== 'admin') { toast('Only admins can permanently delete a sport from history', 'error'); return; }
   const m = state.members.find(x => x.id === memberId);
@@ -6200,7 +6261,7 @@ window.deleteMemberSport = function(memberId, sport) {
       // header amount — which can be stale (e.g. 325 while the lines total 650). Using
       // the header would wildly mis-prorate and could wipe the surviving sport's paid.
       const grossAmt = items.reduce((s, li) => s + (Number(li.price) || 0), 0) || (inv.amount || 0);
-      const propPaid = grossAmt > 0 ? invoicePaid(inv) * (removedAmt / grossAmt) : 0;
+      const propPaid = sportDeletePaidShare(inv, sport, removedAmt, grossAmt);   // v6.795 — the same amount the delete will take
       paidRemoved += propPaid;
     }
     previewInvs.push(inv.ref || ('#' + inv.id));
@@ -6293,15 +6354,10 @@ window.deleteMemberSport = function(memberId, sport) {
           // surviving sport's payments. Setting inv.amount below also self-heals the header.
           const oldAmount = items.reduce((s, li) => s + (Number(li.price) || 0), 0) || inv.amount || 0;
           const newAmount = Math.max(0, oldAmount - removedAmt);
-          const factor = oldAmount > 0 ? (newAmount / oldAmount) : 0;
+          const _share = sportDeletePaidShare(inv, sport, removedAmt, oldAmount);   // v6.795 — computed BEFORE the invoice changes
           inv.lineItems = remaining;
           inv.amount = newAmount;
-          if (Array.isArray(inv.payments) && inv.payments.length) {
-            inv.payments = inv.payments.map(p => ({ ...p, amount: (p.amount || 0) * factor })).filter(p => Math.abs(p.amount) > 0.001);
-            inv.amountPaid = inv.payments.reduce((s, p) => s + (p.amount || 0), 0);
-          } else if (inv.amountPaid != null) {
-            inv.amountPaid = inv.amountPaid * factor;
-          }
+          applySportDeletePayments(inv, sport, _share);   // v6.795 — no rescale of every row
           // If the invoice header sport is the deleted one, point it at the first remaining line.
           if (inv.sport === sport && remaining[0]?.sport) inv.sport = remaining[0].sport;
           if (inv.coachId === undefined && remaining[0]?.coachId) inv.coachId = remaining[0].coachId;
@@ -8271,9 +8327,7 @@ function citadelCompute(selMonths) {
     const mkey = inv.month || String(inv.date || '').slice(0, 7);
     if (selSet.size && !selSet.has(mkey)) continue;
     const items = (inv.lineItems && inv.lineItems.length) ? inv.lineItems : [{ sport: inv.sport || null, price: inv.amount || 0 }];
-    const liSum = items.reduce((s, li) => s + (Number(li.price) || 0), 0);
-    const invAmount = Number(inv.amount) || 0;
-    const factor = liSum > 0 ? invAmount / liSum : (items.length ? invAmount / items.length : 0);
+    // v6.797 — a line's value is its own price (li.price is already net), NOT scaled to the stored invoice amount; a NEGATIVE line (a withdrawal / switch-away credit) reduces the share
     for (const li of items) {
       // v6.572 — MIXED: the line's sport is "Mixed", but the member may have spent those classes on
       // Football/Swimming (which DO carry the facility share). Split the Mixed line's revenue across the
@@ -8284,7 +8338,7 @@ function citadelCompute(selMonths) {
         const _tot = (_mem && typeof mixedTotalClasses === 'function') ? mixedTotalClasses(_mem, inv, li) : 0;
         if (!_mem || _tot <= 0 || !_mem.mixedAttendance) continue;
         const _w = (typeof mixedWindow === 'function') ? mixedWindow(_mem, inv, li) : { from: null, to: null };
-        const _lineAmt = liSum > 0 ? (Number(li.price) || 0) * factor : factor;
+        const _lineAmt = Number(li.price) || 0;
         const _perClass = _tot > 0 ? _lineAmt / _tot : 0;
         const _rows = [];
         for (const _mo of Object.keys(_mem.mixedAttendance)) { const _days = _mem.mixedAttendance[_mo] || {};
@@ -8307,8 +8361,8 @@ function citadelCompute(selMonths) {
       }
       const hit = groupFor(li.sport);
       if (!hit) continue;
-      const amt = liSum > 0 ? (Number(li.price) || 0) * factor : factor;
-      if (amt <= 0) continue;
+      const amt = Number(li.price) || 0;
+      if (!amt) continue;
       agg[hit.g.key][hit.type] += amt;
       eligByInv.set(inv, (eligByInv.get(inv) || 0) + amt);
       // Resolve the customer via customerInfo() — it recovers a COURT-RENTAL renter's name from the
@@ -8325,10 +8379,10 @@ function citadelCompute(selMonths) {
   // invoice's actual paid amount by the fraction of that invoice which is Football/Swimming. (v6.577)
   let paid = 0;
   for (const [inv, elig] of eligByInv) {
-    const invAmount = Number(inv.amount) || 0;
-    if (invAmount <= 0) continue;
+    const invAmount = invoiceTotal(inv);   // v6.797 — the lines' total, not the stored amount
+    if (!invAmount) continue;
     const invPaid = (typeof invoicePaid === 'function') ? invoicePaid(inv) : (Number(inv.amountPaid) || 0);
-    paid += invPaid * (Math.min(elig, invAmount) / invAmount);
+    paid += invPaid * Math.max(0, Math.min(1, elig / invAmount));
   }
   paid = Math.round(paid * 100) / 100;
   return { GROUPS, agg, details, grand, paid };
@@ -10112,8 +10166,7 @@ function computeDashboard(ymSel) {
   const cashInHand = cashCollected - cashExpenses;
   // The ACTUAL physically-counted drawer (latest cash count) — this is the real
   // "cash in hand". The figure above is a computed net cash flow, not the drawer.
-  const _counts = (state.cashCounts || []).filter(c => c && c.kind !== 'deposit').slice()
-    .sort((a, b) => String(b.createdAt || b.date || '').localeCompare(String(a.createdAt || a.date || '')));
+  const _counts = (state.cashCounts || []).filter(c => c && c.kind !== 'deposit').slice().sort(cashCountNewer);
   const countedCash = _counts.length ? (Number(_counts[0].amount) || 0) : null;
 
   return {
@@ -13932,6 +13985,37 @@ function computeUnlinkedRentalsSales() {
   }
   return out.sort((a, b) => String(b.rec.date || '').localeCompare(String(a.rec.date || '')));
 }
+// v6.789 — a sale the cashier recorded as PAID whose invoice still shows a DUE (the old Paid box wrote the sale as paid-in-full while the invoice kept nothing paid): a phantom due on Due Payment.
+function computeSaleDueMismatch() {
+  const out = [];
+  for (const s of (state.sales || [])) {
+    if (!s || s.deleted || String(s.date || '') < '2026-06-01' || !(Number(s.total) > 0)) continue;
+    const inv = saleInvoiceFor(s); if (!inv) continue;
+    const bal = Math.round(invoiceBalance(inv) * 100) / 100;
+    const claimed = (s.paid == null) ? Number(s.total) : Number(s.paid);
+    if (bal > 0.5 && claimed >= (Number(s.total) || 0) - 0.5) out.push({ sale: s, inv, balance: bal });
+  }
+  return out.sort((a, b) => String(b.sale.date || '').localeCompare(String(a.sale.date || '')));
+}
+// Admin: the customer DID pay (record the payment on the sale date, hidden from the live drawer — it is old money) or it really was credit (fix the sale record).
+window._fixSaleDue = function(id, mode) {
+  if (currentRole() !== 'admin') { toast(t('Admins only', 'للمسؤولين فقط'), 'error'); return; }
+  const s = (state.sales || []).find(x => x.id === id); if (!s) return;
+  const inv = saleInvoiceFor(s); if (!inv) { toast(t('Invoice not found', 'الفاتورة غير موجودة'), 'error'); return; }
+  const bal = Math.round(invoiceBalance(inv) * 100) / 100; if (bal < 0.5) { toast(t('Already settled', 'تمت التسوية بالفعل')); return; }
+  if (mode === 'paid') {
+    if (!confirm(t('Record ' + fmt(bal) + ' QAR as PAID (' + (s.method || 'cash') + ') on ' + fmtDate(s.date) + ' for ' + (s.customerName || '—') + '?', 'تسجيل ' + fmt(bal) + ' ر.ق كمدفوع بتاريخ ' + fmtDate(s.date) + '؟'))) return;
+    const row = recordPayment(inv, { amount: bal, method: s.method || 'cash', date: s.date });
+    if (row) { row.noDrawer = true; row.backfill = true; }
+    s.paid = Number(s.total) || 0; s.balance = 0;
+  } else {
+    if (!confirm(t('Keep ' + fmt(bal) + ' QAR as CREDIT (unpaid) and correct the sale record?', 'إبقاء ' + fmt(bal) + ' ر.ق كآجل وتصحيح سجل البيع؟'))) return;
+    s.paid = Math.round(invoicePaid(inv) * 100) / 100; s.balance = bal;
+  }
+  if (typeof stampUpdate === 'function') { stampUpdate(s); stampUpdate(inv); }
+  if (typeof audit === 'function') audit('sale.reconcile', 'sale:' + s.id, 'Sale ' + (inv.ref || '') + ' ' + (mode === 'paid' ? 'recorded as paid' : 'kept as credit') + ' (' + fmt(bal) + ' QAR)');
+  withCloudConfirm({ verify: [{ collection: 'invoices', id: inv.id }], okMsg: t('Sale reconciled', 'تمت تسوية البيع'), afterOk: () => render() });
+};
 // Admin: create the missing invoice for one rental / sale (paid as recorded, or left DUE) and link it. The other invoice a wrong link pointed at is never touched.
 window._fixUnlinked = function(kind, id, mode) {
   if (currentRole() !== 'admin') { toast(t('Admins only', 'للمسؤولين فقط'), 'error'); return; }
@@ -13958,6 +14042,12 @@ window._fixUnlinked = function(kind, id, mode) {
   if (typeof audit === 'function') audit('invoice.relink', (isR ? 'rental:' : 'sale:') + rec.id, 'Created missing invoice ' + inv.ref + ' for ' + (isR ? 'rental' : 'sale') + ' ' + rec.id + ' (' + fmt(amount) + ' QAR, ' + (paid > 0 ? 'paid' : 'due') + ')');
   withCloudConfirm({ verify: [{ collection: 'invoices', id: inv.id }], okMsg: t('Invoice ' + inv.ref + ' created', 'تم إنشاء الفاتورة ' + inv.ref), afterOk: () => render() });
 };
+function _saleDueCardHtml() {
+  if (currentRole() !== 'admin') return '';
+  const list = computeSaleDueMismatch(); if (!list.length) return '';
+  const rows = list.map(x => '<tr><td class="text-dim" style="white-space:nowrap">' + fmtDate(x.sale.date) + '</td><td><div class="font-bold">' + escapeHtml(x.sale.customerName || '—') + '</div><div class="text-mute" style="font-size:11px">' + escapeHtml((x.sale.items || []).map(l => l.name).join(', ')) + ' · ' + escapeHtml(x.inv.ref || '') + '</div></td><td class="text-right num">' + fmt(x.sale.total) + '</td><td class="text-right num font-bold" style="color:var(--red)">' + fmt(x.balance) + '</td><td class="text-right" style="white-space:nowrap"><button class="btn primary sm" onclick="_fixSaleDue(' + x.sale.id + ',\'paid\')">✅ ' + t('Customer paid', 'العميل دفع') + '</button> <button class="btn ghost sm" onclick="_fixSaleDue(' + x.sale.id + ',\'credit\')">⏳ ' + t('It is credit', 'آجل') + '</button></td></tr>').join('');
+  return '<div class="card" style="margin-top:14px"><div class="card-header"><div><div class="card-title">🛒 ' + t('Sales recorded as paid but still due on the invoice', 'مبيعات مسجلة كمدفوعة لكن الفاتورة غير مدفوعة') + '</div><div class="card-subtitle">' + t('The sale says fully paid; its invoice shows a due, so Due Payment lists it. Choose what really happened.', 'البيع مسجل مدفوعاً بالكامل والفاتورة عليها مستحق فتظهر في المستحقات. اختر ما حدث فعلاً.') + ' · ' + list.length + '</div></div></div><div class="table-wrap"><table><thead><tr><th>' + t('Date', 'التاريخ') + '</th><th>' + t('Customer', 'العميل') + '</th><th class="text-right">' + t('Total', 'الإجمالي') + '</th><th class="text-right">' + t('Due on invoice', 'المستحق') + '</th><th class="text-right">' + t('Action', 'الإجراء') + '</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
+}
 function _unlinkedCardHtml() {
   if (currentRole() !== 'admin') return '';
   const list = computeUnlinkedRentalsSales();
@@ -14063,7 +14153,7 @@ PAGES.missinginvoices = (main) => {
         </table>
       </div>
     </div>
-    ${_unlinkedCardHtml()}`;
+    ${_unlinkedCardHtml()}${_saleDueCardHtml()}`;
 
   bindMonthMulti('mi-month', (mSel) => { window._miMonths = mSel; PAGES.missinginvoices(main); });
 };
@@ -18226,12 +18316,19 @@ window.deleteCashCollection = function(id) {
 // list with its 🗑 (admin) — that only stops it counting here (payment.noDrawer); the member's payment, invoice and revenue are untouched, and it can be
 // restored. Derived, never stored. Rule for "since": a later DATE counts; on the count's own day only a timestamp after the count does (rows with no
 // timestamp are taken as already in the count). Returns null with no count yet.
+// v6.796 — "newest count" = the newest count DATE, then the latest typed. It used to go by when the row was typed, so a back-dated count (yesterday's count entered today) replaced today's as the drawer base.
+const cashCountDay = c => String((c && c.date) || String((c && c.createdAt) || '').slice(0, 10)).slice(0, 10);
+function cashCountNewer(a, b) { return cashCountDay(b).localeCompare(cashCountDay(a)) || String((b && b.createdAt) || '').localeCompare(String((a && a.createdAt) || '')); }
 function cashDrawerNow() {
-  const counts = (state.cashCounts || []).filter(c => c && c.kind !== 'deposit').slice().sort((a, b) => String(b.createdAt || b.date || '').localeCompare(String(a.createdAt || a.date || '')));
-  const c = counts[0];
-  if (!c) return null;
-  const cDate = String(c.date || String(c.createdAt || '').slice(0, 10)).slice(0, 10), cAt = c.createdAt ? String(c.createdAt) : '';
-  const after = (date, ts) => { const d = String(date || '').slice(0, 10); if (!d) return false; if (d !== cDate) return d > cDate; return !!(ts && cAt && String(ts) > cAt); };
+  const c = (state.cashCounts || []).filter(x => x && x.kind !== 'deposit').slice().sort(cashCountNewer)[0];
+  return c ? cashDrawerFrom(c, null) : null;
+}
+// What the drawer holds after count `c`, up to now — or, with `upper`, only up to that later count (what it SHOULD have held when it was counted).
+function cashDrawerFrom(c, upper) {
+  const cDate = cashCountDay(c), cAt = c.createdAt ? String(c.createdAt) : '';
+  const afterOf = (cd, ca) => (date, ts) => { const d = String(date || '').slice(0, 10); if (!d) return false; if (d !== cd) return d > cd; return !!(ts && ca && String(ts) > ca); };
+  const afterC = afterOf(cDate, cAt), afterU = upper ? afterOf(cashCountDay(upper), upper.createdAt ? String(upper.createdAt) : '') : null;
+  const after = (date, ts) => afterC(date, ts) && !(afterU && afterU(date, ts));
   const moves = [], hidden = [];
   for (const i of (state.invoices || [])) {
     if (!i || i.deleted || i.switchCredit || i.activityType === 'switch-credit') continue;   // a switch-credit memo is an offset, not drawer cash
@@ -18290,6 +18387,13 @@ window.cashDrawerHide = function (invId, pi, on) {
   if (typeof audit === 'function') audit(on ? 'cash.drawer.hide' : 'cash.drawer.restore', 'invoice:' + inv.id, (on ? 'Removed from' : 'Restored to') + ' Cash in Hand: ' + (inv.ref || '#' + inv.id) + ' · ' + fmt(pi >= 0 ? row.amount : invoicePaid(inv)) + ' QAR');
   withCloudConfirm({ verify: [{ collection: 'invoices', id: inv.id }], okMsg: on ? t('Removed from Cash in Hand', 'أُزيلت من النقد في الصندوق') : t('Restored to Cash in Hand', 'أُعيدت إلى النقد في الصندوق'), afterOk: () => render() });
 };
+// v6.796 — what the drawer should have held when count `cnt` was taken: the count before it (by date) + the cash movements between the two. null with no earlier count.
+function cashExpectedFor(cnt) {
+  const prev = (state.cashCounts || []).filter(x => x && x.kind !== 'deposit' && x !== cnt && x.id !== cnt.id).slice().sort(cashCountNewer).find(x => cashCountNewer(cnt, x) < 0);
+  if (!prev) return null;
+  const D = cashDrawerFrom(prev, cnt);
+  return { expected: D.expected, diff: Math.round(((Number(cnt.amount) || 0) - D.expected) * 100) / 100 };
+}
 // How a typed count compares with what the drawer should hold right now → { expected, diff } (null with no earlier count).
 function cashCountVariance(amount, dateStr) {
   if (String(dateStr || TODAY).slice(0, 10) !== TODAY) return null;   // a back-dated count can't be compared with "now"
@@ -18309,7 +18413,7 @@ PAGES.cashinhand = (main) => {
       <div class="card"><div class="text-mute" style="font-size:13px">${t('Only staff can view or update the cash count.', 'يمكن للموظفين فقط عرض أو تحديث جرد النقد.')}</div></div>`;
     return;
   }
-  const allRecs = (state.cashCounts || []).slice().sort((a, b) => (b.createdAt || b.date || '').localeCompare(a.createdAt || a.date || ''));
+  const allRecs = (state.cashCounts || []).slice().sort(cashCountNewer);
   const counts = allRecs.filter(c => c.kind !== 'deposit');   // v6.757 — owner deposits are listed in the history but are never "the last count"
   const latest = counts[0] || null;
   const prev = counts[1] || null;
@@ -18447,12 +18551,17 @@ window.openCashCountDialog = function(existingId) {
           const before = Number(ex.amount) || 0;
           ex.amount = amount; ex.date = date; ex.by = by; ex.note = note;
           if (typeof stampUpdate === 'function') stampUpdate(ex);
+          // v6.796 — the stored expected / short-over belonged to the OLD amount and date: recompute it, and the next count's (its base just moved)
+          const _fresh = c => { const e = cashExpectedFor(c); if (e) { c.expected = e.expected; c.diff = e.diff; } else { delete c.expected; delete c.diff; } };
+          _fresh(ex);
+          const _next = (state.cashCounts || []).filter(x => x && x.kind !== 'deposit' && x !== ex && cashCountNewer(ex, x) > 0).sort(cashCountNewer).pop();
+          if (_next) { _fresh(_next); if (typeof stampUpdate === 'function') stampUpdate(_next); }
           if (typeof audit === 'function') audit('cash.count_edit', 'cashinhand', `Edited cash count → ${fmt(amount)} QAR (was ${fmt(before)}) on ${fmtDate(date)}`);
           closeModal();
-          withCloudConfirm({ verify: [{ collection: 'cashCounts', id: ex.id }], okMsg: `${t('Cash count updated', 'تم تحديث الجرد')}: ${fmt(amount)} QAR`, afterOk: () => render() });
+          withCloudConfirm({ verify: [{ collection: 'cashCounts', id: ex.id }].concat(_next ? [{ collection: 'cashCounts', id: _next.id }] : []), okMsg: `${t('Cash count updated', 'تم تحديث الجرد')}: ${fmt(amount)} QAR`, afterOk: () => render() });
         } else {
           const entry = { id: 'cc_' + Date.now(), amount, date, by, note, createdAt: new Date().toISOString() };
-          const _v = cashCountVariance(amount, date);   // v6.700
+          const _v = cashCountVariance(amount, date) || cashExpectedFor(entry);   // v6.700 · v6.796 a back-dated count is compared with the count before IT
           if (_v) { entry.expected = _v.expected; entry.diff = _v.diff; }
           if (!Array.isArray(state.cashCounts)) state.cashCounts = [];
           state.cashCounts.push(entry);
@@ -20537,8 +20646,9 @@ function _salEnsureRec(coachId, monthKey, target, settle) {
   const pay = computeMonthlyPay(coachId, monthKey);
   let settledCount = 0, pendingPaid = 0;
   if (settle && pay && pay.commissionPending > 0 && typeof settleCoachPendingCommission === 'function') {
+    const _sp = settleablePendingFor(coachId, monthKey);   // v6.790 — only what the settlement really closes (not a frozen member's pending)
     settledCount = settleCoachPendingCommission(coachId, monthKey);
-    pendingPaid = pay.commissionPending;
+    pendingPaid = _sp.amount;
   }
   const net = (pay ? pay.net : 0) + pendingPaid;
   rec = {
@@ -20687,8 +20797,9 @@ window._salSettlePending = function (coachId, monthKey) {
   if (!c) return;
   const pay = computeMonthlyPay(coachId, monthKey);
   if (!pay) return;
-  const pending = Math.round((Number(pay.commissionPending) || 0) * 100) / 100;
-  if (pending <= 0.005) { toast(t('Nothing pending to settle for this month', 'لا يوجد معلّق لتسويته لهذا الشهر'), 'error'); return; }
+  const _sp = settleablePendingFor(coachId, monthKey);   // v6.790 — a frozen member's pending is NOT settled, so it is not paid now
+  const pending = _sp.amount;
+  if (pending <= 0.005) { toast(_sp.frozen > 0.005 ? t('The only pending left belongs to frozen members — it is paid when they return or expire', 'المعلّق المتبقي يخص أعضاء مجمّدين — يُدفع عند عودتهم أو انتهاء اشتراكهم') : t('Nothing pending to settle for this month', 'لا يوجد معلّق لتسويته لهذا الشهر'), 'error'); return; }
   const msg = t(
     'Settle ' + c.name + ' pending for ' + fmtMonth(monthKey) + '?\n\nThis pays ' + fmt(pending) + ' QAR (cash) now for the not-yet-attended classes, and closes those students so they do NOT carry to next month — even if ' + c.name + ' keeps teaching them.',
     'تسوية معلّق ' + c.name + ' لشهر ' + fmtMonth(monthKey) + '؟\n\nيدفع ' + fmt(pending) + ' ر.ق نقداً الآن عن الحصص غير المحضورة، ويُغلق هؤلاء الطلاب حتى لا يُرحّلوا للشهر القادم — حتى لو استمر ' + c.name + ' بتدريبهم.');
@@ -20765,6 +20876,7 @@ window.markPaid = function(coachId, monthKey) {
   if (!c) return;
   const pay = computeMonthlyPay(coachId, monthKey);
   if (!pay) return;
+  const _settleable = (pay.basis === 'attendance' && pay.commissionPending > 0) ? settleablePendingFor(coachId, monthKey) : { amount: 0, frozen: 0 };   // v6.790
   const rec = _salPaidRec(coachId, monthKey);
   const payments = salaryPayments(rec);
   const paidTotal = pay.paidTotal;
@@ -20789,10 +20901,10 @@ window.markPaid = function(coachId, monthKey) {
         <div style="display:flex;justify-content:space-between;padding:4px 0;border-top:1px solid var(--border);margin-top:4px;font-weight:700;font-size:15px"><span>${t('Net (computed)', 'الصافي المحسوب')}</span><span>${fmt(pay.net)}</span></div>
       </div>
 
-      ${!rec && pay.basis === 'attendance' && pay.commissionPending > 0 ? `
+      ${!rec && pay.basis === 'attendance' && _settleable.amount > 0 ? `
       <label style="display:flex;gap:9px;align-items:flex-start;padding:11px;background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.30);border-radius:8px;margin-bottom:14px;cursor:pointer;font-size:12px;line-height:1.5">
-        <input type="checkbox" id="sp-settle" onchange="window._salToggleSettle && window._salToggleSettle(this.checked, ${pay.net}, ${pay.commissionPending})" style="margin-top:2px;flex-shrink:0">
-        <span><b>${t('Settle pending in full now', 'تسوية المعلّق بالكامل الآن')}</b> — ${t('also settle the', 'سوِّ أيضاً')} <b style="color:var(--accent-2)">${fmt(pay.commissionPending)} QAR</b> ${t('pending (classes not yet attended) so it is not carried to next month. Tick this before adding the first payment; the agreed amount below then defaults to', 'المعلّق (حصص لم تُحضر بعد) حتى لا يُرحّل. فعّله قبل إضافة أول دفعة؛ عندها يصبح المبلغ المتفق عليه أدناه', )} <b>${fmt(pay.net + pay.commissionPending)} QAR</b>.</span>
+        <input type="checkbox" id="sp-settle" onchange="window._salToggleSettle && window._salToggleSettle(this.checked, ${pay.net}, ${_settleable.amount})" style="margin-top:2px;flex-shrink:0">
+        <span><b>${t('Settle pending in full now', 'تسوية المعلّق بالكامل الآن')}</b> — ${t('also settle the', 'سوِّ أيضاً')} <b style="color:var(--accent-2)">${fmt(_settleable.amount)} QAR</b> ${t('pending (classes not yet attended) so it is not carried to next month. Tick this before adding the first payment; the agreed amount below then defaults to', 'المعلّق (حصص لم تُحضر بعد) حتى لا يُرحّل. فعّله قبل إضافة أول دفعة؛ عندها يصبح المبلغ المتفق عليه أدناه', )} <b>${fmt(pay.net + pay.commissionPending)} QAR</b>.</span>
       </label>` : ''}
 
       <div class="field" style="margin-bottom:14px">
@@ -20838,7 +20950,7 @@ window.markPaid = function(coachId, monthKey) {
           <div class="field" style="margin:0"><label style="font-size:11px">${t('Date', 'التاريخ')}</label><input id="sp-add-date" type="date" value="${TODAY}" /></div>
           <button class="btn primary" onclick="_salAddPay(${coachId},'${monthKey}')">＋ ${t('Add payment', 'إضافة الدفعة')}</button>
         </div>
-        <div id="sp-extra-hint" data-rem="${Math.max(0, Math.max(pay.net, 0) + (rec ? (Number(rec.settledPending) || 0) : 0) - paidTotal)}" data-pend="${pay.commissionPending > 0 ? pay.commissionPending : 0}" style="font-size:11.5px;font-weight:700;color:#7c3aed;margin-top:7px"></div>
+        <div id="sp-extra-hint" data-rem="${Math.max(0, Math.max(pay.net, 0) + (rec ? (Number(rec.settledPending) || 0) : 0) - paidTotal)}" data-pend="${_settleable.amount > 0 ? _settleable.amount : 0}" style="font-size:11.5px;font-weight:700;color:#7c3aed;margin-top:7px"></div>
         <label style="display:flex;align-items:center;gap:8px;font-size:11.5px;font-weight:600;cursor:pointer;margin-top:9px;color:var(--text-mute)"><input type="checkbox" id="sp-split-cb" onchange="window._salSplitToggle(this)" style="width:auto;margin:0" /> ${t('Split this payout across methods (e.g. part cash + part transfer)', 'تقسيم هذه الدفعة بين الطرق (مثلاً جزء نقدي + جزء تحويل)')}</label>
       </div>
 
@@ -22186,8 +22298,8 @@ PAGES.sales = (main) => {
   function refresh() {
     const all = applyFilter().sort((a,b) => (b.date || '').localeCompare(a.date || ''));
     const totalAmt = all.reduce((s,r) => s + (r.total || 0), 0);
-    const totalPaid = all.reduce((s,r) => s + (r.paid || 0), 0);
-    const totalDue = all.reduce((s,r) => s + (r.balance || 0), 0);
+    const totalPaid = all.reduce((s,r) => s + salePaidNow(r), 0);   // v6.789 — from each sale's invoice, not the stored (possibly stale) paid / balance
+    const totalDue = all.reduce((s,r) => s + saleBalanceNow(r), 0);
     const rows = paginate(all, pg);
     $('#sale-tbody').innerHTML = rows.length ? rows.map(s => {
       const itemsList = (s.items || []).map(it => `${it.qty}× ${escapeHtml(it.name)}`).join(', ');
@@ -22446,6 +22558,7 @@ function saleBalanceNow(s) {
   const inv = (typeof saleInvoiceFor === 'function') ? saleInvoiceFor(s) : null;
   return inv ? Math.max(0, Math.round(invoiceBalance(inv) * 100) / 100) : (Number(s.balance) || 0);
 }
+function salePaidNow(s) { return Math.max(0, Math.round(((Number(s.total) || 0) - saleBalanceNow(s)) * 100) / 100); }   // v6.789
 function recalcSaleTotals() {
   const subtotal = window._saleLines.reduce((s, l) => s + (l.qty || 0) * (l.unitPrice || 0), 0);
   const discount = parseFloat($('#sale-discount')?.value) || 0;
@@ -26355,32 +26468,34 @@ window.withdrawSport = function(memberId, sport) {
   const enrollment = (m.enrollments || []).find(e => e.sport === sport);
   if (!enrollment) { toast(`No enrollment for ${sport}`, 'error'); return; }
 
-  const totalClasses = parseInt(enrollment.classes) || 0;
-  const price = parseFloat(enrollment.price) || 0;
+  // v6.791 — work from the package that is actually being withdrawn: ITS classes, ITS price, what was PAID for it, and only ITS attendance (the refund used to read the enrollment price,
+  // every class ever attended in the sport — old packages too — and ignored Mixed classes).
+  const _isMix = sport === MIXED, _cid = enrollment.coachId == null ? null : enrollment.coachId;
+  const _subs = (m.subscriptions || []).filter(s => s && s.activity === sport && !s.switchedAwayTo && s.status !== 'Withdrawn' && (_isMix || _cid == null || String(s.coachId) === String(_cid)));
+  const wdSub = _subs.slice().sort((x, y) => String(x.start || '').localeCompare(String(y.start || ''))).pop() || null;
+  const totalClasses = (wdSub && ((typeof subClassLimit === 'function' && subClassLimit(wdSub)) || parseInt(wdSub.totalClasses))) || parseInt(enrollment.classes) || 0;
+  const _wdInv = wdSub ? _pickSwitchInvoice(m, { sport, coachId: _cid }, TODAY, wdSub) : null;
+  const _wdLine = _wdInv && (_wdInv.lineItems || []).filter(li => li.sport === sport && (_isMix || String(li.coachId == null ? null : li.coachId) === String(_cid))).sort((x, y) => Math.abs((Number(x.price) || 0) - (parseFloat(enrollment.price) || 0)) - Math.abs((Number(y.price) || 0) - (parseFloat(enrollment.price) || 0)))[0];
+  const price = (_wdLine && Number(_wdLine.price) > 0) ? Number(_wdLine.price) : (parseFloat(enrollment.price) || 0);
+  const wdPaid = _wdInv ? Math.round(Math.max(0, Math.min(price, invoicePaid(_wdInv) * (price / Math.max(invoiceTotal(_wdInv), 0.01)))) * 100) / 100 : price;
   if (price <= 0) {
     toast('Cannot withdraw a free enrollment — just delete the row instead', 'error');
     return;
   }
-
-  // Count attended classes for this sport (Y marks in dailyAttendance)
-  let attended = 0;
-  const ymKeys = Object.keys(m.dailyAttendance || {});
-  for (const ym of ymKeys) {
-    const sportData = m.dailyAttendance[ym]?.[sport] || {};
-    for (const mark of Object.values(sportData)) {
-      if (mark === 'Y') attended++;
-    }
-  }
+  const _wdWin = wdSub && typeof subAttendanceWindow === 'function' ? subAttendanceWindow(m, wdSub) : { from: null, to: null };
+  let attended = wdSub ? (_isMix ? liveAttendanceCount(m, MIXED, _wdWin.from, _wdWin.to).y : attendedYForSub(m, wdSub)) : 0;
+  if (!wdSub) { for (const ym of Object.keys(m.dailyAttendance || {})) for (const mark of Object.values(m.dailyAttendance[ym]?.[sport] || {})) { if (mark === 'Y') attended++; } }
 
   const isCamp = isCampSport(sport);
   // This sport's start date (from its latest subscription, else member start).
   let sportStart = null;
   for (const s of (m.subscriptions || [])) if (s.activity === sport && s.start) sportStart = s.start;
+  if (wdSub && wdSub.start) sportStart = wdSub.start;   // v6.791
   sportStart = sportStart || enrollment.start || m.startDate || null;
 
   const graceDefault = (state.settings && state.settings.refundGraceDays != null) ? state.settings.refundGraceDays : 7;
   const feeDefault = (state.settings && state.settings.refundFeePct != null) ? state.settings.refundFeePct : 15;
-  const calc = computeWithdrawRefund({ price, totalClasses, attended, startDate: sportStart, refundDate: TODAY, graceDays: graceDefault, feePct: feeDefault });
+  const calc = computeWithdrawRefund({ price, paid: wdPaid, totalClasses, attended, startDate: sportStart, refundDate: TODAY, graceDays: graceDefault, feePct: feeDefault });
   const usedAmount = calc.used;
   const refundAmount = calc.refund;
   const graceLine = (d, withinGrace) => d == null
@@ -26392,7 +26507,7 @@ window.withdrawSport = function(memberId, sport) {
     const g = document.getElementById('wd-grace');
     const f = document.getElementById('wd-fee');
     const dt = document.getElementById('wd-date');
-    const c = computeWithdrawRefund({ price, totalClasses, attended, startDate: sportStart, refundDate: (dt && dt.value) || TODAY, graceDays: g ? g.value : graceDefault, feePct: f ? f.value : feeDefault });
+    const c = computeWithdrawRefund({ price, paid: wdPaid, totalClasses, attended, startDate: sportStart, refundDate: (dt && dt.value) || TODAY, graceDays: g ? g.value : graceDefault, feePct: f ? f.value : feeDefault });
     const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
     set('wd-since', graceLine(c.daysSinceStart, c.withinGrace));
     set('wd-used', `${fmt(c.used)} QAR`);
@@ -26422,8 +26537,8 @@ window.withdrawSport = function(memberId, sport) {
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
         <div class="field" style="margin:0">
-          <label>Original payment</label>
-          <div style="padding:10px;background:var(--surface-2);border-radius:8px;font-weight:700">${fmt(price)} QAR</div>
+          <label>${wdPaid < price - 0.005 ? 'Package price / paid so far' : 'Original payment'}</label>
+          <div style="padding:10px;background:var(--surface-2);border-radius:8px;font-weight:700">${wdPaid < price - 0.005 ? fmt(price) + ' / ' + fmt(wdPaid) : fmt(price)} QAR</div>
         </div>
         <div class="field" style="margin:0">
           <label>Classes attended</label>
@@ -26454,7 +26569,7 @@ window.withdrawSport = function(memberId, sport) {
 
       <div class="field">
         <label>Refund to member <span style="color:var(--accent)">*</span></label>
-        <input id="wd-refund" type="number" min="0" max="${price}" step="0.01" value="${refundAmount}" oninput="this.dataset.touched=1" style="font-size:18px;font-weight:700;color:var(--accent-2)" />
+        <input id="wd-refund" type="number" min="0" max="${wdPaid}" step="0.01" value="${refundAmount}" oninput="this.dataset.touched=1" style="font-size:18px;font-weight:700;color:var(--accent-2)" />
         <div class="text-mute" style="font-size:10px;margin-top:3px">Auto-calculated from grace + attendance; adjust if needed</div>
       </div>
 
@@ -26485,7 +26600,7 @@ window.withdrawSport = function(memberId, sport) {
         const method = document.getElementById('wd-method').value || 'cash';
         const reason = document.getElementById('wd-reason').value.trim() || null;
 
-        if (refund > price) { toast(`Refund cannot exceed paid amount (${fmt(price)} QAR)`, 'error'); return; }
+        if (refund > wdPaid + 0.005) { toast(`Refund cannot exceed paid amount (${fmt(wdPaid)} QAR)`, 'error'); return; }   // v6.791 — what was PAID, not the package price
 
         const refundMonth = refundDate.slice(0, 7);
         const withdrawRef = `WD-${Date.now().toString().slice(-6)}`;
@@ -26529,6 +26644,7 @@ window.withdrawSport = function(memberId, sport) {
           coachId: enrollment.coachId || null,
           coachName: enrollment.coachId ? coachName(enrollment.coachId) : null,
           originalPrice: price,
+          paidAmount: wdPaid,
           totalClasses,
           attendedClasses: attended,
           usedAmount,
@@ -26876,11 +26992,11 @@ window.switchSport = function(memberId) {
             const _dEndSafe = _dEnd ? _dEnd : addDays(switchDate, (_dSrc && parseInt(_dSrc.validity)) || DEFAULT_VALIDITY);
             const _dExpired = !!(_dEnd && String(_dEnd) < String(switchDate));
             const _dRef = 'SWR' + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36);
-            if (_dSrc && _dExpired && !_dSrc.attTo && tgs.some(t => t.sport === from.sport)) _dSrc.attTo = _dEnd;   // v6.779 — expired source keeps its last-day class
+            if (_dSrc && _dExpired && !_dSrc.attTo && tgs.some(t => t.sport === from.sport)) _dSrc.attTo = switchDate;   // v6.787 — an expired source keeps EVERY class up to the switch date (late classes after its end included)
             if (_dSrc && !_dSrc._sid) _dSrc._sid = 's' + Date.now() + '_src';
             const _newDst = [];
             resolved.forEach((tr, i) => { const ds = { activity: tr.sport, coach: coachName(tr.coachId), coachId: tr.coachId, totalClasses: tr.classes, start: _dExpired ? _dEnd : switchDate, end: _dEndSafe, status: _dExpired ? 'expired' : 'active', switchFunded: true, amountPaid: tr.value, _sid: 's' + Date.now() + '_swd' + i,
-              createdVia: 'switch', switchRef: _dRef, switchedFromSid: _dSrc ? _dSrc._sid : null, originalExpiry: _dEnd || null, transferredAmount: Math.round(tr.value * 100) / 100 }; if (_dExpired) ds.attFrom = addDays(_dEnd, 1); _newDst.push(ds); m.subscriptions.push(ds); });
+              createdVia: 'switch', switchRef: _dRef, switchedFromSid: _dSrc ? _dSrc._sid : null, originalExpiry: _dEnd || null, transferredAmount: Math.round(tr.value * 100) / 100 }; if (_dExpired) ds.attFrom = addDays(switchDate, 1); _newDst.push(ds); m.subscriptions.push(ds); });
             if (_dSrc) { Object.assign(_dSrc, { switched: true, switchStatus: 'Switched', consumedClasses: attendedA, transferredClasses: remaining, originalClasses: planned, switchRef: _dRef, switchedToSid: _newDst.map(x => x._sid).join(',') });
               const _drec = m.sportSwitches[m.sportSwitches.length - 1]; if (_drec) Object.assign(_drec, { ref: _dRef, fromSid: _dSrc._sid, toSid: _newDst.map(x => x._sid), consumed: attendedA, transferred: remaining, originalExpiry: _dEnd || null }); }
           }
@@ -27172,7 +27288,7 @@ window.switchSport = function(memberId) {
           if (srcSub && _dstSub) {
             _dstSub.createdVia = 'switch'; _dstSub.switchRef = _swRef; _dstSub.switchedFromSid = srcSub._sid;
             if (_boundaryMarked && srcSub.activity === _dstSub.activity) { srcSub.attTo = switchDate; _dstSub.attFrom = addDays(switchDate, 1); }   // v6.743
-            if (srcSub.end && String(srcSub.end) < String(switchDate)) { const _af = addDays(srcSub.end, 1); if (!_dstSub.attFrom || String(_dstSub.attFrom) < _af) _dstSub.attFrom = _af; if (srcSub.activity === _dstSub.activity && !srcSub.attTo) srcSub.attTo = srcSub.end; }   // v6.779 — an already-EXPIRED source: its last-day class stays with the old coach
+            if (srcSub.end && String(srcSub.end) < String(switchDate)) { const _af = addDays(switchDate, 1); if (!_dstSub.attFrom || String(_dstSub.attFrom) < _af) _dstSub.attFrom = _af; if (srcSub.activity === _dstSub.activity && !srcSub.attTo) srcSub.attTo = switchDate; }   // v6.779 — an already-EXPIRED source: its last-day class stays with the old coach
             _dstSub.originalExpiry = srcSub.end || null; _dstSub.transferredAmount = Math.round(bShare * 100) / 100; _dstSub.transferredFromSport = _fromSport; _dstSub.transferredFromCoachId = _fromCoachId;
             if (!_dstSub._sid) _dstSub._sid = 's' + Date.now() + '_sw';
             srcSub.switchedToSid = _dstSub._sid;
@@ -27494,6 +27610,7 @@ window.addRenewalMulti = function(m, picks, opts) {
       <label style="display:flex;align-items:center;gap:6px;margin:6px 0;cursor:pointer;font-size:12px"><input type="checkbox" id="rnm-adjust" checked /> <span>${t('Apply carry-forward credit & deduct post-expiry classes per sport', 'تطبيق رصيد الحصص المُرحَّلة وخصم حصص ما بعد الانتهاء لكل رياضة')}</span></label>
       <div id="rnm-summary" style="margin-top:8px;padding:10px 12px;background:var(--surface-2);border-radius:8px;font-size:13px;line-height:1.6"></div>
       <div style="margin-top:8px;padding:9px 11px;background:var(--surface-2);border-radius:8px;font-weight:700;font-size:14px">${t('Total to renew', 'إجمالي التجديد')}: <span id="rnm-total">0</span> ${t('QAR', 'ر.ق')}</div>
+      ${payChoiceHtml('rnm-pay')}
     `,
     actions: [
       { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
@@ -27525,15 +27642,20 @@ window.addRenewalMulti = function(m, picks, opts) {
           if (on && !(ap === 'coach' || ap === 'reception')) { toast(r.sport + ' — ' + t('Private: choose who approached the customer (coach or reception)', 'خاص: اختر من أحضر العميل (المدرب أو الاستقبال)'), 'error'); return; }
           input.push({ sport: r.sport, coachId, originalCoachId: r.originalCoachId, classes, price, validity, pv: privFlags(on, ap), carried, deducted, isNew: !!r.isNew });
         }
+        // v6.793 — how the renewal is paid (method / part / leave due); validated before anything is saved
+        const _renTotal = input.reduce((s, x) => s + (Number(x.price) || 0), 0);
+        const _renPay = readPayChoice('rnm-pay', _renTotal);
+        if (!_renPay.ok) { toast(_renPay.error, 'error'); return; }
+        const _payOpt = { mode: _renPay.mode, method: _renPay.method, amount: _renPay.amount, date: TODAY };
         // v6.661 — one confirmation per sport that is already billed around its start date (nothing is saved until all are answered)
         for (const x of input) { const st = computeRenewalStart(m, x.sport).start; const _bh = billedSameLines(m, x.sport, x.coachId, st); if (_bh.length && !confirm(billedSameWarning(m, x.sport, _bh, st))) return; }
         if (typeof assertCloudWritable === 'function' && !assertCloudWritable('record this renewal', 'تسجيل هذا التجديد')) return;
         _busy = true; const btn = document.getElementById('rnm-save'); if (btn) btn.disabled = true;
-        let res = commitRenewals(m, input, { reqId, status });
+        let res = commitRenewals(m, input, { reqId, status, payment: _payOpt });
         if (!res.ok && res.error === 'duplicate-period') {
           if (confirm(`⚠ ${m.name} ${t('already has an identical', 'لديه بالفعل فترة مطابقة')} ${res.detail} ${t('period starting on the same date', 'تبدأ في نفس التاريخ')}.\
 \
-${t('Add another identical period anyway?', 'إضافة فترة مطابقة أخرى على أي حال؟')}`)) res = commitRenewals(m, input, { reqId, status, allowDuplicates: true });
+${t('Add another identical period anyway?', 'إضافة فترة مطابقة أخرى على أي حال؟')}`)) res = commitRenewals(m, input, { reqId, status, allowDuplicates: true, payment: _payOpt });
           else { _busy = false; if (btn) btn.disabled = false; return; }
         }
         if (!res.ok) {
@@ -27734,6 +27856,13 @@ window.addRenewal = function(memberId) {
         if (_dupExisting && !confirm(`⚠ ${m.name} already has an identical ${renewedSport} period starting ${fmtDate(start)}.\n\nThis is what creates duplicate rows. Add ANOTHER identical period anyway?`)) return;
         // v6.661 — the same sport + coach already BILLED around this date on an invoice line (e.g. a switch or an added sport, then a renewal)
         { const _bh = billedSameLines(m, renewedSport, coachId, start); if (_bh.length && !confirm(billedSameWarning(m, renewedSport, _bh, start))) return; }
+        // v6.793 — validate the PAYMENT before anything is written. The "exceeds the fee" check used to run after the renewal entry and the subscription were already added: the dialog
+        // stayed open with half a renewal (no invoice) and a retry added a second package.
+        if (amount > 0) {
+          let _preEntered = 0;
+          document.querySelectorAll('.rn-pay-m').forEach(mi => { if (mi.value !== '' && mi.value != null) _preEntered += Math.max(0, parseFloat(mi.value) || 0); });
+          if (_preEntered > amount + 0.001) { toast(t('Paid now exceeds the fee — reduce it', 'المدفوع الآن يتجاوز الرسوم — قلّله'), 'error'); return; }
+        }
         if (!m.renewals) m.renewals = [];
         const _rid = 'r' + Date.now();
 
@@ -34616,7 +34745,7 @@ function buildSalesWorkbook() {
         it.lineTotal || null, ref,
       ]);
     }
-    totalSelling += (s.paid || 0);
+    totalSelling += salePaidNow(s);   // v6.789
     totalAmount += (s.total || 0);
   }
   rows.push(['total', null, null, totalSelling || null, null, null, null, totalAmount || null, null]);
