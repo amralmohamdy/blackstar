@@ -15788,6 +15788,79 @@ window._applyFixDuplicateSubs = function () {
   else { save(); render(); toast(okMsg); }
 };
 
+// ── FIX FILE (v6.801) ─────────────────────────────────────────────────────────
+// A small JSON that repairs single records (members / invoices) without restoring a whole backup, so anything typed since (attendance, payments) is kept:
+// { format:'bs-fix/1', title, summary:[…], ops:[{ collection, id, expectFields:{…}, removeFrom:{ array:{key:[ids]} }, updateIn:{ array:[{match:{key:id}, set:{…}}] }, set:{…} }] }
+// Refused when a row it removes / updates is missing or a field it expects differs (already fixed, or changed). All or nothing.
+window._fixFileCheck = function (fx) {
+  const OK = { members: 1, invoices: 1 };
+  const bad = m => ({ ok: false, error: m });
+  if (!fx || fx.format !== 'bs-fix/1' || !Array.isArray(fx.ops) || !fx.ops.length) return bad(t('This is not a fix file', 'هذا ليس ملف إصلاح'));
+  const plan = [];
+  for (const op of fx.ops) {
+    if (!op || !OK[op.collection] || op.id == null) return bad(t('The file has a bad operation', 'الملف يحتوي عملية غير صالحة'));
+    const doc = (state[op.collection] || []).find(x => x && String(x.id) === String(op.id));
+    if (!doc) return bad((op.label || '#' + op.id) + ': ' + t('record not found', 'السجل غير موجود'));
+    for (const k of Object.keys(op.expectFields || {})) if (JSON.stringify(doc[k] === undefined ? null : doc[k]) !== JSON.stringify(op.expectFields[k])) return bad((op.label || '#' + op.id) + ': ' + t('"' + k + '" is not what the file expects — already fixed or changed since', '"' + k + '" ليس كما يتوقع الملف — تم إصلاحه أو تغيّر')); 
+    for (const arr of Object.keys(op.removeFrom || {})) for (const key of Object.keys(op.removeFrom[arr])) for (const id of op.removeFrom[arr][key]) if (!(doc[arr] || []).some(r => r && String(r[key]) === String(id))) return bad((op.label || '#' + op.id) + ': ' + arr + ' ' + id + ' ' + t('not found — already fixed?', 'غير موجود — تم إصلاحه؟'));
+    for (const arr of Object.keys(op.updateIn || {})) for (const u of op.updateIn[arr]) { const k = Object.keys(u.match || {})[0]; if (!k || !(doc[arr] || []).some(r => r && String(r[k]) === String(u.match[k]))) return bad((op.label || '#' + op.id) + ': ' + arr + ' ' + t('row not found', 'السطر غير موجود')); }
+    plan.push({ op, doc, label: op.label || ('#' + op.id) });
+  }
+  return { ok: true, plan };
+};
+window._fixFileApply = function (fx) {
+  const chk = window._fixFileCheck(fx);
+  if (!chk.ok) return chk;
+  for (const { op, doc } of chk.plan) {
+    for (const arr of Object.keys(op.removeFrom || {})) doc[arr] = (doc[arr] || []).filter(r => !Object.keys(op.removeFrom[arr]).some(key => op.removeFrom[arr][key].some(id => r && String(r[key]) === String(id))));
+    for (const arr of Object.keys(op.updateIn || {})) for (const u of op.updateIn[arr]) { const k = Object.keys(u.match)[0]; (doc[arr] || []).filter(r => r && String(r[k]) === String(u.match[k])).forEach(r => Object.assign(r, JSON.parse(JSON.stringify(u.set)))); }
+    if (op.set) Object.assign(doc, JSON.parse(JSON.stringify(op.set)));
+    if (typeof stampUpdate === 'function') stampUpdate(doc);
+  }
+  if (typeof audit === 'function') audit('fixfile.apply', 'fixfile', 'Applied fix file: ' + (fx.title || '') + ' (' + chk.plan.map(x => x.op.collection + ':' + x.label).join(', ') + ')', { ops: chk.plan.length });
+  return { ok: true, n: chk.plan.length, verify: chk.plan.map(x => ({ collection: x.op.collection, id: x.op.id })) };
+};
+window.showApplyFixFileUI = function (fx) {
+  const chk = window._fixFileCheck(fx);
+  if (!chk.ok) { toast(chk.error, 'error'); return; }
+  showModal({
+    title: '🩹 ' + t('Apply a fix file', 'تطبيق ملف إصلاح'),
+    body: `<div style="font-size:13px;line-height:1.6">
+      <div style="font-weight:700;margin-bottom:6px">${escapeHtml(fx.title || '')}</div>
+      ${(fx.summary || []).map(s => '<div>• ' + escapeHtml(String(s)) + '</div>').join('')}
+      <div style="margin-top:10px">${t('Records changed', 'سجلات ستتغيّر')}: <b>${chk.plan.map(x => escapeHtml(x.label)).join(' · ')}</b></div>
+      <div style="margin-top:6px;color:var(--accent-2)">⚠ ${t('A full backup downloads first.', 'تُنزَّل نسخة احتياطية كاملة أولاً.')}</div></div>`,
+    actions: [
+      { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: () => closeModal() },
+      { label: '🩹 ' + t('Apply', 'تطبيق'), class: 'btn primary', onclick: () => {
+        try { if (typeof window.downloadBackup === 'function') window.downloadBackup(); } catch (_) {}
+        const r = window._fixFileApply(fx);
+        closeModal();
+        if (!r.ok) { toast(r.error, 'error'); return; }
+        const okMsg = t('Fix applied · saved', 'تم تطبيق الإصلاح · حُفظ');
+        if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: r.verify, okMsg, afterOk: () => render() });
+        else { save(); render(); toast(okMsg); }
+      } },
+    ],
+  });
+};
+// Twin packages: the same member, sport, coach, start day and class count on two package rows (different _sid, so the identical-row cleanups never see them).
+window._scanTwinPackages = function () {
+  const out = [];
+  for (const m of (state.members || [])) {
+    if (!m || m.deleted) continue;
+    const g = new Map();
+    for (const s of (m.subscriptions || [])) {
+      if (!s || !s.activity || !s.start || String(s.start) < '2026-06-01' || String(s.status || '').toLowerCase() === 'withdrawn') continue;
+      const k = [s.activity, s.coachId, s.start, s.totalClasses].join('|');
+      if (!g.has(k)) g.set(k, []);
+      g.get(k).push(s);
+    }
+    for (const arr of g.values()) if (arr.length > 1) out.push({ m, sport: arr[0].activity, coachId: arr[0].coachId, start: arr[0].start, classes: arr[0].totalClasses, count: arr.length });
+  }
+  return out;
+};
+
 // ── DATA SAFETY (v6.319.0) ────────────────────────────────────────────────────
 // A self-serve "is my data safe?" experience. The owner has felt uneasy about data
 // loss, so this makes safety something you can PROVE in one click, any time:
@@ -16088,10 +16161,12 @@ window._dataHealthCheck = function () {
   // Invoices carrying an impossible date (e.g. the 0001-01-01 legacy import rows).
   let badDates = 0;
   try { badDates = window._scanInvalidInvoiceDates().length; } catch (_) {}
+  let twins = [];
+  try { twins = window._scanTwinPackages(); } catch (_) {}   // v6.801 — information only
   const totalBytes = _byteLen(state);
   const LS_LIMIT = 5 * 1024 * 1024;   // browser localStorage safety-net cache ceiling
   const healthy = dupRows === 0 && dupEnr === 0 && dupLi === 0 && dupPay === 0 && badDates === 0 && oversized.length === 0 && totalBytes < LS_LIMIT * 0.9;
-  return { healthy, dupRows, dupMembers, dupEnr, dupEnrMembers, dupLi, dupLiInv, dupPay, dupPayInv, dupPayAmt, badDates, oversized, totalMB: totalBytes / 1048576, cachePct: Math.round(totalBytes / LS_LIMIT * 100) };
+  return { healthy, dupRows, dupMembers, dupEnr, dupEnrMembers, dupLi, dupLiInv, dupPay, dupPayInv, dupPayAmt, badDates, oversized, twins, totalMB: totalBytes / 1048576, cachePct: Math.round(totalBytes / LS_LIMIT * 100) };
 };
 window.showDataHealthUI = function () {
   const h = window._dataHealthCheck();
@@ -16110,6 +16185,7 @@ window.showDataHealthUI = function () {
         <tr><td style="padding:7px 0">${t('Duplicate invoice line-items', 'بنود فاتورة مكررة')}</td><td style="text-align:right">${chip(t('none', 'لا شيء'), `${h.dupLi} ${t('across', 'لدى')} ${h.dupLiInv} ${t('invoices', 'فاتورة')}`, h.dupLi === 0)}</td></tr>
         <tr><td style="padding:7px 0">${t('Duplicate payments (over-collected)', 'دفعات مكررة (تحصيل زائد)')}</td><td style="text-align:right">${chip(t('none', 'لا شيء'), `${h.dupPay} · ${fmt(h.dupPayAmt || 0)} QAR ${t('across', 'لدى')} ${h.dupPayInv} ${t('invoices', 'فاتورة')}`, (h.dupPay || 0) === 0)}</td></tr>
         <tr><td style="padding:7px 0">${t('Invoices with an invalid date', 'فواتير بتاريخ غير صالح')}</td><td style="text-align:right">${chip(t('none', 'لا شيء'), `${h.badDates || 0} ${t('invoices', 'فاتورة')}`, (h.badDates || 0) === 0)}</td></tr>
+        <tr><td style="padding:7px 0">${t('Twin packages (same sport, coach, start day and classes)', 'باقات متطابقة (نفس الرياضة والمدرب ويوم البدء والحصص)')}</td><td style="text-align:right">${(h.twins || []).length ? '<span style="font-weight:800;color:var(--accent-2)">⚠ ' + (h.twins || []).length + ' · ' + (h.twins || []).slice(0, 5).map(x => escapeHtml(x.m.name || '') + ' (' + escapeHtml(x.sport) + ')').join(', ') + ' — ' + t('review on the member card', 'راجع بطاقة العضو') + '</span>' : chip(t('none', 'لا شيء'), '', true)}</td></tr>
         <tr><td style="padding:7px 0">${t('Records near the 1 MB limit', 'سجلات قرب حد 1 ميغابايت')}</td><td style="text-align:right">${chip(t('none', 'لا شيء'), overList, h.oversized.length === 0)}</td></tr>
         <tr><td style="padding:7px 0">${t('Total data size', 'حجم البيانات')}</td><td style="text-align:right"><b>${h.totalMB.toFixed(2)} MB</b> <span class="text-mute">(${h.cachePct}% ${t('of local cache', 'من الذاكرة المحلية')})</span></td></tr>
       </table>
@@ -23552,6 +23628,8 @@ PAGES.settings = (main, section) => {
         <button class="btn ghost" id="datahealth-btn" title="One-glance data integrity check — duplicates, oversized records, storage size — with one-click safe repair">🩺 ${t('Data Health Check', 'فحص سلامة البيانات')}</button>
         <button class="btn ghost" id="cloudstorage-btn" title="See how much data is stored in the cloud, broken down by collection (members, invoices, attendance, audit log…)">☁ ${t('Cloud Storage Usage', 'استخدام التخزين السحابي')}</button>
         <button class="btn ghost" id="fixdupsubs-btn" title="Find & remove duplicate subscription rows on member cards (attendance is kept safe)">🧹 ${t('Fix duplicate subscriptions', 'إصلاح الاشتراكات المكررة')}</button>
+        <button class="btn ghost" id="applyfix-btn" title="${t('Apply a small fix file (JSON) to single records — nothing else is touched', 'تطبيق ملف إصلاح صغير (JSON) على سجلات محددة فقط')}">🩹 ${t('Apply a fix file', 'تطبيق ملف إصلاح')}</button>
+        <input type="file" id="applyfix-file" accept=".json" style="display:none" />
         <input type="file" id="restore-file" accept=".json" style="display:none" />
       </div>
       <div class="text-mute mt-3" style="font-size:12px">
@@ -23800,6 +23878,13 @@ PAGES.settings = (main, section) => {
   $('#datahealth-btn')?.addEventListener('click', () => window.showDataHealthUI());
   $('#cloudstorage-btn')?.addEventListener('click', () => window.showCloudStorageUI());
   $('#fixdupsubs-btn')?.addEventListener('click', () => window.showFixDuplicateSubsUI());
+  $('#applyfix-btn')?.addEventListener('click', () => $('#applyfix-file').click());
+  $('#applyfix-file')?.addEventListener('change', async e => {
+    const f = e.target.files && e.target.files[0]; e.target.value = '';
+    if (!f) return;
+    let fx = null; try { fx = JSON.parse(await f.text()); } catch (_) {}
+    window.showApplyFixFileUI(fx);
+  });
 
   // ── Multi-document migration (one-click) ──────────────────────────────────
   (function setupMigration() {
