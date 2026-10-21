@@ -1931,8 +1931,8 @@ body.modal-open #bs-notif-float { z-index: 60 !important; }   /* v6.776 — belo
   .main [style*="display:flex"] > input, .main [style*="display:flex"] > select { min-width: 0; max-width: 100%; }
 }
 
-/* v6.788 — iPad too (portrait 820, landscape 1024 with the sidebar open): a wide table placed straight in a card scrolls inside the card instead of being clipped */
-@media (max-width: 1100px) {
+/* v6.788 — iPad too (portrait 820, landscape 1024 with the sidebar open): a wide table placed straight in a card scrolls inside the card instead of being clipped. v6.799: up to 1280px — iPad landscape 1180 with the sidebar open leaves a 866px card and Camp / Winter members (1,223px) were clipped */
+@media (max-width: 1280px) {
   .main .card > table { display: block; min-width: 0 !important; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 }
 
@@ -1943,3 +1943,6 @@ body.modal-open #bs-notif-float { z-index: 60 !important; }   /* v6.776 — belo
 @media (max-width: 700px) {
   .kpi-grid[style*="grid-auto-flow:column"] { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
 }
+
+/* v6.799 — any width: a card whose table is wider than the card (Camp / Winter members 1,223px on a 1440 laptop) scrolls inside the card instead of running past the page edge */
+.main .card:has(> table) { overflow-x: auto; }
