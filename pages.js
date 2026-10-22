@@ -238,13 +238,13 @@ function _privTagHtml(priv, plain) {
 // v6.809 — a private line: the coach's amount INCLUDES his private extra (30% + 10% = 40%), the note only says the percentage; reception's own 10% is shown as a percentage and an amount.
 function _lineComm(l, rate, coachPct, allPriv) {
   if (!l || l._dupIgnored) return 0;
-  const pct = (typeof privateBonusPct === 'function') ? privateBonusPct() : 10, cp = (coachPct != null ? coachPct : pct);
+  const pct = (typeof privateBonusPct === 'function') ? privateBonusPct() : 10, cp = (coachPct != null ? coachPct : ((typeof privateCoachPctDefault === 'function') ? privateCoachPctDefault() : pct));
   const extra = (l.priv === 'coach' || (l.priv === 'reception' && allPriv)) ? l.price * cp / 100 : 0;
   return l.price * rate / 100 + extra;
 }
 function _privBonusNote(l, plain, coachPct, allPriv, rate) {
   if (!l || l._dupIgnored || !(Number(l.price) > 0)) return '';
-  const pct = (typeof privateBonusPct === 'function') ? privateBonusPct() : 10, cp = (coachPct != null ? coachPct : pct);
+  const pct = (typeof privateBonusPct === 'function') ? privateBonusPct() : 10, cp = (coachPct != null ? coachPct : ((typeof privateCoachPctDefault === 'function') ? privateCoachPctDefault() : pct));
   const coachHas = l.priv === 'coach' || (l.priv === 'reception' && allPriv);
   const parts = [];
   if (coachHas && rate != null) parts.push(`${Math.round((Number(rate) + cp) * 100) / 100}% (${rate}% + ${cp}%)`);
@@ -254,7 +254,7 @@ function _privBonusNote(l, plain, coachPct, allPriv, rate) {
 // Pending (paid, not yet attended) row: the same two percentages.
 function _privPendingNote(pl, plain, coachPct, allPriv, rate) {
   if (!pl || (pl.priv !== 'coach' && pl.priv !== 'reception') || !(Number(pl.amountBase) > 0)) return '';
-  const pct = (typeof privateBonusPct === 'function') ? privateBonusPct() : 10, cp = (coachPct != null ? coachPct : pct);
+  const pct = (typeof privateBonusPct === 'function') ? privateBonusPct() : 10, cp = (coachPct != null ? coachPct : ((typeof privateCoachPctDefault === 'function') ? privateCoachPctDefault() : pct));
   const coachHas = pl.priv === 'coach' || (pl.priv === 'reception' && allPriv);
   const parts = [];
   if (coachHas && rate != null) parts.push(`${Math.round((Number(rate) + cp) * 100) / 100}% (${rate}% + ${cp}%)`);
@@ -428,10 +428,21 @@ function paymentsByBillMonth(days) {
   }
   return rows;
 }
+// v6.811 — ONE row per invoice (and the month it belongs to): the NET collected that day. A payment that was later corrected / reversed does not list its history; a method that nets to zero is dropped.
+function collapseCollectionRows(rows) {
+  const m = new Map();
+  for (const r of rows) {
+    const k = r.day + '|' + r.inv.id + '|' + r.bill;
+    let g = m.get(k); if (!g) { g = { day: r.day, inv: r.inv, bill: r.bill, amt: 0, methods: new Map() }; m.set(k, g); }
+    const meth = (r.p && r.p.method) || '';
+    g.amt += r.amt; g.methods.set(meth, (g.methods.get(meth) || 0) + r.amt);
+  }
+  return [...m.values()].map(g => ({ day: g.day, inv: g.inv, bill: g.bill, amt: Math.round(g.amt * 100) / 100, p: { method: [...g.methods].filter(([k, v]) => k && Math.abs(v) > 0.004).map(([k]) => k).join(' + ') } })).filter(g => Math.abs(g.amt) > 0.004);
+}
 // The 💵 Today's revenue box: every payment of today / yesterday against the month it belongs to; a month badge jumps to that month.
 window.showDayCollections = function () {
   const yday = addDays(TODAY, -1);
-  const rows = paymentsByBillMonth([TODAY, yday]);
+  const rows = collapseCollectionRows(paymentsByBillMonth([TODAY, yday]));
   const mLabel = mk => (typeof fmtMonth === 'function') ? fmtMonth(mk) : mk;
   const section = (day, title) => {
     const mine = rows.filter(r => r.day === day).sort((a, b) => ((b.bill === day.slice(0, 7)) - (a.bill === day.slice(0, 7))) || b.amt - a.amt);
@@ -3362,7 +3373,7 @@ function enrollRowHtml(row, idx) {
             <option value="">${t('— Approached by… —', '— تم التواصل عن طريق… —')}</option>
             <option value="coach" ${row.approach === 'coach' ? 'selected' : ''}>${t('Approached by the coach', 'عن طريق المدرب')}</option>
             <option value="reception" ${row.approach === 'reception' ? 'selected' : ''}>${t('Approached by reception', 'عن طريق الاستقبال')}</option></select></div>
-          <span class="text-mute" style="font-size:11px">${row.approach === 'coach' ? t('The coach earns +' + privateBonusPct() + '% on top of his commission.', 'يحصل المدرب على +' + privateBonusPct() + '% فوق عمولته.') : row.approach === 'reception' ? t(privateBonusPct() + '% goes to the reception staff, shared equally.', privateBonusPct() + '% لموظفي الاستقبال بالتساوي.') : t('Required: who brought this customer?', 'مطلوب: من أحضر هذا العميل؟')}</span>` : ''}
+          <span class="text-mute" style="font-size:11px">${row.approach === 'coach' ? t('The coach earns +' + privateCoachPctDefault() + '% on top of his commission.', 'يحصل المدرب على +' + privateCoachPctDefault() + '% فوق عمولته.') : row.approach === 'reception' ? t(privateBonusPct() + '% goes to the reception staff, shared equally.', privateBonusPct() + '% لموظفي الاستقبال بالتساوي.') : t('Required: who brought this customer?', 'مطلوب: من أحضر هذا العميل؟')}</span>` : ''}
       </div>`}
     </div>`;
 }
@@ -5217,7 +5228,7 @@ window.transferCoachStudents = function(fromId) {
 window.editCoachPrivatePct = function (id) {
   if (!['admin', 'receptionist'].includes(currentRole())) { toast(t('Admins or receptionists only', 'للمسؤولين أو موظفي الاستقبال فقط'), 'error'); return; }
   const c = state.coaches.find(x => x.id === id); if (!c) return;
-  const def = privateBonusPct(), cur = isFinite(parseFloat(c.privateBonusPct)) ? parseFloat(c.privateBonusPct) : '';
+  const def = privateCoachPctDefault(), cur = isFinite(parseFloat(c.privateBonusPct)) ? parseFloat(c.privateBonusPct) : '';
   showModal({
     title: '🔒 ' + t('Private training bonus', 'بونس التدريب الخاص') + ' · ' + escapeHtml(c.name),
     body: `<div class="text-mute" style="font-size:12px;line-height:1.6;margin-bottom:10px">${t('When a customer comes to a PRIVATE package through THIS coach, he earns this % of the package base on top of his normal commission. Leave it empty to use the club default (' + def + '%). It applies to the pay of the months you open from now on, including past months that are re-opened.', 'عندما يأتي عميل لباقة خاصة عن طريق هذا المدرب يكسب هذه النسبة من أساس الباقة فوق عمولته المعتادة. اتركها فارغة لاستخدام الافتراضي (' + def + '%). تنطبق على رواتب الأشهر التي تفتحها من الآن، بما فيها الأشهر السابقة عند إعادة فتحها.')}</div>
@@ -20134,7 +20145,7 @@ window.openPrivateCheck = function (monthKey) {
       <td style="font-size:11px;white-space:nowrap">${x.sub.start ? fmtDate(x.sub.start) : '—'} → ${x.sub.end ? fmtDate(x.sub.end) : '—'}</td>
       <td class="text-right num">${fmt(x.sub.amountPaid || 0)}</td>
       <td style="white-space:nowrap">
-        <button class="btn ghost sm" onclick="markPackagePrivate(${i}, 'coach')" title="${t('Approached by the coach: coach +' + privateBonusPct() + '%', 'عن طريق المدرب')}">🏃 ${t('Coach', 'مدرب')}</button>
+        <button class="btn ghost sm" onclick="markPackagePrivate(${i}, 'coach')" title="${t('Approached by the coach: coach +' + privateCoachPctDefault() + '%', 'عن طريق المدرب')}">🏃 ${t('Coach', 'مدرب')}</button>
         <button class="btn ghost sm" onclick="markPackagePrivate(${i}, 'reception')" title="${t('Approached by reception: ' + privateBonusPct() + '% shared by reception', 'عن طريق الاستقبال')}">🧾 ${t('Reception', 'استقبال')}</button>
         <button class="btn ghost sm" onclick="markPackagePrivate(${i}, 'none')" title="${t('Not a private package — stop listing it', 'ليست باقة خاصة')}">✕ ${t('Not private', 'ليست خاصة')}</button>
       </td></tr>`).join('');
@@ -20415,6 +20426,10 @@ PAGES.salaries = (main) => {
         <span style="opacity:.35">|</span>
         <span style="font-size:12px;color:var(--text-mute)" title="Commission only counts memberships dated on or after this date. Fixed salary is not affected.">Commission from:</span>
         <input type="date" id="sal-comm-start" value="${(state.settings && state.settings.commissionStartDate) || ''}" class="btn ghost" style="font-size:12px" title="Only memberships starting on or after this date earn commission. Leave empty for no cutoff. Fixed salary is unaffected." />
+        ${currentRole() === 'admin' ? `<span style="opacity:.35">|</span>
+        <span style="font-size:12px;color:var(--text-mute)" title="${t('Private packages: the extra every coach earns on top of his commission (a coach can have his own % on the Team page), and reception\'s own share when reception brought the customer. Default 10 and 10.', 'الباقات الخاصة: الإضافة التي يكسبها كل مدرب فوق عمولته (ولكل مدرب نسبته الخاصة من صفحة الفريق)، وحصة الاستقبال عندما يجلب العميل. الافتراضي 10 و10.')}">🔒 ${t('Private', 'الخاص')}:</span>
+        <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text-mute)">${t('coach +', 'المدرب +')}<input type="number" id="sal-priv-coach" min="0" max="100" step="0.5" value="${privateCoachPctDefault()}" class="btn ghost" style="width:64px;font-size:12px" />%</label>
+        <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text-mute)">${t('reception', 'الاستقبال')}<input type="number" id="sal-priv-rec" min="0" max="100" step="0.5" value="${privateBonusPct()}" class="btn ghost" style="width:64px;font-size:12px" />%</label>` : ''}
         <span style="opacity:.35">|</span>
         <span style="font-size:12px;color:var(--text-mute)">or settle up to:</span>
         <input type="date" id="sal-date" class="btn ghost" value="${filter.settleDate || ''}" title="Calculate pay up to this date — e.g. a coach's last working day. Clear it to go back to the whole month." />
@@ -20484,6 +20499,27 @@ PAGES.salaries = (main) => {
     refresh();
     toast(e.target.value ? `Commission counts from ${fmtDate(e.target.value)}` : 'Commission cutoff cleared (all dates count)');
   });
+  // v6.810 — the club-wide private % (admin): coach extra and reception share, both default 10
+  window.setPrivatePcts = function (coachRaw, recRaw) {
+    if (currentRole() !== 'admin') { toast(t('Only an admin can change this', 'للمسؤول فقط'), 'error'); return { ok: false }; }
+    const parse = raw => { if (raw == null || String(raw).trim() === '') return undefined; const v = parseFloat(raw); return (isFinite(v) && v >= 0 && v <= 100) ? v : null; };
+    const c = parse(coachRaw), r = parse(recRaw);
+    if (c === null || r === null) { toast(t('Enter a percentage between 0 and 100', 'أدخل نسبة بين 0 و100'), 'error'); return { ok: false }; }
+    if (!state.settings) state.settings = {};
+    const before = { coach: privateCoachPctDefault(), reception: privateBonusPct() };
+    if (c !== undefined) state.settings.privateCoachPct = c;
+    if (r !== undefined) state.settings.privateBonusPct = r;
+    try { if (typeof audit === 'function') audit('settings.private_pct', 'settings', 'Private %: coach +' + before.coach + '% → +' + privateCoachPctDefault() + '%, reception ' + before.reception + '% → ' + privateBonusPct() + '%', before); } catch (_) {}
+    return { ok: true, coach: privateCoachPctDefault(), reception: privateBonusPct() };
+  };
+  const _savePriv = () => {
+    const r = window.setPrivatePcts(($('#sal-priv-coach') || {}).value, ($('#sal-priv-rec') || {}).value);
+    if (!r.ok) { const ci = $('#sal-priv-coach'), ri = $('#sal-priv-rec'); if (ci) ci.value = privateCoachPctDefault(); if (ri) ri.value = privateBonusPct(); return; }
+    save(); refresh();
+    toast(t('Private %: coach +' + r.coach + '% · reception ' + r.reception + '%', 'نسبة الخاص: المدرب +' + r.coach + '% · الاستقبال ' + r.reception + '%'));
+  };
+  $('#sal-priv-coach')?.addEventListener('change', _savePriv);
+  $('#sal-priv-rec')?.addEventListener('change', _savePriv);
   const salDate = $('#sal-date');
   if (salDate) salDate.addEventListener('change', e => {
     filter.settleDate = e.target.value || null;
@@ -27925,7 +27961,7 @@ window.addRenewal = function(memberId) {
         <div id="rn-priv-wrap" style="display:none;gap:4px">
           <select id="rn-approach" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)">
             <option value="">${t('— Approached by… —', '— تم التواصل عن طريق… —')}</option>
-            <option value="coach">${t('Approached by the coach (coach +' + privateBonusPct() + '%)', 'عن طريق المدرب (المدرب +' + privateBonusPct() + '%)')}</option>
+            <option value="coach">${t('Approached by the coach (coach +' + privateCoachPctDefault() + '%)', 'عن طريق المدرب (المدرب +' + privateCoachPctDefault() + '%)')}</option>
             <option value="reception">${t('Approached by reception (' + privateBonusPct() + '% shared by reception)', 'عن طريق الاستقبال (' + privateBonusPct() + '% للاستقبال)')}</option>
           </select>
         </div>
@@ -28175,7 +28211,7 @@ window.addRenewal = function(memberId) {
     const chk = $('#rn-private'), sel = $('#rn-approach'), wrap = $('#rn-priv-wrap'), hint = $('#rn-priv-hint');
     if (!chk || !sel) return;
     if (wrap) wrap.style.display = chk.checked ? 'grid' : 'none';
-    if (hint) hint.textContent = !chk.checked ? '' : (sel.value === 'coach' ? t('The coach earns +' + privateBonusPct() + '% on top of his commission.', 'يحصل المدرب على +' + privateBonusPct() + '% فوق عمولته.')
+    if (hint) hint.textContent = !chk.checked ? '' : (sel.value === 'coach' ? t('The coach earns +' + privateCoachPctDefault() + '% on top of his commission.', 'يحصل المدرب على +' + privateCoachPctDefault() + '% فوق عمولته.')
       : sel.value === 'reception' ? t(privateBonusPct() + '% goes to the reception staff, shared equally.', privateBonusPct() + '% لموظفي الاستقبال بالتساوي.') : t('Required: who brought this customer?', 'مطلوب: من أحضر هذا العميل؟'));
   }
   function applyRnPrivateDefault() {
@@ -28470,7 +28506,7 @@ window.editSubscription = function(memberId, sid) {
           <div id="es-approach-wrap" style="display:${sub.private ? 'grid' : 'none'};gap:4px">
             <select id="es-approach" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)">
               <option value="">${t('— Approached by… —', '— تم التواصل عن طريق… —')}</option>
-              <option value="coach" ${sub.approach === 'coach' ? 'selected' : ''}>${t('Approached by the coach (coach +' + privateBonusPct() + '%)', 'عن طريق المدرب (المدرب +' + privateBonusPct() + '%)')}</option>
+              <option value="coach" ${sub.approach === 'coach' ? 'selected' : ''}>${t('Approached by the coach (coach +' + privateCoachPctDefault() + '%)', 'عن طريق المدرب (المدرب +' + privateCoachPctDefault() + '%)')}</option>
               <option value="reception" ${sub.approach === 'reception' ? 'selected' : ''}>${t('Approached by reception (' + privateBonusPct() + '% shared by reception)', 'عن طريق الاستقبال (' + privateBonusPct() + '% للاستقبال)')}</option>
             </select>
           </div></div>`}
