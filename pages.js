@@ -8423,9 +8423,8 @@ function citadelCategories(res) {
 PAGES.citadel = (main) => {
   if (currentRole() !== 'admin') { main.innerHTML = `<div class="card"><div class="empty">${t('Admins only.', 'المسؤولون فقط.')}</div></div>`; return; }
 
-  // Keep the auto Citadel Company Share bank expenses in sync before we render, so the "paid to
-  // company" figure below reflects the current revenue/rate. (v6.577)
-  if (syncCitadelShare()) save();
+  // v6.804 — Citadel is not auto-posted any more; old auto rows become ordinary expenses.
+  if (releaseAutoCitadelRows()) save();
 
   // Revenue-share rate (%). Default 30.
   const rawRate = Number(state.settings && state.settings.citadelRate);
@@ -8564,7 +8563,7 @@ PAGES.citadel = (main) => {
           <tr style="border-top:2px solid var(--border);font-weight:800"><td>${t('Balance due to company', 'المتبقي للشركة')}</td><td class="text-right num" style="color:${balanceDue > 0.5 ? 'var(--red)' : 'var(--green)'};font-size:15px">${fmt(balanceDue)}</td></tr>
         </tbody>
       </table></div>
-      <div class="text-mute" style="font-size:11px;padding:8px 4px 0">${t('The company share is auto-posted each month as a “Citadel Company Share” bank expense; “Paid to company” is the sum of those expenses.', 'تُسجَّل حصة الشركة تلقائياً كل شهر كمصروف بنكي «حصة شركة سيتاديل»؛ «المدفوع للشركة» هو مجموع تلك المصروفات.')}</div>
+      <div class="text-mute" style="font-size:11px;padding:8px 4px 0">${t('The company share is NOT posted automatically: add what you pay Citadel as an expense with the category “Citadel Company Share”; “Paid to company” is the sum of those expenses.', 'حصة الشركة لا تُسجَّل تلقائياً: أضف ما تدفعه لسيتاديل كمصروف بفئة «حصة شركة سيتاديل»؛ «المدفوع للشركة» هو مجموع تلك المصروفات.')}</div>
     </div>
 
     <div class="card" style="margin-top:16px">
@@ -19505,55 +19504,17 @@ function syncBankCommission() {
   return changed;
 }
 
-// Ensure each month with Football/Swimming revenue has a (non-edited) "Citadel Company Share"
-// BANK expense equal to that month's facility-company share (citadel revenue × the configured rate).
-// Mirrors syncBankCommission: one auto row per month, keyed on autoCitadelShare + month, refreshed
-// whenever the revenue or rate changes — but never touches a row the admin has manually edited.
-// Returns true if anything changed (so the caller can save). (v6.577)
-function syncCitadelShare() {
-  if (!Array.isArray(state.expenses)) state.expenses = [];
-  const rawRate = Number(state.settings && state.settings.citadelRate);
-  const RATE = (isNaN(rawRate) || rawRate < 0) ? 30 : rawRate;
-  // Months that carry any citadel-eligible revenue.
-  const months = new Set();
-  for (const i of (state.invoices || [])) { if (!i.deleted) months.add(i.month || String(i.date || '').slice(0, 7)); }
+// v6.804 — the Citadel company share is NO LONGER an automatic expense (only the Bank Commission is). Rows that were auto-posted before are kept as ordinary expenses
+// (same amount, month and category, so profit and "Paid to company" do not move): the auto flag is removed and the row is now editable / deletable like any other.
+// Idempotent. Returns true if anything changed (so the caller can save).
+function releaseAutoCitadelRows() {
   let changed = false;
-  for (const ym of months) {
-    if (!ym || ym.length !== 7) continue;
-    const { grand } = citadelCompute([ym]);            // billed Football+Swimming revenue for this month
-    const auto = Math.round(grand * RATE / 100 * 100) / 100;
-    let row = state.expenses.find(e => e.autoCitadelShare && e.month === ym && !e.deleted);
-    if (auto <= 0 && !row) continue;                   // nothing to add
-    if (!row) {
-      row = {
-        id: nextId(state.expenses),
-        autoCitadelShare: true,
-        edited: false,
-        date: ym + '-01',
-        month: ym,
-        description: `Citadel company share (${RATE}% of Football + Swimming revenue)`,
-        category: CITADEL_SHARE_CATEGORY,
-        method: 'bank',
-        amount: auto,
-        citadelBase: grand,
-        citadelRate: RATE,
-      };
-      state.expenses.push(row);
-      changed = true;
-    } else if (!row.edited) {
-      if (Math.abs((row.amount || 0) - auto) > 0.001 || (row.citadelBase || 0) !== grand || (row.citadelRate || 0) !== RATE) {
-        row.amount = auto;
-        row.citadelBase = grand;
-        row.citadelRate = RATE;
-        row.method = row.method || 'bank';
-        row.category = CITADEL_SHARE_CATEGORY;
-        row.description = `Citadel company share (${RATE}% of Football + Swimming revenue)`;
-        changed = true;
-      }
-    }
+  for (const e of (state.expenses || [])) {
+    if (e && e.autoCitadelShare) { delete e.autoCitadelShare; delete e.edited; e.wasAuto = 'citadel'; changed = true; }
   }
   return changed;
 }
+function syncCitadelShare() { return releaseAutoCitadelRows(); }   // old name, kept for callers
 
 // v6.657 — the card payments behind a month's Bank Commission: SAME inclusion rule as cardPaidForMonth (so the rows add up to its total).
 function bankCardPaymentsForMonth(ym) {
@@ -19686,8 +19647,8 @@ PAGES.expenses = (main) => {
   function refresh() {
     saveFilter('expenses', filter);
     // Keep the auto Bank Commission rows up to date (card payments × the month's bank rate).
-    // Keep the auto Citadel Company Share rows up to date (Football+Swimming revenue × rate). (v6.577)
-    if ([syncBankCommission(), syncCitadelShare()].some(Boolean)) save();
+    // v6.804 — Citadel is no longer automatic: old auto rows become ordinary expenses.
+    if ([syncBankCommission(), releaseAutoCitadelRows()].some(Boolean)) save();
     // Cash collections (owner taking cash out) are tracked on their own Cash
     // Collection screen — they are NOT real expenses, so keep them off this page.
     // Reception (viewer role) does not see Rent-category expenses at all.
