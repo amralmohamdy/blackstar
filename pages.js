@@ -35233,6 +35233,161 @@ function editLamaaPackages(onDone) {
   setTimeout(() => { const more = document.getElementById('lam-pkg-more'); if (more) more.addEventListener('click', () => { const wrap = document.getElementById('lam-pkg-rows'); const div = document.createElement('div'); div.className = 'form-row lam-pkg-row'; div.style.marginBottom = '6px'; div.innerHTML = `<div class="field"><input class="lam-pkg-name" placeholder="${t('Package name', 'اسم الباقة')}" /></div><div class="field"><input class="lam-pkg-price" type="number" min="0" step="1" placeholder="${t('Price', 'السعر')}" /></div>`; wrap.appendChild(div); }); }, 0);
 }
 
+// ═════════════════════════════════════════════════════════════════
+// COURT BOOKINGS (v6.805) — a booking board for the Football Court: day timeline + week strip over the SAME rentals (state.rentals, facility 'Football Court'),
+// so invoices, payments, Due Payment, Citadel and Finance keep working exactly as before. A free slot opens the normal rental dialog pre-filled
+// (the overlap guard of saveRental still applies); a booking opens edit / collect / invoice / delete. Opening hours: state.settings.courtHours.
+// ═════════════════════════════════════════════════════════════════
+const COURT = 'Football Court';
+function courtHours() {
+  const h = (state.settings && state.settings.courtHours) || {};
+  const ok = s => /^\d{2}:\d{2}$/.test(String(s || ''));
+  return { open: ok(h.open) ? h.open : '06:00', close: ok(h.close) ? h.close : '24:00' };
+}
+const cbMin = s => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || '')); return m ? (+m[1]) * 60 + (+m[2]) : null; };
+const cbClock = n => { n = Math.max(0, Math.round(n)); const h = Math.floor(n / 60) % 24, m = n % 60; return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0'); };
+function courtBookingsOn(date) { return (state.rentals || []).filter(r => r && r.facility === COURT && r.date === date); }
+function courtBookingDue(r) { const inv = (typeof rentalInvoiceFor === 'function') ? rentalInvoiceFor(r) : null; return inv && typeof invoiceBalance === 'function' ? Math.round(invoiceBalance(inv) * 100) / 100 : 0; }
+// side-by-side lanes for bookings that overlap (older records can)
+function courtLanes(list) {
+  const sorted = list.slice().sort((x, y) => cbMin(x.startTime) - cbMin(y.startTime)), laneEnd = [], out = [];
+  for (const r of sorted) {
+    const s = cbMin(r.startTime), e = s + Math.round((r.hours || 1) * 60);
+    let l = laneEnd.findIndex(end => end <= s); if (l < 0) { l = laneEnd.length; laneEnd.push(0); }
+    laneEnd[l] = e; out.push({ r, s, e, l });
+  }
+  out.forEach(o => { o.lanes = laneEnd.length; });
+  return out;
+}
+window._cb = window._cb || { date: null, view: 'day' };
+PAGES.courtbookings = (main) => {
+  const S = window._cb; if (!S.date) S.date = TODAY;
+  const money = !isViewerRole();   // reception sees the board and books, not the money
+  const addDays_ = (d, n) => addDays(d, n);
+  const dow = d => new Date(d + 'T12:00:00').getDay();
+  const weekStart = d => addDays_(d, -dow(d));   // Sunday
+  const dayName = d => new Date(d + 'T12:00:00').toLocaleDateString(getLang() === 'ar' ? 'ar' : 'en', { weekday: 'short' });
+  const timed = list => list.filter(r => cbMin(r.startTime) != null);
+  const sum = list => ({ n: list.length, hours: list.reduce((s, r) => s + (Number(r.hours) || 0), 0), amount: list.reduce((s, r) => s + (Number(r.amount) || 0), 0), due: Math.round(list.reduce((s, r) => s + courtBookingDue(r), 0) * 100) / 100 });
+  const pickSlot = (date, start) => addRental(() => render(), { facility: COURT, date, startTime: start, hours: 1 });
+
+  function dayHtml() {
+    const date = S.date, list = courtBookingsOn(date), tm = timed(list), untimed = list.filter(r => cbMin(r.startTime) == null);
+    const H = courtHours(); let open = cbMin(H.open), close = cbMin(H.close);
+    for (const r of tm) { open = Math.min(open, Math.floor(cbMin(r.startTime) / 60) * 60); close = Math.max(close, Math.ceil((cbMin(r.startTime) + Math.round((r.hours || 1) * 60)) / 60) * 60); }
+    const ROW = 56, rows = Math.max(1, Math.round((close - open) / 60)), height = rows * ROW;
+    const lanes = courtLanes(tm), sm = sum(list), openMin = cbMin(H.open), closeMin = cbMin(H.close);
+    const free = Math.max(0, (closeMin - openMin) / 60 - sm.hours);
+    const kpi = (label, value, sub, color) => `<div class="kpi${color ? ' ' + color : ''}"><div class="kpi-label">${label}</div><div class="kpi-value num">${value}</div>${sub ? `<div class="kpi-sub">${sub}</div>` : ''}</div>`;
+    const grid = Array.from({ length: rows }, (_, i) => { const m = open + i * 60, hh = cbClock(m); return `<div class="cb-row" data-slot="${hh}" style="position:absolute;left:0;right:0;top:${i * ROW}px;height:${ROW}px;border-top:1px solid var(--border);cursor:pointer" title="${t('Book', 'احجز')} ${hh}"><span class="text-mute" style="position:absolute;left:6px;top:4px;font-size:11px">${hh}</span></div>`; }).join('');
+    const blocks = lanes.map(o => {
+      const r = o.r, due = courtBookingDue(r), top = (o.s - open) / 60 * ROW, h = Math.max(24, (o.e - o.s) / 60 * ROW - 3), w = 100 / o.lanes;
+      const col = due > 0.5 ? 'var(--red)' : 'var(--green)';
+      return `<div class="cb-block" data-id="${r.id}" style="position:absolute;left:calc(58px + (100% - 64px) * ${o.l / o.lanes});width:calc((100% - 64px) * ${1 / o.lanes} - 3px);top:${top}px;height:${h}px;box-sizing:border-box;padding:4px 8px;border-radius:8px;border:1px solid ${col};border-left:4px solid ${col};background:color-mix(in srgb, ${col} 12%, var(--surface));overflow:hidden;cursor:pointer;font-size:12px;line-height:1.35">
+        <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${cbClock(o.s)}–${cbClock(o.e)} · ${escapeHtml(r.customerName || '—')}</div>
+        <div class="text-mute" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.customerPhone ? escapeHtml(r.customerPhone) : ''}${money ? ' · ' + fmt(r.amount || 0) + ' QAR' : ''}${due > 0.5 ? (money ? ' · ⏳ ' + fmt(due) + ' ' + t('due', 'متبقي') : ' · ⏳ ' + t('unpaid', 'غير مدفوع')) : ''}</div>
+      </div>`;
+    }).join('');
+    const nowLine = (date === TODAY) ? (() => { const n = new Date(), m = n.getHours() * 60 + n.getMinutes(); return (m >= open && m <= close) ? `<div id="cb-now" style="position:absolute;left:52px;right:0;top:${(m - open) / 60 * ROW}px;border-top:2px solid var(--accent);z-index:2;pointer-events:none"></div>` : ''; })() : '';
+    return `
+      <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:14px">
+        ${kpi('⚽ ' + t('Bookings', 'الحجوزات'), sm.n, '', 'green')}
+        ${kpi('⏱ ' + t('Hours booked', 'ساعات محجوزة'), sm.hours + 'h', t('free', 'متاح') + ' ' + (Math.round(free * 10) / 10) + 'h', 'blue')}
+        ${money ? kpi('💰 ' + t('Billed', 'المفوتر'), fmt(sm.amount), 'QAR', '') : ''}
+        ${money ? kpi('⏳ ' + t('Due', 'متبقي'), fmt(sm.due), sm.due > 0.5 ? t('to collect', 'للتحصيل') : '✓', sm.due > 0.5 ? 'orange' : '') : ''}
+      </div>
+      ${untimed.length ? `<div class="card" style="margin-bottom:12px;padding:10px 12px"><div class="text-mute" style="font-size:11px;margin-bottom:6px">${t('No start time recorded', 'بدون وقت بدء')} (${untimed.length}) — ${t('open one to add the time', 'افتح الحجز لإضافة الوقت')}</div><div style="display:flex;gap:6px;flex-wrap:wrap">${untimed.map(r => `<button class="btn ghost sm cb-block" data-id="${r.id}">${escapeHtml(r.customerName || '—')} · ${r.hours || 1}h${courtBookingDue(r) > 0.5 ? ' ⏳' : ''}</button>`).join('')}</div></div>` : ''}
+      <div class="card" style="padding:8px 8px 12px"><div id="cb-board" style="position:relative;height:${height}px;margin-top:4px">${grid}${blocks}${nowLine}</div></div>`;
+  }
+  function weekHtml() {
+    const ws = weekStart(S.date), days = Array.from({ length: 7 }, (_, i) => addDays_(ws, i));
+    const all = days.flatMap(d => courtBookingsOn(d)), tot = sum(all);
+    return `<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:14px">
+        <div class="kpi green"><div class="kpi-label">⚽ ${t('Bookings this week', 'حجوزات الأسبوع')}</div><div class="kpi-value num">${tot.n}</div></div>
+        <div class="kpi blue"><div class="kpi-label">⏱ ${t('Hours booked', 'ساعات محجوزة')}</div><div class="kpi-value num">${tot.hours}h</div></div>
+        ${money ? `<div class="kpi"><div class="kpi-label">💰 ${t('Billed', 'المفوتر')}</div><div class="kpi-value num">${fmt(tot.amount)}</div><div class="kpi-sub">QAR</div></div><div class="kpi${tot.due > 0.5 ? ' orange' : ''}"><div class="kpi-label">⏳ ${t('Due', 'متبقي')}</div><div class="kpi-value num">${fmt(tot.due)}</div></div>` : ''}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">${days.map(d => {
+        const l = courtBookingsOn(d).sort((x, y) => (cbMin(x.startTime) ?? 9999) - (cbMin(y.startTime) ?? 9999)), s = sum(l);
+        return `<div class="card cb-day" data-date="${d}" style="cursor:pointer;padding:10px 12px;${d === TODAY ? 'border:2px solid var(--accent)' : ''}">
+          <div style="display:flex;justify-content:space-between;align-items:baseline"><b>${dayName(d)} ${d.slice(8)}</b><span class="text-mute" style="font-size:11px">${s.n ? s.n + ' · ' + s.hours + 'h' : t('free', 'متاح')}</span></div>
+          ${l.slice(0, 6).map(r => `<div style="font-size:11px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${courtBookingDue(r) > 0.5 ? 'color:var(--red)' : ''}">${r.startTime ? escapeHtml(r.startTime) + ' ' : ''}${escapeHtml(r.customerName || '—')} · ${r.hours || 1}h</div>`).join('')}
+          ${l.length > 6 ? `<div class="text-mute" style="font-size:11px">+${l.length - 6}</div>` : ''}
+          ${money && s.due > 0.5 ? `<div style="font-size:11px;color:var(--red);font-weight:700;margin-top:4px">⏳ ${fmt(s.due)}</div>` : ''}
+        </div>`; }).join('')}</div>`;
+  }
+  function openBooking(id) {
+    const r = (state.rentals || []).find(x => x && x.id === id); if (!r) return;
+    const due = courtBookingDue(r), inv = (typeof rentalInvoiceFor === 'function') ? rentalInvoiceFor(r) : null, s = cbMin(r.startTime), e = s != null ? s + Math.round((r.hours || 1) * 60) : null;
+    showModal({
+      title: '⚽ ' + t('Court booking', 'حجز الملعب'),
+      body: `<div style="font-size:14px;line-height:1.8">
+        <div style="font-weight:700;font-size:16px">${escapeHtml(r.customerName || '—')}</div>
+        ${r.customerPhone ? `<div class="text-dim">📱 ${phoneCell(r.customerPhone)}</div>` : ''}
+        <div>📅 ${fmtDate(r.date)}${s != null ? ' · ' + cbClock(s) + '–' + cbClock(e) : ' · ' + t('no start time', 'بدون وقت بدء')} · ${r.hours || 1}h</div>
+        ${money ? `<div>💰 ${fmt(r.amount || 0)} QAR${due > 0.5 ? ` · <b style="color:var(--red)">⏳ ${fmt(due)} ${t('due', 'متبقي')}</b>` : ' · <span style="color:var(--green)">✓ ' + t('paid', 'مدفوع') + '</span>'}</div>` : (due > 0.5 ? `<div style="color:var(--red)">⏳ ${t('unpaid', 'غير مدفوع')}</div>` : '')}
+        ${r.notes ? `<div class="text-mute">📝 ${escapeHtml(r.notes)}</div>` : ''}</div>`,
+      actions: [
+        { label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal },
+        ...(money && due > 0.5 ? [{ label: '💵 ' + t('Collect', 'تحصيل') + ' ' + fmt(due), class: 'btn primary', onclick: () => { closeModal(); collectRental(r.id); } }] : []),
+        ...(money && inv ? [{ label: '📄 ' + t('Invoice', 'الفاتورة'), class: 'btn ghost', onclick: () => { closeModal(); printInvoicePDF(inv.id); } }] : []),
+        ...(money ? [{ label: '🗑 ' + t('Cancel booking', 'إلغاء الحجز'), class: 'btn ghost', onclick: () => { closeModal(); deleteRental(r.id); } }] : []),
+        { label: '✏️ ' + t('Edit', 'تعديل'), class: 'btn primary', onclick: () => { closeModal(); editRental(r.id); } },
+      ],
+    });
+  }
+  function hoursDialog() {
+    const H = courtHours();
+    showModal({
+      title: '⚙ ' + t('Court opening hours', 'ساعات عمل الملعب'),
+      body: `<div class="form-row"><div class="field"><label>${t('Opens', 'يفتح')}</label><input type="time" id="cb-open" value="${H.open}" /></div><div class="field"><label>${t('Closes', 'يغلق')}</label><input type="time" id="cb-close" value="${H.close === '24:00' ? '23:59' : H.close}" /></div></div><div class="text-mute" style="font-size:12px">${t('Only changes the rows shown on the board — nothing is blocked.', 'يغيّر الصفوف المعروضة فقط — لا شيء يُمنع.')}</div>`,
+      actions: [
+        { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
+        { label: '✓ ' + t('Save', 'حفظ'), class: 'btn primary', onclick: () => {
+          const o = ($('#cb-open') || {}).value || '06:00'; let c = ($('#cb-close') || {}).value || '24:00'; if (c === '23:59') c = '24:00';
+          if (cbMin(o) == null || (c !== '24:00' && cbMin(c) == null) || (c === '24:00' ? 1440 : cbMin(c)) <= cbMin(o)) { toast(t('Closing must be after opening', 'يجب أن يكون الإغلاق بعد الافتتاح'), 'error'); return; }
+          if (!state.settings) state.settings = {}; state.settings.courtHours = { open: o, close: c };
+          closeModal(); save(); render();
+        } },
+      ],
+    });
+  }
+
+  function paint() {
+    const date = S.date, step = S.view === 'week' ? 7 : 1;
+    const label = S.view === 'week' ? (fmtDate(weekStart(date)) + ' – ' + fmtDate(addDays_(weekStart(date), 6))) : (dayName(date) + ' · ' + fmtDate(date));
+    main.innerHTML = `
+      <div class="topbar">
+        <div><h1>⚽ ${t('Court Bookings', 'حجوزات ملعب كرة القدم')}</h1><div class="subtitle">${t('Football Court', 'ملعب كرة القدم')} · ${courtHours().open}–${courtHours().close}</div></div>
+        <div class="topbar-actions">
+          ${currentRole() === 'admin' ? `<button class="btn ghost" id="cb-hours" title="${t('Opening hours', 'ساعات العمل')}">⚙</button>` : ''}
+          <button class="btn ghost" id="cb-rentals" title="${t('The full rentals list', 'قائمة الإيجارات الكاملة')}">📋 ${t('All rentals', 'كل الإيجارات')}</button>
+          <button class="btn primary" id="cb-new">+ ${t('New booking', 'حجز جديد')}</button>
+        </div>
+      </div>
+      <div class="card" style="margin-bottom:14px;padding:10px 12px"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn ghost sm" id="cb-prev">◀</button><button class="btn ghost sm" id="cb-today">${t('Today', 'اليوم')}</button><button class="btn ghost sm" id="cb-next">▶</button>
+        <input type="date" id="cb-date" value="${date}" style="max-width:160px" />
+        <b style="margin:0 8px">${label}</b>
+        <span style="margin-inline-start:auto;display:flex;gap:6px"><button class="btn sm ${S.view === 'day' ? 'primary' : 'ghost'}" id="cb-vday">${t('Day', 'يوم')}</button><button class="btn sm ${S.view === 'week' ? 'primary' : 'ghost'}" id="cb-vweek">${t('Week', 'أسبوع')}</button></span>
+      </div></div>
+      ${S.view === 'week' ? weekHtml() : dayHtml()}`;
+    const go = d => { S.date = d; paint(); };
+    $('#cb-prev').onclick = () => go(addDays_(S.date, -step)); $('#cb-next').onclick = () => go(addDays_(S.date, step)); $('#cb-today').onclick = () => go(TODAY);
+    $('#cb-date').onchange = e => { if (e.target.value) go(e.target.value); };
+    $('#cb-vday').onclick = () => { S.view = 'day'; paint(); }; $('#cb-vweek').onclick = () => { S.view = 'week'; paint(); };
+    $('#cb-new').onclick = () => addRental(() => render(), { facility: COURT, date: S.date, hours: 1 });
+    $('#cb-rentals').onclick = () => navigate('rentals');
+    const hb = $('#cb-hours'); if (hb) hb.onclick = hoursDialog;
+    main.querySelectorAll('.cb-row').forEach(el => el.addEventListener('click', e => { if (e.target.closest('.cb-block')) return; pickSlot(S.date, el.dataset.slot); }));
+    main.querySelectorAll('.cb-block').forEach(el => el.addEventListener('click', e => { e.stopPropagation(); openBooking(+el.dataset.id); }));
+    main.querySelectorAll('.cb-day').forEach(el => el.addEventListener('click', () => { S.date = el.dataset.date; S.view = 'day'; paint(); }));
+    // bring the current time (today) or the first booking of the day into view — the early rows are usually empty
+    if (S.view === 'day') { const tg = main.querySelector('#cb-now') || main.querySelector('#cb-board .cb-block'); if (tg && tg.scrollIntoView) tg.scrollIntoView({ block: 'center' }); }
+  }
+  paint();
+};
+
 PAGES.rentals = (main) => {
   let filter = { search: '', facility: 'all', months: [] };
   const pg = makePager(10);
@@ -35631,10 +35786,10 @@ function wireRentalForm() {
   recalc();
 }
 
-function addRental(onDone) {
+function addRental(onDone, prefill) {   // v6.805 — `prefill` = { facility, date, startTime, hours } from the Court Bookings board
   showModal({
     title: '🏟 New Rental Booking',
-    body: rentalFormHtml({ date: TODAY, hours: 1, method: 'cash' }),
+    body: rentalFormHtml(Object.assign({ date: TODAY, hours: 1, method: 'cash' }, prefill || {})),
     actions: [
       { label: 'Cancel', class: 'btn ghost', onclick: closeModal },
       { label: '💾 Save & Create Invoice', class: 'btn primary', onclick: () => saveRental(null, onDone) },
