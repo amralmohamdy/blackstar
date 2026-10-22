@@ -235,11 +235,12 @@ function _privTagHtml(priv, plain) {
     ? `<div style="margin-top:2px"><span style="display:inline-block;background:#f3e8ff;color:#7c3aed;border:1px solid #d8b4fe;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700;line-height:1.4">🔒 ${txt}</span></div>`
     : `<div style="margin-top:2px"><span class="badge" style="font-size:9px;padding:1px 6px;background:rgba(139,92,246,.14);color:#7c3aed;font-weight:700">🔒 ${txt}</span></div>`;
 }
-function _privBonusNote(l, plain, coachPct, allPriv) {
+function _privBonusNote(l, plain, coachPct, allPriv, comm) {   // v6.808 — `comm` = the commission shown in the cell: the note adds the coach's TOTAL (commission + private extra)
   if (!l || l._dupIgnored || !(Number(l.price) > 0)) return '';
   const pct = (typeof privateBonusPct === 'function') ? privateBonusPct() : 10;
-  if (l.priv === 'coach') return `<div style="font-size:9px;font-weight:600;color:#7c3aed">+${fmt(l.price * (coachPct != null ? coachPct : pct) / 100)} private bonus</div>`;
-  if (l.priv === 'reception') return `<div style="font-size:9px;font-weight:600;color:#7c3aed">${allPriv ? '+' + fmt(l.price * (coachPct != null ? coachPct : pct) / 100) + ' private bonus · ' : ''}${pct}% to reception (${fmt(l.price * pct / 100)})</div>`;   // v6.806 — the coach's extra too
+  const ex = l.price * (coachPct != null ? coachPct : pct) / 100, tot = (comm != null && isFinite(comm)) ? ' → ' + (typeof t === 'function' ? t('coach total', 'إجمالي المدرب') : 'coach total') + ' ' + fmt(comm + ex) : '';
+  if (l.priv === 'coach') return `<div style="font-size:9px;font-weight:600;color:#7c3aed">+${fmt(ex)} private bonus${tot}</div>`;
+  if (l.priv === 'reception') return `<div style="font-size:9px;font-weight:600;color:#7c3aed">${allPriv ? '+' + fmt(ex) + ' private bonus' + tot + ' · ' : ''}${pct}% to reception (${fmt(l.price * pct / 100)}) ${allPriv ? (typeof t === 'function' ? t('— separate, not from the coach', '— منفصلة، ليست من المدرب') : '— separate, not from the coach') : ''}</div>`;   // v6.806/808 — the coach's extra too, and the coach's total
   return '';
 }
 // Pending (paid, not yet attended) row: the private bonus is earned as the classes are attended, so say so.
@@ -5432,8 +5433,8 @@ window.editCoach = function(id, defaultRole) {
 // ═══════════════════════════════════════════════════════════════════
 PAGES.campschedule = (main) => {
   const CAMP = activeCampSport();
-  const SKEY = (CAMP === WINTER_CAMP) ? 'winterCampSchedule' : 'campSchedule';
-  const SROUTE = (CAMP === WINTER_CAMP) ? 'winterschedule' : 'campschedule';
+  const SKEY = campScheduleKey(CAMP);
+  const SROUTE = campScheduleRoute(CAMP);
   if (!state[SKEY] || !state[SKEY].days) state[SKEY] = defaultCampSchedule(CAMP);
   const cs = state[SKEY];
   const groups = CAMP_GROUPS;
@@ -5496,7 +5497,7 @@ PAGES.campschedule = (main) => {
   main.innerHTML = `
     <div class="topbar">
       <div>
-        <h1>${CAMP === WINTER_CAMP ? '❄️' : '☀️'} ${escapeHtml(CAMP)} Schedule</h1>
+        <h1>${campIcon(CAMP)} ${escapeHtml(CAMP)} Schedule</h1>
         <div class="subtitle">Black Stars Academy · Sun–Thu · ${escapeHtml(fmtDate(cs.startDate))} – ${escapeHtml(fmtDate(cs.endDate))}</div>
       </div>
       <div class="topbar-actions">
@@ -7687,7 +7688,7 @@ window.editCampMember = function(id) {
   // Latest Summer-Camp invoice for this member — that is where price/paid live,
   // so editing them here keeps the books and the outstanding balance in sync.
   const campInv = (state.invoices || [])
-    .filter(i => i.customerId === m.id && !i.deleted && ((isCampSport(i.sport)) || (i.lineItems || []).some(li => isCampSport(li.sport))))
+    .filter(i => i.customerId === m.id && !i.deleted && (i.sport === campSport || (i.lineItems || []).some(li => li.sport === campSport)))   // v6.807 — THIS camp's invoice
     .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
   const driverList = (state.drivers || []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   const curDiscount = campInv ? (campInv.discount || 0) : 0;
@@ -7798,15 +7799,15 @@ window.editCampMember = function(id) {
             customerId: m.id,
             customerType: 'member',
             category: 'Membership',
-            sport: SUMMER_CAMP + (picked ? ' · ' + picked.label : ''),
-            description: SUMMER_CAMP + (picked ? ' · ' + picked.label : ''),
+            sport: campSport + (picked ? ' · ' + picked.label : ''),
+            description: campSport + (picked ? ' · ' + picked.label : ''),
             date: campPayDate,
             month: campPayMonth,
             amount: net,
             discount: disc,
             amountPaid: paid,
             method: paid > 0 ? 'cash' : '',
-            lineItems: [{ sport: SUMMER_CAMP, price: net, classes: picked ? campClassCount(picked.days) : null, durationLabel: picked ? picked.label : null }],
+            lineItems: [{ sport: campSport, price: net, classes: picked ? campClassCount(picked.days) : null, durationLabel: picked ? picked.label : null }],
             payments: paid > 0 ? [{ amount: paid, date: campPayDate, month: campPayMonth, method: 'cash' }] : [],
           };
           state.invoices.push(inv);
@@ -7830,8 +7831,8 @@ window.editCampMember = function(id) {
           // Refresh description + sport label so the receipt reads e.g.
           // "Summer Camp · 1 month" after the admin upgrades from 1 week.
           if (picked) {
-            inv.description = SUMMER_CAMP + ' · ' + picked.label;
-            inv.sport = SUMMER_CAMP + ' · ' + picked.label;
+            inv.description = campSport + ' · ' + picked.label;
+            inv.sport = campSport + ' · ' + picked.label;
           }
         }
         if (typeof audit === 'function') audit('member.update', 'member:' + m.id, 'camp edit: ' + label + ', price ' + price + ', paid ' + paid + ', due ' + (net - paid));
@@ -9271,7 +9272,7 @@ window.fixCampValidity = function () {
 
 PAGES.campmembers = (main) => {
   const CAMP = activeCampSport();
-  const campAr = CAMP === WINTER_CAMP ? 'المعسكر الشتوي' : 'المعسكر الصيفي';
+  const campAr = campNameAr(CAMP);
   const isCamp = m => m && !m.deleted && (m.sport === CAMP || (m.enrollments || []).some(e => e.sport === CAMP) || (m.subscriptions || []).some(s => s.activity === CAMP));
   const allCamp = state.members.filter(isCamp).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   const drivers = (state.drivers || []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -9385,10 +9386,13 @@ PAGES.campmembers = (main) => {
     </tr>`;
   }).join('') : `<tr><td colspan="11" style="padding:20px;text-align:center" class="text-mute">${filtersOn ? t('No members match the filters', 'لا يوجد أعضاء يطابقون المرشحات') : ('No members are enrolled in ' + CAMP + ' yet.')}</td></tr>`;
 
+  // v6.807 — registrations entered as "Winter Camp" before the real winter camp (1 Dec) belong to the Autumn Camp: one admin button moves them
+  const _early = (currentRole() === 'admin' && (CAMP === AUTUMN_CAMP || CAMP === WINTER_CAMP) && typeof winterToAutumnCandidates === 'function') ? winterToAutumnCandidates() : [];
+  const _moveBanner = _early.length ? `<div class="card" style="margin-bottom:14px;padding:12px 14px;border:1px solid rgba(217,119,6,.5);background:rgba(245,158,11,.10)"><div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><div style="flex:1;min-width:240px;font-size:13px;line-height:1.6">🍂 <b>${_early.length}</b> ${t('registration(s) were entered as Winter Camp but start before ' + fmtDate(winterCampFrom()) + ' — they belong to the Autumn Camp', 'تسجيل مدخل كمعسكر شتوي لكنه يبدأ قبل ' + fmtDate(winterCampFrom()) + ' — مكانه معسكر الخريف')}: ${_early.slice(0, 6).map(x => escapeHtml(x.m.name)).join(' · ')}${_early.length > 6 ? ' …' : ''}</div><button class="btn primary" id="camp-move-autumn">🍂 ${t('Move to Autumn Camp', 'نقل إلى معسكر الخريف')}</button></div></div>` : '';
   main.innerHTML = `
     <div class="topbar">
       <div>
-        <h1>🚌 ${t('Camp Members', 'أعضاء المعسكر')}</h1>
+        <h1>${campIcon(CAMP)} ${t('Camp Members', 'أعضاء المعسكر')} · ${escapeHtml(CAMP)}</h1>
         <div class="subtitle">${list.length} ${t('of', 'من')} ${allCamp.length} ${t('Everyone enrolled in ' + CAMP, 'كل المسجّلين في ' + campAr)}</div>
       </div>
       <div class="topbar-actions">
@@ -9397,6 +9401,7 @@ PAGES.campmembers = (main) => {
         ${currentRole() === 'admin' ? `<button class="btn ghost" id="campmem-fixvalidity" title="${t('Recompute every Summer Camp end date to the correct class-days (Sun–Thu); previews changes before applying', 'إعادة حساب تواريخ انتهاء المعسكر لأيام الحصص الصحيحة (الأحد–الخميس)؛ يعرض التغييرات قبل التطبيق')}">🛠 ${t('Fix camp dates', 'تصحيح تواريخ المعسكر')}</button>` : ''}
       </div>
     </div>
+    ${_moveBanner}
     <div class="kpi-grid" style="grid-template-columns:repeat(${(gUnk > 0 ? 5 : 4) + 1},1fr);gap:10px;margin-bottom:16px">
       <div class="kpi"><div class="kpi-label">${t('Camp members', 'أعضاء المعسكر')}</div><div class="kpi-value num">${list.length}</div><div class="kpi-sub">🚌 ${withTransport} ${t('with transport', 'مع نقل')}</div></div>
       <div class="kpi" style="border-color:var(--red);background:rgba(239,68,68,.06);cursor:pointer" onclick="window._campFilter={...window._campFilter,expiring:window._campFilter.expiring==='soon'?'all':'soon'};render()" title="${t('Active camp members expiring within 7 days', 'أعضاء المعسكر النشطون الذين ينتهي اشتراكهم خلال 7 أيام')}"><div class="kpi-label" style="color:var(--red)">⏳ ${t('Expiring soon', 'ينتهي قريباً')}</div><div class="kpi-value num" style="color:var(--red)">${expiringSoonCount}</div><div class="kpi-sub">${f.expiring === 'soon' ? '✓ ' + t('filtered', 'مُصفّى') : t('≤ 7 days · click to filter', '≤ 7 أيام · اضغط للتصفية')}</div></div>
@@ -9477,6 +9482,20 @@ PAGES.campmembers = (main) => {
 
   const remindAllBtn = $('#campmem-remind-all');
   if (remindAllBtn) remindAllBtn.addEventListener('click', () => campRemindAll());
+  const moveAutumnBtn = $('#camp-move-autumn');   // v6.807
+  if (moveAutumnBtn) moveAutumnBtn.addEventListener('click', () => {
+    const list = winterToAutumnCandidates();
+    if (!list.length) return;
+    const names = list.map(x => '• ' + x.m.name).join('\n');
+    if (!confirm(t('Move ' + list.length + ' camp registration(s) from Winter Camp to Autumn Camp?\n\n' + names + '\n\nOnly the camp name changes (package, invoice lines and labels, attendance). Prices, payments and dates stay.', 'نقل ' + list.length + ' تسجيل من المعسكر الشتوي إلى معسكر الخريف؟\n\n' + names + '\n\nيتغير اسم المعسكر فقط (الباقة وبنود الفاتورة والحضور). الأسعار والدفعات والتواريخ كما هي.'))) return;
+    const ids = list.map(x => x.m.id), r = moveWinterToAutumn();
+    if (typeof audit === 'function') audit('camp.winter_to_autumn', 'members', 'Moved ' + r.members + ' camp registration(s) from Winter Camp to Autumn Camp', r);
+    const inv = (state.invoices || []).filter(i => ids.includes(i.customerId) && (i.lineItems || []).some(l => l.sport === AUTUMN_CAMP));
+    const done = () => { if (state.route === 'autumnmembers') render(); else navigate('autumnmembers'); };
+    done();   // show the moved list at once; the cloud confirmation follows
+    if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: ids.map(id => ({ collection: 'members', id })).concat(inv.map(i => ({ collection: 'invoices', id: i.id }))), okMsg: t('Moved to Autumn Camp', 'تم النقل إلى معسكر الخريف'), afterOk: done });
+    else { save(); done(); }
+  });
   const fixValBtn = $('#campmem-fixvalidity');
   if (fixValBtn) fixValBtn.addEventListener('click', () => { try { window.fixCampValidity(); } catch (_) {} });
   const expBtn = $('#campmem-export');
@@ -9669,6 +9688,10 @@ PAGES.camproutes = (main) => {
 };
 
 // v6.644 — Winter Camp reuses the Summer Camp screens; each resolves activeCampSport() from the route.
+PAGES.autumnschedule = (main) => PAGES.campschedule(main);   // v6.807
+PAGES.autumnmembers  = (main) => PAGES.campmembers(main);
+PAGES.autumndrivers  = (main) => PAGES.campdrivers(main);
+PAGES.autumnroutes   = (main) => PAGES.camproutes(main);
 PAGES.winterschedule = (main) => PAGES.campschedule(main);
 PAGES.wintermembers  = (main) => PAGES.campmembers(main);
 PAGES.winterdrivers  = (main) => PAGES.campdrivers(main);
@@ -10323,6 +10346,7 @@ PAGES.payanalysis = (main) => {
     const mkActivity = (sport) => {
       const a = sport || baseActivity;
       const group = (String(a).indexOf(WINTER_CAMP) === 0 || a === WINTER_CAMP) ? WINTER_CAMP
+        : (String(a).indexOf(AUTUMN_CAMP) === 0 || a === AUTUMN_CAMP) ? AUTUMN_CAMP
         : (isCampSport(a) || String(a).indexOf(SUMMER_CAMP) === 0) ? SUMMER_CAMP : a;
       return { activity: a, activityGroup: group };
     };
@@ -12898,7 +12922,7 @@ function invoicePaymentDates(i) {
 }
 PAGES.invoices = (main) => {
   // Treat every "Summer Camp · <duration>" variant as Summer Camp for filtering.
-  const _isCampActivity = s => typeof s === 'string' && (isCampSport(s) || s.indexOf(SUMMER_CAMP) === 0 || s.indexOf(WINTER_CAMP) === 0);
+  const _isCampActivity = s => typeof s === 'string' && (isCampSport(s) || s.indexOf(SUMMER_CAMP) === 0 || s.indexOf(AUTUMN_CAMP) === 0 || s.indexOf(WINTER_CAMP) === 0);
   let filter = loadFilter('invoices', { search: '', months: [(TODAY || '').slice(0, 7)].filter(Boolean), day: '', from: '', to: '', method: 'all', sport: 'all', coach: 'all', category: 'all' });
   // Migrate any legacy single-month filter ({month:'YYYY-MM'|'all'}) to the array form.
   if (!Array.isArray(filter.months)) filter.months = (filter.month && filter.month !== 'all') ? [filter.month] : [];
@@ -21625,7 +21649,7 @@ window.showRevenueDetail = function(coachId, monthKey) {
                 <td style="padding:6px 8px;border-top:1px solid var(--border)">${escapeHtml(l.sport || '—')}${_privTagHtml(l.priv)}</td>
                 <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace;color:var(--text-dim)">${(l.fee != null && isFinite(l.fee)) ? fmt(l.fee) : '—'}</td>
                 <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace;color:${l.price < 0 ? 'var(--red)' : 'var(--text)'}">${fmt(l.price)}</td>
-                <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace;font-weight:600;color:${l.price < 0 ? 'var(--red)' : 'var(--text)'}">${fmt(l.price * pay.commissionRate / 100)}${_privBonusNote(l, false, pay.privateBonusPct, pay.privateExtraAll)}</td>
+                <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace;font-weight:600;color:${l.price < 0 ? 'var(--red)' : 'var(--text)'}">${fmt(l.price * pay.commissionRate / 100)}${_privBonusNote(l, false, pay.privateBonusPct, pay.privateExtraAll, l.price * pay.commissionRate / 100)}</td>
               </tr>
             `).join('') : '<tr><td colspan="5" style="padding:18px;text-align:center;color:var(--text-mute)">No commission-generating revenue this month</td></tr>'}
           </tbody>
@@ -21890,7 +21914,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
               <td style="font-size:11px">${escapeHtml(l.status || '—')}</td>
               ${ctCell(l)}
               <td class="num ${l.price < 0 ? 'neg' : ''}">${l._dupIgnored ? `<span style="text-decoration:line-through;color:#c0c0c0">${fmt(l._origAmount || 0)}</span> → <b>0</b>` : fmt(l.price)}${l.prorated ? `<div style="color:#999;font-size:9px">of ${fmt(l.fee)} · ${l.attended}/${l.total} attended</div>` : ''}</td>
-              <td class="num ${l.price < 0 ? 'neg' : ''}" style="font-weight:700">${l._dupIgnored ? '<b>0</b>' : fmt(l.price * rate / 100)}${_privBonusNote(l, true, pay.privateBonusPct, pay.privateExtraAll)}</td>
+              <td class="num ${l.price < 0 ? 'neg' : ''}" style="font-weight:700">${l._dupIgnored ? '<b>0</b>' : fmt(l.price * rate / 100)}${_privBonusNote(l, true, pay.privateBonusPct, pay.privateExtraAll, l.price * rate / 100)}</td>
             </tr>`;
             const grand = lines.reduce((s, l) => s + l.price, 0);
             const grandRow = (label) => `<tr style="background:#f5f5f7;font-weight:700"><td colspan="7">${label}</td><td class="num">${fmt(grandCourse)}</td><td class="num">${fmt(grand)}</td><td class="num">${fmt(grand * rate / 100)}</td></tr>`;
@@ -22916,10 +22940,21 @@ PAGES.sports = (main) => {
       </div>
       <div id="winter-prices-body" style="padding:14px"></div>
     </div>
+
+    <div class="card" style="margin-top:14px">
+      <div class="card-header">
+        <div>
+          <div class="card-title">🍂 Autumn Camp Pricing</div>
+          <div class="card-subtitle">Separate price table for the Autumn Camp. Same durations, its own prices.</div>
+        </div>
+      </div>
+      <div id="autumn-prices-body" style="padding:14px"></div>
+    </div>
   `;
   refresh();
   refreshCampPrices('summerCampPrices', 'camp-prices-body', 'Summer Camp');
   refreshCampPrices('winterCampPrices', 'winter-prices-body', 'Winter Camp');
+  refreshCampPrices('autumnCampPrices', 'autumn-prices-body', 'Autumn Camp');   // v6.807
 
   function refreshCampPrices(KEY, BODY_ID, CAMP_NAME) {
     const body = $('#' + BODY_ID);
@@ -25070,13 +25105,13 @@ PAGES.attendance = (main) => {
         // window, so a renewed camp member isn't flagged "over limit" by a previous
         // cycle's days.
         const sub = (typeof subForAttendanceDate === 'function')
-          ? subForAttendanceDate(m, SUMMER_CAMP, `${gMonth}-15`)
+          ? subForAttendanceDate(m, sport, `${gMonth}-15`)
           : (m.subscriptions || []).filter(s => isCampSport((s.activity || ''))).slice(-1)[0];
         campLimit = sub ? (parseInt(sub.totalClasses) || 0) : 0;
         if (campLimit > 0 && typeof liveAttendanceCount === 'function') {
           // v6.399: corrected window, so the camp over-cap agrees with the popup + member card.
           const _cw = (sub && typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, sub) : { from: sub ? (sub.start || null) : null, to: sub ? (sub.end || null) : null };
-          campMarked = liveAttendanceCount(m, SUMMER_CAMP, _cw.from, _cw.to).y || 0;
+          campMarked = liveAttendanceCount(m, sport, _cw.from, _cw.to).y || 0;
           campOver = campMarked >= campLimit;
         }
       }
@@ -36579,7 +36614,7 @@ function _campClosureRow(m) {
   if (!sub) return null;
   const total = (typeof subClassLimit === 'function') ? (parseInt(subClassLimit(sub)) || 0) : (parseInt(sub.totalClasses) || 0);
   const win = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, sub) : { from: sub.start || null, to: sub.end || null };
-  const live = (typeof liveAttendanceCount === 'function') ? liveAttendanceCount(m, SUMMER_CAMP, win.from, win.to) : { y: 0, total: 0 };
+  const live = (typeof liveAttendanceCount === 'function') ? liveAttendanceCount(m, sub.activity || SUMMER_CAMP, win.from, win.to) : { y: 0, total: 0 };
   const attended = live.total > 0 ? live.y : (parseInt(sub.attendedClasses) || 0);
   const balance = Math.max(0, total - attended);
   const paidAmt = Math.round(Number(sub.amountPaid) || 0);
