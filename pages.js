@@ -235,21 +235,31 @@ function _privTagHtml(priv, plain) {
     ? `<div style="margin-top:2px"><span style="display:inline-block;background:#f3e8ff;color:#7c3aed;border:1px solid #d8b4fe;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700;line-height:1.4">🔒 ${txt}</span></div>`
     : `<div style="margin-top:2px"><span class="badge" style="font-size:9px;padding:1px 6px;background:rgba(139,92,246,.14);color:#7c3aed;font-weight:700">🔒 ${txt}</span></div>`;
 }
-function _privBonusNote(l, plain, coachPct, allPriv, comm) {   // v6.808 — `comm` = the commission shown in the cell: the note adds the coach's TOTAL (commission + private extra)
-  if (!l || l._dupIgnored || !(Number(l.price) > 0)) return '';
-  const pct = (typeof privateBonusPct === 'function') ? privateBonusPct() : 10;
-  const ex = l.price * (coachPct != null ? coachPct : pct) / 100, tot = (comm != null && isFinite(comm)) ? ' → ' + (typeof t === 'function' ? t('coach total', 'إجمالي المدرب') : 'coach total') + ' ' + fmt(comm + ex) : '';
-  if (l.priv === 'coach') return `<div style="font-size:9px;font-weight:600;color:#7c3aed">+${fmt(ex)} private bonus${tot}</div>`;
-  if (l.priv === 'reception') return `<div style="font-size:9px;font-weight:600;color:#7c3aed">${allPriv ? '+' + fmt(ex) + ' private bonus' + tot + ' · ' : ''}${pct}% to reception (${fmt(l.price * pct / 100)}) ${allPriv ? (typeof t === 'function' ? t('— separate, not from the coach', '— منفصلة، ليست من المدرب') : '— separate, not from the coach') : ''}</div>`;   // v6.806/808 — the coach's extra too, and the coach's total
-  return '';
+// v6.809 — a private line: the coach's amount INCLUDES his private extra (30% + 10% = 40%), the note only says the percentage; reception's own 10% is shown as a percentage and an amount.
+function _lineComm(l, rate, coachPct, allPriv) {
+  if (!l || l._dupIgnored) return 0;
+  const pct = (typeof privateBonusPct === 'function') ? privateBonusPct() : 10, cp = (coachPct != null ? coachPct : pct);
+  const extra = (l.priv === 'coach' || (l.priv === 'reception' && allPriv)) ? l.price * cp / 100 : 0;
+  return l.price * rate / 100 + extra;
 }
-// Pending (paid, not yet attended) row: the private bonus is earned as the classes are attended, so say so.
-function _privPendingNote(pl, plain, coachPct, allPriv) {
+function _privBonusNote(l, plain, coachPct, allPriv, rate) {
+  if (!l || l._dupIgnored || !(Number(l.price) > 0)) return '';
+  const pct = (typeof privateBonusPct === 'function') ? privateBonusPct() : 10, cp = (coachPct != null ? coachPct : pct);
+  const coachHas = l.priv === 'coach' || (l.priv === 'reception' && allPriv);
+  const parts = [];
+  if (coachHas && rate != null) parts.push(`${Math.round((Number(rate) + cp) * 100) / 100}% (${rate}% + ${cp}%)`);
+  if (l.priv === 'reception') parts.push(`${(typeof t === 'function') ? t('reception', 'الاستقبال') : 'reception'} ${pct}% = ${fmt(l.price * pct / 100)}`);
+  return parts.length ? `<div style="font-size:9px;font-weight:600;color:#7c3aed">${parts.join(' · ')}</div>` : '';
+}
+// Pending (paid, not yet attended) row: the same two percentages.
+function _privPendingNote(pl, plain, coachPct, allPriv, rate) {
   if (!pl || (pl.priv !== 'coach' && pl.priv !== 'reception') || !(Number(pl.amountBase) > 0)) return '';
-  const pct = (typeof privateBonusPct === 'function') ? privateBonusPct() : 10;
-  const amt = fmt(pl.amountBase * (pl.priv === 'coach' && coachPct != null ? coachPct : pct) / 100);
-  const cx = (pl.priv === 'reception' && allPriv) ? '+' + fmt(pl.amountBase * (coachPct != null ? coachPct : pct) / 100) + ' private bonus once attended · ' : '';   // v6.806
-  return '<div style="font-size:9px;font-weight:600;color:#7c3aed">' + (pl.priv === 'coach' ? '+' + amt + ' private bonus once attended' : cx + pct + '% to reception (' + amt + ') · paid in full next month') + '</div>';
+  const pct = (typeof privateBonusPct === 'function') ? privateBonusPct() : 10, cp = (coachPct != null ? coachPct : pct);
+  const coachHas = pl.priv === 'coach' || (pl.priv === 'reception' && allPriv);
+  const parts = [];
+  if (coachHas && rate != null) parts.push(`${Math.round((Number(rate) + cp) * 100) / 100}% (${rate}% + ${cp}%)`);
+  if (pl.priv === 'reception') parts.push(`${(typeof t === 'function') ? t('reception', 'الاستقبال') : 'reception'} ${pct}% = ${fmt(pl.amountBase * pct / 100)}`);
+  return parts.length ? `<div style="font-size:9px;font-weight:600;color:#7c3aed">${parts.join(' · ')}</div>` : '';
 }
 // v6.678 — one-row summary strip shared by Invoices and Transactions: count · charged · collected (cash / card + fawran) · due (by the
 // invoice's method). o = { icon, count, countLabel, charged, collected, cm, due, dm, dueNote, money }  (money:false → the count card only)
@@ -21649,7 +21659,7 @@ window.showRevenueDetail = function(coachId, monthKey) {
                 <td style="padding:6px 8px;border-top:1px solid var(--border)">${escapeHtml(l.sport || '—')}${_privTagHtml(l.priv)}</td>
                 <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace;color:var(--text-dim)">${(l.fee != null && isFinite(l.fee)) ? fmt(l.fee) : '—'}</td>
                 <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace;color:${l.price < 0 ? 'var(--red)' : 'var(--text)'}">${fmt(l.price)}</td>
-                <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace;font-weight:600;color:${l.price < 0 ? 'var(--red)' : 'var(--text)'}">${fmt(l.price * pay.commissionRate / 100)}${_privBonusNote(l, false, pay.privateBonusPct, pay.privateExtraAll, l.price * pay.commissionRate / 100)}</td>
+                <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace;font-weight:600;color:${l.price < 0 ? 'var(--red)' : 'var(--text)'}">${fmt(_lineComm(l, pay.commissionRate, pay.privateBonusPct, pay.privateExtraAll))}${_privBonusNote(l, false, pay.privateBonusPct, pay.privateExtraAll, pay.commissionRate)}</td>
               </tr>
             `).join('') : '<tr><td colspan="5" style="padding:18px;text-align:center;color:var(--text-mute)">No commission-generating revenue this month</td></tr>'}
           </tbody>
@@ -21658,7 +21668,7 @@ window.showRevenueDetail = function(coachId, monthKey) {
       <div style="margin-top:14px;padding:12px;background:var(--surface-2);border-radius:8px;font-size:13px">
         <div style="display:flex;justify-content:space-between;padding:2px 0"><span class="text-mute">${lines.length} line${lines.length === 1 ? '' : 's'} · Course total</span><span style="font-family:monospace;font-weight:700">${fmt(lines.reduce((s, l) => s + ((l.fee != null && isFinite(l.fee)) ? l.fee : 0), 0))} QAR</span></div>
         <div style="display:flex;justify-content:space-between;padding:2px 0"><span class="text-mute">${lines.length} line${lines.length === 1 ? '' : 's'} · Commission base</span><span style="font-family:monospace;font-weight:700">${fmt(lines.reduce((s, l) => s + l.price, 0))} QAR</span></div>
-        <div style="display:flex;justify-content:space-between;padding:2px 0"><span class="text-mute">Commission @ ${pay.commissionRate}%</span><span style="font-family:monospace;font-weight:700;color:var(--green)">${fmt(lines.reduce((s, l) => s + l.price, 0) * pay.commissionRate / 100)} QAR</span></div>
+        <div style="display:flex;justify-content:space-between;padding:2px 0"><span class="text-mute">${lines.some(l => _lineComm(l, pay.commissionRate, pay.privateBonusPct, pay.privateExtraAll) - l.price * pay.commissionRate / 100 > 0.005) ? 'Commission (incl. private extra)' : 'Commission @ ' + pay.commissionRate + '%'}</span><span style="font-family:monospace;font-weight:700;color:var(--green)">${fmt(lines.reduce((s, l) => s + _lineComm(l, pay.commissionRate, pay.privateBonusPct, pay.privateExtraAll), 0))} QAR</span></div>
       </div>
       ${pendingLines.length ? `
         <div style="margin-top:14px">
@@ -21674,7 +21684,7 @@ window.showRevenueDetail = function(coachId, monthKey) {
                 ${pendingLines.map((p, _pn) => `<tr>
                   <td style="padding:6px 8px;border-top:1px solid var(--border);color:var(--text-mute)">${_pn + 1}</td>
                   <td style="padding:6px 8px;border-top:1px solid var(--border)">${escapeHtml(p.memberName)}${_arNameOf(p)}${p._dupIgnored ? ' <span class="badge" style="font-size:9px;background:#fee2e2;color:#b91c1c">DUPLICATE — NOT COUNTED</span>' : ''}${p.status === 'Frozen' ? ' <span class="badge blue" style="font-size:9px">❄️ Frozen</span>' : ''}</td>
-                  <td style="padding:6px 8px;border-top:1px solid var(--border)">${escapeHtml(p.sport || '—')}${_privTagHtml(p.priv)}${_privPendingNote(p, false, pay.privateBonusPct, pay.privateExtraAll)}</td>
+                  <td style="padding:6px 8px;border-top:1px solid var(--border)">${escapeHtml(p.sport || '—')}${_privTagHtml(p.priv)}${_privPendingNote(p, false, pay.privateBonusPct, pay.privateExtraAll, pay.commissionRate)}</td>
                   <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right">${p.classes != null ? p.classes + (p.total ? ' / ' + p.total : '') : (p.status === 'Frozen' ? '❄️ frozen' : '—')}</td>
                   <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace">${fmt(p.amountBase * pay.commissionRate / 100)}</td>
                 </tr>`).join('')}
@@ -21914,10 +21924,11 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
               <td style="font-size:11px">${escapeHtml(l.status || '—')}</td>
               ${ctCell(l)}
               <td class="num ${l.price < 0 ? 'neg' : ''}">${l._dupIgnored ? `<span style="text-decoration:line-through;color:#c0c0c0">${fmt(l._origAmount || 0)}</span> → <b>0</b>` : fmt(l.price)}${l.prorated ? `<div style="color:#999;font-size:9px">of ${fmt(l.fee)} · ${l.attended}/${l.total} attended</div>` : ''}</td>
-              <td class="num ${l.price < 0 ? 'neg' : ''}" style="font-weight:700">${l._dupIgnored ? '<b>0</b>' : fmt(l.price * rate / 100)}${_privBonusNote(l, true, pay.privateBonusPct, pay.privateExtraAll, l.price * rate / 100)}</td>
+              <td class="num ${l.price < 0 ? 'neg' : ''}" style="font-weight:700">${l._dupIgnored ? '<b>0</b>' : fmt(_lineComm(l, rate, pay.privateBonusPct, pay.privateExtraAll))}${_privBonusNote(l, true, pay.privateBonusPct, pay.privateExtraAll, rate)}</td>
             </tr>`;
             const grand = lines.reduce((s, l) => s + l.price, 0);
-            const grandRow = (label) => `<tr style="background:#f5f5f7;font-weight:700"><td colspan="7">${label}</td><td class="num">${fmt(grandCourse)}</td><td class="num">${fmt(grand)}</td><td class="num">${fmt(grand * rate / 100)}</td></tr>`;
+            const commOf = arr => arr.reduce((s, l) => s + _lineComm(l, rate, pay.privateBonusPct, pay.privateExtraAll), 0);   // v6.809 — rows incl. the private extra
+            const grandRow = (label) => `<tr style="background:#f5f5f7;font-weight:700"><td colspan="7">${label}</td><td class="num">${fmt(grandCourse)}</td><td class="num">${fmt(grand)}</td><td class="num">${fmt(commOf(lines))}</td></tr>`;
             const sports = [...new Set(lines.map(l => l.sport || '—'))];
             let n = 0;
             // Single sport → simple flat list. MORE THAN ONE sport → group the members under a header
@@ -21931,8 +21942,8 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
               const spCourse = grp.reduce((s, l) => s + (l._dupIgnored ? 0 : (ct(l) || 0)), 0);
               return `<tr style="background:#eef2ff"><td colspan="10" style="font-weight:800;color:#3730a3;padding:8px 8px">🏷 ${escapeHtml(sp)} · ${grp.length} member${grp.length === 1 ? '' : 's'}</td></tr>`
                 + grp.map(l => rowTr(l, ++n)).join('')
-                + `<tr style="background:#f5f5f7;font-weight:700"><td colspan="7" style="text-align:right">${escapeHtml(sp)} subtotal</td><td class="num">${fmt(spCourse)}</td><td class="num">${fmt(spBase)}</td><td class="num">${fmt(spBase * rate / 100)}</td></tr>`;
-            }).join('') + `<tr style="background:#e8eaed;font-weight:800"><td colspan="7">TOTAL · Commission base (all sports)</td><td class="num">${fmt(grandCourse)}</td><td class="num">${fmt(grand)}</td><td class="num">${fmt(grand * rate / 100)}</td></tr>`;
+                + `<tr style="background:#f5f5f7;font-weight:700"><td colspan="7" style="text-align:right">${escapeHtml(sp)} subtotal</td><td class="num">${fmt(spCourse)}</td><td class="num">${fmt(spBase)}</td><td class="num">${fmt(commOf(grp))}</td></tr>`;
+            }).join('') + `<tr style="background:#e8eaed;font-weight:800"><td colspan="7">TOTAL · Commission base (all sports)</td><td class="num">${fmt(grandCourse)}</td><td class="num">${fmt(grand)}</td><td class="num">${fmt(commOf(lines))}</td></tr>`;
           })()}
         </tbody>
       </table>
@@ -21947,7 +21958,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
           ${pendingLines.map((p, _pn) => `<tr>
             <td style="color:#999">${_pn + 1}</td>
             <td>${escapeHtml(p.memberName)}${_arNameOf(p, true)}${p.status === 'Frozen' ? ' <span style="font-size:10px;color:#2563eb;font-weight:700">❄️ Frozen</span>' : ''}</td>
-            <td>${escapeHtml(p.sport || '—')}${_privTagHtml(p.priv, true)}${_privPendingNote(p, true, pay.privateBonusPct, pay.privateExtraAll)}</td>
+            <td>${escapeHtml(p.sport || '—')}${_privTagHtml(p.priv, true)}${_privPendingNote(p, true, pay.privateBonusPct, pay.privateExtraAll, pay.commissionRate)}</td>
             <td style="font-size:11px">${p.start ? fmtDate(p.start) : '—'}</td>
             <td style="font-size:11px">${p.end ? fmtDate(p.end) : (p.status === 'Frozen' ? '<span style="color:#2563eb">paused</span>' : '—')}</td>
             <td>${p.classes != null ? p.classes + (p.total ? ' / ' + p.total : '') : (p.status === 'Frozen' ? '❄️ frozen' : '—')}</td>
