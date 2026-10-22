@@ -235,19 +235,20 @@ function _privTagHtml(priv, plain) {
     ? `<div style="margin-top:2px"><span style="display:inline-block;background:#f3e8ff;color:#7c3aed;border:1px solid #d8b4fe;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700;line-height:1.4">🔒 ${txt}</span></div>`
     : `<div style="margin-top:2px"><span class="badge" style="font-size:9px;padding:1px 6px;background:rgba(139,92,246,.14);color:#7c3aed;font-weight:700">🔒 ${txt}</span></div>`;
 }
-function _privBonusNote(l, plain, coachPct) {
+function _privBonusNote(l, plain, coachPct, allPriv) {
   if (!l || l._dupIgnored || !(Number(l.price) > 0)) return '';
   const pct = (typeof privateBonusPct === 'function') ? privateBonusPct() : 10;
   if (l.priv === 'coach') return `<div style="font-size:9px;font-weight:600;color:#7c3aed">+${fmt(l.price * (coachPct != null ? coachPct : pct) / 100)} private bonus</div>`;
-  if (l.priv === 'reception') return `<div style="font-size:9px;font-weight:600;color:#7c3aed">${pct}% to reception (${fmt(l.price * pct / 100)})</div>`;
+  if (l.priv === 'reception') return `<div style="font-size:9px;font-weight:600;color:#7c3aed">${allPriv ? '+' + fmt(l.price * (coachPct != null ? coachPct : pct) / 100) + ' private bonus · ' : ''}${pct}% to reception (${fmt(l.price * pct / 100)})</div>`;   // v6.806 — the coach's extra too
   return '';
 }
 // Pending (paid, not yet attended) row: the private bonus is earned as the classes are attended, so say so.
-function _privPendingNote(pl, plain, coachPct) {
+function _privPendingNote(pl, plain, coachPct, allPriv) {
   if (!pl || (pl.priv !== 'coach' && pl.priv !== 'reception') || !(Number(pl.amountBase) > 0)) return '';
   const pct = (typeof privateBonusPct === 'function') ? privateBonusPct() : 10;
   const amt = fmt(pl.amountBase * (pl.priv === 'coach' && coachPct != null ? coachPct : pct) / 100);
-  return '<div style="font-size:9px;font-weight:600;color:#7c3aed">' + (pl.priv === 'coach' ? '+' + amt + ' private bonus once attended' : pct + '% to reception (' + amt + ') · paid in full next month') + '</div>';
+  const cx = (pl.priv === 'reception' && allPriv) ? '+' + fmt(pl.amountBase * (coachPct != null ? coachPct : pct) / 100) + ' private bonus once attended · ' : '';   // v6.806
+  return '<div style="font-size:9px;font-weight:600;color:#7c3aed">' + (pl.priv === 'coach' ? '+' + amt + ' private bonus once attended' : cx + pct + '% to reception (' + amt + ') · paid in full next month') + '</div>';
 }
 // v6.678 — one-row summary strip shared by Invoices and Transactions: count · charged · collected (cash / card + fawran) · due (by the
 // invoice's method). o = { icon, count, countLabel, charged, collected, cm, due, dm, dueNote, money }  (money:false → the count card only)
@@ -21218,7 +21219,7 @@ window.downloadPayslipPDF = function(coachId, monthKey) {
         <div class="row"><span>Commission earned</span><span>${fmt(pay.commissionAmount)} QAR</span></div>
         ${pay.basis === 'attendance' && pay.commissionPending > 0 ? `<div class="row" style="color:#b45309"><span>Pending (not yet earned — see rule below)</span><span>${fmt(pay.commissionPending)} QAR</span></div>` : ''}
       ` : ''}
-      ${pay.privateBonus > 0 ? `<div class="row"><span>Private bonus (+${pay.privateBonusPct}% on ${fmt(pay.privateBonusBase)} QAR of private packages you brought in)</span><span>${fmt(pay.privateBonus)} QAR</span></div>` : ''}
+      ${pay.privateBonus > 0 ? `<div class="row"><span>Private bonus (+${pay.privateBonusPct}% on ${fmt(pay.privateBonusBase)} QAR of private packages${pay.privateExtraAll ? "" : " you brought in"})</span><span>${fmt(pay.privateBonus)} QAR</span></div>` : ''}
       ${pay.receptionBonus > 0 ? `<div class="row"><span>Reception private share (${pay.receptionSharePct}% of ${fmt(pay.receptionPoolBase)} QAR ÷ ${pay.receptionStaffCount} staff)</span><span>${fmt(pay.receptionBonus)} QAR</span></div>` : ''}
       ${(pay.privateBonusPending || 0) + (pay.receptionBonusPending || 0) > 0.005 ? `<div class="row" style="color:#7c3aed"><span>⏳ Pending private ${pay.receptionBonusPending > 0 ? 'share' : 'bonus'} (not in gross — ${pay.receptionBonusPending > 0 ? 'paid in full next month' : 'earned as the private member attends'})</span><span>${fmt((pay.privateBonusPending || 0) + (pay.receptionBonusPending || 0))} QAR</span></div>` : ''}
       ${pay.targetBonus > 0 ? `<div class="row"><span>Target bonus (${pay.targetKind === 'reception' ? 'reception income target ' + fmt(pay.targetTierBonus) + ' ÷ ' + pay.targetStaff + ' staff' : pay.targetValue + ' new/renew this month'})</span><span>${fmt(pay.targetBonus)} QAR</span></div>` : ''}
@@ -21624,7 +21625,7 @@ window.showRevenueDetail = function(coachId, monthKey) {
                 <td style="padding:6px 8px;border-top:1px solid var(--border)">${escapeHtml(l.sport || '—')}${_privTagHtml(l.priv)}</td>
                 <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace;color:var(--text-dim)">${(l.fee != null && isFinite(l.fee)) ? fmt(l.fee) : '—'}</td>
                 <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace;color:${l.price < 0 ? 'var(--red)' : 'var(--text)'}">${fmt(l.price)}</td>
-                <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace;font-weight:600;color:${l.price < 0 ? 'var(--red)' : 'var(--text)'}">${fmt(l.price * pay.commissionRate / 100)}${_privBonusNote(l, false, pay.privateBonusPct)}</td>
+                <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace;font-weight:600;color:${l.price < 0 ? 'var(--red)' : 'var(--text)'}">${fmt(l.price * pay.commissionRate / 100)}${_privBonusNote(l, false, pay.privateBonusPct, pay.privateExtraAll)}</td>
               </tr>
             `).join('') : '<tr><td colspan="5" style="padding:18px;text-align:center;color:var(--text-mute)">No commission-generating revenue this month</td></tr>'}
           </tbody>
@@ -21649,7 +21650,7 @@ window.showRevenueDetail = function(coachId, monthKey) {
                 ${pendingLines.map((p, _pn) => `<tr>
                   <td style="padding:6px 8px;border-top:1px solid var(--border);color:var(--text-mute)">${_pn + 1}</td>
                   <td style="padding:6px 8px;border-top:1px solid var(--border)">${escapeHtml(p.memberName)}${_arNameOf(p)}${p._dupIgnored ? ' <span class="badge" style="font-size:9px;background:#fee2e2;color:#b91c1c">DUPLICATE — NOT COUNTED</span>' : ''}${p.status === 'Frozen' ? ' <span class="badge blue" style="font-size:9px">❄️ Frozen</span>' : ''}</td>
-                  <td style="padding:6px 8px;border-top:1px solid var(--border)">${escapeHtml(p.sport || '—')}${_privTagHtml(p.priv)}${_privPendingNote(p, false, pay.privateBonusPct)}</td>
+                  <td style="padding:6px 8px;border-top:1px solid var(--border)">${escapeHtml(p.sport || '—')}${_privTagHtml(p.priv)}${_privPendingNote(p, false, pay.privateBonusPct, pay.privateExtraAll)}</td>
                   <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right">${p.classes != null ? p.classes + (p.total ? ' / ' + p.total : '') : (p.status === 'Frozen' ? '❄️ frozen' : '—')}</td>
                   <td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;font-family:monospace">${fmt(p.amountBase * pay.commissionRate / 100)}</td>
                 </tr>`).join('')}
@@ -21889,7 +21890,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
               <td style="font-size:11px">${escapeHtml(l.status || '—')}</td>
               ${ctCell(l)}
               <td class="num ${l.price < 0 ? 'neg' : ''}">${l._dupIgnored ? `<span style="text-decoration:line-through;color:#c0c0c0">${fmt(l._origAmount || 0)}</span> → <b>0</b>` : fmt(l.price)}${l.prorated ? `<div style="color:#999;font-size:9px">of ${fmt(l.fee)} · ${l.attended}/${l.total} attended</div>` : ''}</td>
-              <td class="num ${l.price < 0 ? 'neg' : ''}" style="font-weight:700">${l._dupIgnored ? '<b>0</b>' : fmt(l.price * rate / 100)}${_privBonusNote(l, true, pay.privateBonusPct)}</td>
+              <td class="num ${l.price < 0 ? 'neg' : ''}" style="font-weight:700">${l._dupIgnored ? '<b>0</b>' : fmt(l.price * rate / 100)}${_privBonusNote(l, true, pay.privateBonusPct, pay.privateExtraAll)}</td>
             </tr>`;
             const grand = lines.reduce((s, l) => s + l.price, 0);
             const grandRow = (label) => `<tr style="background:#f5f5f7;font-weight:700"><td colspan="7">${label}</td><td class="num">${fmt(grandCourse)}</td><td class="num">${fmt(grand)}</td><td class="num">${fmt(grand * rate / 100)}</td></tr>`;
@@ -21922,7 +21923,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
           ${pendingLines.map((p, _pn) => `<tr>
             <td style="color:#999">${_pn + 1}</td>
             <td>${escapeHtml(p.memberName)}${_arNameOf(p, true)}${p.status === 'Frozen' ? ' <span style="font-size:10px;color:#2563eb;font-weight:700">❄️ Frozen</span>' : ''}</td>
-            <td>${escapeHtml(p.sport || '—')}${_privTagHtml(p.priv, true)}${_privPendingNote(p, true, pay.privateBonusPct)}</td>
+            <td>${escapeHtml(p.sport || '—')}${_privTagHtml(p.priv, true)}${_privPendingNote(p, true, pay.privateBonusPct, pay.privateExtraAll)}</td>
             <td style="font-size:11px">${p.start ? fmtDate(p.start) : '—'}</td>
             <td style="font-size:11px">${p.end ? fmtDate(p.end) : (p.status === 'Frozen' ? '<span style="color:#2563eb">paused</span>' : '—')}</td>
             <td>${p.classes != null ? p.classes + (p.total ? ' / ' + p.total : '') : (p.status === 'Frozen' ? '❄️ frozen' : '—')}</td>
