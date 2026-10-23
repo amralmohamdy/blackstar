@@ -2515,7 +2515,8 @@ function viewMember(id) {
   const _rowPrice = new Map();   // v6.666 — the invoice-line price each row is matched to
   const _rowPaid = (typeof memberSubPaidMap === 'function') ? memberSubPaidMap(m, allSubs, _rowPrice) : new Map();
 
-  const subs = allSubs.map(s => {
+  const _rowFacts = new Map(), _statParts = new Map();   // v6.816 — per-row numbers + status pieces, so a switch pair can be shown as one row
+  const _subRowsArr = allSubs.map(s => {
     const total = (typeof subClassLimit === 'function') ? subClassLimit(s) : s.totalClasses;
     // Live count for THIS subscription period only — windowed so it doesn't overlap
     // the NEXT period of the same activity (the boundary day belongs to the later
@@ -2557,6 +2558,7 @@ function viewMember(id) {
           <div style="height:100%;width:${pct || 0}%;background:${pct >= 75 ? 'var(--green)' : pct >= 40 ? 'var(--accent-2)' : 'var(--red)'};border-radius:2px"></div>
         </div>
       </div>` : '<span class="text-mute">—</span>';
+    _rowFacts.set(s, _swInfo ? { att: _swInfo.used, tot: _swInfo.used } : { att: Number(attended) || 0, tot: Number(total) || 0 });
     return `
       <tr>
         <td><span class="badge blue">${(() => {
@@ -2627,8 +2629,44 @@ function viewMember(id) {
           const invBtn = (!isViewerRole() && sid)
             ? ` <button onclick="event.stopPropagation();printMemberSubInvoicePDF(${m.id}, '${sid}')" title="${t('Export an invoice for this sport only', 'تصدير فاتورة لهذه الرياضة فقط')}" style="background:transparent;border:0;color:var(--green);opacity:.85;cursor:pointer;padding:0 3px;font-size:12px">📄</button>`
             : '';
+          _statParts.set(s, { label, badge, acts: `${invBtn}${editBtn}${delBtn}` });
           return `${badge}${invBtn}${editBtn}${delBtn}`;
         })()}</td>
+      </tr>
+    `;
+  });
+  // v6.816 — a switched member's source + destination packages read as ONE membership: one row, the classes and the paid amount added up, a line per coach inside.
+  // Nothing is merged in the data (each package keeps its own attendance, invoice line and commission).
+  const _swPairs = (typeof switchPairsFor === 'function') ? switchPairsFor(m, allSubs) : new Map();
+  const _swSrcs = new Set(_swPairs.values());
+  const _cellsOf = h => [...String(h).matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map(x => x[1]);
+  let _shownRows = 0;
+  const subs = allSubs.map((s, i) => {
+    if (_swSrcs.has(s)) return '';
+    _shownRows++;
+    const src = _swPairs.get(s);
+    if (!src) return _subRowsArr[i];
+    const a = _cellsOf(_subRowsArr[allSubs.indexOf(src)]), b = _cellsOf(_subRowsArr[i]);
+    const fa = _rowFacts.get(src) || { att: 0, tot: 0 }, fb = _rowFacts.get(s) || { att: 0, tot: 0 };
+    const att = fa.att + fb.att, tot = fa.tot + fb.tot, pct = tot ? Math.min(100, Math.round(att / tot * 100)) : 0;
+    const pa = _rowPaid.has(src) ? _rowPaid.get(src) : (Number(src.amountPaid) || 0), pb = _rowPaid.has(s) ? _rowPaid.get(s) : (Number(s.amountPaid) || 0);
+    const line = (x, y) => `<div>${x}</div><div style="margin-top:4px;padding-top:4px;border-top:1px dashed var(--border)">${y}</div>`;
+    const sa = _statParts.get(src) || { badge: '', acts: '' }, sb = _statParts.get(s) || { badge: '', acts: '', label: '' };
+    const small = 'font-size:11px;color:var(--text-mute)';
+    return `
+      <tr>
+        <td>${a[0]}</td>
+        <td>${line(a[1], b[1])}</td>
+        <td>${line(a[2], b[2])}</td>
+        <td>${a[3]}</td>
+        <td>${b[4]}</td>
+        <td><div style="min-width:140px">
+          <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px"><span class="font-bold">${att} / ${tot}</span><span class="text-dim">${pct}%</span></div>
+          <div style="height:4px;background:var(--surface-2);border-radius:2px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${pct >= 75 ? 'var(--green)' : pct >= 40 ? 'var(--accent-2)' : 'var(--red)'};border-radius:2px"></div></div>
+          <div style="${small};margin-top:3px">${fa.att}/${fa.tot} + ${fb.att}/${fb.tot}</div>
+        </div></td>
+        ${isViewerRole() ? '' : `<td class="text-right num">${(pa + pb) ? fmt(pa + pb) : '—'}<div style="${small}">${fmt(pa)} + ${fmt(pb)}</div></td>`}
+        <td>${sb.badge}${line(`<span style="${small}">${escapeHtml(src.activity || '')}</span> ${sa.acts}`, `<span style="${small}">${escapeHtml(s.activity || '')}</span> ${sb.acts}`)}</td>
       </tr>
     `;
   }).join('');
@@ -2779,7 +2817,7 @@ function viewMember(id) {
         </div>
       </div>
       ${_dupBanner}
-      <h3 style="font-size:13px;font-weight:600;margin-bottom:8px">Subscription History (${totalSubs})</h3>
+      <h3 style="font-size:13px;font-weight:600;margin-bottom:8px">Subscription History (${_shownRows})</h3>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Month</th><th>Activity</th><th>Coach</th><th>Start</th><th>End</th><th>Attendance</th>${isViewerRole() ? '' : '<th class="text-right">Paid</th>'}<th>Status</th></tr></thead>
@@ -24703,6 +24741,17 @@ PAGES.attendance = (main) => {
     const _prevMark = m.dailyAttendance[mo][sport][String(day)] || null;
     if (next === null) delete m.dailyAttendance[mo][sport][String(day)];
     else m.dailyAttendance[mo][sport][String(day)] = next;
+    // v6.815 — a mark inside a SWITCHED-AWAY package's window re-balances source / destination (classes + line values; admin and reception only — they can edit invoices)
+    if (['admin', 'receptionist'].includes(currentRole()) && typeof rebalanceSwitchedAfterMark === 'function') {
+      try {
+        for (const _rb of rebalanceSwitchedAfterMark(m, String(sport).replace(/ \d+$/, ''), `${mo}-${String(day).padStart(2, '0')}`)) {
+          if (_rb.ok) {
+            toast(t(`⚖ ${_rb.sport} → ${_rb.to}: classes re-balanced after the attendance change (${_rb.sport} ${_rb.before.src}→${_rb.after.src}, ${_rb.to} ${_rb.before.dst}→${_rb.after.dst})`, `⚖ ${_rb.sport} ← ${_rb.to}: أُعيد توزيع الحصص بعد تعديل الحضور (${_rb.before.src}→${_rb.after.src} و ${_rb.before.dst}→${_rb.after.dst})`), 'info');
+            audit('subscription.switch-rebalance', `member:${m.id}`, `Switch re-balanced for ${m.name}: ${_rb.sport} ${_rb.before.src}→${_rb.after.src} classes, ${_rb.to} ${_rb.before.dst}→${_rb.after.dst} (attendance changed)`, { memberId: m.id, name: m.name, before: _rb.before, after: _rb.after });
+          } else if (_rb.reason) toast(t(`⚠ ${String(sport).replace(/ \d+$/, '')} was switched — the class balance could not be re-balanced automatically (${_rb.reason}); check it with Switch check`, `⚠ هذه الرياضة تم تحويلها — تعذّر ضبط الحصص تلقائياً (${_rb.reason})؛ راجعها من فحص التحويل`), 'info');
+        }
+      } catch (e) { console.error('switch re-balance failed', e); }
+    }
     // v6.714 — the first class of a renewal becomes its start date (expiry follows)
     const _anch = (next === 'Y' && typeof anchorRenewalOnMark === 'function') ? anchorRenewalOnMark(m, String(sport).replace(/ \d+$/, ''), `${mo}-${String(day).padStart(2, '0')}`) : null;
     if (_anch) toast(t(`Renewal start set to the first class: ${fmtDate(_anch.plan.first)}` + (_anch.plan.newEnd ? ` · expires ${fmtDate(_anch.plan.newEnd)}` : ''), `بداية التجديد = أول حصة: ${fmtDate(_anch.plan.first)}` + (_anch.plan.newEnd ? ` · ينتهي ${fmtDate(_anch.plan.newEnd)}` : '')));
@@ -26955,7 +27004,7 @@ window.switchSport = function(memberId) {
 
   // Build the list of CURRENT enrollments (the ones eligible to be switched).
   // Fall back to subscriptions if enrollments[] isn't populated.
-  const enrolled = (m.enrollments && m.enrollments.length) ? m.enrollments
+  const enrolled = renewablePicks(m).length ? renewablePicks(m)   // v6.815 — a running package without an enrollment row can still be switched
     : (m.subscriptions || []).reduce((acc, s) => {
         if (!s.activity) return acc;
         if (!acc.find(x => x.sport === s.activity)) {
@@ -27760,8 +27809,8 @@ window.addRenewalMulti = function(m, picks, opts) {
   };
   const mkRow = (e, i) => ({
     isNew: !!e.isNew,
-    sport: e.sport, coachId: e.coachId, originalCoachId: e.coachId, classes: parseInt(e.classes) || 0, i,
-    price: smartPrice(e.sport, Number(e.price) || 0),
+    sport: e.sport, coachId: e.coachId, originalCoachId: e.coachId, classes: (renewalStandardFor(m, e.sport, e.coachId) || {}).classes || parseInt(e.classes) || 0, i,
+    price: (renewalStandardFor(m, e.sport, e.coachId) || {}).price || smartPrice(e.sport, Number(e.price) || 0),
     validity: parseInt(e.validity) || lastValidity(e.sport, e.coachId),
     pv: privateDefaultFor(m, e.sport, e.coachId),   // v6.660
     carry: (typeof carryForwardCredit === 'function') ? (carryForwardCredit(m, e.sport) || 0) : 0,
@@ -27959,7 +28008,7 @@ window.addRenewal = function(memberId) {
   const coachOpts = c => coachOptionsHtml(selCoaches, null, c, co => escapeHtml(co.name) + (isCoachActive(co) ? '' : ' (inactive)'));
 
   // The member's current enrolled sports (each with coach + class progress)
-  const enrolled = (m.enrollments && m.enrollments.length) ? m.enrollments
+  const enrolled = renewablePicks(m).length ? renewablePicks(m)   // v6.815 — enrollments + any sport with a running package but no enrollment row
     : (m.subscriptions || []).map(s => ({ sport: s.activity, coachId: s.coachId, classes: s.totalClasses || 0, price: s.amountPaid || 0 }));
   // De-dupe by sport+coach
   const seen = new Set();
@@ -28007,9 +28056,9 @@ window.addRenewal = function(memberId) {
         <div class="field" id="rn-coach-field" style="${isCampSport((enrolledUnique[0]?.sport || m.sport)) ? 'display:none' : ''}"><label>Coach</label><select id="rn-coach">${coachOpts(enrolledUnique[0]?.coachId || m.coachId)}</select></div>
       </div>
       <div class="form-row">
-        <div class="field"><label>Classes</label><input id="rn-classes" type="number" min="0" step="1" value="${enrolledUnique[0]?.classes || ''}" /></div>
+        <div class="field"><label>Classes</label><input id="rn-classes" type="number" min="0" step="1" value="${(renewalStandardFor(m, enrolledUnique[0]?.sport, enrolledUnique[0]?.coachId) || {}).classes || enrolledUnique[0]?.classes || ''}" /></div>
         <div class="field"><label>Validity</label><select id="rn-validity">${validityOptionsHtml(DEFAULT_VALIDITY)}</select></div>
-        <div class="field"><label>Amount / Fee (QAR)</label><input id="rn-amount" type="number" step="0.01" min="0" value="${enrolledUnique[0]?.price || ''}" /></div>
+        <div class="field"><label>Amount / Fee (QAR)</label><input id="rn-amount" type="number" step="0.01" min="0" value="${(renewalStandardFor(m, enrolledUnique[0]?.sport, enrolledUnique[0]?.coachId) || {}).price || enrolledUnique[0]?.price || ''}" /></div>
       </div>
       <div class="form-row">
         <div class="field"><label>Start / renewal date <span class="text-mute" style="font-size:10px;font-weight:400">(moves to the first attended class)</span></label><input id="rn-start" type="date" value="${computeRenewalStart(m, (enrolledUnique[0]?.sport || m.sport)).start}" /><div id="rn-start-hint" class="text-mute" style="font-size:10px;margin-top:3px"></div></div>
@@ -28145,13 +28194,20 @@ window.addRenewal = function(memberId) {
           manual: true,                            // distinguishes from initial registration
           ...(_rnRule && start === _rnRule.start ? { _startSource: _rnRule.source, _prevExpiry: _rnRule.prevExpiry || null, ...(_rnRule.source === 'attendance' ? { _startLock: true } : {}) } : { _startSource: 'manual' }),
         });
-        { const _en = (m.enrollments || []).find(e => e.sport === renewedSport && String(e.coachId) === String(coachId));
+        { const _enSport = (m.enrollments || []).filter(e => e.sport === renewedSport);
+          // v6.815 — renewing with ANOTHER coach: the sport's single enrollment moves to the new coach (it stayed on the old coach, so Switch / Renew / reports read the wrong coach)
+          const _en = _enSport.find(e => String(e.coachId) === String(coachId)) || (_enSport.length === 1 && !isCampSport(renewedSport) && renewedSport !== MIXED ? _enSport[0] : null);
+          if (_en && String(_en.coachId) !== String(coachId) && !isCampSport(renewedSport) && renewedSport !== MIXED) _en.coachId = coachId;
           if (_en && !isCampSport(renewedSport) && renewedSport !== MIXED) {
             _en.private = !!_pv.private; _en.approach = _pv.private ? _pv.approach : null;   // v6.660: keep the enrollment in step
             // v6.692 — and its package: the renewed class count (incl. carried / minus deducted), price and dates. The enrollment used to keep the OLD
             // numbers, so "Generate latest invoice" / Rebuild from profile later brought them back (Mohamed Hamdy: 14 renewed, invoice rebuilt at 10).
             if (!_en.start || start >= _en.start) { if (classes) _en.classes = classes; if (amount > 0) _en.price = amount; _en.start = start; _en.validity = validity; }
           } }
+        if (!isCampSport(renewedSport) && renewedSport !== MIXED && !(m.enrollments || []).some(e => e.sport === renewedSport)) {   // v6.815 — no enrollment row for the renewed sport → create it
+          if (!Array.isArray(m.enrollments)) m.enrollments = [];
+          m.enrollments.push({ sport: renewedSport, coachId, classes: classes || 0, price: amount || 0, start, validity, private: !!_pv.private, approach: _pv.private ? _pv.approach : null });
+        }
 
         // 3) Create the corresponding invoice so it appears in revenue
         if (amount > 0) {
