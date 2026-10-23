@@ -16808,7 +16808,20 @@ window.editInvoiceQuick = function(id) {
           const _months = new Set((inv.payments || []).map(p => String(p.month || (p.date || '').slice(0, 7))).filter(Boolean));
           if (_months.size > 1) { toast(t('This invoice has installments across several months — edit the split from the 💳 Payments screen so no month’s revenue moves.', 'هذه الفاتورة أقساط عبر عدة أشهر — عدّل التقسيم من شاشة الدفعات 💳 حتى لا تنتقل إيرادات أي شهر.'), 'error'); return; }
           inv.method = parts[0].method;
-          inv.payments = parts.map(p => ({ date: _splitDate, month: (_splitDate || TODAY).slice(0, 7), amount: p.amount, method: p.method, by: currentUserId(), byName: currentUserName(), at: new Date().toISOString(), note: t('Split via Edit invoice', 'تقسيم عبر تعديل الفاتورة') }));
+          // v6.813 — a split only fixes HOW it was paid: when the total is unchanged keep the time the money came in and the "hidden from the drawer" flag (it used to re-stamp to now)
+          const _old = (inv.payments || []).filter(p => p && (Number(p.amount) || 0) > 0);
+          const _oldPaid = Math.round(_old.reduce((x, p) => x + (Number(p.amount) || 0), 0) * 100) / 100;
+          const _same = _old.length > 0 && Math.abs(_oldPaid - splitTotal) < 0.01;
+          const _atOld = _same ? (_old.map(p => p.at).filter(Boolean).sort()[0] || '') : '';
+          const _oldCash = _same ? _old.filter(p => normalizeMethod(p.method || inv.method) === 'cash') : [];
+          const _hidSrc = (_oldCash.length && _oldCash.every(p => p.noDrawer)) ? _oldCash[0] : null;
+          const _nowIso = new Date().toISOString();
+          inv.payments = parts.map((p, k) => {
+            const row = { date: _splitDate, month: (_splitDate || TODAY).slice(0, 7), amount: p.amount, method: p.method, by: currentUserId(), byName: currentUserName(), note: t('Split via Edit invoice', 'تقسيم عبر تعديل الفاتورة') };
+            if (_same) { if (_atOld) row.at = _atOld; row.pid = 'split:' + inv.id + ':' + k + ':' + Date.now(); } else row.at = _nowIso;
+            if (_hidSrc && normalizeMethod(p.method) === 'cash') { row.noDrawer = true; row.noDrawerAt = _hidSrc.noDrawerAt; row.noDrawerBy = _hidSrc.noDrawerBy; }
+            return row;
+          });
           inv.amountPaid = splitTotal;
           save();
           closeModal();
