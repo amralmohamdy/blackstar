@@ -27813,6 +27813,7 @@ window.addRenewalMulti = function(m, picks, opts) {
     price: (renewalStandardFor(m, e.sport, e.coachId) || {}).price || smartPrice(e.sport, Number(e.price) || 0),
     validity: parseInt(e.validity) || lastValidity(e.sport, e.coachId),
     pv: privateDefaultFor(m, e.sport, e.coachId),   // v6.660
+    prev: prevPackageInfo(m, e.sport, e.coachId),   // v6.818
     carry: (typeof carryForwardCredit === 'function') ? (carryForwardCredit(m, e.sport) || 0) : 0,
     deduct: (() => { const le = getLastSportExpiry(e.sport); return le ? countAttendedAfter(e.sport, le) : 0; })(),
   });
@@ -27840,7 +27841,7 @@ window.addRenewalMulti = function(m, picks, opts) {
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px">
         <div class="field" style="margin:0"><label style="font-size:10px">${t('Coach', 'المدرب')}</label>${coachCell}</div>
-        <div class="field" style="margin:0"><label style="font-size:10px">${t('Classes', 'الحصص')}</label><input id="rnm-cls-${r.i}" type="number" min="1" step="1" value="${r.classes || ''}" /></div>
+        <div class="field" style="margin:0"><label style="font-size:10px;display:flex;justify-content:space-between;align-items:center">${t('Classes', 'الحصص')}<span>${r.carry ? `<span title="${t('carried from the last package — added when saved', 'مرحّلة من الباقة السابقة — تُضاف عند الحفظ')}" style="font-size:11px;font-weight:700;padding:1px 7px;border-radius:9px;margin-left:3px;background:rgba(16,185,129,.16);color:#10b981">+${r.carry}</span>` : ''}${r.deduct ? `<span title="${t('attended after the last expiry — deducted when saved', 'حضرها بعد الانتهاء — تُخصم عند الحفظ')}" style="font-size:11px;font-weight:700;padding:1px 7px;border-radius:9px;margin-left:3px;background:rgba(245,158,11,.16);color:var(--accent-2)">−${r.deduct}</span>` : ''}</span></label><input id="rnm-cls-${r.i}" type="number" min="1" step="1" value="${r.classes || ''}" /><div id="rnm-hint-${r.i}" class="text-mute" style="font-size:10px;margin-top:3px">${classesHint(r.prev, r.classes, r.carry, r.deduct)}</div></div>
         <div class="field" style="margin:0"><label style="font-size:10px">${t('Validity', 'المدة')}</label><select id="rnm-val-${r.i}">${validityOptionsHtml(r.validity)}</select></div>
         <div class="field" style="margin:0"><label style="font-size:10px">${t('Price (QAR)', 'السعر (ر.ق)')}</label><input id="rnm-amt-${r.i}" class="rnm-amt" type="number" min="0" step="0.01" value="${r.price || ''}" /></div>
       </div>
@@ -27902,7 +27903,7 @@ window.addRenewalMulti = function(m, picks, opts) {
           const on = !noCoach(r) && !!(document.getElementById(`rnm-priv-${r.i}`) || {}).checked;
           const ap = (document.getElementById(`rnm-app-${r.i}`) || {}).value || '';
           if (on && !(ap === 'coach' || ap === 'reception')) { toast(r.sport + ' — ' + t('Private: choose who approached the customer (coach or reception)', 'خاص: اختر من أحضر العميل (المدرب أو الاستقبال)'), 'error'); return; }
-          input.push({ sport: r.sport, coachId, originalCoachId: r.originalCoachId, classes, price, validity, pv: privFlags(on, ap), carried, deducted, isNew: !!r.isNew });
+          input.push({ sport: r.sport, coachId, originalCoachId: r.originalCoachId, classes, pkg: classesIn, price, validity, pv: privFlags(on, ap), carried, deducted, isNew: !!r.isNew });
         }
         // v6.793 — how the renewal is paid (method / part / leave due); validated before anything is saved
         const _renTotal = input.reduce((s, x) => s + (Number(x.price) || 0), 0);
@@ -27947,6 +27948,8 @@ ${t('Add another identical period anyway?', 'إضافة فترة مطابقة أ
         const on = !!document.getElementById(`rnm-pick-${r.i}`)?.checked;
         const row = document.getElementById(`rnm-row-${r.i}`); if (row) row.style.opacity = on ? '1' : '.5';
         const cls = parseInt(val(`rnm-cls-${r.i}`)) || 0, validity = parseInt(val(`rnm-val-${r.i}`)) || r.validity, price = parseFloat(val(`rnm-amt-${r.i}`)) || 0;
+        const _hint = document.getElementById(`rnm-hint-${r.i}`), _adj = !!document.getElementById('rnm-adjust')?.checked;
+        if (_hint) _hint.innerHTML = classesHint(r.prev, cls, _adj ? r.carry : 0, _adj ? r.deduct : 0);
         const d = computeRenewalDates(m, r.sport, validity, cls);
         const why = d.source === 'attendance'
           ? t('first class attended after expiry', 'أول حصة حضرها بعد الانتهاء') + ' (' + fD(d.firstClass) + ')'
@@ -28056,7 +28059,7 @@ window.addRenewal = function(memberId) {
         <div class="field" id="rn-coach-field" style="${isCampSport((enrolledUnique[0]?.sport || m.sport)) ? 'display:none' : ''}"><label>Coach</label><select id="rn-coach">${coachOpts(enrolledUnique[0]?.coachId || m.coachId)}</select></div>
       </div>
       <div class="form-row">
-        <div class="field"><label>Classes</label><input id="rn-classes" type="number" min="0" step="1" value="${(renewalStandardFor(m, enrolledUnique[0]?.sport, enrolledUnique[0]?.coachId) || {}).classes || enrolledUnique[0]?.classes || ''}" /></div>
+        <div class="field"><label style="display:flex;justify-content:space-between;align-items:center">Classes <span id="rn-cls-badge" style="display:none;gap:4px"></span></label><input id="rn-classes" type="number" min="0" step="1" value="${(renewalStandardFor(m, enrolledUnique[0]?.sport, enrolledUnique[0]?.coachId) || {}).classes || enrolledUnique[0]?.classes || ''}" /><div id="rn-cls-hint" class="text-mute" style="font-size:10px;margin-top:3px"></div></div>
         <div class="field"><label>Validity</label><select id="rn-validity">${validityOptionsHtml(DEFAULT_VALIDITY)}</select></div>
         <div class="field"><label>Amount / Fee (QAR)</label><input id="rn-amount" type="number" step="0.01" min="0" value="${(renewalStandardFor(m, enrolledUnique[0]?.sport, enrolledUnique[0]?.coachId) || {}).price || enrolledUnique[0]?.price || ''}" /></div>
       </div>
@@ -28187,6 +28190,8 @@ window.addRenewal = function(memberId) {
           validity,
           status: $('#rn-status').value,
           totalClasses: classes || null,
+          packageClasses: classesRaw || null,       // v6.817 — the package as sold (8), without the carried / deducted classes
+          ...(carried > 0 ? { carriedClasses: carried } : {}),
           attendedClasses: 0,
           priceCompleted: null,
           amountPaid: amount,
@@ -28202,11 +28207,11 @@ window.addRenewal = function(memberId) {
             _en.private = !!_pv.private; _en.approach = _pv.private ? _pv.approach : null;   // v6.660: keep the enrollment in step
             // v6.692 — and its package: the renewed class count (incl. carried / minus deducted), price and dates. The enrollment used to keep the OLD
             // numbers, so "Generate latest invoice" / Rebuild from profile later brought them back (Mohamed Hamdy: 14 renewed, invoice rebuilt at 10).
-            if (!_en.start || start >= _en.start) { if (classes) _en.classes = classes; if (amount > 0) _en.price = amount; _en.start = start; _en.validity = validity; }
+            if (!_en.start || start >= _en.start) { if (classes) _en.classes = classesRaw || classes; if (amount > 0) _en.price = amount; _en.start = start; _en.validity = validity; }
           } }
         if (!isCampSport(renewedSport) && renewedSport !== MIXED && !(m.enrollments || []).some(e => e.sport === renewedSport)) {   // v6.815 — no enrollment row for the renewed sport → create it
           if (!Array.isArray(m.enrollments)) m.enrollments = [];
-          m.enrollments.push({ sport: renewedSport, coachId, classes: classes || 0, price: amount || 0, start, validity, private: !!_pv.private, approach: _pv.private ? _pv.approach : null });
+          m.enrollments.push({ sport: renewedSport, coachId, classes: classesRaw || classes || 0, price: amount || 0, start, validity, private: !!_pv.private, approach: _pv.private ? _pv.approach : null });
         }
 
         // 3) Create the corresponding invoice so it appears in revenue
@@ -28522,6 +28527,22 @@ window.addRenewal = function(memberId) {
   syncRnCoachVisibility();
   recalcRnDeduction();
   recalcRnCarry();
+  // v6.817 — the Classes box shows the PACKAGE (4 / 6 / 8 / 12 …); the carried / deducted classes ride on top as a +N / −N tag, and are added when it is saved
+  const rnBadge = () => {
+    const el = document.getElementById('rn-cls-badge'); if (!el) return;
+    const sp = (document.getElementById('rn-act') || {}).value;
+    const carry = document.getElementById('rn-apply-carry')?.checked ? (carryForwardCredit(m, sp) || 0) : 0;
+    const ded = document.getElementById('rn-apply-deduction')?.checked ? (window._rnPendingDeduction || 0) : 0;
+    const tag = (txt, bg, fg) => `<span style="font-size:11px;font-weight:700;padding:1px 7px;border-radius:9px;background:${bg};color:${fg}">${txt}</span>`;
+    el.innerHTML = (carry ? tag('+' + carry, 'rgba(16,185,129,.16)', '#10b981') : '') + (ded ? tag('−' + ded, 'rgba(245,158,11,.16)', 'var(--accent-2)') : '');
+    el.style.display = (carry || ded) ? 'inline-flex' : 'none';
+    const h = document.getElementById('rn-cls-hint');
+    if (h) { const enr = enrolledUnique.find(e => e.sport === sp); h.innerHTML = classesHint(prevPackageInfo(m, sp, enr ? enr.coachId : null), parseInt((document.getElementById('rn-classes') || {}).value) || 0, carry, ded); }
+  };
+  document.getElementById('rn-classes')?.addEventListener('input', () => rnBadge());
+  ['rn-carry-banner', 'rn-deduct-banner'].forEach(id => document.getElementById(id)?.addEventListener('change', rnBadge));
+  document.getElementById('rn-act')?.addEventListener('change', () => setTimeout(rnBadge, 0));
+  rnBadge();
 };
 
 // Delete ONE specific subscription period (by _sid) — for fixing a duplicate or a
