@@ -84,6 +84,23 @@ function _financeAggRaw(months) {
   const sales = (state.sales || []).reduce((tt, x) => tt + (mset.has(x.month) ? (x.paid || 0) : 0), 0);
   return { revenue, rentalRevenue, salesRevenue, rentalCount, coachingRevenue: revenue - rentalRevenue - salesRevenue, cashCollected, collected, due, salaries, expenses, cashExpenses, sales, profit: revenue - expenses - salaries };
 }
+// v6.814 — Dashboard view only: costs of the CURRENT month that are owed but not paid yet (monthly rent + the unpaid Citadel share). Never stored as expenses.
+function dashUnpaidRent() {
+  const raw = state.settings && state.settings.dashUnpaidRent;
+  return (raw === undefined || raw === null || raw === '' || isNaN(Number(raw))) ? 16500 : Math.max(0, Number(raw));
+}
+function dashUnpaidAccruals(months) {
+  const cm = String(TODAY || '').slice(0, 7);
+  if (!(months || []).includes(cm)) return { rent: 0, citadel: 0, total: 0 };
+  const rent = dashUnpaidRent();
+  let citadel = 0;
+  try {
+    const raw = Number(state.settings && state.settings.citadelRate);
+    const rate = (isNaN(raw) || raw < 0) ? 30 : raw;
+    citadel = Math.max(0, Math.round((citadelCompute([cm]).grand * rate / 100 - citadelPaidToCompany([cm])) * 100) / 100);
+  } catch (_) {}
+  return { rent, citadel, total: rent + citadel };
+}
 function computeStats(arg) {
   const period = normalizeDashPeriod(arg);
   const months = dashPeriodMonths(period);
@@ -92,6 +109,7 @@ function computeStats(arg) {
   const prev = pp ? financeAgg(dashPeriodMonths(pp)) : { revenue: 0, rentalRevenue: 0, salesRevenue: 0, rentalCount: 0, coachingRevenue: 0, cashCollected: 0, collected: 0, due: 0, salaries: 0, expenses: 0, cashExpenses: 0, sales: 0, profit: 0 };
   const activeMembersList = activeMembers();
   const _mc = memberCounts();
+  const _unpaid = dashUnpaidAccruals(months);
   return {
     period, months,
     currMonth: period.type === 'month' ? period.value : (period.type === 'year' ? period.value : (period.type === 'months' ? 'multi' : 'all')),
@@ -111,6 +129,7 @@ function computeStats(arg) {
     currSalaries: cur.salaries, prevSalaries: prev.salaries,
     currSales: cur.sales, prevSales: prev.sales,
     currProfit: cur.profit, prevProfit: prev.profit,
+    unpaidRent: _unpaid.rent, unpaidCitadel: _unpaid.citadel, unpaidTotal: _unpaid.total,
     activeMembers: _mc.active, expiredMembers: _mc.expired, completedMembers: _mc.completed, frozenMembers: _mc.frozen, withdrawnMembers: _mc.withdrawn,
     totalMembers: activeMembersList.length,
     archivedMembers: state.members.length - activeMembersList.length,
@@ -758,15 +777,16 @@ PAGES.dashboard = (main) => {
       <div class="kpi orange" style="cursor:pointer" onclick="_dashGoExpenses(${escapeHtml(JSON.stringify(s.months))})" title="${t('Click to open the Expenses for this period', 'اضغط لفتح مصروفات هذه الفترة')}">
         <div class="kpi-icon">💸</div>
         <div class="kpi-label" title="${t('Accrual view — operating expenses PLUS all coach pay EARNED this month (fixed salaries + commission), whether paid yet or not. This differs from the Expenses screen, which shows cash actually PAID OUT; coach commission earned but not yet paid is the main gap.', 'عرض الاستحقاق — مصروفات التشغيل + كامل أجور المدربين المستحقة هذا الشهر (رواتب ثابتة + عمولة)، سواء دُفعت أم لا. يختلف عن شاشة المصروفات التي تعرض النقد المدفوع فعلياً؛ الفرق الأساسي هو عمولة المدربين المستحقة غير المدفوعة.')}">${t('Total Expenses','إجمالي المصروفات')} (${s.periodShort})</div>
-        <div class="kpi-value num">${fmt(s.currExpenses + s.currSalaries)} <span style="font-size:13px;color:var(--text-dim);font-weight:500">QAR · ${t('accrual', 'استحقاق')}</span></div>
+        <div class="kpi-value num">${fmt(s.currExpenses + s.currSalaries + s.unpaidTotal)} <span style="font-size:13px;color:var(--text-dim);font-weight:500">QAR · ${t('accrual', 'استحقاق')}</span></div>
         <div class="kpi-delta flat" title="${t('Cash paid out = what the Expenses screen shows (all recorded expenses this month, incl. salary payments entered). Payroll earned = all coach pay earned this month whether paid yet or not — the accrual headline above = Ops + payroll earned.', 'النقد المدفوع = ما تعرضه شاشة المصروفات (كل المصروفات المسجّلة هذا الشهر شاملة رواتب مدفوعة). الرواتب المستحقة = كامل أجور المدربين هذا الشهر سواء دُفعت أم لا — رقم الاستحقاق بالأعلى = التشغيل + الرواتب المستحقة.')}">💵 ${fmt(s.currCashExpenses)} ${t('cash paid', 'مدفوع نقداً')} · 🧮 ${fmt(s.currSalaries)} ${t('payroll earned', 'رواتب مستحقة')}</div>
+        ${s.unpaidTotal > 0 ? `<div class="kpi-delta flat" style="margin-top:4px" title="${t('Owed but not paid yet, added to this card and to Net Profit on the Dashboard only (nothing is recorded as an expense): the monthly rent plus the Citadel share still unpaid.', 'مستحق ولم يُدفع بعد، يُضاف لهذا الكارت وصافي الربح في لوحة المعلومات فقط (لا يُسجَّل كمصروف): إيجار الشهر + حصة سيتادل غير المدفوعة.')}">⏳ ${fmt(s.unpaidRent)} ${t('rent', 'إيجار')} + ${fmt(s.unpaidCitadel)} Citadel ${t('not paid yet', 'لم تُدفع بعد')}${currentRole() === 'admin' ? ` <a href="#" onclick="event.stopPropagation();window.dashEditUnpaidRent();return false" title="${t('Change the monthly rent amount', 'تغيير مبلغ الإيجار الشهري')}">✎</a>` : ''}</div>` : ''}
       </div>
-      <div class="kpi ${s.currProfit >= 0 ? 'green' : 'red'}" style="cursor:pointer" onclick="navigate('reports')" title="${t('Click to open the Reports', 'اضغط لفتح التقارير')}">
-        <div class="kpi-icon">${s.currProfit >= 0 ? '📈' : '📉'}</div>
+      <div class="kpi ${(s.currProfit - s.unpaidTotal) >= 0 ? 'green' : 'red'}" style="cursor:pointer" onclick="navigate('reports')" title="${t('Click to open the Reports', 'اضغط لفتح التقارير')}${s.unpaidTotal > 0 ? ' · ' + t('after the unpaid rent + Citadel shown on the expenses card', 'بعد الإيجار وسيتادل غير المدفوعين الظاهرين في كارت المصروفات') : ''}">
+        <div class="kpi-icon">${(s.currProfit - s.unpaidTotal) >= 0 ? '📈' : '📉'}</div>
         <div class="kpi-label">${s.periodShort} ${t('Net Profit','صافي الربح')}</div>
-        <div class="kpi-value num">${fmt(s.currProfit)} <span style="font-size:13px;color:var(--text-dim);font-weight:500">QAR</span></div>
-        ${kpiDelta(s.currProfit, s.prevProfit)}
-        ${sparkline([s.prevProfit, s.currProfit])}
+        <div class="kpi-value num">${fmt(s.currProfit - s.unpaidTotal)} <span style="font-size:13px;color:var(--text-dim);font-weight:500">QAR</span></div>
+        ${kpiDelta(s.currProfit - s.unpaidTotal, s.prevProfit)}
+        ${sparkline([s.prevProfit, s.currProfit - s.unpaidTotal])}
       </div>
       <div class="kpi ${lowStockList.length ? 'red' : 'green'}" style="cursor:pointer" onclick="navigate('products')" title="${t('Products at or below their low-stock threshold — click to restock','أصناف عند أو تحت حد المخزون المنخفض — اضغط لإعادة التزويد')}">
         <div class="kpi-icon">📦</div>
@@ -845,11 +865,11 @@ PAGES.dashboard = (main) => {
 function drawRevenueChart() {
   const container = $('#rev-chart'); if (!container) return;
   const s = computeStats();
-  const maxVal = Math.max(s.aprRevenue, s.mayRevenue, s.aprExpenses + s.aprSalaries, s.mayExpenses + s.maySalaries, 1);
+  const maxVal = Math.max(s.aprRevenue, s.mayRevenue, s.aprExpenses + s.aprSalaries, s.mayExpenses + s.maySalaries + s.unpaidTotal, 1);
 
   const months = [
     { label: s.prevShort, rev: s.prevRevenue, exp: s.prevExpenses + s.prevSalaries, profit: s.prevProfit },
-    { label: s.periodShort, rev: s.currRevenue, exp: s.currExpenses + s.currSalaries, profit: s.currProfit },
+    { label: s.periodShort, rev: s.currRevenue, exp: s.currExpenses + s.currSalaries + s.unpaidTotal, profit: s.currProfit - s.unpaidTotal },
   ];
 
   container.innerHTML = `
@@ -1192,6 +1212,32 @@ window._dashGoMembers = function (o) {
   o = o || {};
   saveFilter('members', { search: '', status: 'all', statuses: o.statuses || [], sports: o.sports || [], coach: 'all', coaches: [], nationality: 'all', nationalities: [], incomplete: 'all', balance: 'all', expiry: 'all', enrollMonths: [], dateFrom: '', dateTo: '', dateBasis: 'enrolled', newMonths: o.newMonths || [], renewMonths: o.renewMonths || [], curSport: o.curSport || '' });
   if (typeof navigate === 'function') navigate('members');
+};
+// v6.814 — the monthly rent shown as "not paid yet" on the Dashboard (admin). 0 hides it, e.g. once the rent is paid and recorded.
+window.setDashUnpaidRent = function (raw) {
+  if (currentRole() !== 'admin') { toast(t('Only an admin can change this', 'للمسؤول فقط'), 'error'); return { ok: false }; }
+  const v = parseFloat(raw);
+  if (!isFinite(v) || v < 0) { toast(t('Enter an amount of 0 or more', 'أدخل مبلغاً 0 أو أكثر'), 'error'); return { ok: false }; }
+  if (!state.settings) state.settings = {};
+  const before = dashUnpaidRent();
+  state.settings.dashUnpaidRent = v;
+  try { if (typeof audit === 'function') audit('settings.dash_unpaid_rent', 'settings', 'Dashboard unpaid rent: ' + before + ' → ' + v); } catch (_) {}
+  return { ok: true, rent: v };
+};
+window.dashEditUnpaidRent = function () {
+  showModal({
+    title: '⏳ ' + t('Monthly rent not paid yet', 'إيجار الشهر غير المدفوع'),
+    body: `<div class="text-mute" style="font-size:12px;margin-bottom:8px">${t('Shown on the Dashboard only (Total Expenses and Net Profit of the current month). It is not recorded as an expense — set 0 once you have paid and recorded the rent.', 'يظهر في لوحة المعلومات فقط (إجمالي المصروفات وصافي ربح الشهر الحالي). لا يُسجَّل كمصروف — اجعله 0 بعد دفع الإيجار وتسجيله.')}</div><div class="field"><label>${t('Rent (QAR)', 'الإيجار (ر.ق)')}</label><input id="dur-amt" type="number" min="0" step="0.01" value="${dashUnpaidRent()}" /></div>`,
+    actions: [
+      { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
+      { label: t('Save', 'حفظ'), class: 'btn primary', onclick: () => {
+        const r = window.setDashUnpaidRent(($('#dur-amt') || {}).value);
+        if (!r.ok) return;
+        save(); closeModal(); render();
+        toast(t('Rent set to ', 'تم ضبط الإيجار على ') + fmt(r.rent));
+      } },
+    ],
+  });
 };
 // ...and the Expenses screen for the period the Dashboard is showing.
 window._dashGoExpenses = function (months) {
