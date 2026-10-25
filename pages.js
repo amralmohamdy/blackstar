@@ -12982,7 +12982,7 @@ function bindMonthMulti(id, onChange) {
 function invoiceProductLines(inv) {
   if (!inv) return [];
   if ((inv.category || 'Membership') !== 'Product' && inv.activityType !== 'sale') return [];
-  const nameOf = (it) => { const p = (state.products || []).find(x => x.id === it.productId); return (p && p.name) || it.name || it.productName || t('Item', 'صنف'); };
+  const nameOf = (it) => { const p = (state.products || []).find(x => x.id === it.productId); const sku = (p && p.sku) || it.sku; return ((p && p.name) || it.name || it.productName || t('Item', 'صنف')) + (sku ? ' (SKU ' + sku + ')' : ''); };
   const sale = (state.sales || []).find(s => s.invoiceId === inv.id);
   if (sale && Array.isArray(sale.items) && sale.items.length) {
     return sale.items.map(it => ({ name: nameOf(it), qty: Number(it.qty) || 1, unitPrice: Number(it.unitPrice != null ? it.unitPrice : it.price) || 0 })).filter(x => x.name);
@@ -22214,11 +22214,58 @@ PAGES.products = (main) => {
     });
   }
 
+  // v6.824 — the same product in several sizes / SKUs is ONE row (total stock, price range); click it for the SKUs (cost, price, stock, Restock / Edit / Delete each)
+  const _gkey = p => String(p.name || '').trim().toLowerCase() + '|' + String(p.category || '').trim().toLowerCase();
+  function groupProducts(list) {
+    const map = new Map(), out = [];
+    for (const p of list) { const k = _gkey(p); if (!map.has(k)) { const g = { key: k, items: [] }; map.set(k, g); out.push(g); } map.get(k).items.push(p); }
+    return out;
+  }
+  const _range = (vals, money) => { const v = vals.filter(x => x > 0); if (!v.length) return '<span class="text-mute">—</span>'; const lo = Math.min(...v), hi = Math.max(...v); return lo === hi ? fmt(lo) : fmt(lo) + ' – ' + fmt(hi); };
+  const _stat = p => { const s = productCurrentStock(p.id), th = p.lowStockThreshold || 3; return s === 0 ? 'out' : s <= th ? 'low' : 'ok'; };
+  function groupRowHtml(g, n) {
+    const items = g.items, stock = items.reduce((s, p) => s + productCurrentStock(p.id), 0), value = items.reduce((s, p) => s + productCurrentStock(p.id) * (p.price || 0), 0);
+    const st = items.map(_stat), worst = st.includes('out') ? 'out' : st.includes('low') ? 'low' : 'ok';
+    const nOut = st.filter(x => x === 'out').length, nLow = st.filter(x => x === 'low').length;
+    const col = worst === 'out' ? 'var(--red)' : worst === 'low' ? 'var(--accent-2)' : 'var(--green)';
+    const bg = worst === 'out' ? 'rgba(239,68,68,.15)' : worst === 'low' ? 'rgba(242,163,60,.15)' : 'rgba(16,185,129,.15)';
+    const lbl = worst === 'ok' ? t('In stock', 'متوفر') : (nOut ? nOut + ' ' + t('out', 'نفد') : '') + (nOut && nLow ? ' · ' : '') + (nLow ? nLow + ' ' + t('low', 'منخفض') : '');
+    return `
+        <tr style="cursor:pointer" onclick="showProductVariants('${escapeHtml(g.key).replace(/'/g, '&#39;')}')" title="${t('Click to see the SKUs', 'اضغط لعرض الأصناف')}">
+          <td class="text-mute num" style="width:34px;text-align:right">${n}</td>
+          <td><div class="font-bold">${escapeHtml(items[0].name)} <span class="badge blue" style="font-size:10px">${items.length} SKUs</span></div><div class="text-mute" style="font-size:11px">SKU: ${items.map(p => escapeHtml(p.sku || '—')).join(' · ')}</div></td>
+          <td><span class="badge">${escapeHtml(items[0].category || '—')}</span></td>
+          ${isViewerRole() ? '' : `<td class="text-right num">${_range(items.map(p => p.cost || 0))}</td>`}
+          <td class="text-right num font-bold">${_range(items.map(p => p.price || 0))}</td>
+          <td class="text-right" style="color:${col};font-weight:700">${stock}</td>
+          ${isViewerRole() ? '' : `<td class="text-right num">${fmt(value)}</td>`}
+          <td><span class="badge" style="background:${bg};color:${col};font-size:10px">${lbl}</span></td>
+          <td class="text-right" style="white-space:nowrap"><button class="btn ghost sm" onclick="event.stopPropagation();showProductVariants('${escapeHtml(g.key).replace(/'/g, '&#39;')}')">📋 ${t('SKUs', 'الأصناف')} (${items.length})</button></td>
+        </tr>`;
+  }
+  window.showProductVariants = function(key) {
+    const items = (state.products || []).filter(p => _gkey(p) === String(key).toLowerCase());
+    if (!items.length) return;
+    const money = !isViewerRole();
+    showModal({
+      title: '📦 ' + escapeHtml(items[0].name) + ' — ' + items.length + ' SKUs',
+      body: `<div style="font-size:12px;margin-bottom:8px" class="text-mute">${escapeHtml(items[0].category || '')} · ${t('total stock', 'إجمالي المخزون')} <b>${items.reduce((s, p) => s + productCurrentStock(p.id), 0)}</b></div>
+        <div class="table-wrap"><table><thead><tr><th>SKU</th>${money ? '<th class="text-right">' + t('Cost', 'التكلفة') + '</th>' : ''}<th class="text-right">${t('Sell price', 'سعر البيع')}</th><th class="text-right">${t('Stock', 'المخزون')}</th><th>${t('Status', 'الحالة')}</th><th></th></tr></thead><tbody>${items.map(p => {
+          const s = productCurrentStock(p.id), st = _stat(p), col = st === 'out' ? 'var(--red)' : st === 'low' ? 'var(--accent-2)' : 'var(--green)';
+          return `<tr><td class="font-bold">${escapeHtml(p.sku || '—')}</td>${money ? '<td class="text-right num">' + (p.cost ? fmt(p.cost) : '—') + '</td>' : ''}<td class="text-right num font-bold">${fmt(p.price || 0)}</td><td class="text-right" style="color:${col};font-weight:700">${s}</td><td><span style="color:${col};font-size:11px;font-weight:700">${st === 'out' ? t('Out of stock', 'نفد المخزون') : st === 'low' ? t('Low', 'منخفض') : t('In stock', 'متوفر')}</span></td>
+            <td class="text-right" style="white-space:nowrap"><button class="btn ghost sm" onclick="closeModal();restockProduct(${p.id})">➕ ${t('Restock', 'إعادة تخزين')}</button>${money ? '<button class="btn ghost sm" onclick="closeModal();editProduct(' + p.id + ')">✏️</button><button class="btn ghost sm" onclick="closeModal();deleteProduct(' + p.id + ')">🗑</button>' : ''}</td></tr>`; }).join('')}</tbody></table></div>`,
+      actions: [{ label: t('Close', 'إغلاق'), class: 'btn primary', onclick: closeModal }],
+    });
+  };
+
   function refresh() {
     const all = applyFilter();
-    const rows = paginate(all, pg);
+    const groups = groupProducts(all);
+    const rows = paginate(groups, pg);
     const _rowOffset = (pg.size === 'all') ? 0 : (pg.page - 1) * pg.size;   // v6.618 — continuous # across pages
-    $('#prod-tbody').innerHTML = rows.length ? rows.map((p, _i) => {
+    $('#prod-tbody').innerHTML = rows.length ? rows.map((g, _i) => {
+      if (g.items.length > 1) return groupRowHtml(g, _rowOffset + _i + 1);
+      const p = g.items[0];
       const stock = productCurrentStock(p.id);
       const threshold = p.lowStockThreshold || 3;
       const stockColor = stock === 0 ? 'var(--red)' : stock <= threshold ? 'var(--accent-2)' : 'var(--green)';
@@ -22253,7 +22300,7 @@ PAGES.products = (main) => {
       ${isViewerRole() ? '' : `<td class="text-right num font-bold">${fmt(fSell)}</td>`}
       <td></td><td></td>
     </tr>` : '';
-    renderPagination('prod-pagination', pg, all.length, refresh);
+    renderPagination('prod-pagination', pg, groups.length, refresh);
   }
 
   const cats = [...new Set((state.products || []).map(p => p.category).filter(Boolean))].sort();
@@ -22695,7 +22742,7 @@ function renderSaleLines() {
     wrap.innerHTML = headerRow + window._saleLines.map((line, i) => {
       const inStock = line.productId ? productCurrentStock(line.productId) : 0;
       const overStock = line.productId && line.qty > inStock;
-      const opts = products.map(p => `<option value="${p.id}" ${line.productId === p.id ? 'selected' : ''}>${escapeHtml(p.name)} · ${fmt(p.price)} · ${productCurrentStock(p.id)} in stock</option>`).join('');
+      const opts = products.map(p => `<option value="${p.id}" ${line.productId === p.id ? 'selected' : ''}>${escapeHtml(p.name)}${p.sku ? ' · SKU ' + escapeHtml(p.sku) : ''} · ${fmt(p.price)} · ${productCurrentStock(p.id)} in stock</option>`).join('');
       return `
         <div style="display:grid;grid-template-columns:${ROW_GRID};gap:6px;align-items:center;padding:4px 6px;background:${overStock ? 'rgba(239,68,68,.08)' : 'transparent'};border-radius:6px;min-width:0">
           <select data-line-i="${i}" data-line-k="productId" style="font-size:12px;min-width:0;width:100%;padding:6px 4px">
@@ -22712,7 +22759,7 @@ function renderSaleLines() {
           const threshold = p.lowStockThreshold || 3;
           const color = (overStock || inStock === 0) ? 'var(--red)' : (inStock <= threshold ? 'var(--accent-2)' : 'var(--text-mute)');
           const note = overStock ? ` — only ${inStock} available, reduce qty` : (inStock === 0 ? ' — out of stock' : (inStock <= threshold ? ' · low' : ''));
-          return `<div style="font-size:10px;color:${color};padding:0 8px;margin-top:-2px;font-weight:${overStock || inStock === 0 ? '600' : '400'}">📦 ${inStock} in stock${note}</div>`;
+          return `<div style="font-size:10px;color:${color};padding:0 8px;margin-top:-2px;font-weight:${overStock || inStock === 0 ? '600' : '400'}">📦 ${p.sku ? '<b>SKU ' + escapeHtml(p.sku) + '</b> · ' : ''}${inStock} in stock${note}</div>`;
         })() : ''}
       `;
     }).join('');
@@ -22819,6 +22866,7 @@ function completeSale(onDone) {
     .map(l => ({
       productId: l.productId,
       name: l.name,
+      sku: ((state.products || []).find(x => x.id === l.productId) || {}).sku || null,   // v6.824 — which product (size / variant) was deducted
       qty: l.qty,
       unitPrice: l.unitPrice,
       lineTotal: l.qty * l.unitPrice,
@@ -22884,7 +22932,7 @@ function completeSale(onDone) {
 
   // Auto-create linked invoice
   const ref = nextInvoiceRef();
-  const desc = `Sale: ${validLines.map(l => `${l.qty}× ${l.name}`).join(' · ')}${customerName ? ' — ' + customerName : ''}`;
+  const desc = `Sale: ${validLines.map(l => `${l.qty}× ${l.name}${l.sku ? ' (SKU ' + l.sku + ')' : ''}`).join(' · ')}${customerName ? ' — ' + customerName : ''}`;
   const newInv = {
     id: nextId(state.invoices),
     date, description: desc, amount: total, method, month, ref,
@@ -25045,6 +25093,16 @@ PAGES.attendance = (main) => {
     const _defCoach = rec ? rec.coachId : _selfCoach;
     const sportOpts = `<option value="">${t('— pick sport —', '— اختر الرياضة —')}</option>` + sportChoices.map(s => `<option value="${escapeHtml(s)}" ${rec && rec.sport === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('');
     const coachOpts = `<option value="">${t('— pick coach —', '— اختر المدرب —')}</option>` + coaches.map(c => `<option value="${c.id}" ${_defCoach != null && String(_defCoach) === String(c.id) ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+    // v6.823 — the coach list follows the sport: only the coaches who teach it (everyone while no sport is picked, and when nobody teaches it)
+    const coachOptsFor = (sp, sel) => {
+      const el = sp ? coachesForSport(sp, null) : [];
+      const list = el.length ? el : coaches, keep = list.some(c => String(c.id) === String(sel));
+      return `<option value="">${t('— pick coach —', '— اختر المدرب —')}</option>` + list.map(c => `<option value="${c.id}" ${keep && String(sel) === String(c.id) ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+    };
+    window._mixSportChanged = function(n) {
+      const sEl = document.getElementById(n > 1 ? 'mix-sport-' + n : 'mix-sport'), cEl = document.getElementById(n > 1 ? 'mix-coach-' + n : 'mix-coach');
+      if (sEl && cEl) cEl.innerHTML = coachOptsFor(sEl.value, cEl.value);
+    };
     let _mixRow = 1;
     window._mixAddRow = function() {   // v6.798 — one more sport + coach for the SAME day, in the same dialog
       if (_mixRow >= 6) return;
@@ -25052,7 +25110,7 @@ PAGES.attendance = (main) => {
       const host = document.getElementById('mix-extra'); if (!host) return;
       const div = document.createElement('div');
       div.style.cssText = 'margin-top:12px;padding-top:10px;border-top:1px dashed var(--border)';
-      div.innerHTML = `<div class="field"><label>${t('Sport', 'الرياضة')} #${_mixRow}</label><select id="mix-sport-${_mixRow}">${sportOpts}</select></div><div class="field" style="margin-top:8px"><label>${t('Coach', 'المدرب')} #${_mixRow}</label><select id="mix-coach-${_mixRow}">${coachOpts}</select></div>`;
+      div.innerHTML = `<div class="field"><label>${t('Sport', 'الرياضة')} #${_mixRow}</label><select id="mix-sport-${_mixRow}" onchange="window._mixSportChanged(${_mixRow})">${sportOpts}</select></div><div class="field" style="margin-top:8px"><label>${t('Coach', 'المدرب')} #${_mixRow}</label><select id="mix-coach-${_mixRow}">${coachOpts}</select></div>`;
       host.appendChild(div);
       if (_mixRow >= 6) { const b = document.getElementById('mix-add-row'); if (b) b.style.display = 'none'; }
     };
@@ -25078,7 +25136,7 @@ PAGES.attendance = (main) => {
           <p>${escapeHtml(m.name)} · <b>${t('day', 'يوم')} ${day}</b> ${t('of', 'من')} ${fmtMonth(mo)}</p>
           ${_ents.length ? `<div style="margin:8px 0;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2)"><div class="text-mute" style="font-size:11px;margin-bottom:4px">${t('Already logged this day', 'مسجّل في هذا اليوم')} (${_ents.length})</div>${_ents.map(e => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:3px 0"><span>✓ ${escapeHtml(e.rec.sport || '—')} · ${escapeHtml(coachName(e.rec.coachId) || '—')}</span><button class="btn ghost sm" style="color:var(--red)" onclick="window._mixDel(${memberId}, ${day}, '${e.key}')" title="${t('Remove this class', 'حذف هذه الحصة')}">🗑</button></div>`).join('')}</div><p style="margin:0;font-size:12px;color:var(--text-mute)">${t('Need another class the same day? Pick the sport + coach below and press Add.', 'حصة أخرى في نفس اليوم؟ اختر الرياضة والمدرب ثم اضغط إضافة.')}</p>` : ''}
           <p style="margin-top:4px;color:var(--text-mute);font-size:12px">${t('Which sport did they try, and with which coach? The class is credited to that coach.', 'ما الرياضة التي جربها ومع أي مدرب؟ تُحتسب الحصة لذلك المدرب.')}</p>
-          <div class="field" style="margin-top:10px"><label>${t('Sport', 'الرياضة')}</label><select id="mix-sport">${sportOpts}</select></div>
+          <div class="field" style="margin-top:10px"><label>${t('Sport', 'الرياضة')}</label><select id="mix-sport" onchange="window._mixSportChanged(1)">${sportOpts}</select></div>
           <div class="field" style="margin-top:8px"><label>${t('Coach', 'المدرب')}</label><select id="mix-coach">${coachOpts}</select></div>
           <div id="mix-extra"></div>
           <button type="button" id="mix-add-row" class="btn ghost sm" style="margin-top:12px" onclick="window._mixAddRow()">＋ ${t('Another sport (same day)', 'رياضة أخرى (نفس اليوم)')}</button>
@@ -25192,7 +25250,7 @@ PAGES.attendance = (main) => {
         const sportEsc = sport.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
         return `<tr style="${rowStyle2}">
             <td class="att-name-cell" title="${escapeHtml(m.name)} · ${escapeHtml(sport)}${_due2 > 0.5 ? ' · ' + fmt(_due2) + ' QAR due' : ''}">
-              <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isExpired || hist ? 'color:var(--text-mute)' : ''}">${escapeHtml(m.name)}${statusBadge}${histBadge}${renewBadge2}${unpaidBadge2}</div>
+              <div style="font-weight:600;display:flex;align-items:center;gap:4px;min-width:0;${isExpired || hist ? 'color:var(--text-mute)' : ''}"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0">${escapeHtml(m.name)}</span><span style="flex:none;white-space:nowrap">${_isMixedRow ? '<span class="badge" style="font-size:9px;padding:1px 6px;background:rgba(59,130,246,.15);color:var(--blue)">🎯 ' + t('Mixed', 'مختلط') + '</span>' : ''}${statusBadge}${histBadge}${renewBadge2}${unpaidBadge2}</span></div>
               ${m.nameArabic ? `<div dir="rtl" style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isExpired ? 'color:var(--text-mute)' : ''}">${escapeHtml(m.nameArabic)}</div>` : ''}
               <div class="text-mute" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(sport)}${_isMixedRow ? ' · ' + escapeHtml(t('multi-coach', 'عدة مدربين')) : (!isCampSport(sport) ? ' · ' + escapeHtml(coachName(coachId)) : '')}${attPrivTag(rowPrivate(m, sport, coachId))}</div>
             </td>
@@ -25339,7 +25397,7 @@ PAGES.attendance = (main) => {
       return `
         <tr style="${rowStyle}">
           <td class="att-name-cell" title="${escapeHtml(m.name)} · ${escapeHtml(sport)}${_isMixedRow ? ' · ' + escapeHtml(t('multi-coach', 'عدة مدربين')) : (!isCampSport(sport) ? ' · ' + escapeHtml(coachName(coachId)) : '')}${isExpired ? ' · expired ' + fmtDate(m.expiryDate) : ''}${_due > 0.5 ? ' · ' + fmt(_due) + ' QAR due' : ''}">
-            <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isExpired || hist ? 'color:var(--text-mute)' : ''}">${escapeHtml(m.name)}${_isMixedRow ? ' <span class="badge" style="font-size:9px;padding:1px 6px;background:rgba(59,130,246,.15);color:var(--blue)">🎯 ' + t('Mixed', 'مختلط') + '</span>' : ''}${statusBadge}${histBadge}${campOverBadge}${sportOverBadge}${renewBadge}${unpaidBadge}</div>
+            <div style="font-weight:600;display:flex;align-items:center;gap:4px;min-width:0;${isExpired || hist ? 'color:var(--text-mute)' : ''}"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0">${escapeHtml(m.name)}</span><span style="flex:none;white-space:nowrap">${_isMixedRow ? '<span class="badge" style="font-size:9px;padding:1px 6px;background:rgba(59,130,246,.15);color:var(--blue)">🎯 ' + t('Mixed', 'مختلط') + '</span>' : ''}${statusBadge}${histBadge}${campOverBadge}${sportOverBadge}${renewBadge}${unpaidBadge}</span></div>
             ${m.nameArabic ? `<div dir="rtl" style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isExpired ? 'color:var(--text-mute)' : ''}">${escapeHtml(m.nameArabic)}</div>` : ''}
             <div class="text-mute" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(sport)}${_isMixedRow ? ' · ' + escapeHtml(t('pick sport + coach per class', 'اختر الرياضة والمدرب لكل حصة')) : (!isCampSport(sport) ? ' · ' + escapeHtml(coachName(coachId)) : '')}${attPrivTag(rowPrivate(m, sport, coachId))}</div>
           </td>
