@@ -1096,7 +1096,7 @@ window.showLocalBackupsUI = async function () {
     title: '🛟 ' + t('Local auto-backups', 'النسخ الاحتياطية التلقائية'),
     wide: true,
     body: `<div class="text-mute" style="font-size:12px;margin-bottom:10px">${t('Rolling snapshots kept on THIS device (the last 2 days in full, then one per day for 3 weeks). Restoring rolls the whole app back to that point — a safety copy of your current data downloads first, so this is always undoable.', 'لقطات محفوظة على هذا الجهاز (آخر يومين بالكامل ثم لقطة يومياً لثلاثة أسابيع). الاسترجاع يعيد التطبيق إلى تلك اللحظة، مع تنزيل نسخة أمان أولاً.')}</div>
-      <div class="table-wrap" style="max-height:50vh;overflow:auto"><table style="width:100%;font-size:13px">
+      <div class="table-wrap" style="max-height:calc(50vh * var(--uz, 1));overflow:auto"><table style="width:100%;font-size:13px">
         <thead><tr><th style="text-align:left;padding:6px 8px">${t('When', 'الوقت')}</th><th style="text-align:left;padding:6px 8px">${t('Trigger', 'السبب')}</th><th style="text-align:left;padding:6px 8px">${t('Contents', 'المحتوى')}</th><th></th></tr></thead>
         <tbody>${rows}</tbody></table></div>`,
     actions: [{ label: t('Close', 'إغلاق'), class: 'btn primary', onclick: closeModal }],
@@ -8295,7 +8295,7 @@ PAGES.clubrevenue = (main) => {
       body: `
         <div class="text-mute" style="font-size:12px;margin-bottom:10px">${t('Every invoice counted in this period, with amount and category.', 'كل فاتورة محتسبة في هذه الفترة، مع المبلغ والفئة.')}</div>
         ${catRows.length ? `<div style="margin-bottom:12px"><div style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--blue);font-weight:600;margin-bottom:6px">${t('By category', 'حسب الفئة')}</div><div style="display:flex;flex-direction:column;gap:6px">${catSummary}</div></div>` : ''}
-        <div class="table-wrap" style="max-height:46vh;overflow:auto">
+        <div class="table-wrap" style="max-height:calc(46vh * var(--uz, 1));overflow:auto">
           <table>
             <thead><tr>
               <th>${t('Date', 'التاريخ')}</th><th>${t('Category', 'الفئة')}</th><th>${t('Customer', 'العميل')}</th>
@@ -9280,7 +9280,7 @@ window.campRemindAll = function() {
         <div style="flex:1;height:8px;background:var(--surface-2);border-radius:5px;overflow:hidden"><div style="height:100%;width:${Math.round(done / list.length * 100)}%;background:var(--green);transition:width .2s"></div></div>
         <span class="text-mute" style="font-size:12px;white-space:nowrap">${done} / ${list.length} ${t('messaged', 'تم')}</span>
       </div>
-      <div style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow:auto">${list.map(rowHtml).join('')}</div>`;
+      <div style="display:flex;flex-direction:column;gap:6px;max-height:calc(50vh * var(--uz, 1));overflow:auto">${list.map(rowHtml).join('')}</div>`;
   };
 
   // Per-member click: stamp reminded + re-render just the panel (the WA link
@@ -9345,7 +9345,7 @@ window.fixCampValidity = function () {
   showModal({
     title: `🛠 ${t('Fix Summer Camp validity', 'تصحيح صلاحية المعسكر')}`,
     body: `<div style="font-size:13px;margin-bottom:10px">${t('These camp memberships have the wrong end date. A camp pass lasts its class-days counted Sun–Thu (Fri/Sat closed) — e.g. 1 month = 22 class-days, ending on the 22nd. The corrected end is in green; the member’s expiry is kept in sync.', 'هذه الاشتراكات تحمل تاريخ انتهاء خاطئ. باقة المعسكر تُحسب بأيام الحصص من الأحد إلى الخميس (الجمعة/السبت مغلق) — مثلاً الشهر = 22 يوم حصة تنتهي في اليوم الـ22. التصحيح بالأخضر، ويُزامَن تاريخ انتهاء العضو.')}</div>
-      <div style="max-height:44vh;overflow:auto;border:1px solid var(--border);border-radius:8px">
+      <div style="max-height:calc(44vh * var(--uz, 1));overflow:auto;border:1px solid var(--border);border-radius:8px">
         <table style="width:100%;border-collapse:collapse;font-size:12px">
           <thead><tr style="background:var(--surface-2);position:sticky;top:0">
             <th style="padding:6px 8px;text-align:left">#</th><th style="padding:6px 8px;text-align:left">${t('Member', 'العضو')}</th>
@@ -12820,7 +12820,11 @@ function multiFilterHTML(id, options, selected, o) {
         <input type="checkbox" class="mf-cb" value="${escapeHtml(String(v))}" ${sel.has(String(v)) ? 'checked' : ''} /> ${escapeHtml(String(lab))}</label>`;
         const grp = txt => `<div class="mf-grp" style="padding:7px 6px 3px;margin-top:4px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-mute);border-top:1px solid var(--border)">${txt}</div>`;
         const sp = (typeof coachSplitPairs === 'function') ? coachSplitPairs(pairs) : null;
-        return sp ? grp(t('Active coaches', 'المدربون النشطون')) + sp.act.map(row).join('') + grp(t('Inactive coaches', 'المدربون غير النشطين')) + sp.off.map(row).join('') : pairs.map(row).join('');
+        // v6.825 — inactive coaches are COLLAPSED behind a header (▸ / ▾); open by default only when one of them is already ticked
+        const offOpen = !!(sp && sp.off.some(([v]) => sel.has(String(v))));
+        const offRow = pr => row(pr).replace('<label ', '<label class="mf-offrow" ').replace('display:flex;', 'display:' + (offOpen ? 'flex' : 'none') + ';');
+        const offHdr = n => '<div class="mf-grp mf-off-toggle" style="padding:7px 6px 3px;margin-top:4px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-mute);border-top:1px solid var(--border);cursor:pointer;user-select:none"><span class="mf-off-arrow">' + (offOpen ? '▾' : '▸') + '</span> ' + t('Inactive coaches', 'المدربون غير النشطين') + ' (' + n + ')</div>';
+        return sp ? '<span class="mf-off-state" data-open="' + (offOpen ? '1' : '0') + '" style="display:none"></span>' + grp(t('Active coaches', 'المدربون النشطون')) + sp.act.map(row).join('') + offHdr(sp.off.length) + sp.off.map(offRow).join('') : pairs.map(row).join('');
       })()}
       <div class="mf-empty text-mute" style="display:none;padding:8px 6px;font-size:12px">${t('No matches', 'لا نتائج')}</div></div>
     </div>
@@ -12856,13 +12860,18 @@ function bindMultiFilter(id, onChange, o) {
   const applySearch = () => {
     const q = norm((search && search.value || '').trim());
     let shown = 0;
-    boxes().forEach(b => { const lab = b.parentElement; if (!lab) return; const hit = !q || norm(lab.textContent).includes(q); lab.style.display = hit ? 'flex' : 'none'; if (hit) shown++; });   // v6.764 — 'flex' not '' (clearing the inline display made the rows flow sideways)
+    const _offOpen = (wrap.querySelector('.mf-off-state') || {}).dataset ? wrap.querySelector('.mf-off-state').dataset.open === '1' : true;
+    boxes().forEach(b => { const lab = b.parentElement; if (!lab) return; const hit = !q || norm(lab.textContent).includes(q); const show = hit && (q || _offOpen || !lab.classList.contains('mf-offrow')); lab.style.display = show ? 'flex' : 'none'; if (show) shown++; });   // v6.764 — 'flex' not '' (clearing the inline display made the rows flow sideways); v6.825 — collapsed inactive rows stay hidden unless searched
     // v6.747 — hide a section header (Active / Inactive coaches) when none of its rows match
     let hdr = null, any = false;
     [...wrap.querySelectorAll('.mf-list > *')].forEach(el => { if (el.classList.contains('mf-grp')) { if (hdr) hdr.style.display = any ? '' : 'none'; hdr = el; any = false; } else if (el.style.display !== 'none' && !el.classList.contains('mf-empty')) any = true; });
     if (hdr) hdr.style.display = any ? '' : 'none';
+    const _tg = wrap.querySelector('.mf-off-toggle');   // v6.825 — the Inactive header stays while it has rows that match (even collapsed)
+    if (_tg) { const n = [...wrap.querySelectorAll('.mf-offrow')].filter(l => !q || norm(l.textContent).includes(q)).length; _tg.style.display = n ? '' : 'none'; }
     if (empty) empty.style.display = shown ? 'none' : '';
   };
+  const _tgl = wrap.querySelector('.mf-off-toggle');
+  if (_tgl) _tgl.addEventListener('click', e => { e.stopPropagation(); const st = wrap.querySelector('.mf-off-state'); if (!st) return; st.dataset.open = st.dataset.open === '1' ? '0' : '1'; const ar = _tgl.querySelector('.mf-off-arrow'); if (ar) ar.textContent = st.dataset.open === '1' ? '▾' : '▸'; applySearch(); });
   if (search) {
     search.addEventListener('click', e => e.stopPropagation());
     search.addEventListener('keydown', e => e.stopPropagation());
@@ -13762,10 +13771,10 @@ function addInvoice() {
         <div style="min-width:0">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
             <div style="font-weight:700;font-size:13px">🛒 Cart</div>
-            <button type="button" class="btn ghost sm" id="sale-add-line">+ Add line</button>
+            <button type="button" class="btn ghost sm" id="sale-add-line">+ ${t('Add product', 'إضافة منتج')}</button>
           </div>
           <div id="sale-lines" style="display:flex;flex-direction:column;gap:4px;max-height:340px;overflow-y:auto;overflow-x:hidden;border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--surface-2)"></div>
-          <div id="sale-empty-hint" class="text-mute" style="font-size:11px;margin-top:4px;text-align:center">Click "+ Add line" to start</div>
+          <div id="sale-empty-hint" class="text-mute" style="font-size:11px;margin-top:4px;text-align:center">Click "+ Add product" to start</div>
 
           <div style="margin-top:12px;background:var(--surface-2);border-radius:8px;padding:10px;font-size:13px">
             <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-mute">Subtotal</span><span id="sale-subtotal" class="font-bold">0.00</span></div>
@@ -17232,7 +17241,7 @@ window.findDuplicateInvoices = function() {
       ${groups.length} group${groups.length === 1 ? '' : 's'} (${exactN} exact, ${possN} possible) — about <b>${extra}</b> extra invoice${extra === 1 ? '' : 's'} that may be double-counting revenue & commission.
       <b style="color:var(--red)">Exact</b> = same customer, items, amount and the SAME DAY (a genuine double-entry). <b style="color:var(--accent-2)">Possible</b> = same customer, items and amount within 2 days (review before deleting). A renewal days/weeks later is NOT a duplicate. The first in each group is kept.
     </p>
-    <div style="max-height:55vh;overflow:auto">
+    <div style="max-height:calc(55vh * var(--uz, 1));overflow:auto">
     ${groups.map(g => {
       const r0 = g.rows[0];
       return `
@@ -21240,7 +21249,7 @@ window.showCoachSalaryHistory = function (coachId) {
     </tr>`);
   }
   const body = rows.length ? `
-    <div style="max-height:52vh;overflow:auto;border:1px solid var(--border);border-radius:8px">
+    <div style="max-height:calc(52vh * var(--uz, 1));overflow:auto;border:1px solid var(--border);border-radius:8px">
       <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:640px">
         <thead><tr style="background:var(--surface-2);position:sticky;top:0">
           <th style="padding:8px 10px;text-align:left">${t('Month', 'الشهر')}</th>
@@ -21491,7 +21500,7 @@ window.coachAttributionCheck = function () {
       ${t('These invoice lines credit a coach who is <b>different</b> from the current coach for that sport — usually because the coach was reassigned after the invoice was made. Re-crediting moves that line commission to the current coach. Only fix genuine corrections; leave a real mid-membership handover as it is.', 'هذه البنود تنسب العمولة لمدرب <b>مختلف</b> عن مدرب العضو الحالي لتلك الرياضة — عادةً لأن المدرب أُعيد تعيينه بعد إصدار الفاتورة. إعادة الإسناد تنقل عمولة هذا البند للمدرب الحالي. صحّح الحالات الخاطئة فقط.')}
       <div style="margin-top:6px;color:var(--accent-2)">⚠️ ${t('If the old coach was already PAID for a month, re-crediting shifts that commission — reconcile their pay after.', 'إذا كان المدرب القديم قد استلم عن شهرٍ ما، فإن إعادة الإسناد تنقل تلك العمولة — سوِّ راتبه بعد ذلك.')}</div>
     </div>
-    <div style="max-height:52vh;overflow:auto;border:1px solid var(--border);border-radius:8px">
+    <div style="max-height:calc(52vh * var(--uz, 1));overflow:auto;border:1px solid var(--border);border-radius:8px">
       <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:620px">
         <thead><tr style="background:var(--surface-2);position:sticky;top:0">
           <th style="padding:8px 10px;text-align:left">${t('Member', 'العضو')}</th>
@@ -21691,7 +21700,7 @@ window.switchReconcileCheck = function () {
     <div style="background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.30);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;line-height:1.6">
       ${t('These members switched a sport BEFORE the switch fix, so the old sport is still <b>active</b> and its payment was never split — the source coach carries a phantom pending. Reconciling completes the old sport at what was attended, moves the rest to the new sport, and splits the one payment. A backup is downloaded first; each fix is audited.', 'هؤلاء الأعضاء بدّلوا رياضة قبل الإصلاح، فبقيت الرياضة القديمة <b>نشطة</b> ولم يُقسّم دفعها. المعالجة تُكمل الرياضة القديمة على ما تم حضوره وتنقل الباقي وتقسّم الدفعة. يتم تنزيل نسخة احتياطية أولاً.')}
     </div>
-    <div style="max-height:52vh;overflow:auto;border:1px solid var(--border);border-radius:8px">
+    <div style="max-height:calc(52vh * var(--uz, 1));overflow:auto;border:1px solid var(--border);border-radius:8px">
       <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:560px"><thead><tr style="background:var(--surface-2);position:sticky;top:0">
         <th style="padding:8px 10px;text-align:left">${t('Member', 'العضو')}</th><th style="padding:8px 10px;text-align:left">${t('Switch', 'التبديل')}</th>
         <th style="padding:8px 10px;text-align:left">${t('Correction', 'التصحيح')}</th><th style="padding:8px 10px;text-align:right">${t('Action', 'إجراء')}</th></tr></thead><tbody>
@@ -22175,6 +22184,8 @@ window.downloadPayrollCSV = function(monthKey, coachSet) {
 // Compute the running stock for a product: starting `stock` minus all qty in
 // non-historical sale transactions. Historical sales already had their stock
 // subtracted at import time, so we skip them here.
+// v6.826 — products with the same name + category are ONE product with several SKUs: the cart picks the product first, then the SKU
+function productGroupKey(p) { return String(p && p.name || '').trim().toLowerCase() + '|' + String(p && p.category || '').trim().toLowerCase(); }
 function productCurrentStock(productId) {
   const p = (state.products || []).find(x => x.id === productId);
   if (!p) return 0;
@@ -22657,10 +22668,10 @@ function newSale(onDone) {
         <div>
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
             <div style="font-weight:700;font-size:13px">🛒 Cart</div>
-            <button type="button" class="btn ghost sm" id="sale-add-line">+ Add line</button>
+            <button type="button" class="btn ghost sm" id="sale-add-line">+ ${t('Add product', 'إضافة منتج')}</button>
           </div>
           <div id="sale-lines" style="display:flex;flex-direction:column;gap:6px;max-height:240px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--surface-2)"></div>
-          <div id="sale-empty-hint" class="text-mute" style="font-size:11px;margin-top:4px;text-align:center">Click "+ Add line" to start</div>
+          <div id="sale-empty-hint" class="text-mute" style="font-size:11px;margin-top:4px;text-align:center">Click "+ Add product" to start</div>
 
           <div style="margin-top:12px;background:var(--surface-2);border-radius:8px;padding:10px;font-size:13px">
             <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-mute">Subtotal</span><span id="sale-subtotal" class="font-bold">0.00</span></div>
@@ -22729,38 +22740,41 @@ function renderSaleLines() {
     // Grid template: name fills, qty/price/total fixed widths, ✕ fixed.
     // Using fixed widths instead of fr units prevents the Product name from
     // being squeezed when the column container is narrow.
-    const ROW_GRID = 'minmax(0,1fr) 70px 90px 80px 36px';
-    const headerRow = `
-      <div style="display:grid;grid-template-columns:${ROW_GRID};gap:6px;align-items:center;padding:0 6px 4px;font-size:10px;font-weight:600;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);margin-bottom:4px">
-        <div>Product</div>
-        <div style="text-align:center">Qty</div>
-        <div style="text-align:right">Unit price</div>
-        <div style="text-align:right">Total</div>
-        <div></div>
-      </div>
-    `;
-    wrap.innerHTML = headerRow + window._saleLines.map((line, i) => {
+    // v6.827 — each product is a small card: the Product and SKU dropdowns on top (they need the width), qty / unit price / total / remove underneath
+    const _lbl = txt => '<div style="font-size:10px;font-weight:600;color:var(--text-mute);text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px">' + txt + '</div>';
+    wrap.innerHTML = window._saleLines.map((line, i) => {
       const inStock = line.productId ? productCurrentStock(line.productId) : 0;
       const overStock = line.productId && line.qty > inStock;
-      const opts = products.map(p => `<option value="${p.id}" ${line.productId === p.id ? 'selected' : ''}>${escapeHtml(p.name)}${p.sku ? ' · SKU ' + escapeHtml(p.sku) : ''} · ${fmt(p.price)} · ${productCurrentStock(p.id)} in stock</option>`).join('');
+      const _cur = line.productId ? products.find(x => x.id === line.productId) : null, _gk = _cur ? productGroupKey(_cur) : (line.groupKey || '');
+      const _groups = []; { const seen = new Map(); products.forEach(p => { const k = productGroupKey(p); if (!seen.has(k)) { const g = { key: k, items: [] }; seen.set(k, g); _groups.push(g); } seen.get(k).items.push(p); }); }
+      const opts = _groups.map(g => `<option value="${escapeHtml(g.key)}" ${g.key === _gk ? 'selected' : ''}>${escapeHtml(g.items[0].name)} · ${g.items.reduce((s, p) => s + productCurrentStock(p.id), 0)} in stock</option>`).join('');
+      const _vars = _groups.find(g => g.key === _gk);
+      const skuOpts = _vars ? _vars.items.map(p => `<option value="${p.id}" ${line.productId === p.id ? 'selected' : ''}>${p.sku ? 'SKU ' + escapeHtml(p.sku) : '—'} · ${productCurrentStock(p.id)} in stock · ${fmt(p.price)}</option>`).join('') : '';
       return `
-        <div style="display:grid;grid-template-columns:${ROW_GRID};gap:6px;align-items:center;padding:4px 6px;background:${overStock ? 'rgba(239,68,68,.08)' : 'transparent'};border-radius:6px;min-width:0">
-          <select data-line-i="${i}" data-line-k="productId" style="font-size:12px;min-width:0;width:100%;padding:6px 4px">
-            <option value="">— pick product —</option>
-            ${opts}
-          </select>
-          <input type="number" min="1" step="1" data-line-i="${i}" data-line-k="qty" value="${line.qty}" style="text-align:center;padding:6px 4px;width:100%;min-width:0" />
-          <input type="number" min="0" step="0.01" data-line-i="${i}" data-line-k="unitPrice" value="${line.unitPrice}" style="text-align:right;padding:6px 4px;width:100%;min-width:0" />
-          <div class="num font-bold text-right" style="padding:6px 4px;color:var(--green)">${fmt(line.qty * line.unitPrice)}</div>
-          <button type="button" class="btn ghost sm" data-line-remove="${i}" style="color:var(--red);padding:4px;min-width:0;width:100%" title="Remove line">✕</button>
+        <div style="border:1px solid ${overStock ? 'var(--red)' : 'var(--border)'};border-radius:8px;padding:8px;margin-bottom:6px;background:${overStock ? 'rgba(239,68,68,.08)' : 'transparent'};min-width:0">
+          <div style="display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:8px;min-width:0">
+            <div style="min-width:0">${_lbl('Product')}<select data-line-i="${i}" data-line-k="productGroup" style="font-size:13px;min-width:0;width:100%;padding:7px 6px">
+              <option value="">— pick product —</option>
+              ${opts}
+            </select></div>
+            <div style="min-width:0">${_lbl('SKU')}<select data-line-i="${i}" data-line-k="productId" ${_vars ? '' : 'disabled'} style="font-size:13px;min-width:0;width:100%;padding:7px 6px;${_vars && !line.productId ? 'border-color:var(--accent-2)' : ''}">
+              ${_vars && _vars.items.length > 1 ? '<option value="">— pick SKU —</option>' : ''}${skuOpts}
+            </select></div>
+          </div>
+          <div style="display:grid;grid-template-columns:70px 100px minmax(0,1fr) 34px;gap:8px;align-items:end;margin-top:8px;min-width:0">
+            <div>${_lbl('Qty')}<input type="number" min="1" step="1" data-line-i="${i}" data-line-k="qty" value="${line.qty}" style="text-align:center;padding:7px 4px;width:100%;min-width:0" /></div>
+            <div>${_lbl('Unit price')}<input type="number" min="0" step="0.01" data-line-i="${i}" data-line-k="unitPrice" value="${line.unitPrice}" style="text-align:right;padding:7px 4px;width:100%;min-width:0" /></div>
+            <div style="min-width:0">${_lbl('Total')}<div class="num font-bold text-right" style="padding:7px 4px;color:var(--green);font-size:14px">${fmt(line.qty * line.unitPrice)}</div></div>
+            <button type="button" class="btn ghost sm" data-line-remove="${i}" style="color:var(--red);padding:6px;min-width:0;width:100%" title="Remove">✕</button>
+          </div>
+          ${line.productId ? (() => {
+            const p = products.find(x => x.id === line.productId) || {};
+            const threshold = p.lowStockThreshold || 3;
+            const color = (overStock || inStock === 0) ? 'var(--red)' : (inStock <= threshold ? 'var(--accent-2)' : 'var(--text-mute)');
+            const note = overStock ? ` — only ${inStock} available, reduce qty` : (inStock === 0 ? ' — out of stock' : (inStock <= threshold ? ' · low' : ''));
+            return `<div style="font-size:11px;color:${color};margin-top:6px;font-weight:${overStock || inStock === 0 ? '600' : '400'}">📦 ${p.sku ? '<b>SKU ' + escapeHtml(p.sku) + '</b> · ' : ''}${inStock} in stock${note}</div>`;
+          })() : ''}
         </div>
-        ${line.productId ? (() => {
-          const p = products.find(x => x.id === line.productId) || {};
-          const threshold = p.lowStockThreshold || 3;
-          const color = (overStock || inStock === 0) ? 'var(--red)' : (inStock <= threshold ? 'var(--accent-2)' : 'var(--text-mute)');
-          const note = overStock ? ` — only ${inStock} available, reduce qty` : (inStock === 0 ? ' — out of stock' : (inStock <= threshold ? ' · low' : ''));
-          return `<div style="font-size:10px;color:${color};padding:0 8px;margin-top:-2px;font-weight:${overStock || inStock === 0 ? '600' : '400'}">📦 ${p.sku ? '<b>SKU ' + escapeHtml(p.sku) + '</b> · ' : ''}${inStock} in stock${note}</div>`;
-        })() : ''}
       `;
     }).join('');
     // Wire line inputs
@@ -22768,7 +22782,12 @@ function renderSaleLines() {
       el.addEventListener('change', e => {
         const i = parseInt(el.dataset.lineI);
         const k = el.dataset.lineK;
-        if (k === 'productId') {
+        if (k === 'productGroup') {   // v6.826 — product picked → its SKUs; one SKU is taken automatically
+          const L = window._saleLines[i], items = (state.products || []).filter(x => productGroupKey(x) === el.value);
+          L.groupKey = el.value || null; L.productId = null; L.name = ''; L.unitPrice = 0;
+          if (items.length === 1) { L.productId = items[0].id; L.name = items[0].name; L.unitPrice = items[0].price; }
+          else if (items.length) { L.name = items[0].name; L.unitPrice = items[0].price; }
+        } else if (k === 'productId') {
           const pid = parseInt(el.value) || null;
           window._saleLines[i].productId = pid;
           if (pid) {
@@ -22871,6 +22890,7 @@ function completeSale(onDone) {
       unitPrice: l.unitPrice,
       lineTotal: l.qty * l.unitPrice,
     }));
+  { const _noSku = window._saleLines.find(l => !l.productId && l.groupKey && l.qty > 0); if (_noSku) { toast(t('Pick the SKU for ', 'اختر الصنف (SKU) لـ ') + (_noSku.name || ''), 'error'); return; } }   // v6.826
   if (!validLines.length) { toast('Add at least one item to the cart', 'error'); return; }
 
   // Validate customer
@@ -25587,7 +25607,7 @@ PAGES.attendance = (main) => {
           <span class="text-mute">·</span> ${t('blank = did not come', 'فارغ = لم يحضر')}
         </div>
       </div>
-      <div style="overflow-x:auto;max-height:70vh;overflow-y:auto" id="att-table-wrap"></div>
+      <div style="overflow-x:auto;max-height:calc(70vh * var(--uz, 1));overflow-y:auto" id="att-table-wrap"></div>
     </div>
   `;
 
@@ -26728,14 +26748,14 @@ PAGES.history = (main) => {
     </div>
 
     <div class="card" style="display:grid;grid-template-columns:300px 1fr;gap:0;padding:0;overflow:hidden">
-      <div style="border-right:1px solid var(--border);display:flex;flex-direction:column;max-height:80vh">
+      <div style="border-right:1px solid var(--border);display:flex;flex-direction:column;max-height:calc(80vh * var(--uz, 1))">
         <div style="padding:12px;border-bottom:1px solid var(--border);background:var(--surface-2)">
           <div class="search" style="margin-bottom:6px"><input id="hist-search" type="text" placeholder="${t('Search name, phone, QID...', 'ابحث بالاسم أو الهاتف أو الهوية...')}" /></div>
           <div class="text-mute" style="font-size:11px"><span id="hist-mem-count"></span></div>
         </div>
         <div id="hist-list" style="flex:1;overflow-y:auto;min-height:0"></div>
       </div>
-      <div id="hist-right" style="padding:16px;overflow-y:auto;max-height:80vh"></div>
+      <div id="hist-right" style="padding:16px;overflow-y:auto;max-height:calc(80vh * var(--uz, 1))"></div>
     </div>
   `;
 
@@ -31947,7 +31967,7 @@ window.previewWelcome = function(id, kind) {
   window._welcomeMsgCache = msg;
   showModal({
     title: (kind === 'renewal' ? '🔄 ' : '👋 ') + t('Welcome message', 'رسالة الترحيب') + ' — ' + escapeHtml(m.name || ''),
-    body: `<div style="font-size:12.5px;line-height:1.65;white-space:pre-wrap;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:12px;max-height:52vh;overflow:auto">${escapeHtml(msg)}</div>
+    body: `<div style="font-size:12.5px;line-height:1.65;white-space:pre-wrap;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:12px;max-height:calc(52vh * var(--uz, 1));overflow:auto">${escapeHtml(msg)}</div>
       <div class="text-mute" style="font-size:11px;margin-top:8px">${wa ? t('Opens WhatsApp with this text pre-filled. Add a photo or tweak before hitting send.', 'يفتح واتساب بهذا النص جاهزاً. يمكنك التعديل أو إضافة صورة قبل الإرسال.') : t('This member has no valid phone number.', 'لا يوجد رقم هاتف صالح لهذا العضو.')}</div>`,
     actions: [
       { label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal },
@@ -32268,7 +32288,7 @@ PAGES.loginlogs = (main) => {
         <input id="loginlogs-search" placeholder="🔎 ${t('Search email, name, role, device…', 'ابحث بالبريد أو الاسم أو الدور أو الجهاز…')}" value="${escapeHtml(window._loginLogSearch || '')}" style="flex:1;min-width:220px;padding:7px 11px" oninput="window._loginLogSearch=this.value; render();" />
         <span class="text-mute" style="font-size:12px">${filtered.length} / ${logs.length} ${t('logins', 'تسجيل')}</span>
       </div>
-      ${logs.length ? `<div style="max-height:66vh;overflow:auto;border:1px solid var(--border);border-radius:8px">
+      ${logs.length ? `<div style="max-height:calc(66vh * var(--uz, 1));overflow:auto;border:1px solid var(--border);border-radius:8px">
         <table style="width:100%;border-collapse:collapse;font-size:13px">
           <thead style="position:sticky;top:0;background:var(--surface)"><tr style="text-align:left;color:var(--text-mute);font-size:11px">
             <th style="padding:7px 8px">${t('When', 'الوقت')}</th><th style="padding:7px 8px">${t('Email', 'البريد')}</th><th style="padding:7px 8px">${t('Name', 'الاسم')}</th><th style="padding:7px 8px">${t('Role', 'الدور')}</th><th style="padding:7px 8px">${t('Device', 'الجهاز')}</th>
@@ -32380,7 +32400,7 @@ window.showMemberLoginList = function() {
   showModal({
     title: `📋 Member logins (${okCount})`,
     body: `<div style="font-size:12px;color:var(--text-mute);margin-bottom:8px">Login email = <b>mobile</b>@${MEMBER_EMAIL_DOMAIN} · default password = the mobile number. ${bad ? `<span style="color:var(--red)">${bad} member(s) have no valid mobile and can't get a login.</span>` : ''}</div>
-      <div style="max-height:52vh;overflow:auto;border:1px solid var(--border);border-radius:8px">
+      <div style="max-height:calc(52vh * var(--uz, 1));overflow:auto;border:1px solid var(--border);border-radius:8px">
         <table style="width:100%;border-collapse:collapse;font-size:12px">
           <thead style="position:sticky;top:0;background:var(--surface)"><tr style="text-align:left;color:var(--text-mute);font-size:11px"><th style="padding:6px 8px">Name</th><th style="padding:6px 8px">Mobile</th><th style="padding:6px 8px">Login email</th><th style="padding:6px 8px">Default password</th></tr></thead>
           <tbody>${tableRows}</tbody>
@@ -36364,7 +36384,12 @@ window.deleteRental = function(id) {
   if (currentRole() !== 'admin') { toast('Only admins can delete rentals', 'error'); return; }
   const r = (state.rentals || []).find(x => x.id === id);
   if (!r) return;
-  if (!confirm(`Delete the ${r.facility} booking for ${r.customerName} on ${fmtDate(r.date)}?\n\nThe linked invoice (if any) will also be deleted.`)) return;
+  // v6.828 — say WHICH invoice goes with the booking (number, amount, what was collected) instead of "if any"
+  const _inv0 = rentalInvoiceFor(r), _tot0 = _inv0 ? ((typeof invoiceTotal === 'function') ? invoiceTotal(_inv0) : Number(_inv0.amount) || 0) : 0, _paid0 = _inv0 ? Math.max(0, Math.round((_tot0 - (typeof invoiceBalance === 'function' ? invoiceBalance(_inv0) : 0)) * 100) / 100) : 0;
+  const _invLine0 = _inv0
+    ? `\n\nInvoice ${_inv0.ref || '#' + _inv0.id} (${fmt(_tot0)} QAR${_paid0 > 0 ? ', ' + fmt(_paid0) + ' collected — it leaves the cash and revenue too' : ', unpaid'}) will be deleted with it (kept in Archived invoices).`
+    : '\n\nThis booking has no invoice.';
+  if (!confirm(`Cancel the ${r.facility} booking for ${r.customerName} on ${fmtDate(r.date)}?${_invLine0}`)) return;
   // Archive ITS invoice (v6.783 — never a different invoice the link happens to point at; archived, not erased, so an admin can restore it)
   { const _ri = rentalInvoiceFor(r); if (_ri) { _ri.deleted = true; _ri.deletedAt = new Date().toISOString(); _ri.deletedBy = (typeof currentUserName === 'function' ? currentUserName() : 'admin'); if (typeof stampUpdate === 'function') stampUpdate(_ri); } }
   state.rentals = state.rentals.filter(x => x.id !== id);
