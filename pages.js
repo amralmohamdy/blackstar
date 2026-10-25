@@ -13763,62 +13763,7 @@ function addInvoice() {
     walkInWire('f-wname', walkInPhoneIO('f-cust-phone'));
   }
 
-  function renderPosBody() {
-    // Borrowed from the old Sales page newSale() — same DOM ids so wireSaleModal/
-    // completeSale/renderSaleLines work without changes.
-    return `
-      <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:14px;min-width:0">
-        <div style="min-width:0">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-            <div style="font-weight:700;font-size:13px">🛒 Cart</div>
-            <button type="button" class="btn ghost sm" id="sale-add-line">+ ${t('Add product', 'إضافة منتج')}</button>
-          </div>
-          <div id="sale-lines" style="display:flex;flex-direction:column;gap:4px;max-height:340px;overflow-y:auto;overflow-x:hidden;border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--surface-2)"></div>
-          <div id="sale-empty-hint" class="text-mute" style="font-size:11px;margin-top:4px;text-align:center">Click "+ Add product" to start</div>
-
-          <div style="margin-top:12px;background:var(--surface-2);border-radius:8px;padding:10px;font-size:13px">
-            <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-mute">Subtotal</span><span id="sale-subtotal" class="font-bold">0.00</span></div>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-              <span class="text-mute">Discount (QAR)</span>
-              <input type="number" id="sale-discount" min="0" step="0.01" value="0" style="width:100px;text-align:right;background:transparent;border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:var(--text)" />
-            </div>
-            <div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);margin-top:6px;padding-top:6px;font-size:15px">
-              <span class="font-bold">Total</span><span id="sale-total" class="font-bold" style="color:var(--green)">0.00</span>
-            </div>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
-              <span class="text-mute">Paid (QAR)</span>
-              <input type="number" id="sale-paid" min="0" step="0.01" value="0" style="width:100px;text-align:right;background:transparent;border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:var(--text)" />
-            </div>
-            <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:11px">
-              <span class="text-mute">Balance</span><span id="sale-balance" class="font-bold" style="color:var(--accent-2)">0.00</span>
-            </div>
-          </div>
-        </div>
-        <div style="min-width:0">
-          <div style="font-weight:700;font-size:13px;margin-bottom:6px">👤 Customer</div>
-          <div style="display:flex;gap:6px;margin-bottom:8px">
-            <button type="button" class="btn ghost sm" data-cust-type="member" id="cust-tab-member" style="flex:1">🎟 Member</button>
-            <button type="button" class="btn ghost sm" data-cust-type="walkin" id="cust-tab-walkin" style="flex:1;background:var(--accent);color:white">🚶 Walk-in</button>
-          </div>
-          <div id="cust-member-fields" style="display:none">
-            <div class="field" style="margin-bottom:8px"><label>Member</label>${memberPickerHtml('sale-cust', { placeholder: 'Search by name / mobile / QID...' })}</div>
-          </div>
-          <div id="cust-walkin-fields">
-            <div class="field" style="margin-bottom:8px"><label>Name *</label><input type="text" id="sale-walkin-name" placeholder="Required" /></div>
-            <div style="margin-bottom:8px">${phoneInputHtml('sale-walkin-phone', '', { label: 'Mobile', fieldStyle: 'margin:0' })}</div>
-          </div>
-
-          <div style="font-weight:700;font-size:13px;margin:14px 0 6px">📝 Details</div>
-          <div class="field" style="margin-bottom:8px"><label>Date</label><input type="date" id="sale-date" value="${TODAY}" /></div>
-          <div class="field" style="margin-bottom:8px"><label>Method</label><select id="sale-method-pos"><option value="cash">Cash</option><option value="card">Card</option><option value="fawran">Fawran</option></select></div>
-          <div class="field" style="margin-bottom:8px"><label>Notes</label><input type="text" id="sale-notes" /></div>
-        </div>
-      </div>
-      <div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.25);border-radius:8px;padding:10px;margin-top:12px;font-size:12px">
-        💡 An invoice will be created automatically. Stock levels update too.
-      </div>
-    `;
-  }
+  function renderPosBody() { return posBodyHtml(); }   // v6.829 — one shared sale screen
 
   function saveUnifiedInvoice() {
     // Membership / Other branch
@@ -22662,61 +22607,8 @@ function newSale(onDone) {
 
   showModal({
     title: '🛍 New Sale',
-    body: `
-      <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:14px">
-        <!-- Left: items + cart -->
-        <div>
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-            <div style="font-weight:700;font-size:13px">🛒 Cart</div>
-            <button type="button" class="btn ghost sm" id="sale-add-line">+ ${t('Add product', 'إضافة منتج')}</button>
-          </div>
-          <div id="sale-lines" style="display:flex;flex-direction:column;gap:6px;max-height:240px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--surface-2)"></div>
-          <div id="sale-empty-hint" class="text-mute" style="font-size:11px;margin-top:4px;text-align:center">Click "+ Add product" to start</div>
-
-          <div style="margin-top:12px;background:var(--surface-2);border-radius:8px;padding:10px;font-size:13px">
-            <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-mute">Subtotal</span><span id="sale-subtotal" class="font-bold">0.00</span></div>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-              <span class="text-mute">Discount (QAR)</span>
-              <input type="number" id="sale-discount" min="0" step="0.01" value="0" style="width:100px;text-align:right;background:transparent;border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:var(--text)" />
-            </div>
-            <div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);margin-top:6px;padding-top:6px;font-size:15px">
-              <span class="font-bold">Total</span><span id="sale-total" class="font-bold" style="color:var(--green)">0.00</span>
-            </div>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
-              <span class="text-mute">Paid (QAR)</span>
-              <input type="number" id="sale-paid" min="0" step="0.01" value="0" style="width:100px;text-align:right;background:transparent;border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:var(--text)" />
-            </div>
-            <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:11px">
-              <span class="text-mute">Balance</span><span id="sale-balance" class="font-bold" style="color:var(--accent-2)">0.00</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Right: customer + meta -->
-        <div>
-          <div style="font-weight:700;font-size:13px;margin-bottom:6px">👤 Customer</div>
-          <div style="display:flex;gap:6px;margin-bottom:8px">
-            <button type="button" class="btn ghost sm" data-cust-type="member" id="cust-tab-member" style="flex:1">🎟 Member</button>
-            <button type="button" class="btn ghost sm" data-cust-type="walkin" id="cust-tab-walkin" style="flex:1;background:var(--accent);color:white">🚶 Walk-in</button>
-          </div>
-          <div id="cust-member-fields" style="display:none">
-            <div class="field" style="margin-bottom:8px"><label>Member</label>${memberPickerHtml('sale-cust', { placeholder: 'Search by name / mobile / QID...' })}</div>
-          </div>
-          <div id="cust-walkin-fields">
-            <div class="field" style="margin-bottom:8px"><label>Name *</label><input type="text" id="sale-walkin-name" placeholder="Required" /></div>
-            <div style="margin-bottom:8px">${phoneInputHtml('sale-walkin-phone', '', { label: 'Mobile', fieldStyle: 'margin:0' })}</div>
-          </div>
-
-          <div style="font-weight:700;font-size:13px;margin:14px 0 6px">📝 Details</div>
-          <div class="field" style="margin-bottom:8px"><label>Date</label><input type="date" id="sale-date" value="${TODAY}" /></div>
-          <div class="field" style="margin-bottom:8px"><label>Method</label><select id="sale-method-pos"><option value="cash">Cash</option><option value="card">Card</option><option value="fawran">Fawran</option></select></div>
-          <div class="field" style="margin-bottom:8px"><label>Notes</label><input type="text" id="sale-notes" /></div>
-        </div>
-      </div>
-      <div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.25);border-radius:8px;padding:10px;margin-top:12px;font-size:12px">
-        💡 An invoice will be created automatically. Stock levels update too.
-      </div>
-    `,
+    size: 'xl',
+    body: posBodyHtml(),
     actions: [
       { label: 'Cancel', class: 'btn ghost', onclick: closeModal },
       { label: '💾 Complete Sale', class: 'btn primary', onclick: () => completeSale(onDone) },
@@ -22724,6 +22616,75 @@ function newSale(onDone) {
   });
   // Post-render wiring
   setTimeout(wireSaleModal, 50);
+}
+
+// v6.829 — ONE product-sale screen (used by New Invoice → Product and by Product Sales → New sale): items on the left, customer + details on the right,
+// then the money row: the totals on one side and HOW IT IS PAID on the other — any mix of Cash / Card / Fawran / Transfer, the rest is due.
+const SALE_METHODS = [['cash', '💵', 'Cash', 'نقداً'], ['card', '💳', 'Card', 'بطاقة'], ['fawran', '📲', 'Fawran', 'فوران'], ['transfer', '🏦', 'Transfer', 'تحويل']];
+function posBodyHtml() {
+  const sec = (icon, txt) => '<div style="font-weight:800;font-size:14px;margin:0 0 10px;display:flex;align-items:center;gap:6px">' + icon + ' ' + txt + '</div>';
+  return `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:18px;min-width:0">
+      <div style="min-width:0">
+        ${sec('🛒', t('Items', 'الأصناف'))}
+        <div id="sale-lines" style="display:flex;flex-direction:column;gap:0;max-height:calc(46vh * var(--uz, 1));overflow-y:auto;overflow-x:hidden;padding:2px"></div>
+        <div id="sale-empty-hint" class="text-mute" style="font-size:12px;margin:4px 0 8px;text-align:center">${t('Click "+ Add product" to start', 'اضغط «+ إضافة منتج» للبدء')}</div>
+        <button type="button" id="sale-add-line" style="width:100%;padding:11px;border:2px dashed var(--green);border-radius:10px;background:rgba(16,185,129,.07);color:var(--green);font-weight:800;font-size:14px;cursor:pointer;font-family:inherit">+ ${t('Add product', 'إضافة منتج')}</button>
+      </div>
+      <div style="min-width:0">
+        ${sec('👤', t('Customer', 'العميل'))}
+        <div style="display:flex;gap:6px;margin-bottom:10px">
+          <button type="button" class="btn ghost sm" data-cust-type="member" id="cust-tab-member" style="flex:1;padding:9px">🎟 ${t('Member', 'عضو')}</button>
+          <button type="button" class="btn ghost sm" data-cust-type="walkin" id="cust-tab-walkin" style="flex:1;padding:9px;background:var(--accent);color:white">🚶 ${t('Walk-in', 'زائر')}</button>
+        </div>
+        <div id="cust-member-fields" style="display:none">
+          <div class="field" style="margin-bottom:8px"><label>${t('Member', 'العضو')}</label>${memberPickerHtml('sale-cust', { placeholder: t('Search by name / mobile / QID...', 'ابحث بالاسم / الجوال / الرقم الشخصي...') })}</div>
+        </div>
+        <div id="cust-walkin-fields">
+          <div class="field" style="margin-bottom:8px"><label>${t('Name', 'الاسم')} *</label><input type="text" id="sale-walkin-name" placeholder="${t('Required', 'مطلوب')}" /></div>
+          <div style="margin-bottom:8px">${phoneInputHtml('sale-walkin-phone', '', { label: t('Mobile', 'الجوال'), fieldStyle: 'margin:0' })}</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1.4fr;gap:8px;margin-top:6px">
+          <div class="field" style="margin:0"><label>${t('Date', 'التاريخ')}</label><input type="date" id="sale-date" value="${TODAY}" /></div>
+          <div class="field" style="margin:0"><label>${t('Notes', 'ملاحظات')}</label><input type="text" id="sale-notes" /></div>
+        </div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px;margin-top:16px;padding-top:16px;border-top:1px solid var(--border);min-width:0">
+      <div style="background:var(--surface-2);border-radius:12px;padding:14px;font-size:13px;min-width:0">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px"><span class="text-mute">${t('Subtotal', 'المجموع')}</span><span id="sale-subtotal" class="font-bold">0.00</span></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span class="text-mute">${t('Discount (QAR)', 'الخصم (ريال)')}</span>
+          <input type="number" id="sale-discount" min="0" step="0.01" value="0" style="width:110px;text-align:right;background:transparent;border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text)" />
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;border-top:1px solid var(--border);padding-top:10px">
+          <span class="font-bold" style="font-size:15px">${t('Total', 'الإجمالي')}</span><span id="sale-total" class="font-bold" style="color:var(--green);font-size:26px;line-height:1">0.00</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:10px"><span class="text-mute">${t('Paid now', 'المدفوع الآن')}</span><span id="sale-paid-show" class="font-bold">0.00</span></div>
+        <div style="display:flex;justify-content:space-between;margin-top:4px"><span class="text-mute">${t('Balance due', 'المتبقي')}</span><span id="sale-balance" class="font-bold" style="color:var(--accent-2)">0.00</span></div>
+      </div>
+      <div style="min-width:0;border:1px solid rgba(16,185,129,.35);background:rgba(16,185,129,.06);border-radius:12px;padding:14px">
+        ${sec('💳', t('Payment', 'الدفع'))}
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px">
+          ${SALE_METHODS.map(([k, ic, en, ar]) => `<div class="field" style="margin:0"><label style="display:flex;justify-content:space-between;align-items:center;font-size:12px">${ic} ${t(en, ar)}<button type="button" class="sale-pay-fill" data-method="${k}" style="border:none;background:none;color:var(--green);font-size:11px;font-weight:700;cursor:pointer;padding:0" title="${t('Pay the whole balance with this method', 'سدّد كامل المتبقي بهذه الطريقة')}">${t('Full', 'الكل')}</button></label><input type="number" min="0" step="0.01" class="sale-pay-m" data-method="${k}" placeholder="0" style="text-align:right" /></div>`).join('')}
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;cursor:pointer"><input type="checkbox" id="sale-paylater" /> ⏳ ${t('Pay later — nothing paid now', 'الدفع لاحقاً — لا شيء الآن')}</label>
+        <div id="sale-pay-hint" style="margin-top:8px;font-size:12px;font-weight:600"></div>
+        <div class="text-mute" style="font-size:11px;margin-top:4px">${t('Leave every box empty = paid in full in cash. Split it across methods and the rest stays due.', 'اترك كل الخانات فارغة = مدفوع بالكامل نقداً. وزّع على عدة طرق والباقي يبقى مستحقاً.')}</div>
+      </div>
+    </div>
+    <div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.25);border-radius:8px;padding:9px 12px;margin-top:14px;font-size:12px">
+      💡 ${t('An invoice is created automatically and the stock goes down.', 'تُنشأ فاتورة تلقائياً ويُخصم من المخزون.')}
+    </div>`;
+}
+// how the sale is paid: {paid, parts:[{method, amount}], later, error}
+function salePayInfo(total) {
+  const later = !!(document.getElementById('sale-paylater') || {}).checked;
+  if (later) return { paid: 0, parts: [], later: true, entered: true };
+  const parts = [...document.querySelectorAll('.sale-pay-m')].map(i => ({ method: i.dataset.method, amount: Math.round((parseFloat(i.value) || 0) * 100) / 100 })).filter(p => p.amount > 0);
+  if (!parts.length) return { paid: total, parts: total > 0 ? [{ method: 'cash', amount: total }] : [], later: false, entered: false };
+  const paid = Math.round(parts.reduce((s, p) => s + p.amount, 0) * 100) / 100;
+  return { paid, parts, later: false, entered: true, error: paid > total + 0.005 ? t('The amounts add up to more than the total (' + fmt(total) + ')', 'مجموع المبالغ أكبر من الإجمالي (' + fmt(total) + ')') : null };
 }
 
 function renderSaleLines() {
@@ -22838,13 +22799,23 @@ function recalcSaleTotals() {
   const subtotal = window._saleLines.reduce((s, l) => s + (l.qty || 0) * (l.unitPrice || 0), 0);
   const discount = parseFloat($('#sale-discount')?.value) || 0;
   const total = Math.max(0, subtotal - discount);
-  const _pe = $('#sale-paid');
-  if (_pe && _pe.dataset.touched !== '1') _pe.value = String(Math.round(total * 100) / 100);   // v6.785 — default = paid in full; typing 0 or a part means credit
-  const paid = parseFloat(_pe?.value) || 0;
-  const balance = Math.max(0, total - paid);
+  const info = salePayInfo(total), paid = info.error ? Math.min(info.paid, total) : info.paid;
+  const balance = Math.max(0, Math.round((total - paid) * 100) / 100);
   if ($('#sale-subtotal')) $('#sale-subtotal').textContent = fmt(subtotal);
   if ($('#sale-total')) $('#sale-total').textContent = fmt(total);
-  if ($('#sale-balance')) $('#sale-balance').textContent = fmt(balance);
+  if ($('#sale-paid-show')) $('#sale-paid-show').textContent = fmt(paid);
+  if ($('#sale-balance')) { $('#sale-balance').textContent = fmt(balance); $('#sale-balance').style.color = balance > 0.004 ? 'var(--accent-2)' : 'var(--green)'; }
+  document.querySelectorAll('.sale-pay-m').forEach(i => { i.disabled = info.later; });
+  const hint = $('#sale-pay-hint');
+  if (hint) {
+    let txt, col = 'var(--green)';
+    if (info.error) { txt = '⚠ ' + info.error; col = 'var(--red)'; }
+    else if (info.later) { txt = '⏳ ' + t('Nothing paid now — ', 'لا شيء الآن — ') + fmt(total) + ' ' + t('will be due', 'سيكون مستحقاً'); col = 'var(--accent-2)'; }
+    else if (!info.entered) txt = total > 0 ? '✓ ' + t('Paid in full in cash', 'مدفوع بالكامل نقداً') + ': ' + fmt(total) : '';
+    else if (balance > 0.004) { txt = info.parts.map(p => (SALE_METHODS.find(m => m[0] === p.method) || [])[1] + ' ' + fmt(p.amount)).join(' + ') + ' = ' + fmt(paid) + ' · ' + fmt(balance) + ' ' + t('will be due', 'سيبقى مستحقاً'); col = 'var(--accent-2)'; }
+    else txt = '✓ ' + info.parts.map(p => (SALE_METHODS.find(m => m[0] === p.method) || [])[1] + ' ' + fmt(p.amount)).join(' + ') + ' — ' + t('paid in full', 'مدفوع بالكامل');
+    hint.textContent = txt; hint.style.color = col;
+  }
 }
 
 function wireSaleModal() {
@@ -22856,7 +22827,15 @@ function wireSaleModal() {
   });
   // Discount + paid recalc
   $('#sale-discount').addEventListener('input', recalcSaleTotals);
-  $('#sale-paid').addEventListener('input', (e) => { e.target.dataset.touched = '1'; recalcSaleTotals(); });   // v6.785
+  document.querySelectorAll('.sale-pay-m').forEach(i => i.addEventListener('input', recalcSaleTotals));   // v6.829 — pay by method(s)
+  document.querySelectorAll('.sale-pay-fill').forEach(b => b.addEventListener('click', () => {   // "Full": this method takes everything still unpaid
+    const total = Math.max(0, window._saleLines.reduce((s, l) => s + (l.qty || 0) * (l.unitPrice || 0), 0) - (parseFloat($('#sale-discount')?.value) || 0));
+    const others = [...document.querySelectorAll('.sale-pay-m')].filter(i => i.dataset.method !== b.dataset.method).reduce((s, i) => s + (parseFloat(i.value) || 0), 0);
+    const box = document.querySelector('.sale-pay-m[data-method="' + b.dataset.method + '"]'); if (box) box.value = String(Math.max(0, Math.round((total - others) * 100) / 100));
+    const lt = $('#sale-paylater'); if (lt) lt.checked = false;
+    recalcSaleTotals();
+  }));
+  { const lt = $('#sale-paylater'); if (lt) lt.addEventListener('change', recalcSaleTotals); }
 
   // Customer tab switching
   function switchCust(type) {
@@ -22940,14 +22919,13 @@ function completeSale(onDone) {
   const discount = parseFloat($('#sale-discount').value) || 0;
   const total = Math.max(0, subtotal - discount);
   // v6.785 — the Paid box is a REAL value: empty = paid in full, 0 = credit sale, a part = partial. (It used to read 0 as "full", so a credit sale could not be saved.)
-  const _pv = String($('#sale-paid').value).trim();
-  const paid = (_pv === '' || isNaN(parseFloat(_pv))) ? total : Math.round(parseFloat(_pv) * 100) / 100;
-  if (paid < 0) { toast(t('Paid cannot be negative', 'المدفوع لا يمكن أن يكون سالباً'), 'error'); return; }
-  if (paid > total + 0.005) { toast(t('Paid is more than the sale total (' + fmt(total) + ')', 'المدفوع أكبر من إجمالي البيع (' + fmt(total) + ')'), 'error'); return; }
+  const _pay = salePayInfo(total);   // v6.829 — any mix of Cash / Card / Fawran / Transfer; blank = paid in full in cash; "Pay later" = nothing paid
+  if (_pay.error) { toast(_pay.error, 'error'); return; }
+  const paid = _pay.paid;
   const balance = Math.max(0, Math.round((total - paid) * 100) / 100);
   const date = $('#sale-date').value || TODAY;
   const month = date.slice(0, 7);
-  const method = $('#sale-method-pos').value || 'cash';
+  const method = _pay.parts.length ? _pay.parts.slice().sort((a, b) => b.amount - a.amount)[0].method : 'cash';   // headline method = the biggest part
   const notes = $('#sale-notes').value.trim() || null;
 
   // Auto-create linked invoice
@@ -22961,7 +22939,7 @@ function completeSale(onDone) {
     customerId, customerName, customerPhone,
     // v6.785 — a real ledger: nothing paid → due, part paid → the rest is due (no ledger used to mean "paid in full")
     amountPaid: paid,
-    payments: paid > 0 ? [{ amount: paid, method, date, month, by: (typeof currentUserId === 'function' ? currentUserId() : undefined), byName: (typeof currentUserName === 'function' ? currentUserName() : undefined), at: new Date().toISOString() }] : [],
+    payments: _pay.parts.map(pt => ({ amount: pt.amount, method: pt.method, date, month, by: (typeof currentUserId === 'function' ? currentUserId() : undefined), byName: (typeof currentUserName === 'function' ? currentUserName() : undefined), at: new Date().toISOString() })),
   };
   stampUpdate(newInv); state.invoices.push(newInv);
 
