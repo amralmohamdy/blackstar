@@ -28750,6 +28750,8 @@ window.editSubscription = function(memberId, sid) {
         }
         if (newCoachId !== undefined) { sub.coachId = newCoachId; sub.coach = newCoachId != null ? coachName(newCoachId) : ''; }
         if (!isNaN(price)) sub.amountPaid = price;
+        // v6.822 — the package's renewal record (same _rid) says what the edit says: it kept the OLD class count / price / status, and the member's status counted it as a second, unfinished package
+        if (sub._rid && Array.isArray(m.renewals)) m.renewals.filter(r => r && r._rid === sub._rid).forEach(r => { r.totalClasses = cls || r.totalClasses; r.status = st; if (!isNaN(price)) r.amountPaid = price; });
         const _applyPriv = (o) => { if (newPrivate) { o.private = true; o.approach = newApproach; } else { delete o.private; delete o.approach; } };
         if (newPrivate !== undefined) { _applyPriv(sub); if (line && !_lineShared) _applyPriv(line); }   // v6.653
         // Keep the invoice LINE (price + coach → commission + total) in sync with this profile edit —
@@ -35566,6 +35568,7 @@ PAGES.courtbookings = (main) => {
       actions: [
         { label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal },
         ...(money && due > 0.5 ? [{ label: '💵 ' + t('Collect', 'تحصيل') + ' ' + fmt(due), class: 'btn primary', onclick: () => { closeModal(); collectRental(r.id); } }] : []),
+        ...(r.customerPhone ? [{ label: '💬 ' + t('Send WhatsApp', 'إرسال واتساب'), class: 'btn ghost', style: 'color:#128C7E;border-color:#25D366', onclick: () => sendRentalBookingWhatsApp(r.id) }] : []),   // v6.821
         ...(money && inv ? [{ label: '📄 ' + t('Invoice', 'الفاتورة'), class: 'btn ghost', onclick: () => { closeModal(); printInvoicePDF(inv.id); } }] : []),
         ...(money ? [{ label: '🗑 ' + t('Cancel booking', 'إلغاء الحجز'), class: 'btn ghost', onclick: () => { closeModal(); deleteRental(r.id); } }] : []),
         { label: '✏️ ' + t('Edit', 'تعديل'), class: 'btn primary', onclick: () => { closeModal(); editRental(r.id); } },
@@ -35664,6 +35667,7 @@ PAGES.rentals = (main) => {
         <td class="text-mute" style="font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(r.notes || '')}</td>
         <td class="text-right" style="white-space:nowrap">
           ${_due > 0.5 && !isViewerRole() ? `<button class="btn primary sm" onclick="collectRental(${r.id})" title="Record payment now (${fmt(_due)} QAR)">💵 Collect</button>` : ''}
+          ${r.customerPhone && !isViewerRole() ? `<button class="btn ghost sm" onclick="sendRentalBookingWhatsApp(${r.id})" title="${t('Send the booking to the customer on WhatsApp', 'إرسال الحجز للعميل على واتساب')}" style="color:#128C7E">💬</button>` : ''}
           ${rentalInvoiceFor(r) && !isViewerRole() ? `<button class="btn ghost sm" onclick="printInvoicePDF(${rentalInvoiceFor(r).id})" title="Linked invoice PDF">📄</button>` : ''}
           ${r.customerRentalId ? `<button class="btn ghost sm" onclick="viewRentalCustomerHistory(${r.customerRentalId})" title="See all bookings for this customer">📜</button>` : ''}
           <button class="btn ghost sm" onclick="editRental(${r.id})" title="Edit">✏️</button>
@@ -36127,6 +36131,43 @@ function showRentalCustomersList() {
   }, 50);
 }
 
+// v6.821 — the booking details to the customer on WhatsApp (court / room, day, time, hours, amount, paid / due, invoice) — a button on the "Booking saved" popup.
+window.rentalBookingMessage = function(r) {
+  const inv = (typeof rentalInvoiceFor === 'function') ? rentalInvoiceFor(r) : null;
+  const total = inv ? ((typeof invoiceTotal === 'function') ? invoiceTotal(inv) : Number(inv.amount) || 0) : (Number(r.amount) || 0);
+  const due = inv ? Math.max(0, Math.round(((typeof invoiceBalance === 'function') ? invoiceBalance(inv) : 0) * 100) / 100) : 0;
+  const paid = Math.round((total - due) * 100) / 100;
+  const first = String(r.customerName || '').split(' ')[0];
+  const FAC = { 'Football Court': ['ملعب كرة القدم', 'Football Court'], 'Boxing Room': ['قاعة الملاكمة', 'Boxing Room'] };
+  const [facAr, facEn] = FAC[r.facility] || [r.facility || '', r.facility || ''];
+  const DAYS_AR = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'], DAYS_EN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const dow = r.date ? new Date(r.date + 'T00:00:00').getDay() : null;
+  const hrs = Number(r.hours) || 0;
+  let range = '';
+  if (r.startTime && /^\d{1,2}:\d{2}/.test(r.startTime)) {
+    const [h, mi] = r.startTime.split(':').map(Number), endMin = h * 60 + mi + Math.round(hrs * 60), pad = n => String(n).padStart(2, '0');
+    range = r.startTime.slice(0, 5) + ' – ' + pad(Math.floor(endMin / 60) % 24) + ':' + pad(endMin % 60);
+  }
+  const ref = inv && inv.ref ? inv.ref : '';
+  const dayAr = (dow != null ? DAYS_AR[dow] + ' ' : '') + (r.date ? fmtDate(r.date) : ''), dayEn = (dow != null ? DAYS_EN[dow] + ' ' : '') + (r.date ? fmtDate(r.date) : '');
+  const payAr = due > 0.009 ? (paid > 0.009 ? 'المدفوع: ' + fmt(paid) + ' ريال · المتبقي: ' + fmt(due) + ' ريال' : 'المبلغ المستحق: ' + fmt(due) + ' ريال') : 'مدفوع بالكامل ✅';
+  const payEn = due > 0.009 ? (paid > 0.009 ? 'Paid: ' + fmt(paid) + ' QAR · Remaining: ' + fmt(due) + ' QAR' : 'Amount due: ' + fmt(due) + ' QAR') : 'Paid in full ✅';
+  const ar = ['أهلاً ' + first + '! 👋', 'تم تأكيد حجزك في نادي بلاك ستارز الرياضي:', '🏟 ' + facAr, '📅 ' + dayAr, range ? '🕒 ' + range : '', '⏱ ' + hrs + (hrs === 1 ? ' ساعة' : ' ساعات'),
+    '💰 الإجمالي: ' + fmt(total) + ' ريال', payAr, ref ? '🧾 فاتورة رقم ' + ref : '', 'الوعب، الدوحة 📍'];
+  const en = ['Hi ' + first + '! 👋', 'Your booking at Black Stars Sports Club is confirmed:', '🏟 ' + facEn, '📅 ' + dayEn, range ? '🕒 ' + range : '', '⏱ ' + hrs + (hrs === 1 ? ' hour' : ' hours'),
+    '💰 Total: ' + fmt(total) + ' QAR', payEn, ref ? '🧾 Invoice ' + ref : '', 'Waab, Doha 📍'];
+  return ar.filter(Boolean).join('\n') + '\n\n———\n\n' + en.filter(Boolean).join('\n');
+};
+window.sendRentalBookingWhatsApp = function(rentalId) {
+  const r = (state.rentals || []).find(x => x.id === rentalId);
+  if (!r) { toast('Booking not found', 'error'); return; }
+  let digits = String(r.customerPhone || '').replace(/\D/g, '');
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  if (digits.length === 8) digits = '974' + digits;
+  if (digits.length < 8) { toast(t('No valid mobile for this customer', 'لا يوجد جوال صالح لهذا الزبون'), 'error'); return; }
+  try { window.open('https://wa.me/' + digits + '?text=' + encodeURIComponent(window.rentalBookingMessage(r)), '_blank'); } catch (_) {}
+};
+
 // v6.618 — WhatsApp a rental customer to come book again now the weather has improved.
 window.rentalRebookReminder = function(rcustId) {
   const c = (state.rentalCustomers || []).find(x => x.id === rcustId);
@@ -36429,7 +36470,8 @@ function saveRental(existingId, onDone) {
   const linkBadge = matchedMember ? ` · linked to member ${matchedMember.name}` : '';
   // Write-through + SERVER read-back of the booking's invoice before confirming. (v6.332)
   const _rtMsg = `Booking saved · invoice ${ref} created${linkBadge}${paidNow > 0 ? '' : ' · ⏳ marked DUE (' + fmt(amount) + ' QAR to collect)'}`;
-  if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'invoices', id: newInv.id }], okMsg: _rtMsg });
+  const _rtWa = (String(phone || '').replace(/\D/g, '').length >= 8) ? [{ label: '💬 ' + t('Send WhatsApp', 'إرسال واتساب'), bg: 'linear-gradient(135deg,#25D366,#128C7E)', onclick: () => sendRentalBookingWhatsApp(rentalId) }] : [];   // v6.821
+  if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'invoices', id: newInv.id }], okMsg: _rtMsg, bigActions: _rtWa });
   else { save(); toast(_rtMsg, 'success'); }
 }
 
