@@ -28872,7 +28872,7 @@ window.deleteSubscription = function(memberId, sid) {
         const keep = items.filter(li => drop.indexOf(li) < 0);
         const removed = drop.reduce((s, li) => s + (Number(li.price) || 0), 0);
         if (!keep.length) { inv.deleted = true; }
-        else { inv.lineItems = keep; inv.amount = Math.max(0, (inv.amount || 0) - removed); }
+        else { inv.lineItems = keep; inv.amount = Math.max(0, (inv.amount || 0) - removed); const _lb = (typeof sportListWithDuration === 'function' && sportListWithDuration(keep)) || keep.map(li => li.sport).join(', '); inv.sport = _lb; if (inv.description) inv.description = m.name + ' — ' + _lb + ' subscription'; }   // v6.819 — the label no longer lists the deleted sport
       } else {
         inv.deleted = true;   // whole invoice was for this sub
       }
@@ -28883,6 +28883,16 @@ window.deleteSubscription = function(memberId, sid) {
   try { if (typeof window._tombstoneEl === 'function') window._tombstoneEl(sub); } catch (_) {}
   m.subscriptions = m.subscriptions.filter(s => (s._sid || s._rid) !== sid);
   if (sub._rid && Array.isArray(m.renewals)) m.renewals = m.renewals.filter(r => r._rid !== sub._rid);
+  // v6.820 — the LAST package of a sport takes the sport's enrollment with it. It stayed behind, so the card still listed the sport (a row with no icons) and the next Edit → Save
+  // created the package again and billed it again (Art Workshop, Iylin: deleted, back after every Save).
+  if (!m.subscriptions.some(s => (s.activity || '') === (sub.activity || '')) && Array.isArray(m.enrollments) && m.enrollments.some(e => (e.sport || '') === (sub.activity || ''))) {
+    try {
+      const _enrScope = 'members:' + m.id + ':enrollments';
+      if (typeof window._tombstoneEl === 'function') m.enrollments.filter(e => (e.sport || '') === sub.activity).forEach(e => window._tombstoneEl(e, _enrScope));
+      if (typeof window._tombstoneSport === 'function') window._tombstoneSport(_enrScope, sub.activity);
+    } catch (_) {}
+    m.enrollments = m.enrollments.filter(e => (e.sport || '') !== sub.activity);
+  }
   // Recompute the member's expiry from whatever subscriptions remain (latest end).
   const ends = (m.subscriptions || []).map(s => s.end).filter(Boolean).sort();
   if (ends.length) m.expiryDate = ends[ends.length - 1];
@@ -28971,13 +28981,20 @@ window.deleteSportFull = function(memberId, sid) {
         const keep = items.filter(li => drop.indexOf(li) < 0);
         const removed = drop.reduce((s, li) => s + (Number(li.price) || 0), 0);
         if (!keep.length) { inv.deleted = true; }
-        else { inv.lineItems = keep; inv.amount = Math.max(0, (inv.amount || 0) - removed); }
+        else { inv.lineItems = keep; inv.amount = Math.max(0, (inv.amount || 0) - removed); const _lb = (typeof sportListWithDuration === 'function' && sportListWithDuration(keep)) || keep.map(li => li.sport).join(', '); inv.sport = _lb; if (inv.description) inv.description = m.name + ' — ' + _lb + ' subscription'; }   // v6.819 — the label no longer lists the deleted sport
       } else {
         inv.deleted = true;
       }
     }
   }
 
+  // v6.819 — TOMBSTONE what is removed (removeEnrollmentData already did): without it a stale copy from another device brought the sport's enrollment back after the delete
+  try {
+    const _enrScope = 'members:' + m.id + ':enrollments', _subScope = 'members:' + m.id + ':subscriptions';
+    const _lastOfSport = !m.subscriptions.some(s => (s._sid || s._rid) !== sid && (s.activity || '') === sport);
+    if (typeof window._tombstoneEl === 'function') { m.subscriptions.filter(s => (s._sid || s._rid) === sid).forEach(s => window._tombstoneEl(s, _subScope)); if (_lastOfSport) (m.enrollments || []).filter(e => (e.sport || '') === sport).forEach(e => window._tombstoneEl(e, _enrScope)); }
+    if (typeof window._tombstoneSport === 'function' && _lastOfSport) window._tombstoneSport(_enrScope, sport);
+  } catch (_) {}
   // 3) Remove the subscription + any matching renewal entry.
   m.subscriptions = m.subscriptions.filter(s => (s._sid || s._rid) !== sid);
   if (sub._rid && Array.isArray(m.renewals)) m.renewals = m.renewals.filter(r => r._rid !== sub._rid);
