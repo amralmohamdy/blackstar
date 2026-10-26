@@ -89,10 +89,54 @@ function dashUnpaidRent() {
   const raw = state.settings && state.settings.dashUnpaidRent;
   return (raw === undefined || raw === null || raw === '' || isNaN(Number(raw))) ? 16500 : Math.max(0, Number(raw));
 }
+// v6.832 — rent / Citadel owed for the month, shown on the Expenses screen as PENDING rows (not in the total) with a Pay button; paying records a real expense.
+function expPaidFor(kind, ym) {
+  let s = 0;
+  for (const e of (state.expenses || [])) { if (e && !e.deleted && e.payFor === kind && (e.month || String(e.date || '').slice(0, 7)) === ym) s += Number(e.amount) || 0; }
+  return Math.round(s * 100) / 100;
+}
+function expPendingList() {
+  const cm = String(TODAY || '').slice(0, 7), u = dashUnpaidAccruals([cm]), out = [];
+  const raw = Number(state.settings && state.settings.citadelRate), rate = (isNaN(raw) || raw < 0) ? 30 : raw;
+  if (u.rent > 0.004) out.push({ kind: 'rent', month: cm, amount: u.rent, category: 'Rent', label: t('Monthly rent', 'إيجار الشهر') + ' — ' + fmtMonth(cm), note: t('not paid yet · not in the total', 'غير مدفوع · غير محسوب في الإجمالي') });
+  if (u.citadel > 0.004) out.push({ kind: 'citadel', month: cm, amount: u.citadel, category: CITADEL_SHARE_CATEGORY, label: t('Citadel company share', 'حصة شركة سيتادل') + ' (' + rate + '%) — ' + fmtMonth(cm), note: t('not paid yet · not in the total', 'غير مدفوع · غير محسوب في الإجمالي') });
+  return out;
+}
+window.expPay = function (kind) {
+  if (currentRole() !== 'admin') { toast(t('Only an admin can record a payment', 'للمسؤول فقط'), 'error'); return; }
+  const it = expPendingList().find(x => x.kind === kind);
+  if (!it) { toast(t('Nothing is pending', 'لا يوجد مستحق'), 'info'); return; }
+  showModal({
+    title: '💵 ' + t('Pay', 'سداد') + ' — ' + escapeHtml(it.label),
+    body: `<div class="text-mute" style="font-size:12px;margin-bottom:10px">${t('Recording the payment adds it to the Expenses total, the Dashboard and the Reports. Pay less than the amount due and the rest stays pending.', 'تسجيل الدفع يضيفه إلى إجمالي المصروفات واللوحة والتقارير. إن دفعت أقل يبقى الباقي مستحقاً.')}</div>
+      <div class="form-row">
+        <div class="field"><label>${t('Amount (QAR)', 'المبلغ (ريال)')} *</label><input id="pay-amt" type="number" min="0" step="0.01" value="${it.amount}" /><div class="text-mute" style="font-size:11px;margin-top:3px">${t('Due', 'المستحق')}: ${fmt(it.amount)}</div></div>
+        <div class="field"><label>${t('Date', 'التاريخ')} *</label><input id="pay-date" type="date" value="${TODAY}" /></div>
+      </div>
+      <div class="field"><label>${t('Payment method', 'طريقة الدفع')} *</label><select id="pay-method"><option value="cash">Cash</option><option value="card">Card</option><option value="fawran">Fawran</option><option value="transfer">Bank transfer</option></select></div>
+      <div class="field"><label>${t('Comments', 'ملاحظات')} <span class="text-mute" style="font-size:10px">(${t('optional', 'اختياري')})</span></label><input id="pay-notes" /></div>`,
+    actions: [
+      { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
+      { label: '💵 ' + t('Record payment', 'تسجيل الدفع'), class: 'btn primary', onclick: () => {
+        const amt = Math.round((parseFloat($('#pay-amt').value) || 0) * 100) / 100, date = $('#pay-date').value, method = $('#pay-method').value, notes = ($('#pay-notes').value || '').trim();
+        if (!(amt > 0)) { toast(t('Amount must be greater than 0', 'المبلغ يجب أن يكون أكبر من 0'), 'error'); return; }
+        if (amt > it.amount + 0.005) { toast(t('More than what is due (' + fmt(it.amount) + ')', 'أكثر من المستحق (' + fmt(it.amount) + ')'), 'error'); return; }
+        if (!date) { toast(t('Date is required', 'التاريخ مطلوب'), 'error'); return; }
+        if (typeof assertCloudWritable === 'function' && !assertCloudWritable('record this payment', 'تسجيل هذا الدفع')) return;
+        const row = { id: nextId(state.expenses), date, description: it.label, amount: amt, category: it.category, method, month: it.month, payMobile: '', notes, payFor: kind, createdAt: new Date().toISOString() };
+        state.expenses.push(row);
+        try { if (typeof audit === 'function') audit('expense.pay_due', 'expense:' + row.id, it.label + ' · ' + fmt(amt) + ' · ' + method); } catch (_) {}
+        closeModal(); render();
+        if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'expenses', id: row.id }], okMsg: t('Paid & recorded: ', 'تم السداد والتسجيل: ') + it.label + ' · ' + fmt(amt) });
+        else { save(); toast(t('Paid & recorded', 'تم السداد والتسجيل')); }
+      } },
+    ],
+  });
+};
 function dashUnpaidAccruals(months) {
   const cm = String(TODAY || '').slice(0, 7);
   if (!(months || []).includes(cm)) return { rent: 0, citadel: 0, total: 0 };
-  const rent = dashUnpaidRent();
+  const rent = Math.max(0, Math.round((dashUnpaidRent() - expPaidFor('rent', cm)) * 100) / 100);   // v6.832 — what the Expenses "Pay" button already recorded comes off
   let citadel = 0;
   try {
     const raw = Number(state.settings && state.settings.citadelRate);
@@ -3243,6 +3287,26 @@ window.unfreezeMember = function(id) {
   withCloudConfirm({ verify: [{ collection: 'members', id: m.id }], okMsg: `${m.name} unfrozen`, afterOk: () => viewMember(m.id) });
 };
 
+// v6.833 — archiving a member archives HIS invoices too (they leave Due Payment and the revenue; nothing is destroyed). Restoring the member brings back exactly those invoices.
+function archiveMemberInvoices(id) {
+  const now = new Date().toISOString(), by = (typeof currentUserName === 'function' ? currentUserName() : 'admin'); let n = 0, due = 0;
+  for (const i of (state.invoices || [])) {
+    if (!i || i.deleted || i.customerId !== id) continue;
+    due += Math.max(0, (typeof invoiceBalance === 'function') ? invoiceBalance(i) : 0);
+    i.deleted = true; i.deletedAt = now; i.deletedBy = by; i.archivedWithMember = id; n++;
+    if (typeof stampUpdate === 'function') stampUpdate(i);
+  }
+  return { n, due: Math.round(due * 100) / 100 };
+}
+function restoreMemberInvoices(id) {
+  let n = 0;
+  for (const i of (state.invoices || [])) {
+    if (!i || !i.deleted || i.archivedWithMember !== id) continue;
+    delete i.deleted; delete i.deletedAt; delete i.deletedBy; delete i.archivedWithMember; n++;
+    if (typeof stampUpdate === 'function') stampUpdate(i);
+  }
+  return n;
+}
 window.deleteMember = function(id) {
   const _role = currentRole();
   if (_role !== 'admin' && _role !== 'receptionist') { toast('You do not have permission to archive members', 'error'); return; }
@@ -3255,7 +3319,8 @@ window.deleteMember = function(id) {
       delete m.deleted;
       delete m.deletedAt;
       delete m.deletedReason;
-      withCloudConfirm({ verify: [{ collection: 'members', id: m.id }], okMsg: `Restored ${m.name}`, afterOk: () => render() });
+      const _ri = restoreMemberInvoices(m.id);
+      withCloudConfirm({ verify: [{ collection: 'members', id: m.id }], okMsg: `Restored ${m.name}${_ri ? ' · ' + _ri + ' invoice(s) back' : ''}`, afterOk: () => render() });
     }
     return;
   }
@@ -3271,8 +3336,10 @@ window.deleteMember = function(id) {
   if (rentalCount) linked.push(`${rentalCount} rental${rentalCount === 1 ? '' : 's'}`);
   if (switchCount) linked.push(`${switchCount} sport switch${switchCount === 1 ? '' : 'es'}`);
   if (attendanceMonths) linked.push(`${attendanceMonths} attendance month${attendanceMonths === 1 ? '' : 's'}`);
+  const _liveInv = (state.invoices || []).filter(i => i && !i.deleted && i.customerId === id);
+  const _invDue = Math.round(_liveInv.reduce((s, i) => s + Math.max(0, (typeof invoiceBalance === 'function') ? invoiceBalance(i) : 0), 0) * 100) / 100;
   const linkedMsg = linked.length
-    ? `\n\nPRESERVED (history stays intact):\n• ${linked.join('\n• ')}\n• Coach commission already earned\n• Member ID, name, all data`
+    ? `\n\nKEPT with the member: attendance${attendanceMonths ? ' (' + attendanceMonths + ' month' + (attendanceMonths === 1 ? '' : 's') + ')' : ''}, sport switches, name and all data.${_liveInv.length ? '\n\nARCHIVED with him: ' + _liveInv.length + ' invoice' + (_liveInv.length === 1 ? '' : 's') + (_invDue > 0 ? ' — including ' + fmt(_invDue) + ' QAR DUE, which leaves Due Payment' : '') + ' (they also leave the revenue; restoring the member brings them back).' : ''}`
     : '\n\nNo linked records.';
   // v6.645: archiving removes the member from the commission engine for EVERY month, so a coach's pay for
   // classes already taught silently drops (180 → 0 in the test). Show what will change before confirming.
@@ -3290,10 +3357,11 @@ window.deleteMember = function(id) {
   m.deleted = true;
   m.deletedAt = new Date().toISOString();
   m.deletedReason = reason || null;
+  const _ai = archiveMemberInvoices(m.id);   // v6.833
   audit('member.archive', `member:${m.id}`,
-    `Archived ${m.name}${reason ? ' — ' + reason : ''}`,
-    { memberId: m.id, name: m.name, reason });
-  withCloudConfirm({ verify: [{ collection: 'members', id: m.id }], okMsg: `📦 Archived ${m.name}${linked.length ? ' · ' + linked.length + ' record types preserved' : ''}`, afterOk: () => render() });
+    `Archived ${m.name}${reason ? ' — ' + reason : ''}${_ai.n ? ' · ' + _ai.n + ' invoice(s) archived' : ''}`,
+    { memberId: m.id, name: m.name, reason, invoicesArchived: _ai.n, due: _ai.due });
+  withCloudConfirm({ verify: [{ collection: 'members', id: m.id }].concat((state.invoices || []).filter(i => i && i.archivedWithMember === m.id).slice(0, 20).map(i => ({ collection: 'invoices', id: i.id }))), okMsg: `📦 Archived ${m.name}${_ai.n ? ' · ' + _ai.n + ' invoice(s) archived with him' : ''}`, afterOk: () => render() });
 };
 
 window.restoreMember = function(id) {
@@ -3303,8 +3371,9 @@ window.restoreMember = function(id) {
   delete m.deleted;
   delete m.deletedAt;
   delete m.deletedReason;
-  audit('member.restore', `member:${m.id}`, `Restored ${m.name}`, { memberId: m.id, name: m.name });
-  withCloudConfirm({ verify: [{ collection: 'members', id: m.id }], okMsg: `Restored ${m.name}`, afterOk: () => render() });
+  const _ri = restoreMemberInvoices(m.id);   // v6.833
+  audit('member.restore', `member:${m.id}`, `Restored ${m.name}${_ri ? ' · ' + _ri + ' invoice(s) restored' : ''}`, { memberId: m.id, name: m.name, invoicesRestored: _ri });
+  withCloudConfirm({ verify: [{ collection: 'members', id: m.id }], okMsg: `Restored ${m.name}${_ri ? ' · ' + _ri + ' invoice(s) back' : ''}`, afterOk: () => render() });
 };
 
 // Hard-delete an ARCHIVED member. Irreversible (unlike restore). Lets the user
@@ -3314,7 +3383,7 @@ window.permanentlyDeleteMember = function(id) {
   const m = state.members.find(x => x.id === id);
   if (!m) return;
   if (!m.deleted) { toast('Archive the member first, then you can permanently delete.', 'error'); return; }
-  const invs = (state.invoices || []).filter(i => i.customerId === id).length;
+  const invs = (state.invoices || []).filter(i => i.customerId === id).length;   // v6.833 — archived invoices count too
   const sales = (state.sales || []).filter(s => s.customerId === id).length;
   const rentals = (state.rentals || []).filter(r => r.memberId === id).length;
   const purge = (alsoRecords) => {
@@ -3334,12 +3403,11 @@ window.permanentlyDeleteMember = function(id) {
     title: `⚠️ Permanently delete "${escapeHtml(m.name)}"?`,
     body: `<div style="font-size:13px;line-height:1.65">
       <p><b>This cannot be undone.</b> Unlike Archive, the member will be erased and can't be restored.</p>
-      <p>${linkedBits.length ? `Linked financial records: <b>${linkedBits.join(', ')}</b>.` : 'No linked invoices, sales, or rentals.'}</p>
-      <p class="text-mute">💾 Tip: back up your data first (Settings → Backup). Choose what to remove:</p>
+      <p>${linkedBits.length ? `Everything linked to him goes too — attendance, <b>${linkedBits.join(', ')}</b> (archived ones included) and any amount he still owes.` : 'No linked invoices, sales, or rentals.'}</p>
+      <p class="text-mute">💾 Tip: back up your data first (Settings → Backup).</p>
     </div>`,
     actions: [
       { label: 'Cancel', class: 'btn ghost', onclick: closeModal },
-      ...(linkedBits.length ? [{ label: 'Member only (keep records)', class: 'btn ghost', onclick: () => { if (confirm(`Permanently delete "${m.name}" but KEEP their ${linkedBits.join(', ')} as history?`)) purge(false); } }] : []),
       { label: linkedBits.length ? '🗑 Delete everything' : '🗑 Delete forever', class: 'btn danger', onclick: () => { if (confirm(`Last chance — permanently erase "${m.name}"${linkedBits.length ? ' AND all their ' + linkedBits.join(', ') : ''}? This CANNOT be undone.`)) purge(true); } },
     ],
   });
@@ -8783,6 +8851,31 @@ if (typeof window !== 'undefined') { window.citadelExportXlsx = citadelExportXls
 // (not stored fields) so it's always live: paying via the Edit Pricing dialog
 // removes the row instantly. Admins AND receptionists use this — collecting
 // dues is the front-desk job.
+// v6.833 — dues of people who are no longer members (an archived / deleted member): archive the invoice from the Due screen
+window.dueArchiveInvoice = function (invId) {
+  if (currentRole() !== 'admin') { toast(t('Only an admin can archive an invoice', 'للمسؤول فقط'), 'error'); return; }
+  const inv = (state.invoices || []).find(i => i && i.id === invId); if (!inv || inv.deleted) return;
+  const bal = Math.round(invoiceBalance(inv) * 100) / 100;
+  if (!confirm(t('Archive invoice ', 'أرشفة الفاتورة ') + (inv.ref || '#' + inv.id) + ' — ' + (inv.customerName || inv.description || '') + ' (' + fmt(bal) + ' QAR due)?\n\n' + t('It leaves Due Payment and the revenue. It stays in Archived invoices, so it can be restored.', 'تخرج من المستحقات والإيرادات وتبقى في الفواتير المؤرشفة ويمكن استعادتها.'))) return;
+  inv.deleted = true; inv.deletedAt = new Date().toISOString(); inv.deletedBy = (typeof currentUserName === 'function' ? currentUserName() : 'admin');
+  if (typeof stampUpdate === 'function') stampUpdate(inv);
+  try { if (typeof audit === 'function') audit('invoice.archive_from_due', 'invoice:' + inv.id, 'Archived ' + (inv.ref || '') + ' from Due Payment (' + fmt(bal) + ' due, customer no longer a member)'); } catch (_) {}
+  if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'invoices', id: inv.id }], okMsg: t('Archived ', 'تمت الأرشفة ') + (inv.ref || ''), afterOk: () => render() });
+  else { save(); render(); }
+};
+window.dueArchiveOrphans = function () {
+  if (currentRole() !== 'admin') return;
+  const live = id => id != null && (state.members || []).some(m => m && m.id === id && !m.deleted);
+  const list = (state.invoices || []).filter(i => i && !i.deleted && !i.switchCredit && i.customerId != null && !i.rentalId && !live(i.customerId) && invoiceBalance(i) >= 0.5);
+  if (!list.length) return;
+  const sum = Math.round(list.reduce((s, i) => s + invoiceBalance(i), 0) * 100) / 100;
+  if (!confirm(t('Archive ' + list.length + ' invoice(s) of people who are no longer members (' + fmt(sum) + ' QAR due)?\n\nThey leave Due Payment and the revenue and stay in Archived invoices.', 'أرشفة ' + list.length + ' فاتورة لأشخاص لم يعودوا أعضاء (' + fmt(sum) + ' ريال)؟\n\nتخرج من المستحقات وتبقى في الفواتير المؤرشفة.'))) return;
+  const now = new Date().toISOString(), by = (typeof currentUserName === 'function' ? currentUserName() : 'admin');
+  list.forEach(i => { i.deleted = true; i.deletedAt = now; i.deletedBy = by; if (typeof stampUpdate === 'function') stampUpdate(i); });
+  try { if (typeof audit === 'function') audit('invoice.archive_orphans_from_due', 'invoices', 'Archived ' + list.length + ' invoice(s) of non-members from Due Payment (' + fmt(sum) + ')'); } catch (_) {}
+  if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: list.slice(0, 20).map(i => ({ collection: 'invoices', id: i.id })), okMsg: t('Archived ' + list.length + ' invoice(s)', 'تمت أرشفة ' + list.length + ' فاتورة'), afterOk: () => render() });
+  else { save(); render(); }
+};
 PAGES.duepayment = (main) => {
   if (window._dueFilter == null) window._dueFilter = { search: '', status: 'all', sport: 'all', range: 'all', months: [] };
   const f = window._dueFilter;
@@ -9040,6 +9133,7 @@ Black Stars Academy`;
             : `<a class="btn ghost sm" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;${lvlColor}" href="${wa}" target="_blank" rel="noopener" onclick="markReminded(${r.m.id})" title="${t('Send', 'إرسال')}: ${lvlLabel}">${lvlIcon} ${lvlLabel}</a>`;
         })()}
         ${r.walk ? '' : `<button class="btn ghost sm" onclick="viewMember(${r.m.id})" title="${t('Open profile', 'فتح الملف')}">👁</button>`}
+        ${(r.walk && r.inv && r.inv.customerId != null && !r.inv.rentalId && currentRole() === 'admin') ? `<button class="btn ghost sm" style="color:var(--red)" onclick="dueArchiveInvoice(${r.inv.id})" title="${t('This person is no longer a member — archive this invoice (it leaves Due Payment)', 'لم يعد عضواً — أرشفة هذه الفاتورة (تخرج من المستحقات)')}">🗑 ${t('Archive', 'أرشفة')}</button>` : ''}
       </td>
     </tr>`;
   }).join('') : `<tr><td colspan="9" class="empty"><div class="empty-icon">🎉</div>${filtersOn ? t('No members match these filters', 'لا يوجد أعضاء يطابقون المرشحات') : t('All settled — no outstanding balances', 'كل شيء مسوّى — لا توجد مبالغ مستحقة')}</td></tr>`;
@@ -9051,6 +9145,7 @@ Black Stars Academy`;
         <div class="subtitle">${list.length} ${t('of', 'من')} ${all.length} ${t('customers with an outstanding balance (members + walk-ins)', 'عميلاً عليه مبلغ مستحق (أعضاء + غير أعضاء)')}${filtersOn ? '' : ` · ${fmt(grandTotal)} QAR`}</div>
       </div>
     </div>
+    ${(() => { if (currentRole() !== 'admin') return ''; const _lv = id => id != null && (state.members || []).some(m => m && m.id === id && !m.deleted); const _o = (state.invoices || []).filter(i => i && !i.deleted && !i.switchCredit && i.customerId != null && !i.rentalId && !_lv(i.customerId) && invoiceBalance(i) >= 0.5); if (!_o.length) return ''; return `<div style="margin-bottom:12px;padding:10px 14px;border:1px solid rgba(239,68,68,.4);background:rgba(239,68,68,.06);border-radius:10px;display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap"><div style="font-size:13px">⚠ <b>${_o.length}</b> ${t('due invoice(s) belong to people who are no longer members', 'فاتورة مستحقة لأشخاص لم يعودوا أعضاء')} (${fmt(Math.round(_o.reduce((s, i) => s + invoiceBalance(i), 0) * 100) / 100)} QAR)</div><button class="btn danger sm" onclick="dueArchiveOrphans()">🗑 ${t('Archive them all', 'أرشفتها كلها')}</button></div>`; })()}
     ${(() => { if (currentRole() !== 'admin') return ''; let n = 0, amt = 0; for (const mm of (state.members || [])) { if (mm.deleted) continue; for (const x of _memberMisallocations(mm)) { n++; amt += x.amount; } } return n ? `<div style="margin-bottom:12px;padding:10px 14px;border:1px solid rgba(245,158,11,.5);background:rgba(245,158,11,.08);border-radius:10px;font-size:12.5px">⚠ ${n} ${t('payment(s) sit on the wrong invoice', 'دفعة على فاتورة خطأ')} (${fmt(amt)} QAR) — ${t('an invoice is overpaid while another invoice of the same member is unpaid.', 'فاتورة مدفوعة بزيادة بينما فاتورة أخرى لنفس العضو غير مدفوعة.')} <button class="btn sm" style="margin-inline-start:8px" onclick="window._rebalanceAllMembers()">${t('Move them', 'انقلها')}</button></div>` : ''; })()}
     <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
       <div class="kpi" style="border-color:var(--red);background:rgba(239,68,68,.06)"><div class="kpi-label" style="color:var(--red)">⚠ ${t('Total due (shown)', 'إجمالي المستحق (المعروض)')}</div><div class="kpi-value num" style="color:var(--red)">${fmt(grandTotal)}</div><div class="kpi-sub">QAR · ${list.length} ${t('customers', 'عميل')}</div></div>
@@ -19788,7 +19883,20 @@ PAGES.expenses = (main) => {
     // Show the "Clear filters" button only while a filter is active.
     const _clr = $('#exp-clear'); if (_clr) _clr.style.display = anyFilter ? '' : 'none';
 
-    $('#exp-tbody').innerHTML = rows.length ? rows.map((e, i) => `
+    // v6.832 — PENDING rows (rent + Citadel share of the current month): shown, NOT counted in any total, with a Pay button
+    const _pend = (currentRole() === 'admin' && (!filter.months.length || filter.months.includes(String(TODAY || '').slice(0, 7))) && !filter.search && !(filter.methods || []).length)
+      ? expPendingList().filter(x => !filter.categories.length || filter.categories.includes(x.category)) : [];
+    const _pendHtml = _pend.map(x => `
+      <tr style="background:rgba(242,163,60,.07)">
+        <td class="text-mute" style="text-align:center;font-size:14px">⏳</td>
+        <td class="text-dim" style="white-space:nowrap;font-size:12px">${t('due', 'مستحق')} ${fmtMonth(x.month)}</td>
+        <td><div class="font-bold">${escapeHtml(x.label)}</div><div class="text-mute" style="font-size:11px">${escapeHtml(x.note)}</div></td>
+        <td><span class="badge">${escapeHtml(x.category)}</span></td>
+        <td class="text-mute">—</td>
+        <td class="text-right num" style="color:var(--accent-2);font-weight:700">${fmt(x.amount)}<div style="font-size:10px;font-weight:400">${t('pending', 'معلّق')}</div></td>
+        <td class="text-right" style="white-space:nowrap"><button class="btn primary sm" onclick="expPay('${x.kind}')">💵 ${t('Pay', 'سداد')}</button>${x.kind === 'rent' ? ` <button class="btn ghost sm" onclick="dashEditUnpaidRent()" title="${t('Change the monthly rent', 'تغيير الإيجار الشهري')}">✏️</button>` : ''}</td>
+      </tr>`).join('');
+    $('#exp-tbody').innerHTML = _pendHtml + (rows.length ? rows.map((e, i) => `
       <tr ${e.autoBankCommission ? 'style="background:rgba(91,141,239,.05)"' : ''}>
         <td class="text-mute" style="text-align:center;font-size:12px">${i + 1}</td>
         <td class="text-dim" style="white-space:nowrap">${fmtDate(e.date)}</td>
@@ -19798,7 +19906,7 @@ PAGES.expenses = (main) => {
         <td class="text-right num font-bold">${fmt(e.amount)}</td>
         <td class="text-right" style="white-space:nowrap">${isViewerRole() ? '' : (e.autoBankCommission || e.autoCitadelShare) ? `<button class="btn ghost sm" onclick="openExpenseReport('${e.autoBankCommission ? 'bank' : 'citadel'}', '${e.month || String(e.date || '').slice(0, 7)}')" title="${t('Open the report behind this amount', 'افتح التقرير وراء هذا المبلغ')}">🔎</button> ` : ''}${isViewerRole() ? '' : `<button class="btn ghost sm" onclick="editExpense(${e.id})" title="Edit">✏️</button> ${e.autoBankCommission ? `<button class="btn ghost sm" onclick="resetBankCommission(${e.id})" title="Reset to auto-calculated value">↻</button>` : `<button class="btn ghost sm" onclick="deleteExpense(${e.id})" title="Delete">🗑</button>`}`}</td>
       </tr>
-    `).join('') : `<tr><td colspan="7" class="empty"><div class="empty-icon">💸</div>No expenses match</td></tr>`;
+    `).join('') : (_pend.length ? '' : `<tr><td colspan="7" class="empty"><div class="empty-icon">💸</div>No expenses match</td></tr>`));
     const footEl = $('#exp-tfoot');
     if (footEl) {
       // Reception sees only the count in the footer — never the total sum.
@@ -19817,7 +19925,7 @@ PAGES.expenses = (main) => {
     // Reception must not see the expense TOTAL / per-category sums — only the count.
     $('#exp-count').textContent = isViewerRole()
       ? `${allRows.length} ${allRows.length === 1 ? 'entry' : 'entries'}`
-      : `${allRows.length} entries · ${fmtMoney(total)}${anyFilter ? ` of ${fmtMoney(grandTotal)} total` : ''}${topStr ? ' · ' + topStr : ''}`;
+      : `${allRows.length} entries · ${fmtMoney(total)}${anyFilter ? ` of ${fmtMoney(grandTotal)} total` : ''}${topStr ? ' · ' + topStr : ''}${_pend.length ? ' · ⏳ ' + _pend.map(x => x.category + ' ' + fmt(x.amount)).join(' + ') + ' ' + t('pending (not in the total)', 'معلّق (غير محسوب)') : ''}`;
     $('#exp-pagination').innerHTML = paginationBar(pg, allRows.length, 'exp');
     bindPagination('exp', pg, allRows.length, refresh);
   }
@@ -27141,8 +27249,18 @@ window.switchSport = function(memberId) {
 
   // v6.740 — a switch is REFUSED (nothing changes) when the source package was already switched away. (An EXPIRED
   // package can still be switched: the new record keeps the ORIGINAL expiry and is simply not active — never extended.)
-  function switchBlockReason(from, switchDate) {
+  function switchBlockReason(from, switchDate, toSports) {
     const same = (a, b) => String(a) === String(b);
+    // v6.831 — a CHANGE OF SPORT dated before classes already marked in the old sport: those marks stay in the old sport's cell, so they would be counted for nobody (the old coach loses their pay and the member
+    // gets the whole remainder again — Anabia Shaikh −637.50). A coach change inside the same sport shares the cell and is fine.
+    if (from.sport !== MIXED && !isCampSport(from.sport) && (toSports || []).some(s => s && s !== from.sport) && m.dailyAttendance) {
+      const key = (from.coachId != null && typeof attendanceKeyFor === 'function') ? attendanceKeyFor(m, from.sport, from.coachId) : from.sport;
+      const src = (m.subscriptions || []).filter(s => (s.activity || '') === from.sport && same(s.coachId, from.coachId) && s.status !== 'completed' && !s.switchedAwayTo).sort((x, y) => String(x.start || '').localeCompare(String(y.start || ''))).pop();
+      const since = src && typeof subAttendanceWindow === 'function' ? ((subAttendanceWindow(m, src) || {}).from || src.start || '') : (src && src.start) || '';
+      const later = [];
+      for (const mk of Object.keys(m.dailyAttendance)) { const cell = (m.dailyAttendance[mk] || {})[key]; if (!cell || typeof cell !== 'object') continue; for (const d of Object.keys(cell)) { if (cell[d] !== 'Y') continue; const iso = mk + '-' + String(parseInt(d, 10)).padStart(2, '0'); if (iso > switchDate && (!since || iso >= since)) later.push(iso); } }
+      if (later.length) { later.sort(); return { kind: 'later', n: later.length, last: later[later.length - 1] }; }
+    }
     const subs = (m.subscriptions || []).filter(s => (s.activity || '') === from.sport && same(s.coachId, from.coachId));
     const live = subs.filter(s => s.status !== 'completed' && !s.switchedAwayTo);
     if (subs.length && !live.length && subs.some(s => s.switchedAwayTo)) return { kind: 'already' };
@@ -27151,6 +27269,7 @@ window.switchSport = function(memberId) {
     return null;
   }
   function switchBlockToast(r, from, switchDate) {
+    if (r.kind === 'later') { toast(t(r.n + ' class' + (r.n === 1 ? ' is' : 'es are') + ' already marked in ' + from.sport + ' after ' + fmtDate(switchDate) + ' (the last on ' + fmtDate(r.last) + ') — pick a switch date on or after ' + fmtDate(r.last) + ', or switch the coach inside the same sport.', 'هناك ' + r.n + ' حصة مسجّلة في ' + from.sport + ' بعد ' + fmtDate(switchDate) + ' (آخرها ' + fmtDate(r.last) + ') — اختر تاريخ تبديل في أو بعد ' + fmtDate(r.last) + '.'), 'error'); return; }
     if (r.kind === 'before') { toast(t('The switch date is before this package starts (' + fmtDate(r.start) + ') — pick a date on or after the start.', 'تاريخ التبديل قبل بداية هذه الباقة (' + fmtDate(r.start) + ') — اختر تاريخاً في أو بعد البداية.'), 'error'); return; }
     toast(t('This package (' + from.sport + ' with ' + coachName(from.coachId) + ') was already switched — nothing left to switch.', 'هذه الباقة (' + from.sport + ' مع ' + coachName(from.coachId) + ') تم تبديلها مسبقاً — لا يوجد ما يُبدَّل.'), 'error');
   }
@@ -27251,7 +27370,7 @@ window.switchSport = function(memberId) {
           }
           if (new Set(tgs.map(t => t.sport)).size !== tgs.length) { toast('Each new sport must be different', 'error'); return; }
           if (isCampSport(from.sport)) { toast('Distribution isn\'t available when switching FROM Summer Camp.', 'error'); return; }
-          { const _bk = switchBlockReason(from, switchDate); if (_bk) { switchBlockToast(_bk, from, switchDate); return; } }
+          { const _bk = switchBlockReason(from, switchDate, tgs.map(x => x.sport)); if (_bk) { switchBlockToast(_bk, from, switchDate); return; } }
           const sumClasses = tgs.reduce((s, t) => s + (t.classes || 0), 0);
           if (sumClasses <= 0) { toast('Allocate the remaining classes across the new sports', 'error'); return; }
           if (sumClasses !== remaining) { toast('Allocated ' + sumClasses + ' but ' + remaining + ' classes remain — they must match.', 'error'); return; }
@@ -27391,7 +27510,7 @@ window.switchSport = function(memberId) {
           toast(t('Nothing to switch: ' + from.sport + ' with ' + coachName(from.coachId) + ' has no classes left (' + attendedA + '/' + totalClasses + ' attended). To start a NEW package with the new coach use Renew.', 'لا يوجد ما يُبدَّل: ' + from.sport + ' مع ' + coachName(from.coachId) + ' لا توجد حصص متبقية (' + attendedA + '/' + totalClasses + '). لبدء باقة جديدة مع المدرب الجديد استخدم «تجديد».'), 'error');
           return;
         }
-        if (!skipReconciliation) { const _bk = switchBlockReason(from, switchDate); if (_bk) { switchBlockToast(_bk, from, switchDate); return; } }
+        if (!skipReconciliation) { const _bk = switchBlockReason(from, switchDate, [toSport]); if (_bk) { switchBlockToast(_bk, from, switchDate); return; } }
         // …and the same switch (same package → same destination, same day) pressed twice never runs twice.
         if ((m.sportSwitches || []).some(sw => sw.fromSport === from.sport && String(sw.fromCoachId) === String(from.coachId) && sw.toSport === toSport && String(sw.toCoachId) === String(toCoachId) && sw.date === switchDate && (Date.now() - Date.parse(sw.createdAt || 0)) < 120000)) {
           toast(t('This switch was just made — not repeated.', 'تم هذا التبديل للتو — لن يتكرر.'), 'error');
@@ -27865,7 +27984,7 @@ window.addRenewalMulti = function(m, picks, opts) {
   };
   const mkRow = (e, i) => ({
     isNew: !!e.isNew,
-    sport: e.sport, coachId: e.coachId, originalCoachId: e.coachId, classes: (renewalStandardFor(m, e.sport, e.coachId) || {}).classes || parseInt(e.classes) || 0, i,
+    sport: e.sport, coachId: e.coachId, originalCoachId: e.coachId, classes: (renewalStandardFor(m, e.sport, e.coachId) || {}).classes || parseInt(e.pkgClasses) || parseInt(e.classes) || 0, i,
     price: (renewalStandardFor(m, e.sport, e.coachId) || {}).price || smartPrice(e.sport, Number(e.price) || 0),
     validity: parseInt(e.validity) || lastValidity(e.sport, e.coachId),
     pv: privateDefaultFor(m, e.sport, e.coachId),   // v6.660
@@ -28115,7 +28234,7 @@ window.addRenewal = function(memberId) {
         <div class="field" id="rn-coach-field" style="${isCampSport((enrolledUnique[0]?.sport || m.sport)) ? 'display:none' : ''}"><label>Coach</label><select id="rn-coach">${coachOpts(enrolledUnique[0]?.coachId || m.coachId)}</select></div>
       </div>
       <div class="form-row">
-        <div class="field"><label style="display:flex;justify-content:space-between;align-items:center">Classes <span id="rn-cls-badge" style="display:none;gap:4px"></span></label><input id="rn-classes" type="number" min="0" step="1" value="${(renewalStandardFor(m, enrolledUnique[0]?.sport, enrolledUnique[0]?.coachId) || {}).classes || enrolledUnique[0]?.classes || ''}" /><div id="rn-cls-hint" class="text-mute" style="font-size:10px;margin-top:3px"></div></div>
+        <div class="field"><label style="display:flex;justify-content:space-between;align-items:center">Classes <span id="rn-cls-badge" style="display:none;gap:4px"></span></label><input id="rn-classes" type="number" min="0" step="1" value="${(renewalStandardFor(m, enrolledUnique[0]?.sport, enrolledUnique[0]?.coachId) || {}).classes || enrolledUnique[0]?.pkgClasses || enrolledUnique[0]?.classes || ''}" /><div id="rn-cls-hint" class="text-mute" style="font-size:10px;margin-top:3px"></div></div>
         <div class="field"><label>Validity</label><select id="rn-validity">${validityOptionsHtml(DEFAULT_VALIDITY)}</select></div>
         <div class="field"><label>Amount / Fee (QAR)</label><input id="rn-amount" type="number" step="0.01" min="0" value="${(renewalStandardFor(m, enrolledUnique[0]?.sport, enrolledUnique[0]?.coachId) || {}).price || enrolledUnique[0]?.price || ''}" /></div>
       </div>
@@ -28263,11 +28382,11 @@ window.addRenewal = function(memberId) {
             _en.private = !!_pv.private; _en.approach = _pv.private ? _pv.approach : null;   // v6.660: keep the enrollment in step
             // v6.692 — and its package: the renewed class count (incl. carried / minus deducted), price and dates. The enrollment used to keep the OLD
             // numbers, so "Generate latest invoice" / Rebuild from profile later brought them back (Mohamed Hamdy: 14 renewed, invoice rebuilt at 10).
-            if (!_en.start || start >= _en.start) { if (classes) _en.classes = classesRaw || classes; if (amount > 0) _en.price = amount; _en.start = start; _en.validity = validity; }
+            if (!_en.start || start >= _en.start) { if (classes) { _en.classes = classes; _en.packageClasses = classesRaw || classes; } if (amount > 0) _en.price = amount; _en.start = start; _en.validity = validity; }
           } }
         if (!isCampSport(renewedSport) && renewedSport !== MIXED && !(m.enrollments || []).some(e => e.sport === renewedSport)) {   // v6.815 — no enrollment row for the renewed sport → create it
           if (!Array.isArray(m.enrollments)) m.enrollments = [];
-          m.enrollments.push({ sport: renewedSport, coachId, classes: classesRaw || classes || 0, price: amount || 0, start, validity, private: !!_pv.private, approach: _pv.private ? _pv.approach : null });
+          m.enrollments.push({ sport: renewedSport, coachId, classes: classes || 0, packageClasses: classesRaw || classes || 0, price: amount || 0, start, validity, private: !!_pv.private, approach: _pv.private ? _pv.approach : null });
         }
 
         // 3) Create the corresponding invoice so it appears in revenue
