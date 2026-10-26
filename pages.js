@@ -1246,7 +1246,7 @@ function _subFilterStatus(m, s) {
   if (!s) return '';
   if (s.switchedAwayTo) return 'Switched';                                   // switched away — not Active
   if ((s.status || '').toLowerCase() === 'withdrawn') return 'Withdrawn';
-  if (typeof isMemberFrozenAt === 'function' && isMemberFrozenAt(m, TODAY)) return 'Frozen';
+  if (typeof isMemberFrozenAt === 'function' && isMemberFrozenAt(m, TODAY, s.activity)) return 'Frozen';
   const total = parseInt(s.totalClasses) || 0;
   const att = (typeof liveAttendanceCount === 'function') ? (liveAttendanceCount(m, s.activity, s.start, s.end).y || 0) : (parseInt(s.attendedClasses) || 0);
   if (total > 0 && att >= total) return 'Completed';
@@ -2648,6 +2648,7 @@ function viewMember(id) {
           if (_switchedTo) { label = 'switched'; cls = 'switched'; }
           else if (isCompleted) { label = 'completed'; cls = 'completed'; }
           else if (s.end && s.end < TODAY) { label = 'expired'; cls = 'expired'; }
+          else if (typeof isMemberFrozenAt === 'function' && isMemberFrozenAt(m, TODAY, s.activity) && !(s.end && s.end < TODAY)) { label = 'frozen'; cls = 'frozen'; }   // v6.851 — this sport is frozen
           else if (s.start && s.end) { label = 'active'; cls = 'active'; }
           else if (s.status) { const sl = s.status.toLowerCase(); label = sl; cls = sl === 'expired' ? 'expired' : (sl === 'completed' ? 'completed' : 'active'); }
           else { return '—'; }
@@ -3120,6 +3121,8 @@ window.freezeMember = function(id) {
     });
     return;
   }
+  // v6.851 — the ticked sports of the freeze dialog (null = all of them)
+  const _fzPicked = () => { const all = [...document.querySelectorAll('.freeze-sport-cb')]; if (!all.length) return null; const on = all.filter(x => x.checked).map(x => x.value); return on.length === all.length ? null : on; };
   // For admins, the input is not capped (free choice); for others it's the remaining allowance.
   const inputMax = isAdmin ? 365 : allow.remainingDays;
   const defaultDays = isAdmin ? (allow.remainingDays > 0 ? Math.min(7, allow.remainingDays) : 7) : Math.min(7, allow.remainingDays);
@@ -3134,6 +3137,10 @@ window.freezeMember = function(id) {
           <span>${t('Used', 'مستخدم')}: <b>${allow.usedDays}</b>${allow.freezeCount ? ` (${allow.freezeCount}×)` : ''} · ${t('Remaining', 'متبقٍ')}: <b style="color:var(--blue)">${allow.remainingDays} ${t('days', 'يوم')}</b></span>
         </div>
         ${isAdmin ? `<div class="text-mute" style="font-size:11px;margin-top:-6px">🔓 ${t('Admin override: you can freeze beyond the standard allowance. The printed invoice policy stays one week per month.', 'صلاحية المشرف: يمكنك التجميد بأكثر من الرصيد القياسي. تبقى سياسة الفاتورة المطبوعة أسبوعاً واحداً لكل شهر.')}</div>` : ''}
+        ${(() => { const _sp = freezeLiveSports(m, TODAY); return _sp.length > 1 ? `<div id="freeze-sports" style="border:1px solid var(--border);border-radius:8px;padding:10px 12px">
+          <div style="font-size:12px;font-weight:600;margin-bottom:6px">❄️ ${t('Which sports to freeze', 'أي الرياضات تُجمَّد')} <span class="text-mute" style="font-weight:400">${t('— the others keep running', '— والباقي يستمر')}</span></div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px 16px">${_sp.map(sp => `<label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" class="freeze-sport-cb" value="${escapeHtml(sp)}" checked /> ${escapeHtml(sp)}</label>`).join('')}</div>
+        </div>` : ''; })()}
         <div>
           <label style="font-size:12px;font-weight:600;display:block;margin-bottom:8px">Freeze duration <span class="text-mute" style="font-weight:400">${isAdmin ? '(admin · any number of days)' : `(max ${allow.remainingDays} days)`}</span></label>
           <div id="freeze-presets" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
@@ -3196,7 +3203,8 @@ window.freezeMember = function(id) {
           const days = daysBetween(from, until);
           if (!isAdmin && days > allow.remainingDays) { toast(`Only ${allow.remainingDays} freeze day${allow.remainingDays === 1 ? '' : 's'} remaining for this membership cycle.`, 'error'); return; }
           const reason = document.getElementById('freeze-reason').value.trim();
-          applyFreeze(m, days, reason, { start: from, end: until });
+          { const _ps = _fzPicked(); if (_ps && !_ps.length) { toast(t('Tick at least one sport to freeze', 'اختر رياضة واحدة على الأقل للتجميد'), 'error'); return; }
+            applyFreeze(m, days, reason, { start: from, end: until, sports: _ps }); }
           closeModal();
           // Confirm the freeze reached the cloud (it shifts the expiry) + show the member as
           // the SERVER holds them; reopen the card only after OK. (v6.347)
@@ -3208,7 +3216,8 @@ window.freezeMember = function(id) {
         if (days > 365) { toast(t('A freeze can be at most 365 days', 'أقصى مدة للتجميد 365 يوماً'), 'error'); return; }   // v6.841 (X-08)
         if (!isAdmin && days > allow.remainingDays) { toast(`Only ${allow.remainingDays} freeze day${allow.remainingDays === 1 ? '' : 's'} remaining for this membership cycle.`, 'error'); return; }
         const reason = document.getElementById('freeze-reason').value.trim();
-        applyFreeze(m, days, reason);
+        { const _ps = _fzPicked(); if (_ps && !_ps.length) { toast(t('Tick at least one sport to freeze', 'اختر رياضة واحدة على الأقل للتجميد'), 'error'); return; }
+          applyFreeze(m, days, reason, { sports: _ps }); }
         closeModal();
         withCloudConfirm({ verify: [{ collection: 'members', id: m.id }], okMsg: `${m.name} frozen for ${days} day${days === 1 ? '' : 's'}`, afterOk: () => viewMember(m.id) });
       }},
@@ -3223,7 +3232,7 @@ window.freezeMember = function(id) {
       const resume = document.getElementById('freeze-resume');
       const newExp = document.getElementById('freeze-new-expiry');
       if (resume) resume.textContent = d > 0 ? fmtDate(addDays(TODAY, d)) : '—';
-      if (newExp) newExp.textContent = (d > 0 && m.expiryDate) ? fmtDate(addDays(m.expiryDate, d)) : (m.expiryDate ? fmtDate(m.expiryDate) : '—');
+      if (newExp) newExp.textContent = (d > 0 && m.expiryDate) ? fmtDate(freezeNewExpiry(m, _fzPicked(), d, TODAY)) : (m.expiryDate ? fmtDate(m.expiryDate) : '—');
       // Highlight matching preset chip
       document.querySelectorAll('.freeze-preset').forEach(btn => {
         const match = parseInt(btn.dataset.days) === d;
@@ -3262,11 +3271,12 @@ window.freezeMember = function(id) {
         const d = daysBetween(from, until);
         if (dateDays) dateDays.textContent = `= ${d} day${d === 1 ? '' : 's'} · resume ${fmtDate(until)}`;
         if (resume) resume.textContent = fmtDate(until);
-        if (newExp) newExp.textContent = m.expiryDate ? fmtDate(addDays(m.expiryDate, d)) : '—';
+        if (newExp) newExp.textContent = m.expiryDate ? fmtDate(freezeNewExpiry(m, _fzPicked(), d, from)) : '—';
       } else {
         if (dateDays) dateDays.textContent = (from || until) ? 'Pick a valid From → Until range' : '';
       }
     }
+    document.querySelectorAll('.freeze-sport-cb').forEach(cb => cb.addEventListener('change', () => { if (useDates && useDates.checked) updateDatePreview(); else updatePreview(); }));
     if (useDates) useDates.addEventListener('change', syncDateMode);
     if (fromEl) fromEl.addEventListener('change', updateDatePreview);
     if (untilEl) untilEl.addEventListener('change', updateDatePreview);
@@ -3274,6 +3284,17 @@ window.freezeMember = function(id) {
   }, 50);
 };
 
+// v6.851 — end a PARTIAL (some-sports) freeze early: the sports resume today; the expiry stays where the freeze moved it (like a full unfreeze)
+window.unfreezeSports = function(id, freezeId) {
+  if (!canManageFreeze()) { toast(t('Only Admin or Reception can unfreeze a membership.', 'يمكن للمشرف أو الاستقبال فقط إلغاء تجميد العضوية.'), 'error'); return; }
+  const m = state.members.find(x => x.id === id); const f = m && (m.freezes || []).find(fr => fr && fr.id === freezeId && fr.partial);
+  if (!f) return;
+  if (!confirm(t('End the freeze of ' + (f.sports || []).join(', ') + ' for ' + m.name + ' now?\n\nThe expiry date stays where it is (already shifted when the freeze was applied).', 'إنهاء تجميد ' + (f.sports || []).join('، ') + ' لـ ' + m.name + ' الآن؟\n\nتاريخ الانتهاء يبقى كما هو (تحرّك عند التجميد).'))) return;
+  f.endedEarly = TODAY; f.plannedEnd = f.end; f.end = addDays(TODAY, -1);   // frozen up to yesterday (a freeze that began today is cancelled outright)
+  stampUpdate(m);
+  audit('member.unfreeze', `member:${m.id}`, `Unfroze ${(f.sports || []).join(', ')} for ${m.name} early (was until ${fmtDate(f.plannedEnd)})`, { name: m.name, memberId: m.id });
+  withCloudConfirm({ verify: [{ collection: 'members', id: m.id }], okMsg: `${m.name}: ${(f.sports || []).join(', ')} unfrozen`, afterOk: () => viewMember(m.id) });
+};
 window.unfreezeMember = function(id) {
   if (!canManageFreeze()) { toast(t('Only Admin or Reception can unfreeze a membership.', 'يمكن للمشرف أو الاستقبال فقط إلغاء تجميد العضوية.'), 'error'); return; }
   const m = state.members.find(x => x.id === id);
@@ -26812,6 +26833,9 @@ PAGES.history = (main) => {
         </div>
         ${m.updatedAt ? `<div class="text-mute" style="font-size:11px;margin:-6px 0 12px">🕓 ${t('Last updated by', 'آخر تعديل بواسطة')} <b>${escapeHtml(m.updatedByName || m.updatedBy)}</b> · ${fmtDateTime(m.updatedAt)}</div>` : ''}
 
+        ${(m.freezes || []).filter(f => f && f.partial && !f.endedEarly && f.start <= TODAY && TODAY <= f.end).map(f => `<div style="background:rgba(96,165,250,.12);border:1px solid rgba(96,165,250,.4);border-radius:8px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:center;gap:12px">
+          <div style="font-size:22px">❄️</div><div style="flex:1"><div style="font-weight:700;color:var(--blue)">${escapeHtml((f.sports || []).join(', '))} ${t('frozen until', 'مجمّد حتى')} ${fmtDate(f.end)}</div><div class="text-mute" style="font-size:12px">${t('The other sports keep running', 'باقي الرياضات مستمرة')}${f.reason ? ' · "' + escapeHtml(f.reason) + '"' : ''}</div></div>
+          ${canManageFreeze() ? `<button class="btn ghost sm" onclick="unfreezeSports(${m.id}, '${escapeHtml(f.id)}')" title="${t('End this freeze early', 'إنهاء هذا التجميد مبكراً')}">⏯ ${t('Unfreeze', 'إلغاء التجميد')}</button>` : ''}</div>`).join('')}
         ${(() => {
           const isFrozen = m.currentFreezeUntil && TODAY <= m.currentFreezeUntil;
           if (!isFrozen) return '';
@@ -27836,6 +27860,9 @@ window.switchSport = function(memberId) {
         // place: the source (Sport A) line is capped to attended/aShare, and a Sport B line is ADDED
         // for the moved classes at the RE-PRICED amount. The invoice total becomes aShare + bPrice —
         // so a dearer new sport creates a top-up due, a cheaper one an over-payment credit.
+        // v6.852 — a switch INTO a sport the member already runs with the SAME coach MERGES into that package (Zain: Karate 2 classes + Football 8 → Football 14 classes, 700) instead of leaving a second
+        // Football package next to it. Only when the destination package is a genuine paid, running one AND its invoice line sits on the invoice being split.
+        let _mergeInto = null, _mergeBefore = 0;
         if (!skipReconciliation) {
           const _hasLine = v => Array.isArray(v.lineItems) && v.lineItems.some(li => li.sport === from.sport && String(li.coachId) === String(from.coachId));
           // v6.528 (BUG 2 fix): also match a LEGACY membership invoice stored with top-level sport/coach
@@ -27871,7 +27898,15 @@ window.switchSport = function(memberId) {
               ? _cands.slice().sort((a, b) => Math.abs((Number(a.price) || 0) - price) - Math.abs((Number(b.price) || 0) - price))[0]
               : _cands[0];
             if (_fl) { _fl.price = aShare; _fl.classes = attendedA; }
-            _inv.lineItems.push({ sport: toSport, coach: coachName(toCoachId), coachId: toCoachId, classes: moved, price: bPrice, issueDate: switchDate, ...privateCarryOnSwitch(_srcSubCycle, toSport, toCoachId) });
+            const _runSame = (m.subscriptions || []).find(s => s !== _srcSubCycle && (s.activity || '') === toSport && _sameCoachId(s.coachId, toCoachId) && !['completed', 'withdrawn'].includes(String(s.status || '').toLowerCase()) && !s.switchedAwayTo && !s.switchFunded
+              && Number(s.amountPaid) > 0 && (!s.start || String(s.start) <= switchDate) && (!s.end || String(s.end) >= switchDate));
+            const _dl = _runSame ? _inv.lineItems.find(li => li !== _fl && li.sport === toSport && _sameCoachId(li.coachId, toCoachId)) : null;
+            if (_runSame && _dl) {
+              _dl.price = Math.round(((Number(_dl.price) || 0) + bPrice) * 100) / 100; _dl.classes = (parseInt(_dl.classes) || 0) + moved;
+              _mergeInto = _runSame;
+            } else {
+              _inv.lineItems.push({ sport: toSport, coach: coachName(toCoachId), coachId: toCoachId, classes: moved, price: bPrice, issueDate: switchDate, ...privateCarryOnSwitch(_srcSubCycle, toSport, toCoachId) });
+            }
             _inv.amount = _inv.lineItems.reduce((s, li) => s + (Number(li.price) || 0), 0);
             _inv.sport = (typeof sportListWithDuration === 'function' && sportListWithDuration(_inv.lineItems)) || _inv.lineItems.map(li => li.sport).join(', ');
             _inv.description = `${m.name} — ${_inv.sport} subscription`;
@@ -27935,11 +27970,17 @@ window.switchSport = function(memberId) {
         // sub was NEVER created/sized, and the card's remaining classes were wrong. THE switch bug.
         const _fromSport = from.sport, _fromCoachId = from.coachId;
         const targetIdx = m.enrollments.findIndex(e => e.sport === _fromSport && _sameCoach(e.coachId, _fromCoachId));
-        if (targetIdx >= 0) {
+        const _destEnr = _mergeInto ? m.enrollments.find((e, i) => i !== targetIdx && e.sport === toSport && _sameCoach(e.coachId, finalToCoachId)) : null;
+        if (_mergeInto && _destEnr && targetIdx >= 0) {
+          _destEnr.classes = (parseInt(_destEnr.classes) || 0) + (parseInt(_remainingCls) || 0);
+          _destEnr.price = Math.round(((Number(_destEnr.price) || 0) + (Number(_destPrice) || 0)) * 100) / 100;
+          try { if (typeof window._tombstoneEl === 'function') window._tombstoneEl(m.enrollments[targetIdx], 'members:' + m.id + ':enrollments'); } catch (_) {}
+          m.enrollments.splice(targetIdx, 1);
+        } else if (targetIdx >= 0) {
+          if (_mergeInto) { m.enrollments[targetIdx].classes = (parseInt(_mergeInto.totalClasses) || 0) + (parseInt(_remainingCls) || 0); m.enrollments[targetIdx].price = Math.round(((Number(_mergeInto.amountPaid) || 0) + (Number(_destPrice) || 0)) * 100) / 100; }
           m.enrollments[targetIdx].sport = toSport;
           m.enrollments[targetIdx].coachId = finalToCoachId;
-          m.enrollments[targetIdx].classes = _remainingCls;
-          m.enrollments[targetIdx].price = _destPrice;
+          if (!_mergeInto) { m.enrollments[targetIdx].classes = _remainingCls; m.enrollments[targetIdx].price = _destPrice; }
           m.enrollments[targetIdx].switchedInto = true;   // funded by a switch credit — never re-bill as a fresh membership
         } else {
           m.enrollments.push({ sport: toSport, coachId: finalToCoachId, classes: _remainingCls, price: _destPrice, switchedInto: true });
@@ -27996,10 +28037,17 @@ window.switchSport = function(memberId) {
           // v6.520 (F1): only REUSE a destination sub that is a switch placeholder or an empty/unpaid
           // stub. A GENUINE existing paid package for the same sport+coach (v6.504 two-package model)
           // must NOT be clobbered — create a separate switch-funded sub alongside it instead.
-          const destSub = m.subscriptions.find(s => (s.activity || '') === toSport && _sameCoach(s.coachId, finalToCoachId)
+          const destSub = _mergeInto ? null : m.subscriptions.find(s => (s.activity || '') === toSport && _sameCoach(s.coachId, finalToCoachId)
             && s.status !== 'completed' && !s.switchedAwayTo
             && (s.switchFunded || !(Number(s.amountPaid) > 0)));
-          if (destSub) {
+          if (_mergeInto) {
+            _mergeBefore = parseInt(_mergeInto.totalClasses) || 0;
+            _mergeInto.totalClasses = (parseInt(_mergeInto.totalClasses) || 0) + (parseInt(_remainingCls) || 0);
+            _mergeInto.amountPaid = Math.round(((Number(_mergeInto.amountPaid) || 0) + (Number(_destPrice) || 0)) * 100) / 100;
+            if (!_mergeInto._sid) _mergeInto._sid = 's' + Date.now() + '_mg';
+            _mergeInto.mergedSwitchRefs = (_mergeInto.mergedSwitchRefs || []).concat([_swRef]);
+            _dstSub = _mergeInto;
+          } else if (destSub) {
             destSub.totalClasses = _remainingCls;
             destSub.amountPaid = _destPrice;
             destSub.status = 'active';
@@ -28027,7 +28075,12 @@ window.switchSport = function(memberId) {
             m.subscriptions.push(_dstSub);
           }
           // v6.740 — the NEW record: created through a switch, linked both ways to the original
-          if (srcSub && _dstSub) {
+          if (srcSub && _dstSub && _mergeInto) {
+            srcSub.switchedToSid = _dstSub._sid;
+            const _recM = (m.sportSwitches || [])[(m.sportSwitches || []).length - 1];
+            if (_recM) Object.assign(_recM, { ref: _swRef, fromSid: srcSub._sid, toSid: _dstSub._sid, merged: true, consumed: attendedA, transferred: moved, amountPerClass: Math.round(aRate * 100) / 100,
+              consumedValue: Math.round(aShare * 100) / 100, transferredValue: Math.round(bShare * 100) / 100, chargedValue: bPrice, originalExpiry: srcSub.end || null });
+          } else if (srcSub && _dstSub) {
             _dstSub.createdVia = 'switch'; _dstSub.switchRef = _swRef; _dstSub.switchedFromSid = srcSub._sid;
             if (_boundaryMarked && srcSub.activity === _dstSub.activity) { srcSub.attTo = switchDate; _dstSub.attFrom = addDays(switchDate, 1); }   // v6.743
             if (srcSub.end && String(srcSub.end) < String(switchDate)) { const _af = addDays(switchDate, 1); if (!_dstSub.attFrom || String(_dstSub.attFrom) < _af) _dstSub.attFrom = _af; if (srcSub.activity === _dstSub.activity && !srcSub.attTo) srcSub.attTo = switchDate; }   // v6.779 — an already-EXPIRED source: its last-day class stays with the old coach
@@ -28066,7 +28119,7 @@ window.switchSport = function(memberId) {
           msg = `Switched · ${coachName(_fromCoachId)} ${attendedA}/${attendedA} keeps ${fmt(aShare)} · ${coachName(toCoachId)} ${moved} cls @ ${fmt(bPrice)}${_recon}`;
         }
         commitSwitch(msg, skipReconciliation ? null : { kind: 'single', srcSid: _srcSubCycle && _srcSubCycle._sid, consumed: attendedA, moved, expectedEnd: _srcSubCycle ? (_srcSubCycle.end || null) : null,
-          price, aShare, bPrice, repriced: Math.abs(bPrice - Math.round(bShare * 100) / 100) > 0.01, hasSrc: !!_srcSubCycle });
+          price, aShare, bPrice, repriced: Math.abs(bPrice - Math.round(bShare * 100) / 100) > 0.01, hasSrc: !!_srcSubCycle, merge: _mergeInto ? { sid: _mergeInto._sid, before: _mergeBefore } : null });
       }},
     ],
   });
