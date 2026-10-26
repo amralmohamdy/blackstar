@@ -27900,9 +27900,30 @@ window.switchSport = function(memberId) {
             if (_fl) { _fl.price = aShare; _fl.classes = attendedA; }
             const _runSame = (m.subscriptions || []).find(s => s !== _srcSubCycle && (s.activity || '') === toSport && _sameCoachId(s.coachId, toCoachId) && !['completed', 'withdrawn'].includes(String(s.status || '').toLowerCase()) && !s.switchedAwayTo && !s.switchFunded
               && Number(s.amountPaid) > 0 && (!s.start || String(s.start) <= switchDate) && (!s.end || String(s.end) >= switchDate));
-            const _dl = _runSame ? _inv.lineItems.find(li => li !== _fl && li.sport === toSport && _sameCoachId(li.coachId, toCoachId)) : null;
+            let _dl = _runSame ? _inv.lineItems.find(li => li !== _fl && li.sport === toSport && _sameCoachId(li.coachId, toCoachId)) : null;
+            // v6.854 — the running destination package may be billed on ANOTHER invoice (a renewal, an added sport): merge into THAT invoice's line and move the money that the source invoice now over-pays
+            let _destInv = _inv;
+            if (_runSame && !_dl) {
+              const _others = (state.invoices || []).filter(v => v !== _inv && !v.deleted && !v.switchCredit && v.activityType !== 'switch-credit' && (v.category || 'Membership') === 'Membership' && v.customerId === m.id && Array.isArray(v.lineItems));
+              const _own = _runSame.invoiceNumber ? _others.find(v => String(v.ref) === String(_runSame.invoiceNumber) && v.lineItems.some(li => li.sport === toSport && _sameCoachId(li.coachId, toCoachId))) : null;
+              _destInv = _own || _others.filter(v => v.lineItems.some(li => li.sport === toSport && _sameCoachId(li.coachId, toCoachId))).slice(-1)[0] || null;
+              _dl = _destInv ? (_destInv.lineItems.filter(li => li.sport === toSport && _sameCoachId(li.coachId, toCoachId)).sort((a, b) => Math.abs((Number(a.price) || 0) - (Number(_runSame.amountPaid) || 0)) - Math.abs((Number(b.price) || 0) - (Number(_runSame.amountPaid) || 0)))[0] || null) : null;
+            }
             if (_runSame && _dl) {
               _dl.price = Math.round(((Number(_dl.price) || 0) + bPrice) * 100) / 100; _dl.classes = (parseInt(_dl.classes) || 0) + moved;
+              if (_destInv !== _inv) {
+                _destInv.amount = _destInv.lineItems.reduce((s, li) => s + (Number(li.price) || 0), 0);
+                _destInv.sport = (typeof sportListWithDuration === 'function' && sportListWithDuration(_destInv.lineItems)) || _destInv.lineItems.map(li => li.sport).join(', ');
+                _destInv.description = `${m.name} — ${_destInv.sport} subscription`;
+                // the source invoice now over-pays by what moved: carry that money to the destination invoice (a reversal row there, a payment row here — same method, hidden from the drawer: no new cash)
+                const _t = Math.max(0, Math.min(bPrice, Math.round((invoicePaid(_inv) - aShare) * 100) / 100));
+                if (_t > 0.004) {
+                  const _pm = ((_inv.payments || []).filter(p => p && Number(p.amount) > 0).slice(-1)[0] || {}).method || _inv.method || 'cash';
+                  const _neg = recordPayment(_inv, { amount: -_t, date: TODAY, method: _pm }); if (_neg) { _neg._correction = true; _neg.noDrawer = true; _neg.switchTransfer = _swRef; _neg.note = 'moved to ' + (_destInv.ref || ''); }
+                  const _pos = recordPayment(_destInv, { amount: _t, date: TODAY, method: _pm }); if (_pos) { _pos.noDrawer = true; _pos.switchTransfer = _swRef; _pos.note = 'moved from ' + (_inv.ref || ''); }
+                }
+                if (typeof stampUpdate === 'function') stampUpdate(_destInv);
+              }
               _mergeInto = _runSame;
             } else {
               _inv.lineItems.push({ sport: toSport, coach: coachName(toCoachId), coachId: toCoachId, classes: moved, price: bPrice, issueDate: switchDate, ...privateCarryOnSwitch(_srcSubCycle, toSport, toCoachId) });
@@ -28042,6 +28063,7 @@ window.switchSport = function(memberId) {
             && (s.switchFunded || !(Number(s.amountPaid) > 0)));
           if (_mergeInto) {
             _mergeBefore = parseInt(_mergeInto.totalClasses) || 0;
+            if (!_mergeInto.mergedBase) _mergeInto.mergedBase = { classes: parseInt(_mergeInto.packageClasses) || _mergeBefore, price: Math.round((Number(_mergeInto.amountPaid) || 0) * 100) / 100 };   // v6.853 — the package as sold (renewals start from it)
             _mergeInto.totalClasses = (parseInt(_mergeInto.totalClasses) || 0) + (parseInt(_remainingCls) || 0);
             _mergeInto.amountPaid = Math.round(((Number(_mergeInto.amountPaid) || 0) + (Number(_destPrice) || 0)) * 100) / 100;
             if (!_mergeInto._sid) _mergeInto._sid = 's' + Date.now() + '_mg';
@@ -29143,6 +29165,8 @@ window.editSubscription = function(memberId, sid) {
   const _hoRem = Math.max(0, _hoTotal - _hoAtt), _hoOld = coachName(sub.coachId);
   const hasSwitchCredit = (state.invoices || []).some(v => !v.deleted && v.switchCredit && v.customerId === m.id && Array.isArray(v.lineItems) && v.lineItems.some(l => l.sport === sub.activity));
   const statuses = ['active', 'completed', 'expired', 'frozen'];
+  // v6.855 — the package's validity in days (stored, else start → end) for the new Validity drop-down
+  const _curValidity = (sub.start && sub.end) ? (daysBetween(sub.start, sub.end) || parseInt(sub.validity) || DEFAULT_VALIDITY) : (parseInt(sub.validity) || DEFAULT_VALIDITY);
   // Coach picker (v6.482): the PROFILE is the single place to set a sport's price / classes / coach.
   // Saving here syncs the invoice line + subscription + ENROLLMENT together, so "Generate latest
   // invoice" (which reads enrollments) always agrees with the invoice — no more drift to rebuild.
@@ -29157,6 +29181,9 @@ window.editSubscription = function(memberId, sid) {
         <div class="text-mute" style="font-size:11px;line-height:1.5">${t('This updates ONLY the selected period above — its invoice line and commission. Other periods of the same sport are left untouched.', 'يحدّث هذه الفترة المحددة فقط — بند فاتورتها وعمولتها. الفترات الأخرى لنفس الرياضة تبقى كما هي.')}</div>
         <label style="display:grid;gap:4px">${t('Total classes', 'إجمالي الحصص')}
           <input id="es-classes" type="number" min="0" value="${sub.totalClasses != null ? sub.totalClasses : 0}" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)"></label>
+        ${(sub.start && !isCampSport(sub.activity || '')) ? `<label style="display:grid;gap:4px">${t('Validity', 'مدة الصلاحية')} <span class="text-mute" style="font-size:10px">${t('how long the package runs from its start — the end date follows', 'مدة الباقة من بدايتها — يتغيّر تاريخ الانتهاء تبعاً لها')}</span>
+          <select id="es-validity" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)">${validityOptionsHtml(_curValidity)}</select>
+          <span id="es-validity-hint" class="text-mute" style="font-size:11px">${t('Starts', 'تبدأ')} ${fmtDate(sub.start)} · ${t('ends', 'تنتهي')} ${sub.end ? fmtDate(sub.end) : '—'}</span></label>` : ''}
         <label style="display:grid;gap:4px">${t('Price (QAR)', 'السعر')} <span class="text-mute" style="font-size:10px">${t('updates the invoice line + commission + profile', 'يحدّث بند الفاتورة والعمولة والملف')}</span>
           <input id="es-price" type="number" min="0" step="0.01" value="${linePrice}" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)"></label>
         ${(_attachMode && _attachDefault) ? `<div style="display:grid;gap:6px;padding:10px;border:1px solid rgba(245,158,11,.45);background:rgba(245,158,11,.08);border-radius:8px">
@@ -29273,6 +29300,20 @@ window.editSubscription = function(memberId, sid) {
         }
         sub.totalClasses = cls;
         sub.status = st;
+        // v6.855 — a changed Validity moves THIS package's end date (start + validity), its renewal record, the current enrollment's validity and, when this package ends last, the member's expiry
+        { const _vEl = $('#es-validity'), _nv = _vEl ? parseInt(_vEl.value) : NaN;
+          if (sub.start && _vEl && _nv > 0 && _nv !== _curValidity) {
+            const _oldEnd = sub.end ? String(sub.end).slice(0, 10) : '', _newEnd = addDays(String(sub.start).slice(0, 10), _nv);
+            const _maxEnd = () => (m.subscriptions || []).filter(s => s && s.end && !s.switchedAwayTo && String(s.status || '').toLowerCase() !== 'withdrawn').map(s => String(s.end).slice(0, 10)).sort().pop() || '';
+            const _hadMax = _oldEnd && _oldEnd === _maxEnd();
+            sub.end = _newEnd; sub.validity = _nv;
+            if (sub._rid && Array.isArray(m.renewals)) m.renewals.filter(r => r && r._rid === sub._rid).forEach(r => { r.end = _newEnd; r.validity = _nv; });
+            const _cur = !(m.subscriptions || []).some(s => s !== sub && (s.activity || '') === (sub.activity || '') && (s.start || '') > (sub.start || ''));
+            if (_cur) (m.enrollments || []).filter(e => e.sport === sub.activity && String(e.coachId) === String(sub.coachId)).forEach(e => { e.validity = _nv; });
+            const _mx = _maxEnd();
+            if (_mx && (_hadMax || !m.expiryDate || _mx > String(m.expiryDate).slice(0, 10))) m.expiryDate = _mx;
+            if (typeof audit === 'function') audit('subscription.validity', 'member:' + m.id, sub.activity + ': validity ' + _curValidity + ' → ' + _nv + ' days (ends ' + _oldEnd + ' → ' + _newEnd + ')', { memberId: m.id, sport: sub.activity });
+          } }
         // v6.490: For a Summer Camp the class-day LIMIT comes from the duration LABEL
         // (subClassLimit maps "1 week"→5, "1 month"→22, …) and IGNORES totalClasses. So
         // editing the class count here had NO effect on a PRESET camp — e.g. Hossam's
@@ -29335,6 +29376,8 @@ window.editSubscription = function(memberId, sid) {
       } },
     ],
   });
+  { const vEl = document.getElementById('es-validity'), vh = document.getElementById('es-validity-hint');
+    if (vEl && vh && typeof vEl.addEventListener === 'function') vEl.addEventListener('change', () => { const nv = parseInt(vEl.value); if (nv > 0) vh.textContent = t('Starts', 'تبدأ') + ' ' + fmtDate(sub.start) + ' · ' + t('will end', 'ستنتهي') + ' ' + fmtDate(addDays(String(sub.start).slice(0, 10), nv)); }); }
   window._esCoachChanged = function () {
     const s = document.getElementById('es-coach'), b = document.getElementById('es-ho-box'); if (!s || !b) return;
     b.style.display = (s.value !== '' && s.value !== String(curCoach == null ? '' : curCoach)) ? 'grid' : 'none';
