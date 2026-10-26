@@ -5142,17 +5142,23 @@ window.viewCoach = function(id) {
 
   // Current students under this coach (any subscription), deduped
   const studentRows = [];
+  let _activeStudents = 0, _pastStudents = 0;
   const seen = new Set();
   for (const m of state.members) {
     const subs = (m.subscriptions || []).filter(s => s.coachId === id);
     if (!subs.length || seen.has(m.id)) continue;
     seen.add(m.id);
     const sports = [...new Set(subs.map(s => s.activity).filter(Boolean))].join(', ');
+    // v6.844 — the status is THIS coach's: the member can be Active with another coach (Karim: Aziz's package runs, his Aziz (Private) package ended 3 Sep) and must not read Active here
+    const _live = subs.filter(s => !s.switchedAwayTo && String(s.status || '').toLowerCase() !== 'withdrawn' && String(s.status || '').toLowerCase() !== 'completed' && (!s.end || String(s.end).slice(0, 10) >= TODAY));
+    const _lastEnd = subs.map(s => String(s.end || '').slice(0, 10)).filter(Boolean).sort().pop() || '';
+    const _st = _live.length ? 'Active' : (subs.every(s => s.switchedAwayTo) ? 'Switched' : 'Expired');
+    if (_st === 'Active') _activeStudents++; else _pastStudents++;
     studentRows.push(`
       <tr style="cursor:pointer" onclick="closeModal(); viewMember(${m.id})">
         <td>${escapeHtml(m.name)}</td>
         <td>${escapeHtml(sports || '—')}</td>
-        <td><span class="badge ${memberStatus(m).toLowerCase()}">${memberStatus(m)}</span></td>
+        <td><span class="badge ${_st.toLowerCase()}" title="${_st === 'Active' ? '' : escapeHtml(t('Last package with this coach ended ' + (_lastEnd ? fmtDate(_lastEnd) : '—'), 'آخر باقة مع هذا المدرب انتهت ' + (_lastEnd ? fmtDate(_lastEnd) : '—')))}">${_st}</span></td>
       </tr>`);
   }
 
@@ -5201,7 +5207,7 @@ window.viewCoach = function(id) {
         <div><div class="text-mute" style="font-size:10px;text-transform:uppercase">Apr Pay</div><div>${fmt(aprComm)} QAR</div></div>
         <div><div class="text-mute" style="font-size:10px;text-transform:uppercase">May Classes</div><div>${may.attended}/${may.total}</div></div>
       </div>`}
-      <h3 style="font-size:13px;font-weight:600;margin-bottom:8px">Students with this coach (${studentRows.length})</h3>
+      <h3 style="font-size:13px;font-weight:600;margin-bottom:8px">Students with this coach (${studentRows.length}) <span class="text-mute" style="font-weight:400;font-size:11px">· ${_activeStudents} ${t('active now', 'نشط الآن')} · ${_pastStudents} ${t('past', 'سابق')}</span></h3>
       <div class="table-wrap" style="max-height:240px;overflow:auto">
         <table>
           <thead><tr><th>Name</th><th>Sport(s)</th><th>Status</th></tr></thead>
@@ -18716,7 +18722,14 @@ function cashDrawerFrom(c, upper) {
       if (amt > 0 && after(i.date, i.createdAt)) (i.noDrawer ? hidden : moves).push({ when: i.createdAt || i.date, amount: amt, label: who, ref, kind: 'in', inv: i.id, pi: -1 });
     }
   }
-  for (const e of (state.expenses || [])) {   // the owner taking cash out of the drawer — the ONLY deduction
+  // v6.843 — expenses paid in CASH (incl. cash salary payments) leave the drawer too. Only rows that SAY cash count; a row can be taken out with noDrawer.
+  for (const e of (state.expenses || [])) {
+    if (!e || e.deleted || e.noDrawer || e.autoBankCommission || (e.category || '') === CASH_COLLECTION_CATEGORY) continue;
+    if (!e.method || normalizeMethod(e.method) !== 'cash') continue;
+    const amt = Number(e.amount) || 0;
+    if (amt > 0 && after(e.date || (e.month ? e.month + '-01' : ''), e.createdAt || e.at)) moves.push({ when: e.createdAt || e.at || e.date, amount: -amt, label: t('Cash expense: ', 'مصروف نقدي: ') + (e.description || e.category || ''), ref: e.category || '', kind: 'expense', exp: e.id });
+  }
+  for (const e of (state.expenses || [])) {   // the owner taking cash out of the drawer
     if (!e || e.deleted || (e.category || '') !== CASH_COLLECTION_CATEGORY) continue;
     const amt = Number(e.amount) || 0;
     if (amt > 0 && after(e.date || (e.month ? e.month + '-01' : ''), e.createdAt || e.at)) moves.push({ when: e.createdAt || e.at || e.date, amount: -amt, label: t('Cash collected by owner', 'نقد استلمه المالك'), ref: e.description || e.note || '', kind: 'collection', exp: e.id });
@@ -19473,9 +19486,11 @@ PAGES.moneyflow = (main) => {
 function attentionData() {
   const FROM = '2026-06-01', r2 = x => Math.round(x * 100) / 100;
   const invs = state.invoices || [];
-  const liveInv = id => id != null && invs.some(i => i && !i.deleted && i.id === id);
-  const sales = (state.sales || []).filter(s => s && !s.deleted && String(s.date || '') >= FROM && !liveInv(s.invoiceId));
-  const rentals = (state.rentals || []).filter(r => r && !r.deleted && !r.cancelled && String(r.date || '') >= FROM && !liveInv(r.invoiceId));
+  // v6.843 — the same test as the Missing-invoices checker: the record's OWN invoice (right type, not somebody else's) must exist
+  const _un = (typeof computeUnlinkedRentalsSales === 'function') ? computeUnlinkedRentalsSales() : [];
+  const sales = _un.filter(x => x.kind === 'sale').map(x => x.rec);
+  const rentals = _un.filter(x => x.kind === 'rental' && !x.rec.cancelled).map(x => x.rec);
+  const lowStock = (state.products || []).filter(p => p && !p.deleted && (parseInt(p.stock) || 0) <= (p.lowStockThreshold != null ? parseInt(p.lowStockThreshold) : 3)).sort((a, b) => (parseInt(a.stock) || 0) - (parseInt(b.stock) || 0));
   const since = new Date(TODAY + 'T00:00:00'); since.setDate(since.getDate() - 14);
   const iso = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   const sinceIso = iso(since);
@@ -19495,14 +19510,14 @@ function attentionData() {
     }
     if (late.length) outside.push({ m, late: late.sort() });
   }
-  return { sales, rentals, outside, over: (typeof overpaidInvoices === 'function') ? overpaidInvoices() : [] };
+  return { sales, rentals, lowStock, outside, over: (typeof overpaidInvoices === 'function') ? overpaidInvoices() : [] };
 }
 PAGES.attention = (main) => {
   const D = attentionData(), isAdmin = currentRole() === 'admin';
   const sec = (icon, title, n, body, hint) => `<div class="card" style="margin-bottom:12px;padding:12px 14px"><div style="font-weight:800;font-size:14px">${icon} ${title} <span class="num" style="color:${n ? 'var(--red)' : 'var(--green)'}">${n ? n : '✓ 0'}</span></div><div class="text-mute" style="font-size:11px;margin:2px 0 6px">${hint}</div>${body}</div>`;
   const row = (a, b, c) => `<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:5px 0;border-top:1px solid var(--border);font-size:12px"><span style="flex:1;min-width:160px">${a}</span><span class="text-mute">${b}</span>${c || ''}</div>`;
   const more = (arr, n) => arr.length > n ? `<div class="text-mute" style="font-size:11px;padding-top:4px">+ ${arr.length - n} ${t('more', 'أخرى')}</div>` : '';
-  const total = D.outside.length + D.sales.length + D.rentals.length + (isAdmin ? D.over.length : 0);
+  const total = D.outside.length + D.sales.length + D.rentals.length + D.lowStock.length + (isAdmin ? D.over.length : 0);
   main.innerHTML = `
     <div class="topbar"><div><h1>🔔 ${t('Needs Attention', 'يحتاج متابعة')}</h1>
       <div class="subtitle">${total ? total + ' ' + t('item(s) to check', 'بند للمراجعة') : '✓ ' + t('Nothing to check — all clear', 'لا شيء للمراجعة — كله سليم')}</div></div></div>
@@ -19513,11 +19528,14 @@ PAGES.attention = (main) => {
       D.over.slice(0, 30).map(({ inv, over }) => row('<b>' + escapeHtml(inv.customerName || (customerInfo(inv) || {}).name || '—') + '</b> · ' + escapeHtml(String(inv.ref || inv.id)), '+' + fmt(over) + ' QAR', `<a class="btn ghost sm" href="#" onclick="navigate('duepayment');return false">${t('Handle in Due Payment', 'عالجها في المستحقات')}</a>`)).join('') + more(D.over, 30),
       t('Money paid above the invoice total — refund it or use it on his other invoice.', 'مدفوع أكتر من الفاتورة — استردها أو سدّد بها فاتورة أخرى.')) : ''}
     ${sec('🛒', t('Product sales with no invoice', 'مبيعات منتجات بدون فاتورة'), D.sales.length,
-      D.sales.slice(0, 30).map(s => row('<b>' + escapeHtml(s.customerName || '—') + '</b>', fmtDate(s.date) + ' · ' + fmt(s.total || 0) + ' QAR')).join('') + more(D.sales, 30),
+      D.sales.slice(0, 30).map(s => row('<b>' + escapeHtml(s.customerName || '—') + '</b>', fmtDate(s.date) + ' · ' + fmt(s.total || 0) + ' QAR', isAdmin ? `<button class="btn ghost sm" onclick="_fixUnlinked('sale',${s.id},'paid')">${t('Create invoice (paid)', 'إنشاء فاتورة (مدفوعة)')}</button><button class="btn ghost sm" onclick="_fixUnlinked('sale',${s.id},'due')">${t('Create (due)', 'إنشاء (آجلة)')}</button>` : '')).join('') + more(D.sales, 30),
       t('The sale is recorded but its invoice is missing or archived.', 'البيع مسجّل لكن فاتورته ناقصة أو مؤرشفة.'))}
     ${sec('🏟', t('Court bookings with no invoice', 'حجوزات ملاعب بدون فاتورة'), D.rentals.length,
-      D.rentals.slice(0, 30).map(r => row('<b>' + escapeHtml(r.customerName || '—') + '</b>', fmtDate(r.date) + ' · ' + fmt(r.amount || 0) + ' QAR')).join('') + more(D.rentals, 30),
-      t('The booking is recorded but its invoice is missing or archived.', 'الحجز مسجّل لكن فاتورته ناقصة أو مؤرشفة.'))}`;
+      D.rentals.slice(0, 30).map(r => row('<b>' + escapeHtml(r.customerName || '—') + '</b>', fmtDate(r.date) + ' · ' + fmt(r.amount || 0) + ' QAR', isAdmin ? `<button class="btn ghost sm" onclick="_fixUnlinked('rental',${r.id},'paid')">${t('Create invoice (paid)', 'إنشاء فاتورة (مدفوعة)')}</button><button class="btn ghost sm" onclick="_fixUnlinked('rental',${r.id},'due')">${t('Create (due)', 'إنشاء (آجلة)')}</button>` : '')).join('') + more(D.rentals, 30),
+      t('The booking is recorded but its invoice is missing or archived.', 'الحجز مسجّل لكن فاتورته ناقصة أو مؤرشفة.'))}
+    ${sec('📦', t('Low stock — time to reorder', 'مخزون منخفض — وقت إعادة الطلب'), D.lowStock.length,
+      D.lowStock.slice(0, 40).map(p => row('<b>' + escapeHtml(p.name) + '</b>' + (p.sku ? ' <span class="text-mute">' + escapeHtml(p.sku) + '</span>' : ''), (parseInt(p.stock) || 0) + ' ' + t('left', 'متبقي') + ' · ' + t('alert at', 'تنبيه عند') + ' ' + (p.lowStockThreshold != null ? p.lowStockThreshold : 3))).join('') + more(D.lowStock, 40),
+      t('Stock at or below each product alert level.', 'المخزون عند أو أقل من حد التنبيه للمنتج.'))}`;
 };
 PAGES.cashcollection = (main) => {
   if (window._ccFilter == null) window._ccFilter = { month: 'all', search: '' };
@@ -25364,7 +25382,45 @@ PAGES.attendance = (main) => {
     } else if (typeof save === 'function') { save(); }
     refresh();
   }
+  // v6.843 — a Mixed class on a day no Mixed package covers, or beyond the package size, asks first (Renew / Mark anyway)
+  function mixedPackageProblem(m, iso) {
+    const subs = (m.subscriptions || []).filter(s => s && (s.activity || '') === MIXED && String(s.status || '').toLowerCase() !== 'withdrawn');
+    if (!subs.length) return null;   // no Mixed package record at all (legacy) — nothing to compare with
+    const cover = subs.filter(s => (!s.start || String(s.start).slice(0, 10) <= iso) && (!s.end || iso <= String(s.end).slice(0, 10)));
+    if (!cover.length) return { kind: 'none', lastEnd: subs.map(s => String(s.end || '').slice(0, 10)).filter(Boolean).sort().pop() || '' };
+    const sub = cover.sort((a, b) => String(b.start || '').localeCompare(String(a.start || '')))[0];
+    const total = parseInt(sub.totalClasses) || 0;
+    if (!total) return null;
+    let used = 0;
+    const from = String(sub.start || '0000-00-00').slice(0, 10), to = String(sub.end || '9999-99-99').slice(0, 10);
+    for (const mk of Object.keys(m.mixedAttendance || {})) for (const k of Object.keys(m.mixedAttendance[mk] || {})) {
+      const rec = m.mixedAttendance[mk][k]; if (!rec || rec.mark === 'N') continue;
+      const d = mk + '-' + String(parseInt(k, 10)).padStart(2, '0');
+      if (d >= from && d <= to) used++;
+    }
+    return used >= total ? { kind: 'full', used, total } : null;
+  }
   function markMixedCell(memberId, day) {
+    const m0 = state.members.find(x => x.id === memberId); if (!m0) return;
+    const iso = gridMonth() + '-' + String(day).padStart(2, '0');
+    const pr = mixedPackageProblem(m0, iso);
+    if (pr) {
+      showModal({
+        title: pr.kind === 'full' ? t('Mixed package fully used', 'باقة Mixed مستهلكة بالكامل') : t('No Mixed package on this day', 'لا توجد باقة Mixed في هذا اليوم'),
+        body: '<div style="font-size:13px;line-height:1.7"><p><b>' + escapeHtml(m0.name) + '</b> — ' + fmtDate(iso) + '</p><p style="margin-top:8px">' + (pr.kind === 'full'
+          ? t('All ' + pr.total + ' classes of the Mixed package are already marked (' + pr.used + '). Another class would count for nobody — renew first, or mark it anyway.', 'كل حصص باقة Mixed (' + pr.total + ') مسجَّلة بالفعل (' + pr.used + '). حصة إضافية لن تُحتسب لأحد — جدّد أولاً أو سجّلها رغم ذلك.')
+          : t('No Mixed package covers this day' + (pr.lastEnd ? ' (the last one ended ' + fmtDate(pr.lastEnd) + ')' : '') + '. The class would count for nobody. Renew first, or mark it anyway.', 'لا توجد باقة Mixed تغطي هذا اليوم' + (pr.lastEnd ? ' (آخر باقة انتهت ' + fmtDate(pr.lastEnd) + ')' : '') + '. الحصة لن تُحتسب لأحد. جدّد أولاً أو سجّلها رغم ذلك.')) + '</p></div>',
+        actions: [
+          { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
+          { label: t('Mark anyway', 'سجّل رغم ذلك'), class: 'btn ghost', onclick: () => { closeModal(); markMixedCellDialog(memberId, day); } },
+          ...(currentRole() !== 'coach' ? [{ label: t('Renew', 'تجديد'), class: 'btn primary', onclick: () => { closeModal(); if (typeof addRenewal === 'function') addRenewal(memberId); } }] : []),
+        ],
+      });
+      return;
+    }
+    markMixedCellDialog(memberId, day);
+  }
+  function markMixedCellDialog(memberId, day) {
     const m = state.members.find(x => x.id === memberId); if (!m) return;
     const mo = gridMonth();
     const _ents = mixedDayEntries(m, mo, day);   // v6.784 — the classes already logged that day (there can be several)
