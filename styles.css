@@ -797,7 +797,7 @@ thead tr.col-filter-row th {
   text-transform: none;
   letter-spacing: 0;
 }
-input.col-filter {
+select.col-filter, input.col-filter {
   width: 100%;
   padding: 6px 9px;
   font-size: 12px;
@@ -807,7 +807,7 @@ input.col-filter {
   background: var(--surface);
   color: var(--text);
 }
-input.col-filter:focus { outline: none; border-color: var(--accent); }
+select.col-filter:focus, input.col-filter:focus { outline: none; border-color: var(--accent); }
 
 /* Totals footer */
 tfoot tr.tfoot-total td {

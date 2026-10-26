@@ -377,7 +377,8 @@ PAGES.targets = (main) => {
     const income = receptionIncome(ym);
     const receptionCard = `<div style="max-width:420px;margin:0 auto 6px">${_targetCard('🧾', t('Reception — Income Target', 'الاستقبال — هدف الدخل'), t('Income this month (membership + rentals + shop)', 'الدخل هذا الشهر (اشتراكات + إيجارات + متجر)'), income, receptionTargets(), 'QAR')}</div>`;
     const _recTT = targetTier(income, receptionTargets());
-    const _recps = (state.coaches || []).filter(c => _coachActive(c) && isReceptionStaff(c));
+    const _recAll = (state.coaches || []).filter(c => _coachActive(c) && isReceptionStaff(c));
+    const _recps = _recAll.filter(receptionBonusEligible);   // v6.835 — only the ticked receptionists share the bonus
     const _n = _recps.length;
     const per = _n > 0 ? Math.round(_recTT.bonus / _n) : _recTT.bonus;
     if (role === 'admin') {
@@ -387,7 +388,7 @@ PAGES.targets = (main) => {
         splitHtml = `<div class="card" style="max-width:420px;margin:6px auto 0;padding:12px 14px">
           <div style="font-weight:700;font-size:13px;margin-bottom:6px">🏆 ${t('Bonus', 'المكافأة')}: ${fmt(_recTT.bonus)} QAR${_n > 1 ? ` · ${t('split between', 'مقسّمة بين')} ${_n} ${t('receptionists', 'موظفي استقبال')}` : ''}</div>
           ${_n > 0
-            ? _recps.map(r => `<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0"><span>🧾 ${escapeHtml(r.name)}</span><span style="font-weight:700;color:var(--green)">${fmt(per)} QAR</span></div>`).join('')
+            ? _recAll.map(r => receptionBonusEligible(r) ? `<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0"><span>🧾 ${escapeHtml(r.name)}</span><span style="font-weight:700;color:var(--green)">${fmt(per)} QAR</span></div>` : `<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0;opacity:.55"><span>🧾 ${escapeHtml(r.name)}</span><span>${t('not eligible', 'غير مشمول')}</span></div>`).join('')
             : `<div class="text-mute" style="font-size:12px">${t('No active receptionist assigned — set a staff member’s role to Receptionist to split this bonus.', 'لا يوجد موظف استقبال نشط — عيّن دور «استقبال» لأحد الموظفين لتقسيم المكافأة.')}</div>`}
         </div>`;
       } else {
@@ -403,7 +404,10 @@ PAGES.targets = (main) => {
       bodyHtml = receptionCard + splitHtml + coachesHtml;
     } else {
       // Receptionist: own details only — the dial + THEIR (equal) share, no peer list, no coach grid.
-      const mine = _recTT.hit
+      const _me = (typeof myCoach === 'function') ? myCoach() : null;
+      const mine = (_me && !receptionBonusEligible(_me))
+        ? `<div class="card" style="max-width:420px;margin:6px auto 0;padding:12px 14px;text-align:center"><div class="text-mute" style="font-size:12px">${t('You are not part of the reception bonus.', 'أنت غير مشمول بمكافأة الاستقبال.')}</div></div>`
+        : _recTT.hit
         ? `<div class="card" style="max-width:420px;margin:6px auto 0;padding:14px;text-align:center;border:1px solid rgba(16,185,129,.35);background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(16,185,129,.02))">
             <div style="font-size:26px">🏆</div>
             <div style="font-weight:800;font-size:15px;color:var(--green)">${t('Your bonus', 'مكافأتك')}: ${fmt(per)} QAR</div>
@@ -5475,6 +5479,13 @@ window.editCoach = function(id, defaultRole) {
       <div class="form-row">
         <div class="field"><label>🔒 ${t('Private training bonus (%)', 'بونس التدريب الخاص (%)')} <span class="text-mute" style="font-size:10px">${t('empty = club default', 'فارغ = الافتراضي')} (${privateBonusPct()}%)</span></label><input id="c-privpct" type="number" min="0" max="100" step="0.5" value="${isFinite(parseFloat(c.privateBonusPct)) ? parseFloat(c.privateBonusPct) : ''}" placeholder="${privateBonusPct()}" /></div>
       </div>
+      <div class="field" style="margin-top:2px" id="c-bonus-wrap" ${role === 'receptionist' ? '' : 'hidden'}>
+        <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-weight:400">
+          <input type="checkbox" id="c-recbonus" ${c.noBonus === true ? '' : 'checked'} />
+          🏆 ${t('Eligible for the reception bonus (target + private share)', 'مشمول بمكافأة الاستقبال (الهدف + الخاص)')}
+        </label>
+        <div class="text-mute" style="font-size:10px;margin-top:3px">${t('The bonus is split equally between the ticked receptionists only. Untick = no bonus for this person, and his share is NOT given to the others.', 'تُقسَّم المكافأة بالتساوي بين المشمولين فقط. إلغاء التحديد = لا مكافأة له ولا تذهب حصته للآخرين.')}</div>
+      </div>
       <div class="field" style="margin-top:2px">
         <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-weight:400">
           <input type="checkbox" id="c-attended-only" ${c.payAttendedOnly ? 'checked' : ''} />
@@ -5544,6 +5555,7 @@ window.editCoach = function(id, defaultRole) {
         const _ppRaw = String((($('#c-privpct') || {}).value) || '').trim(), _pp = _ppRaw === '' ? null : parseFloat(_ppRaw);   // v6.665: per-coach private bonus % (empty = club default)
         if (_pp != null && (!isFinite(_pp) || _pp < 0 || _pp > 100)) { toast(t('Private bonus must be between 0 and 100', 'بونس الخاص بين 0 و100'), 'error'); return; }
         const roleVal = $('#c-role').value || 'coach';
+        const noBonus = roleVal === 'receptionist' && !(($('#c-recbonus') || {}).checked);
         const sports = $$('.coach-sport').filter(x => x.checked).map(x => x.value);
         const activeVal = $('#c-active').value;
         const qid = $('#c-qid').value.trim() || null;
@@ -5562,6 +5574,7 @@ window.editCoach = function(id, defaultRole) {
             phone, email: email || null, qid, birthdate: birthdate || null, gender, joinedDate,
           };
           if (leftOn) _nc.leftOn = leftOn;
+          if (noBonus) _nc.noBonus = true;
           if (_pp != null) _nc.privateBonusPct = _pp;
           state.coaches.push(_nc);
           _savedCoachId = _nc.id;
@@ -5572,6 +5585,7 @@ window.editCoach = function(id, defaultRole) {
           });
           if (_pp == null) delete c.privateBonusPct; else c.privateBonusPct = _pp;
           if (leftOn) c.leftOn = leftOn; else delete c.leftOn;
+          if (noBonus) c.noBonus = true; else delete c.noBonus;
           _savedCoachId = c.id;
         }
         closeModal();
@@ -5589,6 +5603,7 @@ window.editCoach = function(id, defaultRole) {
     if (!roleSel || !fixedInp || !rateInp) return;
     roleSel.addEventListener('change', () => {
       const isStaff = roleSel.value === 'staff';
+      { const _bw = $('#c-bonus-wrap'); if (_bw) _bw.hidden = roleSel.value !== 'receptionist'; }
       if (isStaff && parseFloat(rateInp.value) === 30 && parseFloat(fixedInp.value) === 0) {
         fixedInp.value = 3000;
         rateInp.value = 0;
@@ -22268,7 +22283,7 @@ PAGES.products = (main) => {
         const q = filter.fname.toLowerCase();
         if (!`${p.name || ''} ${p.sku || ''}`.toLowerCase().includes(q)) return false;
       }
-      if (filter.fcat && !`${p.category || ''}`.toLowerCase().includes(filter.fcat.toLowerCase())) return false;
+      if (filter.fcat && `${p.category || ''}` !== filter.fcat) return false;
       if (filter.category !== 'all' && p.category !== filter.category) return false;
       const stock = productCurrentStock(p.id);
       if (filter.stock === 'low' && stock > (p.lowStockThreshold || 3)) return false;
@@ -22428,7 +22443,7 @@ PAGES.products = (main) => {
             <tr class="col-filter-row">
               <th></th>
               <th><input id="prod-fname" type="text" class="col-filter" placeholder="🔍 ${t('name / SKU', 'الاسم / SKU')}" /></th>
-              <th><input id="prod-fcat" type="text" class="col-filter" placeholder="🔍 ${t('category', 'الفئة')}" /></th>
+              <th><select id="prod-fcat" class="col-filter"><option value="">${t('All categories', 'كل الفئات')}</option>${cats.map(c => `<option>${escapeHtml(c)}</option>`).join('')}</select></th>
               ${isViewerRole() ? '' : '<th></th>'}<th></th><th></th>${isViewerRole() ? '' : '<th></th>'}<th></th><th></th>
             </tr>
           </thead>
@@ -22442,7 +22457,7 @@ PAGES.products = (main) => {
 
   $('#prod-search').addEventListener('input', e => { filter.search = e.target.value; pg.page = 1; refresh(); });
   $('#prod-fname')?.addEventListener('input', e => { filter.fname = e.target.value; pg.page = 1; refresh(); });
-  $('#prod-fcat')?.addEventListener('input', e => { filter.fcat = e.target.value; pg.page = 1; refresh(); });
+  $('#prod-fcat')?.addEventListener('change', e => { filter.fcat = e.target.value; pg.page = 1; refresh(); });
   $('#prod-cat').addEventListener('change', e => { filter.category = e.target.value; pg.page = 1; refresh(); });
   $('#prod-stock').addEventListener('change', e => { filter.stock = e.target.value; pg.page = 1; refresh(); });
   $('#prod-add')?.addEventListener('click', addProduct);
