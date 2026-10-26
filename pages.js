@@ -14249,7 +14249,7 @@ function computeUnlinkedRentalsSales() {
   const FROM = '2026-06-01', out = [];
   const byId = id => (id != null) ? (state.invoices || []).find(i => i && !i.deleted && i.id === id) : null;
   for (const r of (state.rentals || [])) {
-    if (!r || r.deleted || String(r.date || '') < FROM || rentalInvoiceFor(r)) continue;
+    if (!r || r.deleted || r.academy || String(r.date || '') < FROM || rentalInvoiceFor(r)) continue;
     out.push({ kind: 'rental', rec: r, amount: Number(r.amount) || 0, other: byId(r.invoiceId) });
   }
   for (const s of (state.sales || [])) {
@@ -29860,6 +29860,8 @@ PAGES.expiring = (main) => {
     if (filter.bucket === 'recent' && !(days < 0 && days >= -recentDays)) return false;
     // v6.841 — CALL TODAY: about to expire (within the alert window) or expired within the win-back window
     if (filter.bucket === 'calltoday' && !(days <= threshold && days >= -recentDays)) return false;
+    // v6.846 — WIN-BACK: expired 31–90 days ago (the Call-today list already covers the first 15 days)
+    if (filter.bucket === 'winback' && !(days <= -31 && days >= -90)) return false;
     // "Expiring in ≤ 7 days" bucket: active memberships whose expiry is 0–7 days out. (v6.358)
     if (filter.bucket === 'd7' && !(days >= 0 && days <= 7)) return false;
     if (filter.sports.length) {   // v6.519: multi-select — keep if the member does ANY chosen sport
@@ -30042,6 +30044,7 @@ PAGES.expiring = (main) => {
       </div>
       <div class="topbar-actions">
         <button class="btn primary" title="${t('Everyone to call today: expiring soon + recently expired, not-yet-reminded first', 'من تتصل بهم اليوم: قاربت على الانتهاء + انتهت حديثاً، ومن لم يُذكَّر أولاً')}" onclick="document.getElementById('exp-bucket').value='calltoday';document.getElementById('exp-bucket').dispatchEvent(new Event('change'))">📞 ${t('Call today', 'اتصل اليوم')} · ${expiringSoon.length + recentCount}</button>
+        <button class="btn ghost" title="${t('Win-back: members whose package expired 31–90 days ago', 'استرجاع: من انتهت باقته من 31 إلى 90 يوماً')}" onclick="document.getElementById('exp-bucket').value='winback';document.getElementById('exp-bucket').dispatchEvent(new Event('change'))">🔁 ${t('Win-back', 'استرجاع')} · ${expired.filter(x => x.days <= -31 && x.days >= -90).length}</button>
         <button class="btn ghost" title="Show members who expired within the last ${recentDays} days (set in Settings)" onclick="document.getElementById('exp-bucket').value='recent';document.getElementById('exp-bucket').dispatchEvent(new Event('change'))">🔴 Recently expired (≤${recentDays}d) · ${recentCount}</button>
         ${isViewerRole() ? '' : '<button class="btn ghost" id="export-expiring">📥 Export CSV</button>'}
       </div>
@@ -30096,6 +30099,7 @@ PAGES.expiring = (main) => {
         <select id="exp-bucket" class="btn ghost">
           <option value="all">All statuses</option>
           <option value="calltoday">📞 ${t('Call today', 'اتصل اليوم')}</option>
+          <option value="winback">🔁 ${t('Win-back (expired 31–90 days)', 'استرجاع (منتهي 31–90 يوم)')}</option>
           <option value="soon">⏰ Expiring in ≤ ${threshold} days</option>
           <option value="d7">⏳ Expiring in ≤ 7 days</option>
           <option value="recent">🔴 Recently expired (≤ ${recentDays} days)</option>
@@ -30163,6 +30167,11 @@ PAGES.expiring = (main) => {
     const uFiltered = applySort(upcoming.filter(matchFilter));
     const cFiltered = applySort(completed.filter(matchFilter));
     const parts = [];
+    if (filter.bucket === 'winback') {
+      const _rc2 = x => (typeof reminderInfo === 'function' ? reminderInfo(x.m).count : 0);
+      const wbList = eFiltered.filter(x => x.days <= -31 && x.days >= -90).slice().sort((a, b) => (_rc2(a) > 0) - (_rc2(b) > 0) || b.days - a.days);
+      parts.push(section(t('Win-back — expired 31 to 90 days ago', 'استرجاع — منتهي من 31 إلى 90 يوماً'), 'var(--purple)', '🔁', wbList, 'expired'));
+    }
     if (filter.bucket === 'calltoday') {
       // not-yet-reminded first, then the soonest to expire / most recently expired
       const _rc = x => (typeof reminderInfo === 'function' ? reminderInfo(x.m).count : 0);
@@ -30225,7 +30234,8 @@ PAGES.expiring = (main) => {
         const bucket = e.target.dataset.bucket;
         // The ≤7-day view is ONE section spanning both soon + upcoming, so select-all must
         // cover the whole combined list, not just the 'soon' half. (v6.358)
-        const list = filter.bucket === 'calltoday' ? [...expiringSoon, ...expired].filter(matchFilter)
+        const list = filter.bucket === 'winback' ? expired.filter(matchFilter)
+                   : filter.bucket === 'calltoday' ? [...expiringSoon, ...expired].filter(matchFilter)
                    : filter.bucket === 'd7' ? [...expiringSoon, ...week, ...upcoming].filter(matchFilter)
                    : bucket === 'soon' ? expiringSoon.filter(matchFilter)
                    : bucket === 'week' ? week.filter(matchFilter)
@@ -35936,7 +35946,7 @@ const COURT = 'Football Court';
 function courtHours() {
   const h = (state.settings && state.settings.courtHours) || {};
   const ok = s => /^\d{2}:\d{2}$/.test(String(s || ''));
-  return { open: ok(h.open) ? h.open : '06:00', close: ok(h.close) ? h.close : '24:00' };
+  return { open: ok(h.open) ? h.open : '16:00', close: (ok(h.close) || h.close === '24:00') ? h.close : '24:00' };   // v6.846 — the court takes bookings from 4 PM to midnight (owner)
 }
 const cbMin = s => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || '')); return m ? (+m[1]) * 60 + (+m[2]) : null; };
 const cbClock = n => { n = Math.max(0, Math.round(n)); const h = Math.floor(n / 60) % 24, m = n % 60; return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0'); };
@@ -35953,6 +35963,48 @@ function courtLanes(list) {
   out.forEach(o => { o.lanes = laneEnd.length; });
   return out;
 }
+// v6.846 — a booking must sit inside the opening hours (default 16:00–24:00); returns an error text or ''
+function courtHoursError(startTime, hours) {
+  const s = cbMin(startTime); if (s == null) return '';
+  const H = courtHours(), o = cbMin(H.open), c = H.close === '24:00' ? 1440 : cbMin(H.close);
+  const e = s + Math.round((Number(hours) || 0) * 60);
+  if (s < o || e > c) return t('The court takes bookings from ' + H.open + ' to ' + H.close + ' only.', 'الملعب يقبل الحجز من ' + H.open + ' إلى ' + H.close + ' فقط.');
+  return '';
+}
+// v6.846 — ACADEMY booking: the club's own training on the court, FREE (amount 0, no invoice, no customer, no revenue) — only to keep the board organised
+const ACADEMY_NAME = 'Black Stars Academy';
+window.academyBookingDialog = function (prefill, existingId, onDone) {
+  const ex = existingId ? (state.rentals || []).find(x => x && x.id === existingId) : null;
+  const p = Object.assign({ date: TODAY, startTime: '', hours: 1, notes: '' }, ex || {}, ex ? {} : (prefill || {}));
+  showModal({
+    title: '🏫 ' + (ex ? t('Edit academy booking', 'تعديل حجز الأكاديمية') : t('Academy booking (free)', 'حجز للأكاديمية (مجاني)')),
+    body: '<div class="text-mute" style="font-size:12px;margin-bottom:10px">' + t("The academy's own training on the court. No charge, no invoice — it only blocks the time so nobody else books it.", 'تدريب الأكاديمية على الملعب. بدون رسوم وبدون فاتورة — فقط يحجز الوقت حتى لا يحجزه أحد.') + '</div>'
+      + '<div class="form-row"><div class="field"><label>' + t('Date', 'التاريخ') + '</label><input id="ab-date" type="date" value="' + escapeHtml(p.date) + '" /></div>'
+      + '<div class="field"><label>' + t('Start time', 'وقت البدء') + '</label><input id="ab-time" type="time" value="' + escapeHtml(p.startTime || '') + '" /></div>'
+      + '<div class="field"><label>' + t('Hours', 'الساعات') + '</label><input id="ab-hours" type="number" min="0.5" max="8" step="0.5" value="' + (p.hours || 1) + '" /></div></div>'
+      + '<div class="field"><label>' + t('Note (team / group)', 'ملاحظة (الفريق / المجموعة)') + '</label><input id="ab-notes" value="' + escapeHtml(p.notes || '') + '" placeholder="U12, Football" /></div>',
+    actions: [
+      { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
+      ...(ex ? [{ label: '🗑 ' + t('Delete', 'حذف'), class: 'btn ghost', onclick: () => { if (!confirm(t('Delete this academy booking?', 'حذف حجز الأكاديمية؟'))) return; state.rentals = state.rentals.filter(x => x.id !== ex.id); closeModal(); save(); if (onDone) onDone(); else render(); } }] : []),
+      { label: '💾 ' + t('Save', 'حفظ'), class: 'btn primary', onclick: () => {
+        const date = ($('#ab-date') || {}).value || TODAY, startTime = ($('#ab-time') || {}).value || '', hours = parseFloat(($('#ab-hours') || {}).value) || 0, notes = (($('#ab-notes') || {}).value || '').trim() || null;
+        if (!startTime) { toast(t('Pick the start time', 'اختر وقت البدء'), 'error'); return; }
+        if (!(hours > 0) || hours > 8) { toast(t('Hours must be between 0.5 and 8', 'الساعات بين 0.5 و8'), 'error'); return; }
+        if (sanityDateToast(date, 'Booking', 'الحجز', { future: 366, past: 400 })) return;
+        const he = courtHoursError(startTime, hours); if (he) { toast(he, 'error'); return; }
+        const s1 = cbMin(startTime), e1 = s1 + Math.round(hours * 60);
+        const clash = (state.rentals || []).find(x => x && x.id !== (ex && ex.id) && x.facility === COURT && x.date === date && x.startTime && (() => { const s2 = cbMin(x.startTime), e2 = s2 + Math.round((x.hours || 0) * 60); return s1 < e2 && s2 < e1; })());
+        if (clash) { toast(t('The court is already booked at ' + clash.startTime + ' on ' + fmtDate(date), 'الملعب محجوز بالفعل الساعة ' + clash.startTime + ' يوم ' + fmtDate(date)), 'error'); return; }
+        let savedId;
+        if (ex) { Object.assign(ex, { date, startTime, hours, notes, amount: 0, hourlyRate: 0 }); stampUpdate(ex); savedId = ex.id; }
+        else { const r = { id: nextId(state.rentals || []), facility: COURT, academy: true, date, startTime, hours, hourlyRate: 0, amount: 0, customerName: ACADEMY_NAME, customerPhone: null, method: null, notes }; stampUpdate(r); state.rentals.push(r); savedId = r.id; }
+        closeModal();
+        if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'rentals', id: savedId }], okMsg: t('Academy booking saved', 'تم حفظ حجز الأكاديمية'), afterOk: () => { if (onDone) onDone(); else render(); } });
+        else { save(); if (onDone) onDone(); else render(); }
+      } },
+    ],
+  });
+};
 window._cb = window._cb || { date: null, view: 'day' };
 PAGES.courtbookings = (main) => {
   const S = window._cb; if (!S.date) S.date = TODAY;
@@ -35976,10 +36028,10 @@ PAGES.courtbookings = (main) => {
     const grid = Array.from({ length: rows }, (_, i) => { const m = open + i * 60, hh = cbClock(m); return `<div class="cb-row" data-slot="${hh}" style="position:absolute;left:0;right:0;top:${i * ROW}px;height:${ROW}px;border-top:1px solid var(--border);cursor:pointer" title="${t('Book', 'احجز')} ${hh}"><span class="text-mute" style="position:absolute;left:6px;top:4px;font-size:11px">${hh}</span></div>`; }).join('');
     const blocks = lanes.map(o => {
       const r = o.r, due = courtBookingDue(r), top = (o.s - open) / 60 * ROW, h = Math.max(24, (o.e - o.s) / 60 * ROW - 3), w = 100 / o.lanes;
-      const col = due > 0.5 ? 'var(--red)' : 'var(--green)';
+      const col = r.academy ? 'var(--blue)' : (due > 0.5 ? 'var(--red)' : 'var(--green)');
       return `<div class="cb-block" data-id="${r.id}" style="position:absolute;left:calc(58px + (100% - 64px) * ${o.l / o.lanes});width:calc((100% - 64px) * ${1 / o.lanes} - 3px);top:${top}px;height:${h}px;box-sizing:border-box;padding:4px 8px;border-radius:8px;border:1px solid ${col};border-left:4px solid ${col};background:color-mix(in srgb, ${col} 12%, var(--surface));overflow:hidden;cursor:pointer;font-size:12px;line-height:1.35">
-        <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${cbClock(o.s)}–${cbClock(o.e)} · ${escapeHtml(r.customerName || '—')}</div>
-        <div class="text-mute" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.customerPhone ? escapeHtml(r.customerPhone) : ''}${money ? ' · ' + fmt(r.amount || 0) + ' QAR' : ''}${due > 0.5 ? (money ? ' · ⏳ ' + fmt(due) + ' ' + t('due', 'متبقي') : ' · ⏳ ' + t('unpaid', 'غير مدفوع')) : ''}</div>
+        <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${cbClock(o.s)}–${cbClock(o.e)} · ${r.academy ? '🏫 ' : ''}${escapeHtml(r.customerName || '—')}</div>
+        <div class="text-mute" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.academy ? t('Academy · free', 'الأكاديمية · مجاني') + (r.notes ? ' · ' + escapeHtml(r.notes) : '') : ''}${r.academy ? '' : r.customerPhone ? escapeHtml(r.customerPhone) : ''}${money ? ' · ' + fmt(r.amount || 0) + ' QAR' : ''}${due > 0.5 ? (money ? ' · ⏳ ' + fmt(due) + ' ' + t('due', 'متبقي') : ' · ⏳ ' + t('unpaid', 'غير مدفوع')) : ''}</div>
       </div>`;
     }).join('');
     const nowLine = (date === TODAY) ? (() => { const n = new Date(), m = n.getHours() * 60 + n.getMinutes(); return (m >= open && m <= close) ? `<div id="cb-now" style="position:absolute;left:52px;right:0;top:${(m - open) / 60 * ROW}px;border-top:2px solid var(--accent);z-index:2;pointer-events:none"></div>` : ''; })() : '';
@@ -36012,6 +36064,7 @@ PAGES.courtbookings = (main) => {
   }
   function openBooking(id) {
     const r = (state.rentals || []).find(x => x && x.id === id); if (!r) return;
+    if (r.academy) { academyBookingDialog(null, r.id, () => render()); return; }   // v6.846
     const due = courtBookingDue(r), inv = (typeof rentalInvoiceFor === 'function') ? rentalInvoiceFor(r) : null, s = cbMin(r.startTime), e = s != null ? s + Math.round((r.hours || 1) * 60) : null;
     showModal({
       title: '⚽ ' + t('Court booking', 'حجز الملعب'),
@@ -36057,6 +36110,7 @@ PAGES.courtbookings = (main) => {
         <div class="topbar-actions">
           ${currentRole() === 'admin' ? `<button class="btn ghost" id="cb-hours" title="${t('Opening hours', 'ساعات العمل')}">⚙</button>` : ''}
           <button class="btn ghost" id="cb-rentals" title="${t('The full rentals list', 'قائمة الإيجارات الكاملة')}">📋 ${t('All rentals', 'كل الإيجارات')}</button>
+          <button class="btn ghost" id="cb-academy" title="${t('Block the court for the academy — free, no invoice', 'احجز الملعب للأكاديمية — مجاني بدون فاتورة')}">🏫 ${t('Academy (free)', 'الأكاديمية (مجاني)')}</button>
           <button class="btn primary" id="cb-new">+ ${t('New booking', 'حجز جديد')}</button>
         </div>
       </div>
@@ -36072,6 +36126,7 @@ PAGES.courtbookings = (main) => {
     $('#cb-date').onchange = e => { if (e.target.value) go(e.target.value); };
     $('#cb-vday').onclick = () => { S.view = 'day'; paint(); }; $('#cb-vweek').onclick = () => { S.view = 'week'; paint(); };
     $('#cb-new').onclick = () => addRental(() => render(), { facility: COURT, date: S.date, hours: 1 });
+    $('#cb-academy').onclick = () => academyBookingDialog({ date: S.date }, null, () => render());
     $('#cb-rentals').onclick = () => navigate('rentals');
     const hb = $('#cb-hours'); if (hb) hb.onclick = hoursDialog;
     main.querySelectorAll('.cb-row').forEach(el => el.addEventListener('click', e => { if (e.target.closest('.cb-block')) return; pickSlot(S.date, el.dataset.slot); }));
@@ -36488,6 +36543,7 @@ function addRental(onDone, prefill) {   // v6.805 — `prefill` = { facility, da
     body: rentalFormHtml(Object.assign({ date: TODAY, hours: 1, method: 'cash' }, prefill || {})),
     actions: [
       { label: 'Cancel', class: 'btn ghost', onclick: closeModal },
+      ...((prefill && prefill.facility === COURT) ? [{ label: '🏫 ' + t('Academy (free)', 'الأكاديمية (مجاني)'), class: 'btn ghost', onclick: () => { closeModal(); academyBookingDialog({ date: prefill.date, startTime: prefill.startTime || '', hours: prefill.hours || 1 }, null, onDone); } }] : []),
       { label: '💾 Save & Create Invoice', class: 'btn primary', onclick: () => saveRental(null, onDone) },
     ],
   });
@@ -36791,6 +36847,7 @@ function saveRental(existingId, onDone) {
   const hourlyRate = parseFloat($('#r-rate').value) || 0;
   const amount = parseFloat($('#r-amount').value) || (hours * hourlyRate);
   if (hours <= 0 || hourlyRate <= 0) { toast('Hours and rate must be > 0', 'error'); return; }
+  if (facility === COURT && startTime) { const _he = courtHoursError(startTime, hours); if (_he) { toast(_he, 'error'); return; } }   // v6.846 — 4 PM to midnight only
   // Start time is OPTIONAL now. Back-dating is allowed (record a past rental / issue an
   // old-dated invoice). When a start time is given we still guard against overlaps.
   // Back-dating is allowed (record past rentals / old-dated invoices).
