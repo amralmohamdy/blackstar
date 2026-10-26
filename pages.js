@@ -3897,6 +3897,9 @@ function showMemberForm(m) {
       if (!s.activity || s.coachId == null) continue;
       const _st = (s.status || '').toLowerCase();
       if (_st === 'completed' || _st === 'withdrawn' || s.switchedAwayTo) continue;
+      // v6.847 (D1) — an ENDED package (end date passed) is history, whatever its stored status says. A stale 'active' / 'expired' one used to come back as a form row once a switch removed its
+      // enrollment, and Save then wrote its numbers over the switched package and its invoice line (+7,309 QAR of phantom dues on 31 members).
+      if (s.end && String(s.end).slice(0, 10) < TODAY) continue;
       const _key = s.activity + '|' + String(s.coachId);
       if (_covered.has(_key)) continue;
       _covered.add(_key);
@@ -4559,15 +4562,22 @@ function showMemberForm(m) {
           let matched = false;
           if (e._originalSport) {
             // Existing row: match its own subscription by sport + original coach.
-            for (let i = subs.length - 1; i >= 0; i--) {
-              const s = subs[i];
-              if (s.activity === e.sport && _sameCoach(s.coachId, e._originalCoachId)) {
-                syncSubToEnrollment(s, e, existing, state.invoices, { keepCoach: !!e._keepSubCoach }); matched = true; break;
+            // v6.847 (D1/D3) — never write the form's numbers over a package that was SWITCHED AWAY (its classes/amount are the capped, settled record), and prefer a LIVE package of the sport:
+            // two packages of one sport+coach left the switched source LAST in the list, so the loop below grabbed it and re-billed the member (Tammim AlYamani 800 → 900).
+            for (const _pass of [0, 1]) {
+              if (matched) break;
+              for (let i = subs.length - 1; i >= 0; i--) {
+                const s = subs[i];
+                if (s.switchedAwayTo || (_pass === 0 && _finished(s))) continue;
+                if (s.activity === e.sport && _sameCoach(s.coachId, e._originalCoachId)) {
+                  syncSubToEnrollment(s, e, existing, state.invoices, { keepCoach: !!e._keepSubCoach }); matched = true; break;
+                }
               }
             }
             // Legacy fallback: original coach not recorded / already renamed → match by sport once.
             if (!matched) {
               for (let i = subs.length - 1; i >= 0; i--) {
+                if (subs[i].switchedAwayTo) continue;
                 if (subs[i].activity === e.sport) { syncSubToEnrollment(subs[i], e, existing, state.invoices, { keepCoach: !!e._keepSubCoach }); matched = true; break; }
               }
             }
@@ -19505,7 +19515,8 @@ function attentionData() {
         if (v !== 'Y' && v !== true) continue;
         const ds = mk + '-' + String(dd).padStart(2, '0');
         if (ds < sinceIso || ds > TODAY) continue;
-        if (!subs.some(s => s && String(s.start || '') <= ds && (!s.end || ds <= String(s.end).slice(0, 10)))) late.push(ds + ' ' + String(sp).split(' ')[0]);
+        const _base = String(sp).replace(/ \d+$/, '');   // v6.848 (D4) — the cell's own sport (a live MMA package must not cover a Taekwondo mark)
+        if (!subs.some(s => s && (s.activity || '') === _base && String(s.start || '') <= ds && (!subCoverEnd(s) || ds <= subCoverEnd(s)))) late.push(ds + ' ' + _base);
       }
     }
     if (late.length) outside.push({ m, late: late.sort() });
@@ -25321,11 +25332,12 @@ PAGES.attendance = (main) => {
       const base = String(sport).replace(/ \d+$/, '');
       const iso = gridMonth() + '-' + String(day).padStart(2, '0');
       const subs = (m2 && m2.subscriptions || []).filter(s => s && (s.activity || '') === base && String(s.status || '').toLowerCase() !== 'withdrawn');
-      if (m2 && subs.length && !subs.some(s => (!s.start || String(s.start).slice(0, 10) <= iso) && (!s.end || iso <= String(s.end).slice(0, 10)))) {
-        const lastEnd = subs.map(s => String(s.end || '').slice(0, 10)).filter(Boolean).sort().pop();
+      if (m2 && subs.length && !subs.some(s => (!s.start || String(s.start).slice(0, 10) <= iso) && (!subCoverEnd(s) || iso <= subCoverEnd(s)))) {   // v6.848 (D4) — a switched-away package stops at the switch date
+        const lastEnd = subs.map(s => subCoverEnd(s)).filter(Boolean).sort().pop();
+        const _swSub = subs.filter(s => s.switchedAwayTo && s.switchedAt && String(s.switchedAt).slice(0, 10) <= iso).sort((a, b) => String(b.switchedAt).localeCompare(String(a.switchedAt)))[0];
         showModal({
           title: t('No package on this day', 'لا توجد باقة في هذا اليوم'),
-          body: '<div style="font-size:13px;line-height:1.7"><p><b>' + escapeHtml(m2.name) + '</b> · ' + escapeHtml(base) + ' — ' + fmtDate(iso) + '</p><p style="margin-top:8px">' + t('No package covers this day' + (lastEnd ? ' (the last one ended ' + fmtDate(lastEnd) + ')' : '') + '. The class would count for nobody. Renew first, or mark it anyway.', 'لا توجد باقة تغطي هذا اليوم' + (lastEnd ? ' (آخر باقة انتهت ' + fmtDate(lastEnd) + ')' : '') + '. الحصة لن تُحتسب لأحد. جدّد أولاً أو سجّلها رغم ذلك.') + '</p></div>',
+          body: '<div style="font-size:13px;line-height:1.7"><p><b>' + escapeHtml(m2.name) + '</b> · ' + escapeHtml(base) + ' — ' + fmtDate(iso) + '</p><p style="margin-top:8px">' + t('No package covers this day' + (_swSub ? ' — ' + base + ' was switched to ' + _swSub.switchedAwayTo + ' on ' + fmtDate(String(_swSub.switchedAt).slice(0, 10)) + ', so mark the class under ' + _swSub.switchedAwayTo : (lastEnd ? ' (the last one ended ' + fmtDate(lastEnd) + ')' : '')) + '. The class would count for nobody. Renew first, or mark it anyway.', 'لا توجد باقة تغطي هذا اليوم' + (_swSub ? ' — ' + base + ' اتبدّلت إلى ' + _swSub.switchedAwayTo + ' يوم ' + fmtDate(String(_swSub.switchedAt).slice(0, 10)) + '، فسجّل الحصة تحت ' + _swSub.switchedAwayTo : (lastEnd ? ' (آخر باقة انتهت ' + fmtDate(lastEnd) + ')' : '')) + '. الحصة لن تُحتسب لأحد. جدّد أولاً أو سجّلها رغم ذلك.') + '</p></div>',
           actions: [
             { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
             { label: t('Mark anyway', 'سجّل رغم ذلك'), class: 'btn ghost', onclick: () => { closeModal(); applyMark(memberId, sport, day, next); } },
@@ -25920,7 +25932,7 @@ PAGES.attendance = (main) => {
           <option value="4">${t('Week', 'أسبوع')} 4 (22–28)</option>
           <option value="5">${t('Week', 'أسبوع')} 5 (29–${t('end', 'النهاية')})</option>
         </select>
-        <span ${myCoachId != null ? 'style="display:none"' : ''}>${multiFilterHTML('att-coach', state.coaches.filter(c => isCoachRole(c) && (isCoachActive(c) || filter.coaches.map(String).includes(String(c.id)))).map(c => [String(c.id), c.name + (c.nameArabic ? ' · ' + c.nameArabic : '')]), filter.coaches, { allText: t('All coaches', 'كل المدربين'), noun: t('coaches', 'مدربين'), minWidth: 150, search: true })}</span>
+        <span ${myCoachId != null ? 'style="display:none"' : ''}>${multiFilterHTML('att-coach', state.coaches.filter(c => isCoachRole(c)).map(c => [String(c.id), c.name + (c.nameArabic ? ' · ' + c.nameArabic : '')]), filter.coaches, { allText: t('All coaches', 'كل المدربين'), noun: t('coaches', 'مدربين'), minWidth: 150, search: true })}</span>
         ${multiFilterHTML('att-mstatus', [['Active', '🟢 ' + t('Active', 'نشط')], ['Frozen', '🔵 ' + t('Frozen', 'مجمّد')], ['Expired', '⚪ ' + t('Expired', 'منتهي')], ['Completed', '🟣 ' + t('Completed', 'مكتمل')], ['Withdrawn', '🔴 ' + t('Withdrawn', 'منسحب')]], filter.statuses, { allText: t('All statuses', 'كل الحالات'), noun: t('statuses', 'حالات'), minWidth: 150 })}
         ${multiFilterHTML('att-status', [['attended', '✓ ' + t('Attended', 'حضر')], ['notattended', '✗ ' + t('Not attended', 'لم يحضر')]], filter.atts, { allText: t('All attendance', 'كل الحضور'), noun: t('selected', 'محدد'), minWidth: 150 })}
         <div style="position:relative">
@@ -27364,13 +27376,27 @@ window.withdrawSport = function(memberId, sport) {
 // v6.779 — the live membership invoice that carries the package being switched: the one dated inside the source cycle, else the latest on/before the switch, else the latest.
 // v6.779 — the price of the ONE package being switched. coachBaseForSport SUMS every same-sport+coach package, so a member with an old + a renewed package (both Kick Boxing / Aziz)
 // had the split based on 2× the package. One package → what the coach was credited; several → this package's own price.
-function _switchPriceBase(m, from) {
+// v6.847 (D3) — the amount of the invoice LINE that belongs to the package being switched (the live package of this sport+coach covering the switch date, on the invoice of its own cycle).
+// With two live packages of one sport+coach the enrollment price is the LATEST package's, not the switched one's (550 October vs 600 November prepaid → the split was priced on 600).
+function _switchSourceOwnPrice(m, from, switchDate) {
+  const same = s => (s.activity || '') === from.sport && String(s.coachId) === String(from.coachId) && s.status !== 'completed' && s.status !== 'withdrawn' && !s.switchedAwayTo;
+  const cands = (m.subscriptions || []).filter(same);
+  const cov = cands.filter(s => (s.start || '') <= switchDate && (!s.end || switchDate <= s.end));
+  const srcSub = (cov.length ? cov : cands).slice().sort((a, b) => (a.start || '').localeCompare(b.start || '')).slice(-1)[0] || null;
+  // the package's OWN invoice first (sub.invoiceNumber → invoice ref); only then the date-based pick (a prepaid next-cycle invoice can be dated inside this cycle)
+  const _own = srcSub && srcSub.invoiceNumber ? (state.invoices || []).find(v => !v.deleted && !v.switchCredit && v.customerId === m.id && String(v.ref) === String(srcSub.invoiceNumber) && Array.isArray(v.lineItems) && v.lineItems.some(li => li.sport === from.sport && String(li.coachId) === String(from.coachId))) : null;
+  const inv = _own || _pickSwitchInvoice(m, from, switchDate, srcSub);
+  if (!inv || !Array.isArray(inv.lineItems)) return 0;
+  const lines = inv.lineItems.filter(li => li.sport === from.sport && String(li.coachId) === String(from.coachId));
+  return lines.length === 1 ? (Number(lines[0].price) || 0) : 0;   // several lines on ONE invoice are ambiguous → keep the old rule
+}
+function _switchPriceBase(m, from, switchDate) {
   const credited = coachBaseForSport(m, from.sport, from.coachId);
   const pkgs = (state.invoices || []).filter(v => !v.deleted && !v.switchCredit && v.customerId === m.id && (v.category || 'Membership') === 'Membership')
     .reduce((n, v) => n + ((Array.isArray(v.lineItems) && v.lineItems.length)
       ? v.lineItems.filter(li => li.sport === from.sport && String(li.coachId) === String(from.coachId)).length
       : ((v.sport === from.sport && String(v.coachId) === String(from.coachId)) ? 1 : 0)), 0);
-  return (pkgs > 1) ? (parseFloat(from.price) || (credited > 0 ? credited / pkgs : 0)) : (credited > 0 ? credited : (parseFloat(from.price) || 0));
+  return (pkgs > 1) ? (_switchSourceOwnPrice(m, from, switchDate || TODAY) || parseFloat(from.price) || (credited > 0 ? credited / pkgs : 0)) : (credited > 0 ? credited : (parseFloat(from.price) || 0));
 }
 function _pickSwitchInvoice(m, from, switchDate, srcSub) {
   const has = v => Array.isArray(v.lineItems) && v.lineItems.some(li => li.sport === from.sport && String(li.coachId) === String(from.coachId));
@@ -27607,7 +27633,7 @@ window.switchSport = function(memberId) {
           const attendedA = countAttendedUpTo(from.sport, switchDate, from.coachId);
           const planned = parseInt(from.classes) || 0;
           const remaining = Math.max(0, planned - attendedA);
-          const priceBase = _switchPriceBase(m, from);   // v6.779
+          const priceBase = _switchPriceBase(m, from, switchDate);   // v6.779
           const switchMonth = switchDate.slice(0, 7);
           for (const tg of tgs) {
             if (!tg.sport) { toast('Pick a sport for each new row', 'error'); return; }
@@ -27723,11 +27749,11 @@ window.switchSport = function(memberId) {
             ? v.lineItems.filter(li => li.sport === from.sport && String(li.coachId) === String(from.coachId)).length
             : ((v.sport === from.sport && String(v.coachId) === String(from.coachId)) ? 1 : 0)), 0);
         const price = (_srcPkgCount > 1)
-          ? (parseFloat(from.price) || (creditedBase > 0 ? creditedBase / _srcPkgCount : 0))   // this package only
+          ? (_switchSourceOwnPrice(m, from, switchDate) || parseFloat(from.price) || (creditedBase > 0 ? creditedBase / _srcPkgCount : 0))   // this package only (v6.847: its own invoice line, not the latest enrollment price)
           : (creditedBase > 0 ? creditedBase : (parseFloat(from.price) || 0));
         let aShare = 0, bShare = 0;
-        if (skipReconciliation) {
-          // No commission to split when Summer Camp is on either side
+        if (fromIsCamp) {
+          // a CAMP source has no commission and no per-class value to split (v6.847: a sport → camp switch DOES split — the sport's coach keeps what was attended)
           aShare = 0; bShare = 0;
         } else {
           const split = computeSwitchSplit(price, attendedA, totalClasses);
@@ -27749,7 +27775,7 @@ window.switchSport = function(memberId) {
         const moved = remaining + carried;
         const _enteredPrice = parseFloat(($('#sw-price') || {}).value);
         const _exactB = Math.round((price - aShare) * 100) / 100;   // v6.838 — the dialog pre-fills a ROUNDED price; if it is left as it was, use the exact rest so the invoice total never drifts by 0.01
-        const bPrice = skipReconciliation ? (parseFloat(from.price) || 0)
+        const bPrice = fromIsCamp ? (parseFloat(from.price) || 0)
           : (Number.isFinite(_enteredPrice) && _enteredPrice >= 0 ? (Math.abs(_enteredPrice - _exactB) <= 0.0101 ? _exactB : Math.round(_enteredPrice * 100) / 100) : Math.round(bShare * 100) / 100);   // v6.532: carried classes are a FREE bonus — default charges only the remaining (bShare), so money stays conserved
 
         // v6.740 — only REMAINING classes can move: a fully used package has nothing to transfer.
@@ -27801,6 +27827,8 @@ window.switchSport = function(memberId) {
         const _srcSubCycle = ((_covering.length ? _covering : _srcCycleCands)
           .slice().sort((a, b) => (a.start || '').localeCompare(b.start || '')).slice(-1)[0]) || null;
 
+        // v6.847 (D2) — a camp ↔ sport switch needs a live package to move (a finished camp enrollment left on the profile has nothing to switch)
+        if (skipReconciliation && !_srcSubCycle) { toast(t(from.sport + ' has no running package to switch — renew it first, or remove the finished enrollment.', from.sport + ' ليس لها باقة سارية للتبديل — جدّدها أولاً أو احذف التسجيل المنتهي.'), 'error'); return; }
         // v6.755 — every guard passed: freeze the attendance cell of each package of this sport before the switch changes who is "first" among two simultaneous coaches
         pinAttendanceCells(m, from.sport);
         // ─── SPLIT THE ONE MEMBERSHIP INVOICE (v6.520) ─────────────
@@ -27826,7 +27854,9 @@ window.switchSport = function(memberId) {
           // invoice and the capped sub are the SAME cycle even when the invoice date is after the switch);
           // fall back to the latest dated on/before the switch, then the latest overall.
           const _cycleInv = _srcSubCycle ? _invByDate.filter(v => String(v.date || '') >= (_srcSubCycle.start || '') && (!_srcSubCycle.end || String(v.date || '') <= _srcSubCycle.end)) : [];
-          const _inv = _cycleInv.slice(-1)[0]
+          // v6.847 (D3) — the package's OWN invoice (sub.invoiceNumber → ref) wins: a prepaid next-cycle invoice can be dated inside this cycle and was being split instead
+          const _ownInv = (_srcSubCycle && _srcSubCycle.invoiceNumber) ? _invByDate.find(v => String(v.ref) === String(_srcSubCycle.invoiceNumber)) : null;
+          const _inv = _ownInv || _cycleInv.slice(-1)[0]
             || _invByDate.filter(v => String(v.date || '') <= switchDate).slice(-1)[0]
             || _invByDate.slice(-1)[0] || null;
           if (_inv) {
@@ -27891,8 +27921,8 @@ window.switchSport = function(memberId) {
         // sports, the member card shows the right class counts, and a later invoice re-sync
         // won't see the switched-in sport as "missing" and re-charge it a full membership.
         // v6.520 — destination carries remaining + CARRY-FORWARD (moved) at the RE-PRICED amount.
-        const _remainingCls = skipReconciliation ? (from.classes || 0) : moved;
-        const _destPrice = skipReconciliation ? (from.price || 0) : bPrice;
+        const _remainingCls = fromIsCamp ? (from.classes || 0) : moved;
+        const _destPrice = fromIsCamp ? (from.price || 0) : bPrice;
         // v6.494: coachId can be a string on one record and a number on another (imported data), so
         // ALWAYS compare with String() — otherwise the enrollment / source-sub / dest-sub below aren't
         // found, the source sport is never marked "switched away", the destination never gets the
@@ -27914,10 +27944,33 @@ window.switchSport = function(memberId) {
         } else {
           m.enrollments.push({ sport: toSport, coachId: finalToCoachId, classes: _remainingCls, price: _destPrice, switchedInto: true });
         }
+        // v6.847 (D2) — a CAMP ↔ SPORT switch has no commission split, but it must still MOVE the package: the invoice line is renamed to the destination (same price, so the total and the payments do
+        // not change) and the source package is closed / the destination package created below. Before, only the enrollment changed, the camp (or sport) package stayed active, and the next Edit → Save
+        // billed the sport a second time (Rawan Mabkhout 500 → 1000).
+        if (skipReconciliation) {
+          const _lineIsSrc = li => li.sport === _fromSport && (isCampSport(_fromSport) || String(li.coachId) === String(_fromCoachId));
+          const _cands = (state.invoices || []).filter(v => !v.deleted && !v.switchCredit && v.activityType !== 'switch-credit' && (v.category || 'Membership') === 'Membership' && v.customerId === m.id && Array.isArray(v.lineItems) && v.lineItems.some(_lineIsSrc))
+            .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+          const _inv0 = _cands.filter(v => String(v.date || '') <= switchDate).slice(-1)[0] || _cands.slice(-1)[0] || null;
+          if (_inv0 && !fromIsCamp) {
+            // SPORT → CAMP: the sport's coach keeps the attended share; the rest of the line becomes the camp line
+            const _ln = _inv0.lineItems.find(_lineIsSrc);
+            const _tot = Number(_ln.price) || 0, _keep = Math.round(aShare * 100) / 100, _rest = Math.round((_tot - _keep) * 100) / 100;
+            _ln.price = _keep; _ln.classes = attendedA;
+            _inv0.lineItems.push({ sport: toSport, coach: '', coachId: null, classes: moved, price: _rest, issueDate: switchDate });
+            if (typeof sportListWithDuration === 'function') { const _lb = sportListWithDuration(_inv0.lineItems); if (_lb) _inv0.sport = _lb; }
+            if (typeof stampUpdate === 'function') stampUpdate(_inv0);
+          } else if (_inv0) {
+            const _ln = _inv0.lineItems.find(_lineIsSrc);
+            _ln.sport = toSport; _ln.coachId = finalToCoachId; _ln.coach = finalToCoachId != null ? coachName(finalToCoachId) : '';
+            if (typeof sportListWithDuration === 'function') { const _lb = sportListWithDuration(_inv0.lineItems); if (_lb) _inv0.sport = _lb; }
+            if (typeof stampUpdate === 'function') stampUpdate(_inv0);
+          }
+        }
         // Mark the SOURCE subscription completed at what she actually used (e.g. Gymnastic → 2
         // attended, completed) and size/repurpose the destination subscription to the remaining
         // classes + transferred value, so the card and payroll read one split package.
-        if (!skipReconciliation && Array.isArray(m.subscriptions)) {
+        if (Array.isArray(m.subscriptions)) {
           // v6.556/6.559: cap/switch the CURRENT cycle — the SAME sub resolved above for the invoice
           // split (covers the switch date), never the FIRST active sub. Otherwise a renewed sport switched
           // the OLD cycle: the destination inherited a stale end (backwards window → "outside period") and
@@ -28033,7 +28086,7 @@ window.switchSport = function(memberId) {
     if (isCampSport(from.sport)) return parseFloat(from.price) || 0;
     const attended = countAttendedUpTo(from.sport, $('#sw-date')?.value || TODAY, from.coachId);
     const total = parseInt(from.classes) || 0;
-    const price = _switchPriceBase(m, from);   // v6.779
+    const price = _switchPriceBase(m, from, $('#sw-date')?.value || TODAY);   // v6.779
     const aRate = total > 0 ? price / total : 0;
     // v6.532: the default price charges ONLY the remaining classes (bShare). Carry-forward classes still
     // MOVE to the new sport (moved = remaining + carried in the sub) but are a FREE bonus — pricing them
@@ -28118,7 +28171,7 @@ window.switchSport = function(memberId) {
     const attended = countAttendedUpTo(from.sport, switchDate, from.coachId);
     const totalClasses = parseInt(from.classes) || 0;
     const remaining = Math.max(0, totalClasses - attended);
-    const price = _switchPriceBase(m, from);   // v6.779
+    const price = _switchPriceBase(m, from, ($('#sw-date') || {}).value || TODAY);   // v6.779
     const switchMonth = switchDate.slice(0, 7);
     const monthLabel = fmtMonth(switchMonth);
     const elPrev = $('#sw-preview'); if (!elPrev) return;
@@ -35950,7 +36003,25 @@ function courtHours() {
 }
 const cbMin = s => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || '')); return m ? (+m[1]) * 60 + (+m[2]) : null; };
 const cbClock = n => { n = Math.max(0, Math.round(n)); const h = Math.floor(n / 60) % 24, m = n % 60; return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0'); };
-function courtBookingsOn(date) { return (state.rentals || []).filter(r => r && r.facility === COURT && r.date === date); }
+// v6.848 — the FOOTBALL classes of the weekly schedule are shown on the board as academy bookings (free). They are DERIVED from state.schedule on every paint — nothing is stored — so editing the
+// schedule updates the board by itself, and only TODAY and later days show them (a past day keeps what was really booked: no back-dating).
+const SCHED_DAY_CODES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+function courtScheduleOn(date) {
+  if (!date || date < TODAY) return [];
+  const code = SCHED_DAY_CODES[new Date(date + 'T12:00:00').getDay()];
+  const real = (state.rentals || []).filter(r => r && r.facility === COURT && r.date === date && r.startTime);
+  const covered = hh => real.some(r => { const s2 = cbMin(r.startTime), e2 = s2 + Math.round((r.hours || 0) * 60); return hh * 60 < e2 && s2 < hh * 60 + 60; });   // a real booking on the slot replaces the schedule block
+  return (state.schedule || []).filter(c => c && c.sport === 'Football' && c.day === code && Number.isFinite(parseInt(c.slot, 10)) && !covered(parseInt(c.slot, 10)))
+    .map(c => ({ id: 'sch' + c.id, schedId: c.id, fromSchedule: true, academy: !c.label, unbilled: !!c.label, facility: COURT, date, startTime: String(parseInt(c.slot, 10)).padStart(2, '0') + ':00', hours: 1, amount: 0, hourlyRate: 0,
+      customerName: c.label ? c.label : 'Football', customerPhone: null, notes: (!c.label && c.coachId != null && typeof coachName === 'function') ? coachName(c.coachId) : null }));
+}
+// the first booking (real or from the schedule) that overlaps [start, start + hours) on a date, ignoring one real rental id
+function courtClash(date, startTime, hours, exceptId) {
+  const s1 = cbMin(startTime); if (s1 == null) return null;
+  const e1 = s1 + Math.round((Number(hours) || 0) * 60);
+  return courtBookingsOn(date).find(x => x && x.id !== exceptId && x.startTime && (() => { const s2 = cbMin(x.startTime), e2 = s2 + Math.round((x.hours || 0) * 60); return s1 < e2 && s2 < e1; })()) || null;
+}
+function courtBookingsOn(date) { return (state.rentals || []).filter(r => r && r.facility === COURT && r.date === date).concat(courtScheduleOn(date)); }
 function courtBookingDue(r) { const inv = (typeof rentalInvoiceFor === 'function') ? rentalInvoiceFor(r) : null; return inv && typeof invoiceBalance === 'function' ? Math.round(invoiceBalance(inv) * 100) / 100 : 0; }
 // side-by-side lanes for bookings that overlap (older records can)
 function courtLanes(list) {
@@ -35964,8 +36035,9 @@ function courtLanes(list) {
   return out;
 }
 // v6.846 — a booking must sit inside the opening hours (default 16:00–24:00); returns an error text or ''
-function courtHoursError(startTime, hours) {
+function courtHoursError(startTime, hours, date) {
   const s = cbMin(startTime); if (s == null) return '';
+  if (date && String(date).slice(0, 10) < TODAY) return '';   // v6.846 — a BACK-DATED booking can be at any time (recording what already happened)
   const H = courtHours(), o = cbMin(H.open), c = H.close === '24:00' ? 1440 : cbMin(H.close);
   const e = s + Math.round((Number(hours) || 0) * 60);
   if (s < o || e > c) return t('The court takes bookings from ' + H.open + ' to ' + H.close + ' only.', 'الملعب يقبل الحجز من ' + H.open + ' إلى ' + H.close + ' فقط.');
@@ -35991,9 +36063,8 @@ window.academyBookingDialog = function (prefill, existingId, onDone) {
         if (!startTime) { toast(t('Pick the start time', 'اختر وقت البدء'), 'error'); return; }
         if (!(hours > 0) || hours > 8) { toast(t('Hours must be between 0.5 and 8', 'الساعات بين 0.5 و8'), 'error'); return; }
         if (sanityDateToast(date, 'Booking', 'الحجز', { future: 366, past: 400 })) return;
-        const he = courtHoursError(startTime, hours); if (he) { toast(he, 'error'); return; }
-        const s1 = cbMin(startTime), e1 = s1 + Math.round(hours * 60);
-        const clash = (state.rentals || []).find(x => x && x.id !== (ex && ex.id) && x.facility === COURT && x.date === date && x.startTime && (() => { const s2 = cbMin(x.startTime), e2 = s2 + Math.round((x.hours || 0) * 60); return s1 < e2 && s2 < e1; })());
+        const he = courtHoursError(startTime, hours, date); if (he) { toast(he, 'error'); return; }
+        const clash = courtClash(date, startTime, hours, ex && ex.id);
         if (clash) { toast(t('The court is already booked at ' + clash.startTime + ' on ' + fmtDate(date), 'الملعب محجوز بالفعل الساعة ' + clash.startTime + ' يوم ' + fmtDate(date)), 'error'); return; }
         let savedId;
         if (ex) { Object.assign(ex, { date, startTime, hours, notes, amount: 0, hourlyRate: 0 }); stampUpdate(ex); savedId = ex.id; }
@@ -36004,6 +36075,77 @@ window.academyBookingDialog = function (prefill, existingId, onDone) {
       } },
     ],
   });
+};
+// v6.849 — turn a customer's weekly SCHEDULE slots (a Football class with a label, e.g. "Yarid") into real RENTALS for the rest of the month, each left DUE (no payment). Consecutive hours of one day
+// become ONE booking; a slot that already has a real booking is skipped; nothing is created for past days or after the chosen end date.
+function scheduleRentalPlan(label, untilDate, rate) {
+  const lab = String(label || '').trim().toLowerCase(), out = [];
+  const entries = (state.schedule || []).filter(c => c && c.sport === 'Football' && String(c.label || '').trim().toLowerCase() === lab && Number.isFinite(parseInt(c.slot, 10)));
+  for (let d = TODAY; d <= untilDate; d = addDays(d, 1)) {
+    const code = SCHED_DAY_CODES[new Date(d + 'T12:00:00').getDay()];
+    const hrs = entries.filter(c => c.day === code).map(c => parseInt(c.slot, 10)).sort((a, b) => a - b);
+    let i = 0;
+    while (i < hrs.length) {
+      let j = i; while (j + 1 < hrs.length && hrs[j + 1] === hrs[j] + 1) j++;
+      const start = hrs[i], n = j - i + 1, st = String(start).padStart(2, '0') + ':00';
+      const taken = (state.rentals || []).some(r => r && r.facility === COURT && r.date === d && r.startTime && (() => { const s2 = cbMin(r.startTime), e2 = s2 + Math.round((r.hours || 0) * 60); return start * 60 < e2 && s2 < (start + n) * 60; })());
+      out.push({ date: d, startTime: st, hours: n, amount: Math.round(n * rate * 100) / 100, skip: taken });
+      i = j + 1;
+    }
+  }
+  return out;
+}
+window.scheduleRentalsDialog = function () {
+  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast(t('Not allowed', 'غير مسموح'), 'error'); return; }
+  const labels = [...new Set((state.schedule || []).filter(c => c && c.sport === 'Football' && c.label).map(c => String(c.label).trim()))];
+  if (!labels.length) { toast(t('No customer slots (with a label) in the Football schedule', 'لا توجد حجوزات عملاء (باسم) في جدول الكرة'), 'info'); return; }
+  const custs = (state.rentalCustomers || []).slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const monthEnd = (() => { const d = new Date(TODAY.slice(0, 7) + '-01T12:00:00'); d.setMonth(d.getMonth() + 1); d.setDate(0); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); })();
+  const guess = lb => { const l = lb.toLowerCase(); return custs.find(c => String(c.name).trim().toLowerCase() === l) || custs.find(c => String(c.name).toLowerCase().includes(l)) || null; };
+  const lastRate = cid => { const r = (state.rentals || []).filter(x => x && x.customerRentalId === cid && x.hourlyRate > 0 && x.facility === COURT).sort((a, b) => String(b.date).localeCompare(String(a.date)))[0]; return r ? r.hourlyRate : 100; };
+  const g0 = guess(labels[0]);
+  const rows = labels.map((lb, i) => '<div class="card" style="padding:10px 12px;margin-bottom:10px"><div style="font-weight:700;margin-bottom:6px">📅 ' + escapeHtml(lb) + '</div><div class="form-row">'
+    + '<div class="field"><label>' + t('Customer', 'العميل') + '</label><select id="sr-c' + i + '">' + custs.map(c => '<option value="' + c.id + '"' + ((guess(lb) || {}).id === c.id ? ' selected' : '') + '>' + escapeHtml(c.name) + ' · ' + escapeHtml(c.phone || '') + '</option>').join('') + '</select></div>'
+    + '<div class="field" style="max-width:130px"><label>' + t('Rate / hour', 'السعر / ساعة') + '</label><input id="sr-r' + i + '" type="number" min="0" step="1" value="' + lastRate((guess(lb) || {}).id) + '" /></div></div></div>').join('');
+  showModal({
+    title: '📅 ' + t('Create rentals from the schedule (left due)', 'إنشاء حجوزات من الجدول (آجلة)'),
+    body: '<div class="text-mute" style="font-size:12px;margin-bottom:10px">' + t('Each customer slot of the weekly Football schedule becomes a real rental from today to the end date. Nothing is paid — every rental is left DUE for the customer.', 'كل حجز عميل في جدول الكرة الأسبوعي يصبح حجزاً حقيقياً من اليوم حتى تاريخ النهاية. لا يُدفع شيء — كل حجز يبقى مستحقاً على العميل.') + '</div>'
+      + rows + '<div class="field" style="max-width:200px"><label>' + t('Until (end of this month)', 'حتى (آخر الشهر)') + '</label><input id="sr-until" type="date" value="' + monthEnd + '" /></div><div id="sr-plan" style="font-size:12px;margin-top:8px"></div>',
+    actions: [
+      { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
+      { label: '✓ ' + t('Create rentals (due)', 'إنشاء الحجوزات (آجلة)'), class: 'btn primary', onclick: () => {
+        const until = ($('#sr-until') || {}).value || monthEnd;
+        if (until < TODAY) { toast(t('The end date must be today or later — nothing is created for past days', 'تاريخ النهاية اليوم أو بعده — لا يُنشأ شيء للأيام الماضية'), 'error'); return; }
+        if (sanityDateToast(until, 'End', 'النهاية', { future: 120, past: 0 })) return;
+        const made = [];
+        labels.forEach((lb, i) => {
+          const cust = custs.find(c => String(c.id) === String((($('#sr-c' + i) || {}).value))); const rate = parseFloat((($('#sr-r' + i) || {}).value)) || 0;
+          if (!cust || !(rate > 0)) return;
+          const matched = (state.members || []).find(m => m && !m.deleted && m.phone && m.phone === cust.phone) || null;
+          for (const p of scheduleRentalPlan(lb, until, rate).filter(x => !x.skip)) {
+            const rentalId = nextId(state.rentals || []), ref = nextInvoiceRef(), desc = '🏟 Football Court rental — ' + p.hours + 'h @ ' + p.startTime + ' — ' + cust.name;
+            const inv = { id: nextId(state.invoices), date: p.date, description: desc, amount: p.amount, method: 'cash', month: p.date.slice(0, 7), ref, category: 'Court Rental', activityType: 'rental', sport: COURT, coach: null, coachId: null,
+              customerId: matched ? matched.id : null, customerName: cust.name, customerPhone: cust.phone || null, amountPaid: 0, payments: [], rentalId };
+            stampUpdate(inv); state.invoices.push(inv);
+            const rn = { id: rentalId, facility: COURT, date: p.date, startTime: p.startTime, hours: p.hours, hourlyRate: rate, amount: p.amount, customerName: cust.name, customerPhone: cust.phone || null, customerQid: cust.qid || null,
+              customerRentalId: cust.id, memberId: matched ? matched.id : null, method: 'cash', notes: t('From the weekly schedule', 'من الجدول الأسبوعي'), invoiceId: inv.id, createdAt: new Date().toISOString(), fromSchedule: true };
+            stampUpdate(rn); state.rentals.push(rn); made.push(inv);
+          }
+        });
+        closeModal();
+        if (!made.length) { toast(t('Nothing to create (no slots left, or they already have a booking)', 'لا شيء للإنشاء (لا حصص متبقية أو لديها حجز بالفعل)'), 'info'); return; }
+        const total = Math.round(made.reduce((s, i) => s + i.amount, 0) * 100) / 100;
+        if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: made.slice(0, 20).map(i => ({ collection: 'invoices', id: i.id })), okMsg: t(made.length + ' rental(s) created · ' + fmt(total) + ' QAR left DUE', 'تم إنشاء ' + made.length + ' حجز · ' + fmt(total) + ' ريال آجل'), afterOk: () => render() });
+        else { save(); render(); }
+      } },
+    ],
+  });
+  const plan = () => {
+    const until = ($('#sr-until') || {}).value || monthEnd; let n = 0, amt = 0, sk = 0, html = '';
+    labels.forEach((lb, i) => { const rate = parseFloat((($('#sr-r' + i) || {}).value)) || 0; const pl = scheduleRentalPlan(lb, until, rate); pl.forEach(p => { if (p.skip) sk++; else { n++; amt += p.amount; } }); html += '<div>' + escapeHtml(lb) + ': ' + pl.filter(p => !p.skip).map(p => fmtDate(p.date) + ' ' + p.startTime + ' (' + p.hours + 'h)').join(' · ') + '</div>'; });
+    const el = $('#sr-plan'); if (el) el.innerHTML = '<b>' + n + ' ' + t('rental(s)', 'حجز') + ' · ' + fmt(amt) + ' QAR ' + t('due', 'آجل') + '</b>' + (sk ? ' <span class="text-mute">(' + sk + ' ' + t('already booked — skipped', 'محجوز بالفعل — تم تخطيه') + ')</span>' : '') + html;
+  };
+  setTimeout(() => { plan(); ['#sr-until'].concat(labels.map((_, i) => '#sr-r' + i)).forEach(sel => { const el = $(sel); if (el) el.addEventListener('input', plan); }); }, 30);
 };
 window._cb = window._cb || { date: null, view: 'day' };
 PAGES.courtbookings = (main) => {
@@ -36020,6 +36162,7 @@ PAGES.courtbookings = (main) => {
   function dayHtml() {
     const date = S.date, list = courtBookingsOn(date), tm = timed(list), untimed = list.filter(r => cbMin(r.startTime) == null);
     const H = courtHours(); let open = cbMin(H.open), close = cbMin(H.close);
+    if (date < TODAY) { open = Math.min(open, 360); close = 1440; }   // v6.846 — back-dating: a past day shows 06:00–24:00
     for (const r of tm) { open = Math.min(open, Math.floor(cbMin(r.startTime) / 60) * 60); close = Math.max(close, Math.ceil((cbMin(r.startTime) + Math.round((r.hours || 1) * 60)) / 60) * 60); }
     const ROW = 56, rows = Math.max(1, Math.round((close - open) / 60)), height = rows * ROW;
     const lanes = courtLanes(tm), sm = sum(list), openMin = cbMin(H.open), closeMin = cbMin(H.close);
@@ -36028,10 +36171,10 @@ PAGES.courtbookings = (main) => {
     const grid = Array.from({ length: rows }, (_, i) => { const m = open + i * 60, hh = cbClock(m); return `<div class="cb-row" data-slot="${hh}" style="position:absolute;left:0;right:0;top:${i * ROW}px;height:${ROW}px;border-top:1px solid var(--border);cursor:pointer" title="${t('Book', 'احجز')} ${hh}"><span class="text-mute" style="position:absolute;left:6px;top:4px;font-size:11px">${hh}</span></div>`; }).join('');
     const blocks = lanes.map(o => {
       const r = o.r, due = courtBookingDue(r), top = (o.s - open) / 60 * ROW, h = Math.max(24, (o.e - o.s) / 60 * ROW - 3), w = 100 / o.lanes;
-      const col = r.academy ? 'var(--blue)' : (due > 0.5 ? 'var(--red)' : 'var(--green)');
-      return `<div class="cb-block" data-id="${r.id}" style="position:absolute;left:calc(58px + (100% - 64px) * ${o.l / o.lanes});width:calc((100% - 64px) * ${1 / o.lanes} - 3px);top:${top}px;height:${h}px;box-sizing:border-box;padding:4px 8px;border-radius:8px;border:1px solid ${col};border-left:4px solid ${col};background:color-mix(in srgb, ${col} 12%, var(--surface));overflow:hidden;cursor:pointer;font-size:12px;line-height:1.35">
+      const col = r.academy ? 'var(--blue)' : (r.unbilled ? 'var(--accent-2)' : (due > 0.5 ? 'var(--red)' : 'var(--green)'));
+      return `<div class="cb-block" data-id="${r.id}"${r.fromSchedule ? ' data-sch="1"' : ''} style="position:absolute;left:calc(58px + (100% - 64px) * ${o.l / o.lanes});width:calc((100% - 64px) * ${1 / o.lanes} - 3px);top:${top}px;height:${h}px;box-sizing:border-box;padding:4px 8px;border-radius:8px;border:1px solid ${col};border-left:4px solid ${col};background:color-mix(in srgb, ${col} 12%, var(--surface));overflow:hidden;cursor:pointer;font-size:12px;line-height:1.35">
         <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${cbClock(o.s)}–${cbClock(o.e)} · ${r.academy ? '🏫 ' : ''}${escapeHtml(r.customerName || '—')}</div>
-        <div class="text-mute" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.academy ? t('Academy · free', 'الأكاديمية · مجاني') + (r.notes ? ' · ' + escapeHtml(r.notes) : '') : ''}${r.academy ? '' : r.customerPhone ? escapeHtml(r.customerPhone) : ''}${money ? ' · ' + fmt(r.amount || 0) + ' QAR' : ''}${due > 0.5 ? (money ? ' · ⏳ ' + fmt(due) + ' ' + t('due', 'متبقي') : ' · ⏳ ' + t('unpaid', 'غير مدفوع')) : ''}</div>
+        <div class="text-mute" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.academy ? (r.fromSchedule ? '📅 ' + t('Schedule', 'الجدول') + ' · ' : '') + t('Academy · free', 'الأكاديمية · مجاني') + (r.notes ? ' · ' + escapeHtml(r.notes) : '') : ''}${(!r.academy && r.unbilled) ? '📅 ' + t('From the schedule — not billed yet', 'من الجدول — لم تُفوتر بعد') : ''}${(r.academy || r.unbilled) ? '' : r.customerPhone ? escapeHtml(r.customerPhone) : ''}${money ? ' · ' + fmt(r.amount || 0) + ' QAR' : ''}${due > 0.5 ? (money ? ' · ⏳ ' + fmt(due) + ' ' + t('due', 'متبقي') : ' · ⏳ ' + t('unpaid', 'غير مدفوع')) : ''}</div>
       </div>`;
     }).join('');
     const nowLine = (date === TODAY) ? (() => { const n = new Date(), m = n.getHours() * 60 + n.getMinutes(); return (m >= open && m <= close) ? `<div id="cb-now" style="position:absolute;left:52px;right:0;top:${(m - open) / 60 * ROW}px;border-top:2px solid var(--accent);z-index:2;pointer-events:none"></div>` : ''; })() : '';
@@ -36063,6 +36206,13 @@ PAGES.courtbookings = (main) => {
         </div>`; }).join('')}</div>`;
   }
   function openBooking(id) {
+    if (String(id).startsWith('sch')) {   // v6.848 — a Football class from the schedule
+      const sc = courtScheduleOn(S.date).find(x => x.id === id); if (!sc) return;
+      if (sc.unbilled) { scheduleRentalsDialog(); return; }   // v6.849 — a customer's weekly slot → create the rentals (due)
+      showModal({ title: '📅 ' + t('Academy class (from the schedule)', 'حصة الأكاديمية (من الجدول)'), body: '<div style="font-size:14px;line-height:1.8"><div style="font-weight:700">' + escapeHtml(sc.customerName) + (sc.notes ? ' · ' + escapeHtml(sc.notes) : '') + '</div><div>📅 ' + fmtDate(sc.date) + ' · ' + sc.startTime + '–' + cbClock(cbMin(sc.startTime) + 60) + '</div><div class="text-mute" style="margin-top:6px">' + t('This class comes from the weekly Schedule. It is free and blocks the court. Change it in the Schedule — the board follows from today on; past days are not touched.', 'هذه الحصة من الجدول الأسبوعي. مجانية وتحجز الملعب. عدّلها من الجدول — اللوحة تتبعه من اليوم فصاعداً ولا تتغير الأيام الماضية.') + '</div></div>',
+        actions: [{ label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal }, { label: '📅 ' + t('Open the Schedule', 'فتح الجدول'), class: 'btn primary', onclick: () => { closeModal(); navigate('schedule'); } }] });
+      return;
+    }
     const r = (state.rentals || []).find(x => x && x.id === id); if (!r) return;
     if (r.academy) { academyBookingDialog(null, r.id, () => render()); return; }   // v6.846
     const due = courtBookingDue(r), inv = (typeof rentalInvoiceFor === 'function') ? rentalInvoiceFor(r) : null, s = cbMin(r.startTime), e = s != null ? s + Math.round((r.hours || 1) * 60) : null;
@@ -36110,6 +36260,7 @@ PAGES.courtbookings = (main) => {
         <div class="topbar-actions">
           ${currentRole() === 'admin' ? `<button class="btn ghost" id="cb-hours" title="${t('Opening hours', 'ساعات العمل')}">⚙</button>` : ''}
           <button class="btn ghost" id="cb-rentals" title="${t('The full rentals list', 'قائمة الإيجارات الكاملة')}">📋 ${t('All rentals', 'كل الإيجارات')}</button>
+          ${currentRole() === 'admin' ? `<button class="btn ghost" id="cb-sched-rent" title="${t('Turn the customers\' weekly schedule slots (e.g. Yarid) into rentals left due, until month end', 'حوّل حجوزات العملاء الأسبوعية من الجدول (مثل Yarid) إلى حجوزات آجلة حتى آخر الشهر')}">📅 ${t('Schedule → rentals', 'الجدول ← حجوزات')}</button>` : ''}
           <button class="btn ghost" id="cb-academy" title="${t('Block the court for the academy — free, no invoice', 'احجز الملعب للأكاديمية — مجاني بدون فاتورة')}">🏫 ${t('Academy (free)', 'الأكاديمية (مجاني)')}</button>
           <button class="btn primary" id="cb-new">+ ${t('New booking', 'حجز جديد')}</button>
         </div>
@@ -36126,11 +36277,12 @@ PAGES.courtbookings = (main) => {
     $('#cb-date').onchange = e => { if (e.target.value) go(e.target.value); };
     $('#cb-vday').onclick = () => { S.view = 'day'; paint(); }; $('#cb-vweek').onclick = () => { S.view = 'week'; paint(); };
     $('#cb-new').onclick = () => addRental(() => render(), { facility: COURT, date: S.date, hours: 1 });
+    { const _sb = $('#cb-sched-rent'); if (_sb) _sb.onclick = () => scheduleRentalsDialog(); }
     $('#cb-academy').onclick = () => academyBookingDialog({ date: S.date }, null, () => render());
     $('#cb-rentals').onclick = () => navigate('rentals');
     const hb = $('#cb-hours'); if (hb) hb.onclick = hoursDialog;
     main.querySelectorAll('.cb-row').forEach(el => el.addEventListener('click', e => { if (e.target.closest('.cb-block')) return; pickSlot(S.date, el.dataset.slot); }));
-    main.querySelectorAll('.cb-block').forEach(el => el.addEventListener('click', e => { e.stopPropagation(); openBooking(+el.dataset.id); }));
+    main.querySelectorAll('.cb-block').forEach(el => el.addEventListener('click', e => { e.stopPropagation(); openBooking(el.dataset.sch ? el.dataset.id : +el.dataset.id); }));
     main.querySelectorAll('.cb-day').forEach(el => el.addEventListener('click', () => { S.date = el.dataset.date; S.view = 'day'; paint(); }));
     // bring the current time (today) or the first booking of the day into view — the early rows are usually empty
     if (S.view === 'day') { const tg = main.querySelector('#cb-now') || main.querySelector('#cb-board .cb-block'); if (tg && tg.scrollIntoView) tg.scrollIntoView({ block: 'center' }); }
@@ -36643,6 +36795,9 @@ function showRentalCustomersList() {
   }, 50);
 }
 
+// v6.846 — club contact details used in the customer confirmation message
+const CLUB_MAP_URL = 'https://maps.app.goo.gl/hE3g8r5svmJy34bd6';
+const CLUB_PHONE = '30400103';
 // v6.821 — the booking details to the customer on WhatsApp (court / room, day, time, hours, amount, paid / due, invoice) — a button on the "Booking saved" popup.
 window.rentalBookingMessage = function(r) {
   const inv = (typeof rentalInvoiceFor === 'function') ? rentalInvoiceFor(r) : null;
@@ -36665,9 +36820,9 @@ window.rentalBookingMessage = function(r) {
   const payAr = due > 0.009 ? (paid > 0.009 ? 'المدفوع: ' + fmt(paid) + ' ريال · المتبقي: ' + fmt(due) + ' ريال' : 'المبلغ المستحق: ' + fmt(due) + ' ريال') : 'مدفوع بالكامل ✅';
   const payEn = due > 0.009 ? (paid > 0.009 ? 'Paid: ' + fmt(paid) + ' QAR · Remaining: ' + fmt(due) + ' QAR' : 'Amount due: ' + fmt(due) + ' QAR') : 'Paid in full ✅';
   const ar = ['أهلاً ' + first + '! 👋', 'تم تأكيد حجزك في نادي بلاك ستارز الرياضي:', '🏟 ' + facAr, '📅 ' + dayAr, range ? '🕒 ' + range : '', '⏱ ' + hrs + (hrs === 1 ? ' ساعة' : ' ساعات'),
-    '💰 الإجمالي: ' + fmt(total) + ' ريال', payAr, ref ? '🧾 فاتورة رقم ' + ref : '', 'الوعب، الدوحة 📍'];
+    '💰 الإجمالي: ' + fmt(total) + ' ريال', payAr, ref ? '🧾 فاتورة رقم ' + ref : '', '📍 الوعب، الدوحة: ' + CLUB_MAP_URL, '📞 رقم النادي: ' + CLUB_PHONE];
   const en = ['Hi ' + first + '! 👋', 'Your booking at Black Stars Sports Club is confirmed:', '🏟 ' + facEn, '📅 ' + dayEn, range ? '🕒 ' + range : '', '⏱ ' + hrs + (hrs === 1 ? ' hour' : ' hours'),
-    '💰 Total: ' + fmt(total) + ' QAR', payEn, ref ? '🧾 Invoice ' + ref : '', 'Waab, Doha 📍'];
+    '💰 Total: ' + fmt(total) + ' QAR', payEn, ref ? '🧾 Invoice ' + ref : '', '📍 Waab, Doha: ' + CLUB_MAP_URL, '📞 Club number: ' + CLUB_PHONE];
   return ar.filter(Boolean).join('\n') + '\n\n———\n\n' + en.filter(Boolean).join('\n');
 };
 window.sendRentalBookingWhatsApp = function(rentalId) {
@@ -36847,7 +37002,8 @@ function saveRental(existingId, onDone) {
   const hourlyRate = parseFloat($('#r-rate').value) || 0;
   const amount = parseFloat($('#r-amount').value) || (hours * hourlyRate);
   if (hours <= 0 || hourlyRate <= 0) { toast('Hours and rate must be > 0', 'error'); return; }
-  if (facility === COURT && startTime) { const _he = courtHoursError(startTime, hours); if (_he) { toast(_he, 'error'); return; } }   // v6.846 — 4 PM to midnight only
+  if (facility === COURT && startTime) { const _he = courtHoursError(startTime, hours, date); if (_he) { toast(_he, 'error'); return; } }
+  if (facility === COURT && startTime) { const _sc = courtScheduleOn(date).find(x => { const s2 = cbMin(x.startTime), s1 = cbMin(startTime); return s1 < s2 + 60 && s2 < s1 + Math.round(hours * 60); }); if (_sc) { toast(t('The academy has a Football class then (' + _sc.startTime + (_sc.notes ? ' · ' + _sc.notes : '') + ') — pick another time, or change the schedule.', 'الأكاديمية عندها حصة كرة قدم في هذا الوقت (' + _sc.startTime + (_sc.notes ? ' · ' + _sc.notes : '') + ') — اختر وقتاً آخر أو عدّل الجدول.'), 'error'); return; } }   // v6.848   // v6.846 — 4 PM to midnight only
   // Start time is OPTIONAL now. Back-dating is allowed (record a past rental / issue an
   // old-dated invoice). When a start time is given we still guard against overlaps.
   // Back-dating is allowed (record past rentals / old-dated invoices).
