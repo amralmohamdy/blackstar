@@ -378,7 +378,7 @@ PAGES.targets = (main) => {
     const receptionCard = `<div style="max-width:420px;margin:0 auto 6px">${_targetCard('🧾', t('Reception — Income Target', 'الاستقبال — هدف الدخل'), t('Income this month (membership + rentals + shop)', 'الدخل هذا الشهر (اشتراكات + إيجارات + متجر)'), income, receptionTargets(), 'QAR')}</div>`;
     const _recTT = targetTier(income, receptionTargets());
     const _recAll = (state.coaches || []).filter(c => _coachActive(c) && isReceptionStaff(c));
-    const _recps = _recAll.filter(receptionBonusEligible);   // v6.835 — only the ticked receptionists share the bonus
+    const _recps = _recAll;   // v6.840 — equal slices for ALL receptionists; an unticked one forfeits his slice
     const _n = _recps.length;
     const per = _n > 0 ? Math.round(_recTT.bonus / _n) : _recTT.bonus;
     if (role === 'admin') {
@@ -3205,6 +3205,7 @@ window.freezeMember = function(id) {
         }
         const days = parseInt(document.getElementById('freeze-days').value);
         if (!days || days < 1) { toast('Enter a duration of at least 1 day', 'error'); return; }
+        if (days > 365) { toast(t('A freeze can be at most 365 days', 'أقصى مدة للتجميد 365 يوماً'), 'error'); return; }   // v6.841 (X-08)
         if (!isAdmin && days > allow.remainingDays) { toast(`Only ${allow.remainingDays} freeze day${allow.remainingDays === 1 ? '' : 's'} remaining for this membership cycle.`, 'error'); return; }
         const reason = document.getElementById('freeze-reason').value.trim();
         applyFreeze(m, days, reason);
@@ -3757,7 +3758,7 @@ function updatePaidNowHint() {
   const methodInputs = document.querySelectorAll('.f-pay-m');
   if (!methodInputs.length) return;
   const total = (window._enrollRows || []).reduce((s, r) => s + (parseFloat(r.price) || 0), 0);
-  let entered = 0, anyEntered = false;
+  let entered = 0, anyEntered = !!(document.getElementById('f-leavedue') || {}).checked;   // v6.842 (X-14) — "leave due" = entered, nothing paid
   methodInputs.forEach(mi => { if (mi.value !== '' && mi.value != null) { anyEntered = true; entered += Math.max(0, parseFloat(mi.value) || 0); } });
   const paid = anyEntered ? entered : total;   // all blank = paying in full (cash)
   const due = Math.max(0, total - paid);
@@ -4010,6 +4011,7 @@ function showMemberForm(m) {
       ${isNew ? `
       <div style="margin-top:6px;padding:14px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.30);border-radius:10px">
         <div style="font-size:11px;color:var(--green);text-transform:uppercase;letter-spacing:.6px;font-weight:700;margin-bottom:10px">💳 ${t('First payment (auto-creates invoice)', 'الدفعة الأولى (تنشئ فاتورة تلقائياً)')}</div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;margin-bottom:8px;cursor:pointer"><input type="checkbox" id="f-leavedue" onchange="document.querySelectorAll('.f-pay-m').forEach(function(i){i.disabled=this.checked;if(this.checked)i.value=''}.bind(this));updatePaidNowHint()" /> ⏳ ${t('Leave the whole amount DUE — nothing paid now', 'اترك كامل المبلغ مستحقاً — لا شيء مدفوع الآن')}</label>
         <div>
           <label style="font-size:12px;font-weight:600;display:block;margin-bottom:6px">💵 ${t('Paid now — amount per method', 'المدفوع الآن — المبلغ لكل طريقة')} <span class="text-mute" style="font-weight:400;font-size:10px">${t('(split allowed · leave ALL blank = paid in full, cash)', '(يمكن التقسيم · اترك الكل فارغاً = مدفوع بالكامل نقداً)')}</span></label>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -4050,6 +4052,7 @@ function showMemberForm(m) {
         // Gently fix obviously-wrong casing (all-lowercase or ALL-UPPERCASE) to
         // Title Case; leave intentional mixed-case (e.g. "McDonald") untouched.
         if (nameEn && (nameEn === nameEn.toLowerCase() || nameEn === nameEn.toUpperCase())) nameEn = titleCaseName(nameEn);
+        if (nameEn.length < 2 || nameEn.length > 80) { toast(t('The name must be 2 to 80 characters', 'الاسم من 2 إلى 80 حرفاً'), 'error'); return; }   // v6.841 (X-13)
         const nameAr = $('#f-name-ar').value.trim();
         const phoneInput = readPhoneInput('f-phone');
         const phone = phoneInput.digits ? phoneInput.phone : null;
@@ -4243,6 +4246,12 @@ function showMemberForm(m) {
           toast(`"${dupSport}" is enrolled more than once. A member can have only one active enrollment per sport — remove the extra row, or use Switch Sport to change a sport.`, 'error');
           return;
         }
+        // v6.839 (X-02 / X-03) — typo guards on the sport cards
+        for (const en of enrollments) {
+          if (en.start && sanityDateBad(en.start, { past: 3650, future: 366 })) { toast(t(en.sport + ': the start date looks wrong (' + en.start + ') — check the year.', en.sport + ': تاريخ البداية يبدو خطأ (' + en.start + ') — راجع السنة.'), 'error'); return; }
+          if (en.classes < 0 || en.classes > 365) { toast(t(en.sport + ': classes must be between 0 and 365', en.sport + ': الحصص بين 0 و 365'), 'error'); return; }
+          if (en.price < 0 || en.price > 100000) { toast(t(en.sport + ': the price looks wrong (' + fmt(en.price) + ')', en.sport + ': السعر يبدو خطأ (' + fmt(en.price) + ')'), 'error'); return; }
+        }
         // Derive member-level fields from the per-sport cards:
         //  • member start  = earliest sport start
         //  • first reg     = the entered value, else earliest sport start
@@ -4281,6 +4290,7 @@ function showMemberForm(m) {
         // v6.792 — validate the PAYMENT before anything is saved. The "exceeds the total" check used to run AFTER the member was already added: the form stayed open with a half-saved member
         // (no invoice) and a retry created a DUPLICATE member. Same arithmetic as the invoice block below; nothing is written until it passes.
         if (isNew) {
+          if (Array.from(document.querySelectorAll('.f-pay-m')).some(mi => mi.value !== '' && (parseFloat(mi.value) || 0) < 0)) { toast(t('A paid amount cannot be negative', 'المبلغ المدفوع لا يكون سالباً'), 'error'); return; }   // v6.842 (X-14)
           const _preTotal = enrollments.reduce((s, e) => s + e.price, 0);
           if (_preTotal > 0) {
             let _preEntered = 0;
@@ -4315,7 +4325,7 @@ function showMemberForm(m) {
             // First payment — SPLIT across methods. Each non-zero method becomes its own
             // dated ledger row. If ALL method boxes are blank, default to paying the full
             // total in cash (the common walk-in case).
-            const payByMethod = {}; let entered = 0, anyEntered = false;
+            const payByMethod = {}; let entered = 0, anyEntered = !!(document.getElementById('f-leavedue') || {}).checked;   // v6.842 (X-14) — ticked = nothing paid now, whole amount due
             document.querySelectorAll('.f-pay-m').forEach(mi => {
               if (mi.value !== '' && mi.value != null) { anyEntered = true; const a = Math.max(0, parseFloat(mi.value) || 0); if (a > 0) { payByMethod[mi.dataset.method] = Math.round(((payByMethod[mi.dataset.method] || 0) + a) * 100) / 100; entered += a; } }
             });
@@ -5324,7 +5334,7 @@ window.transferCoachStudents = function(fromId) {
         <div class="text-mute" style="font-size:12px;margin-top:6px">${activeSubCount} active course${activeSubCount === 1 ? '' : 's'} · ${schedCount} scheduled class${schedCount === 1 ? '' : 'es'} will move. A backup is downloaded first.</div>
       </div>
       <div class="form-row">
-        <div class="field"><label>New coach</label><select id="tr-to">${targets.map(c => `<option value="${c.id}">${escapeHtml(c.name)} · ${c.rate || 0}%</option>`).join('')}</select></div>
+        <div class="field"><label>New coach</label><select id="tr-to">${(() => { const _fs = _fromSports.length ? _fromSports : (from.sports || []); const _teaches = c => !_fs.length || _fs.some(sp => coachTeachesSport(c, sp)); return targets.slice().sort((a, b) => (_teaches(b) - _teaches(a))).map(c => `<option value="${c.id}">${escapeHtml(c.name)} · ${c.rate || 0}%${_teaches(c) ? '' : ' (' + t("doesn't teach " + _fs.join('/'), 'لا يدرّب ' + _fs.join('/')) + ')'}</option>`).join(''); })()}</select></div>
         <div class="field"><label>${escapeHtml(from.name)}'s last day</label><input id="tr-date" type="date" value="${TODAY}" /><div class="text-mute" style="font-size:11px;margin-top:4px">Classes on/before this date stay with ${escapeHtml(from.name)}; the new coach starts the next day. (For "left 31 Jul", enter 31 Jul.)</div></div>
       </div>
       ${_fromSports.length > 1 ? `<div class="form-row"><div class="field"><label>Sport to transfer</label><select id="tr-sport"><option value="__ALL__">All sports (${_fromSports.length})</option>${_fromSports.map(sp => `<option value="${escapeHtml(sp)}">${escapeHtml(sp)}</option>`).join('')}</select><div class="text-mute" style="font-size:11px;margin-top:4px">${escapeHtml(from.name)} teaches ${_fromSports.length} sports — pick one to hand off only that, or leave "All sports".</div></div></div>` : ''}`,
@@ -5484,7 +5494,7 @@ window.editCoach = function(id, defaultRole) {
           <input type="checkbox" id="c-recbonus" ${c.noBonus === true ? '' : 'checked'} />
           🏆 ${t('Eligible for the reception bonus (target + private share)', 'مشمول بمكافأة الاستقبال (الهدف + الخاص)')}
         </label>
-        <div class="text-mute" style="font-size:10px;margin-top:3px">${t('The bonus is split equally between the ticked receptionists only. Untick = no bonus for this person, and his share is NOT given to the others.', 'تُقسَّم المكافأة بالتساوي بين المشمولين فقط. إلغاء التحديد = لا مكافأة له ولا تذهب حصته للآخرين.')}</div>
+        <div class="text-mute" style="font-size:10px;margin-top:3px">${t('The bonus is split equally between ALL receptionists. Untick = this person gets no bonus, and his slice is NOT given to the others.', 'تُقسَّم المكافأة بالتساوي بين كل موظفي الاستقبال. إلغاء التحديد = لا مكافأة له ولا تذهب حصته للآخرين.')}</div>
       </div>
       <div class="field" style="margin-top:2px">
         <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-weight:400">
@@ -7548,7 +7558,7 @@ window.editMemberPricing = function(memberId) {
                 const r = groupRefunds[key];
                 if (r && r.amount > 0 && g.inv) {
                   const rd = (groupPayMeta[key] && groupPayMeta[key].date) || payDate || TODAY;
-                  recordPayment(g.inv, { amount: -r.amount, date: rd, method: r.method });
+                  { const _rr = recordPayment(g.inv, { amount: -r.amount, date: rd, method: r.method }); if (_rr) _rr.refund = true; }
                   if (typeof audit === 'function') audit('invoice.refund', 'invoice:' + g.inv.id, `refund ${fmt(r.amount)} (${r.method})`);
                 }
               }
@@ -8891,6 +8901,57 @@ window.dueArchiveOrphans = function () {
   if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: list.slice(0, 20).map(i => ({ collection: 'invoices', id: i.id })), okMsg: t('Archived ' + list.length + ' invoice(s)', 'تمت أرشفة ' + list.length + ' فاتورة'), afterOk: () => render() });
   else { save(); render(); }
 };
+// v6.836 — OVERPAYMENTS get an outlet: an invoice paid above its total can be REFUNDED (a negative payment row) or APPLIED to the same customer's other unpaid invoice.
+function overpaidInvoices() {
+  const r2 = x => Math.round(x * 100) / 100;
+  return (state.invoices || []).filter(i => i && !i.deleted && !i.switchCredit && i.activityType !== 'switch-credit' && Array.isArray(i.payments) && i.payments.length && r2(invoicePaid(i) - invoiceTotal(i)) >= 0.5)
+    .map(i => ({ inv: i, over: r2(invoicePaid(i) - invoiceTotal(i)) }));
+}
+function _overpayDone(ids, okMsg) {
+  if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: ids.map(id => ({ collection: 'invoices', id })), okMsg, afterOk: () => render() });
+  else { save(); render(); }
+}
+window.overpayRefund = function (invId) {
+  if (currentRole() !== 'admin') { toast(t('Admins only', 'للمسؤولين فقط'), 'error'); return; }
+  const o = overpaidInvoices().find(x => x.inv.id === invId); if (!o) return;
+  const v = prompt(t('Refund how much? (max ' + fmt(o.over) + ' QAR)', 'كم تسترد؟ (الحد ' + fmt(o.over) + ' ريال)'), String(o.over)); if (v == null) return;
+  const amt = Math.round((parseFloat(v) || 0) * 100) / 100;
+  if (!(amt > 0) || amt > o.over + 0.001) { toast(t('Enter an amount up to ' + fmt(o.over), 'أدخل مبلغاً حتى ' + fmt(o.over)), 'error'); return; }
+  const mRaw = prompt(t('Refunded by: cash / card / transfer / fawran', 'طريقة الاسترداد: cash / card / transfer / fawran'), 'cash'); if (mRaw == null) return;
+  { const _r = recordPayment(o.inv, { amount: -amt, date: TODAY, method: mRaw || 'cash' }); if (_r) _r.refund = true; }
+  try { if (typeof audit === 'function') audit('invoice.refund', 'invoice:' + o.inv.id, 'overpayment refund ' + fmt(amt) + ' (' + mRaw + ')'); } catch (e) {}
+  _overpayDone([o.inv.id], t('Refunded ' + fmt(amt) + ' QAR', 'تم استرداد ' + fmt(amt) + ' ريال'));
+};
+window.overpayApply = function (invId) {
+  if (currentRole() !== 'admin') { toast(t('Admins only', 'للمسؤولين فقط'), 'error'); return; }
+  const o = overpaidInvoices().find(x => x.inv.id === invId); if (!o) return;
+  const src = o.inv;
+  const target = (state.invoices || []).filter(i => i && !i.deleted && !i.switchCredit && i.id !== src.id && src.customerId != null && i.customerId === src.customerId && invoiceBalance(i) >= 0.5)
+    .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')))[0];
+  if (!target) { toast(t('This customer has no other unpaid invoice', 'لا توجد فاتورة أخرى غير مسددة لهذا العميل'), 'error'); return; }
+  const amt = Math.min(o.over, invoiceBalance(target));
+  if (!confirm(t('Move ' + fmt(amt) + ' QAR from ' + (src.ref || src.id) + ' to ' + (target.ref || target.id) + '?\n\nNo cash moves — the overpayment just pays the other invoice.', 'نقل ' + fmt(amt) + ' ريال من ' + (src.ref || src.id) + ' إلى ' + (target.ref || target.id) + '؟\n\nلا توجد حركة نقد — الزيادة تسدد الفاتورة الأخرى.'))) return;
+  const pm = (src.payments.find(p => p && Number(p.amount) > 0) || {}).method || src.method || 'cash';
+  recordPayment(src, { amount: -amt, date: TODAY, method: pm });
+  const row = recordPayment(target, { amount: amt, date: TODAY, method: pm });
+  if (row) { row.noDrawer = true; row.fromInvoice = src.ref || src.id; }
+  try { if (typeof audit === 'function') audit('invoice.overpay_apply', 'invoice:' + src.id, 'moved ' + fmt(amt) + ' to invoice ' + (target.ref || target.id)); } catch (e) {}
+  _overpayDone([src.id, target.id], t('Moved ' + fmt(amt) + ' QAR to ' + (target.ref || target.id), 'تم نقل ' + fmt(amt) + ' ريال إلى ' + (target.ref || target.id)));
+};
+function overpaidPanelHtml() {
+  if (currentRole() !== 'admin') return '';
+  const list = overpaidInvoices(); if (!list.length) return '';
+  const tot = Math.round(list.reduce((s, x) => s + x.over, 0) * 100) / 100;
+  const rows = list.map(({ inv, over }) => { const info = (typeof customerInfo === 'function' ? (customerInfo(inv) || {}) : {}); return `<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--border);font-size:12px"><span style="flex:1;min-width:160px"><b>${escapeHtml(info.name || inv.customerName || '—')}</b> · ${escapeHtml(String(inv.ref || inv.id))}</span><b class="num" style="color:var(--accent-2)">+${fmt(over)} QAR</b><button class="btn ghost sm" onclick="overpayApply(${inv.id})">${t('Apply to his other due', 'سدّد بها فاتورته الأخرى')}</button><button class="btn ghost sm" onclick="overpayRefund(${inv.id})">↩ ${t('Refund', 'استرداد')}</button></div>`; }).join('');
+  return `<div class="card" style="margin-bottom:12px;padding:12px 14px;border:1px solid var(--accent-2)"><div style="font-weight:800;font-size:13px;margin-bottom:4px">💸 ${t('Overpaid invoices', 'فواتير مدفوعة بزيادة')}: ${list.length} · ${fmt(tot)} QAR <span class="text-mute" style="font-weight:400;font-size:11px">${t('— customer money the club holds. Refund it, or use it on his other unpaid invoice.', '— فلوس عملاء عند النادي. استردها أو سدّد بها فاتورته الأخرى.')}</span></div>${rows}</div>`;
+}
+// v6.842 — DUE REMINDER SCHEDULE: how old the oldest unpaid invoice is; reminder 1 is due at day 3, reminder 2 at day 7, the final notice at day 14.
+function dueReminderStage(ageDays) { return ageDays >= 14 ? 3 : ageDays >= 7 ? 2 : ageDays >= 3 ? 1 : 0; }
+function dueAgeDays(dates) {
+  const d = (dates || []).map(x => String(x || '').slice(0, 10)).filter(x => /^\d{4}-\d{2}-\d{2}$/.test(x)).sort()[0];
+  if (!d) return 0;
+  return Math.max(0, Math.round((new Date(TODAY + 'T00:00:00') - new Date(d + 'T00:00:00')) / 86400000));
+}
 PAGES.duepayment = (main) => {
   if (window._dueFilter == null) window._dueFilter = { search: '', status: 'all', sport: 'all', range: 'all', months: [] };
   const f = window._dueFilter;
@@ -8966,7 +9027,9 @@ PAGES.duepayment = (main) => {
       }
       for (const sp of Object.keys(chg)) { const due = Math.round((chg[sp] - (pd[sp] || 0)) * 100) / 100; if (due > 0.001) bySport[sp] = (bySport[sp] || 0) + due; }
     }
-    all.push({ m, total, bySport, st: memberStatus(m), expiry: m.expiryDate, lastReminded: m.lastRemindedAt || null, remind: reminderInfo(m) });
+    const _rem = reminderInfo(m);
+    const _age = dueAgeDays(invs.filter(i => invoiceBalance(i) >= 0.5).map(i => i.date));
+    all.push({ m, total, bySport, st: memberStatus(m), expiry: m.expiryDate, lastReminded: m.lastRemindedAt || null, remind: _rem, age: _age, needs: dueReminderStage(_age) > (_rem.count || 0) });
   }
 
   // v6.769 — EVERY due: also the invoices of people who are NOT members (walk-in rentals, hall, products, an archived member).
@@ -8980,12 +9043,13 @@ PAGES.duepayment = (main) => {
     const info = (typeof customerInfo === 'function' ? (customerInfo(inv) || {}) : {});
     const nm = inv.customerName || info.name || inv.description || '—';
     const cat = inv.category || inv.sport || 'Other';
-    all.push({ walk: true, inv, m: { id: null, name: nm, nameArabic: '', phone: inv.customerPhone || info.phone || '' }, total: bal, bySport: { [cat]: bal }, st: 'Walk-in', expiry: null, lastReminded: null, remind: { count: 0, last: null } });
+    all.push({ walk: true, inv, m: { id: null, name: nm, nameArabic: '', phone: inv.customerPhone || info.phone || '' }, total: bal, bySport: { [cat]: bal }, st: 'Walk-in', expiry: null, lastReminded: null, remind: { count: 0, last: null }, age: 0, needs: false });
   }
 
   // Apply filters
   const list = all.filter(r => {
     if (f.status !== 'all' && r.st !== f.status) return false;
+    if (f.remind === 'now' && !r.needs) return false;   // v6.842
     if (f.sport !== 'all' && !Object.keys(r.bySport).includes(f.sport)) return false;
     if (f.range !== 'all') {
       const n = r.total;
@@ -9005,7 +9069,8 @@ PAGES.duepayment = (main) => {
   const overallTotal = all.reduce((s, r) => s + r.total, 0);
   const sportSet = [...new Set(all.flatMap(r => Object.keys(r.bySport)))].sort();
   const statusSet = [...new Set(all.map(r => r.st))].sort();
-  const filtersOn = f.search || f.status !== 'all' || f.sport !== 'all' || f.range !== 'all' || f.months.length;
+  const filtersOn = f.search || f.status !== 'all' || f.sport !== 'all' || f.range !== 'all' || f.months.length || f.remind === 'now';
+  const needCount = all.filter(r => r.needs).length;
   const editable = currentRole() === 'admin' || currentRole() === 'receptionist';
 
   // Compute a member's outstanding membership balance (same basis as the rows above).
@@ -9129,7 +9194,7 @@ Black Stars Academy`;
       <td>${r.expiry ? fmtDate(r.expiry) : '—'}</td>
       <td><div style="display:flex;flex-wrap:wrap;gap:4px">${sportChips}</div></td>
       <td class="text-right num" style="color:var(--red);font-weight:800;font-size:14px">${fmt(r.total)} <span class="text-mute" style="font-size:10px;font-weight:400">QAR</span></td>
-      <td style="font-size:11px">${r.remind.count ? `<span class="badge ${r.remind.count >= 3 ? '' : 'active'}" style="font-size:10px;${r.remind.count >= 3 ? 'background:rgba(120,120,140,.15);color:var(--text-mute)' : ''}">✓ ${r.remind.count}/3${r.remind.last === TODAY ? ' · ' + t('today', 'اليوم') : r.remind.last ? ' · ' + fmtDate(r.remind.last) : ''}</span>` : '<span class="text-mute">—</span>'}</td>
+      <td style="font-size:11px">${r.remind.count ? `<span class="badge ${r.remind.count >= 3 ? '' : 'active'}" style="font-size:10px;${r.remind.count >= 3 ? 'background:rgba(120,120,140,.15);color:var(--text-mute)' : ''}">✓ ${r.remind.count}/3${r.remind.last === TODAY ? ' · ' + t('today', 'اليوم') : r.remind.last ? ' · ' + fmtDate(r.remind.last) : ''}</span>` : '<span class="text-mute">—</span>'}${r.needs ? `<div style="font-size:10px;margin-top:3px;font-weight:700;color:${dueReminderStage(r.age) >= 3 ? 'var(--red)' : 'var(--accent-2)'}" title="${t('Unpaid for ' + r.age + ' days', 'غير مسدد منذ ' + r.age + ' يوماً')}">⏰ ${dueReminderStage(r.age) >= 3 ? t('final notice due', 'الإشعار الأخير مستحق') : dueReminderStage(r.age) === 2 ? t('2nd reminder due', 'التذكير الثاني مستحق') : t('1st reminder due', 'التذكير الأول مستحق')} · ${r.age}d</div>` : ''}</td>
       <td class="text-right" style="white-space:nowrap">
         ${editable ? (r.walk ? `<button class="btn primary sm" onclick="${r.inv.rentalId ? 'collectRental(' + r.inv.rentalId + ')' : 'recordPaymentUI(' + r.inv.id + ')'}" title="${t('Collect this invoice', 'تحصيل هذه الفاتورة')} · ${escapeHtml(r.inv.ref || '')}">💰 ${t('Collect', 'تحصيل')}</button>` : `<button class="btn primary sm" onclick="moneyPanel(${r.m.id})" title="${t('Record a payment / edit pricing', 'تسجيل دفعة / تعديل السعر')}">💰 ${t('Collect', 'تحصيل')}</button>`) : ''}
         ${(() => {
@@ -9160,6 +9225,7 @@ Black Stars Academy`;
         <div class="subtitle">${list.length} ${t('of', 'من')} ${all.length} ${t('customers with an outstanding balance (members + walk-ins)', 'عميلاً عليه مبلغ مستحق (أعضاء + غير أعضاء)')}${filtersOn ? '' : ` · ${fmt(grandTotal)} QAR`}</div>
       </div>
     </div>
+    ${overpaidPanelHtml()}
     ${(() => { if (currentRole() !== 'admin') return ''; const _lv = id => id != null && (state.members || []).some(m => m && m.id === id && !m.deleted); const _o = (state.invoices || []).filter(i => i && !i.deleted && !i.switchCredit && i.customerId != null && !i.rentalId && !_lv(i.customerId) && invoiceBalance(i) >= 0.5); if (!_o.length) return ''; return `<div style="margin-bottom:12px;padding:10px 14px;border:1px solid rgba(239,68,68,.4);background:rgba(239,68,68,.06);border-radius:10px;display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap"><div style="font-size:13px">⚠ <b>${_o.length}</b> ${t('due invoice(s) belong to people who are no longer members', 'فاتورة مستحقة لأشخاص لم يعودوا أعضاء')} (${fmt(Math.round(_o.reduce((s, i) => s + invoiceBalance(i), 0) * 100) / 100)} QAR)</div><button class="btn danger sm" onclick="dueArchiveOrphans()">🗑 ${t('Archive them all', 'أرشفتها كلها')}</button></div>`; })()}
     ${(() => { if (currentRole() !== 'admin') return ''; let n = 0, amt = 0; for (const mm of (state.members || [])) { if (mm.deleted) continue; for (const x of _memberMisallocations(mm)) { n++; amt += x.amount; } } return n ? `<div style="margin-bottom:12px;padding:10px 14px;border:1px solid rgba(245,158,11,.5);background:rgba(245,158,11,.08);border-radius:10px;font-size:12.5px">⚠ ${n} ${t('payment(s) sit on the wrong invoice', 'دفعة على فاتورة خطأ')} (${fmt(amt)} QAR) — ${t('an invoice is overpaid while another invoice of the same member is unpaid.', 'فاتورة مدفوعة بزيادة بينما فاتورة أخرى لنفس العضو غير مدفوعة.')} <button class="btn sm" style="margin-inline-start:8px" onclick="window._rebalanceAllMembers()">${t('Move them', 'انقلها')}</button></div>` : ''; })()}
     <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
@@ -9178,6 +9244,10 @@ Black Stars Academy`;
         <select id="dp-sport" class="btn ghost">
           <option value="all">${t('All sports', 'كل الرياضات')}</option>
           ${sportSet.map(sp => `<option value="${escapeHtml(sp)}" ${f.sport === sp ? 'selected' : ''}>${escapeHtml(sp)}</option>`).join('')}
+        </select>
+        <select id="dp-remind" class="btn ghost" title="${t('Reminders are due at day 3, 7 and 14 of an unpaid invoice', 'التذكيرات تستحق في اليوم 3 و7 و14 من فاتورة غير مسددة')}">
+          <option value="all">${t('All dues', 'كل المستحقات')}</option>
+          <option value="now" ${f.remind === 'now' ? 'selected' : ''}>⏰ ${t('Reminder due now', 'تذكير مستحق الآن')} (${needCount})</option>
         </select>
         <select id="dp-range" class="btn ghost" title="${t('Filter by amount range', 'تصفية حسب فئة المبلغ')}">
           <option value="all">${t('Any amount', 'أي مبلغ')}</option>
@@ -9218,6 +9288,7 @@ Black Stars Academy`;
   bindMonthMulti('dp-month', (mSel) => { f.months = mSel; render(); });
   $('#dp-sport')?.addEventListener('change', e => { f.sport = e.target.value; render(); });
   $('#dp-range')?.addEventListener('change', e => { f.range = e.target.value; render(); });
+  $('#dp-remind')?.addEventListener('change', e => { f.remind = e.target.value; render(); });
   $('#dp-clear')?.addEventListener('click', () => { window._dueFilter = null; render(); });
 };
 
@@ -13881,7 +13952,10 @@ function addInvoice() {
     const amt = parseFloat($('#f-amt')?.value);
     const method = $('#f-method')?.value;
     const date = $('#f-date')?.value;
+    if (!$('#f-desc') && !$('#f-amt')) return;   // v6.839 (X-04) — the Create button ran this a second time after the form had closed (a false error right after a good save)
     if (!desc || !amt || !date) { toast('Description, amount and date required', 'error'); return; }
+    if (!(amt > 0) || amt > 1000000) { toast(t('The amount must be more than 0 (and under 1,000,000)', 'المبلغ يجب أن يكون أكبر من 0'), 'error'); return; }   // v6.839 (X-04)
+    if (sanityDateToast(date, 'Invoice', 'الفاتورة')) return;
     // OFFLINE GUARD (v6.331): don't create an invoice that can't reach the cloud (it would be lost).
     if (typeof assertCloudWritable === 'function' && !assertCloudWritable('create this invoice', 'إنشاء هذه الفاتورة')) return;
     const custId = parseInt($('#f-cust')?.value) || null;
@@ -18551,6 +18625,8 @@ window.openCashCollectionModal = function(existingId) {
         const amt = parseFloat($('#cc-amt').value) || 0;
         if (amt <= 0) { toast(t('Enter an amount greater than 0', 'أدخل مبلغاً أكبر من 0'), 'error'); return; }
         const date = $('#cc-date').value || today;
+        if (sanityDateToast(date, 'Collection', 'التحصيل', { future: 0, past: 800 })) return;   // v6.839 (X-03)
+        if (sanityAmountToast(amt, 'The amount', 'المبلغ', 1000000)) return;
         const by = ($('#cc-by').value || '').trim();
         const note = ($('#cc-note').value || '').trim();
         const month = date.slice(0, 7);
@@ -18627,6 +18703,10 @@ function cashDrawerFrom(c, upper) {
         const pi = i.payments.indexOf(p);
         if (!p || p._recon) return;   // a reconstruction row is old money, not a new receipt
         const amt = Number(p.amount) || 0;
+        if (p.refund === true && amt < 0 && normalizeMethod(p.method || i.method) === 'cash') {   // v6.837 — a CASH refund handed back leaves the drawer
+          if (after(p.date, p.at)) (p.noDrawer ? hidden : moves).push({ when: p.at || p.date, amount: amt, label: t('Refund to ', 'استرداد إلى ') + who, ref, kind: 'refund', inv: i.id, pi });
+          return;
+        }
         if (!(amt > 0) || normalizeMethod(p.method || i.method) !== 'cash') return;   // only cash coming IN
         if (!after(p.date, p.at)) return;
         (p.noDrawer ? hidden : moves).push({ when: p.at || p.date, amount: amt, label: who, ref, kind: 'in', inv: i.id, pi });
@@ -18830,6 +18910,8 @@ window.openCashCountDialog = function(existingId) {
         const amount = parseFloat(document.getElementById('cih-amount').value);
         if (isNaN(amount) || amount < 0) { toast('Enter a valid amount', 'error'); return; }
         const date = document.getElementById('cih-date').value || TODAY;
+        if (sanityDateToast(date, 'Cash count', 'الجرد', { future: 0, past: 800 })) return;   // v6.839 (X-03) — a future-dated count becomes the base and hides every later cash payment
+        if (sanityAmountToast(amount, 'The count', 'الجرد', 1000000)) return;
         const by = (document.getElementById('cih-by').value || '').trim();
         const note = (document.getElementById('cih-note').value || '').trim();
         if (ex) {
@@ -19259,7 +19341,8 @@ PAGES.reconciliation = (main) => {
         ${bucket(t('Cash collected (all)', 'النقد المُحصّل (الكل)'), R.cashCollectedTotal, 'var(--text)')}
         ${bucket('− ' + t('Cash expenses', 'مصروفات نقدية'), R.cashExpenses, 'var(--text)')}
         ${bucket('− ' + t('Cash taken by owner', 'نقد سحبه المالك'), R.ownerCashTaken, 'var(--text)')}
-        ${bucket('= ' + t('Expected cash in hand', 'النقد المتوقع'), R.cashInHand, R.cashInHand >= 0 ? 'var(--green)' : 'var(--red)')}
+        ${bucket('= ' + t('Net cash movement this month', 'صافي حركة النقد هذا الشهر'), R.cashInHand, R.cashInHand >= 0 ? 'var(--green)' : 'var(--red)', t('this month only — cash taken can exceed what was collected if it came from earlier months', 'هذا الشهر فقط — قد يزيد المسحوب عن المحصّل لو من شهور سابقة'))}
+        ${(() => { const _d = (typeof cashDrawerNow === 'function') ? cashDrawerNow() : null; return _d ? bucket('💰 ' + t('Expected cash in the drawer now', 'النقد المتوقع في الدرج الآن'), _d.expected, _d.expected >= 0 ? 'var(--green)' : 'var(--red)', t('last count + cash movements since (same as Cash in Hand)', 'آخر جرد + حركة النقد بعده (نفس النقد بالصندوق)')) : ''; })()}
         <div style="height:10px"></div>
         ${bucket('🏦 ' + t('Bank credit (non-cash)', 'الرصيد البنكي'), R.nonCash, 'var(--accent)')}
         ${bucket('📋 ' + t('Still due (outstanding)', 'المتبقي المستحق'), R.due, 'var(--accent-2)', t('not yet collected', 'لم يُحصّل بعد'))}
@@ -19363,7 +19446,7 @@ PAGES.moneyflow = (main) => {
         ${methodRow('👤', t('Cash collected by owner', 'النقد لدى المالك'), R.ownerCashTaken)}
         ${methodRow('🧾', t('Cash spent on expenses', 'مصروف نقداً'), R.cashExpenses)}
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0 0;font-weight:800;color:${R.cashInHand >= 0 ? 'var(--green)' : 'var(--red)'}">
-          <span>💰 ${t('Cash in hand now', 'النقد بالصندوق الآن')}</span><span class="num">${money(R.cashInHand)} QAR</span></div>
+          <span>💰 ${t('Net cash movement', 'صافي حركة النقد')}</span><span class="num">${money(R.cashInHand)} QAR</span></div>
         <div class="text-mute" style="font-size:11px;margin-top:6px">${recOk
           ? '✓ ' + t('Cash reconciles', 'النقد متطابق')
           : '⚠ ' + t('Unexplained gap', 'فرق غير مفسَّر') + ': ' + money(R.leakage) + ' QAR'}</div>
@@ -19386,6 +19469,56 @@ PAGES.moneyflow = (main) => {
   if (sel) sel.addEventListener('change', () => { window._mfMonth = sel.value; PAGES.moneyflow(main); });
 };
 
+// v6.836 — NEEDS ATTENTION: one daily list of things that look wrong, so nothing waits for a month-end audit.
+function attentionData() {
+  const FROM = '2026-06-01', r2 = x => Math.round(x * 100) / 100;
+  const invs = state.invoices || [];
+  const liveInv = id => id != null && invs.some(i => i && !i.deleted && i.id === id);
+  const sales = (state.sales || []).filter(s => s && !s.deleted && String(s.date || '') >= FROM && !liveInv(s.invoiceId));
+  const rentals = (state.rentals || []).filter(r => r && !r.deleted && !r.cancelled && String(r.date || '') >= FROM && !liveInv(r.invoiceId));
+  const since = new Date(TODAY + 'T00:00:00'); since.setDate(since.getDate() - 14);
+  const iso = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const sinceIso = iso(since);
+  const outside = [];
+  for (const m of (state.members || [])) {
+    if (!m || m.deleted || !m.dailyAttendance) continue;
+    const subs = m.subscriptions || [];
+    const late = [];
+    for (const [mk, bySport] of Object.entries(m.dailyAttendance)) {
+      if (mk < sinceIso.slice(0, 7) || !bySport) continue;
+      for (const [sp, days] of Object.entries(bySport)) for (const [dd, v] of Object.entries(days || {})) {
+        if (v !== 'Y' && v !== true) continue;
+        const ds = mk + '-' + String(dd).padStart(2, '0');
+        if (ds < sinceIso || ds > TODAY) continue;
+        if (!subs.some(s => s && String(s.start || '') <= ds && (!s.end || ds <= String(s.end).slice(0, 10)))) late.push(ds + ' ' + String(sp).split(' ')[0]);
+      }
+    }
+    if (late.length) outside.push({ m, late: late.sort() });
+  }
+  return { sales, rentals, outside, over: (typeof overpaidInvoices === 'function') ? overpaidInvoices() : [] };
+}
+PAGES.attention = (main) => {
+  const D = attentionData(), isAdmin = currentRole() === 'admin';
+  const sec = (icon, title, n, body, hint) => `<div class="card" style="margin-bottom:12px;padding:12px 14px"><div style="font-weight:800;font-size:14px">${icon} ${title} <span class="num" style="color:${n ? 'var(--red)' : 'var(--green)'}">${n ? n : '✓ 0'}</span></div><div class="text-mute" style="font-size:11px;margin:2px 0 6px">${hint}</div>${body}</div>`;
+  const row = (a, b, c) => `<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:5px 0;border-top:1px solid var(--border);font-size:12px"><span style="flex:1;min-width:160px">${a}</span><span class="text-mute">${b}</span>${c || ''}</div>`;
+  const more = (arr, n) => arr.length > n ? `<div class="text-mute" style="font-size:11px;padding-top:4px">+ ${arr.length - n} ${t('more', 'أخرى')}</div>` : '';
+  const total = D.outside.length + D.sales.length + D.rentals.length + (isAdmin ? D.over.length : 0);
+  main.innerHTML = `
+    <div class="topbar"><div><h1>🔔 ${t('Needs Attention', 'يحتاج متابعة')}</h1>
+      <div class="subtitle">${total ? total + ' ' + t('item(s) to check', 'بند للمراجعة') : '✓ ' + t('Nothing to check — all clear', 'لا شيء للمراجعة — كله سليم')}</div></div></div>
+    ${sec('🏃', t('Attended with no package (last 14 days)', 'حضور بدون باقة (آخر ١٤ يوماً)'), D.outside.length,
+      D.outside.slice(0, 30).map(x => row('<b>' + escapeHtml(x.m.name) + '</b>', x.late.slice(0, 3).join(', ') + (x.late.length > 3 ? ' …' : ''), `<button class="btn ghost sm" onclick="viewMember(${x.m.id})">${t('Open', 'فتح')}</button>`)).join('') + more(D.outside, 30),
+      t('He was marked present on a day no package covers — renew him, or fix the mark.', 'اتسجّل حضوره في يوم مفيش باقة تغطيه — جدّد له أو صحّح العلامة.'))}
+    ${isAdmin ? sec('💸', t('Overpaid invoices', 'فواتير مدفوعة بزيادة'), D.over.length,
+      D.over.slice(0, 30).map(({ inv, over }) => row('<b>' + escapeHtml(inv.customerName || (customerInfo(inv) || {}).name || '—') + '</b> · ' + escapeHtml(String(inv.ref || inv.id)), '+' + fmt(over) + ' QAR', `<a class="btn ghost sm" href="#" onclick="navigate('duepayment');return false">${t('Handle in Due Payment', 'عالجها في المستحقات')}</a>`)).join('') + more(D.over, 30),
+      t('Money paid above the invoice total — refund it or use it on his other invoice.', 'مدفوع أكتر من الفاتورة — استردها أو سدّد بها فاتورة أخرى.')) : ''}
+    ${sec('🛒', t('Product sales with no invoice', 'مبيعات منتجات بدون فاتورة'), D.sales.length,
+      D.sales.slice(0, 30).map(s => row('<b>' + escapeHtml(s.customerName || '—') + '</b>', fmtDate(s.date) + ' · ' + fmt(s.total || 0) + ' QAR')).join('') + more(D.sales, 30),
+      t('The sale is recorded but its invoice is missing or archived.', 'البيع مسجّل لكن فاتورته ناقصة أو مؤرشفة.'))}
+    ${sec('🏟', t('Court bookings with no invoice', 'حجوزات ملاعب بدون فاتورة'), D.rentals.length,
+      D.rentals.slice(0, 30).map(r => row('<b>' + escapeHtml(r.customerName || '—') + '</b>', fmtDate(r.date) + ' · ' + fmt(r.amount || 0) + ' QAR')).join('') + more(D.rentals, 30),
+      t('The booking is recorded but its invoice is missing or archived.', 'الحجز مسجّل لكن فاتورته ناقصة أو مؤرشفة.'))}`;
+};
 PAGES.cashcollection = (main) => {
   if (window._ccFilter == null) window._ccFilter = { month: 'all', search: '' };
   const f = window._ccFilter;
@@ -19439,7 +19572,7 @@ PAGES.cashcollection = (main) => {
       </div>
     </div>
 
-    <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
+    ${isAdmin ? `<div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
       <div class="kpi" style="border-color:var(--red);background:rgba(239,68,68,.06)">
         <div class="kpi-label" style="color:var(--red)">💵 ${t('Total withdrawn (shown)', 'إجمالي المسحوب (المعروض)')}</div>
         <div class="kpi-value num" style="color:var(--red)">${fmt(totalShown)}</div>
@@ -19455,7 +19588,7 @@ PAGES.cashcollection = (main) => {
         <div class="kpi-value num">${fmt(thisMonthTotal)}</div>
         <div class="kpi-sub">QAR · ${thisMonthCount} ${t('records', 'سجل')}</div>
       </div>
-    </div>
+    </div>` : ''}   <!-- v6.836: the totals are the owner's, reception sees only the records it enters -->
 
     <div class="card">
       <div class="filter-bar" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">
@@ -19476,7 +19609,7 @@ PAGES.cashcollection = (main) => {
             <th data-sortable="0" class="text-right"></th>
           </tr></thead>
           <tbody>${rows}</tbody>
-          ${list.length ? `<tfoot><tr style="border-top:2px solid var(--border);font-weight:800">
+          ${(list.length && isAdmin) ? `<tfoot><tr style="border-top:2px solid var(--border);font-weight:800">
             <td colspan="3">${t('Total', 'الإجمالي')} (${list.length} ${t('records', 'سجل')})</td>
             <td class="text-right num" style="color:var(--red);font-size:15px">${fmt(totalShown)} QAR</td>
             <td></td>
@@ -20209,6 +20342,8 @@ function showExpenseForm(id) {
         if (!category) { toast('Category is required', 'error'); $('#f-cat')?.focus(); return; }
         if (!method) { toast('Payment method is required', 'error'); $('#f-method')?.focus(); return; }
         if (!date) { toast('Date is required', 'error'); $('#f-date')?.focus(); return; }
+        if (sanityDateToast(date, 'Expense', 'المصروف')) return;   // v6.839 (X-03)
+        if (sanityAmountToast(amt, 'The amount', 'المبلغ', 1000000)) return;
 
         // Salary payments may be attributed to a registered coach OR an external
         // (ad-hoc) coach by name — both optional.
@@ -22521,6 +22656,9 @@ function saveProduct(existingId) {
   const price = parseFloat($('#p-price').value) || 0;
   if (price <= 0) { toast('Sell price must be > 0', 'error'); return; }
   const cost = parseFloat($('#p-cost').value) || 0;
+  { const _stk = parseInt($('#p-stock').value) || 0; if (_stk < 0) { toast(t('Stock cannot be negative', 'المخزون لا يكون سالباً'), 'error'); return; }   // v6.841 (X-10)
+    const _sku = $('#p-sku').value.trim().toLowerCase();
+    if (_sku && (state.products || []).some(p => p && p.id !== existingId && String(p.sku || '').trim().toLowerCase() === _sku)) { toast(t('Another product already has this SKU — SKUs must be unique', 'منتج آخر يحمل نفس الـ SKU — يجب أن يكون فريداً'), 'error'); return; } }
   const data = {
     name,
     sku: $('#p-sku').value.trim() || null,
@@ -22920,7 +23058,7 @@ function saleBalanceNow(s) {
 function salePaidNow(s) { return Math.max(0, Math.round(((Number(s.total) || 0) - saleBalanceNow(s)) * 100) / 100); }   // v6.789
 function recalcSaleTotals() {
   const subtotal = window._saleLines.reduce((s, l) => s + (l.qty || 0) * (l.unitPrice || 0), 0);
-  const discount = parseFloat($('#sale-discount')?.value) || 0;
+  const discount = Math.min(Math.max(0, parseFloat($('#sale-discount')?.value) || 0), subtotal);   // v6.839 (X-05) — shown capped; the save refuses a bad one
   const total = Math.max(0, subtotal - discount);
   const info = salePayInfo(total), paid = info.error ? Math.min(info.paid, total) : info.paid;
   const balance = Math.max(0, Math.round((total - paid) * 100) / 100);
@@ -23040,6 +23178,7 @@ function completeSale(onDone) {
 
   const subtotal = validLines.reduce((s,l) => s + l.lineTotal, 0);
   const discount = parseFloat($('#sale-discount').value) || 0;
+  if (discount < 0 || discount > subtotal + 0.001) { toast(t('The discount must be between 0 and the sale total (' + fmt(subtotal) + ')', 'الخصم يجب أن يكون بين 0 وإجمالي البيع (' + fmt(subtotal) + ')'), 'error'); return; }   // v6.839 (X-05)
   const total = Math.max(0, subtotal - discount);
   // v6.785 — the Paid box is a REAL value: empty = paid in full, 0 = credit sale, a part = partial. (It used to read 0 as "full", so a credit sale could not be saved.)
   const _pay = salePayInfo(total);   // v6.829 — any mix of Cash / Card / Fawran / Transfer; blank = paid in full in cash; "Pay later" = nothing paid
@@ -23304,16 +23443,19 @@ PAGES.sports = (main) => {
       });
     });
     $('#' + P + 'add-row').addEventListener('click', () => {
+  if (currentRole() !== 'admin') { toast(t('Prices are for the admin only', 'الأسعار للمسؤول فقط'), 'error'); return; }
       state.settings[KEY].push({ label: '', days: 0, price: 0 });
       refreshCampPrices(KEY, BODY_ID, CAMP_NAME);
     });
     $('#' + P + 'save').addEventListener('click', () => {
+  if (currentRole() !== 'admin') { toast(t('Prices are for the admin only', 'الأسعار للمسؤول فقط'), 'error'); return; }
       // Clean: drop rows with empty label or 0 days
       state.settings[KEY] = state.settings[KEY].filter(p => p.label && p.label.trim() && p.days > 0);
       confirmSaved(`Saved ${state.settings[KEY].length} ${CAMP_NAME} tiers`);
       refreshCampPrices(KEY, BODY_ID, CAMP_NAME);
     });
     $('#' + P + 'reset').addEventListener('click', () => {
+  if (currentRole() !== 'admin') { toast(t('Prices are for the admin only', 'الأسعار للمسؤول فقط'), 'error'); return; }
       if (!confirm(`Reset ${CAMP_NAME} prices to the original defaults?`)) return;
       state.settings[KEY] = [
         { label: '1 day',    days: 1,  price: 175  },
@@ -23328,7 +23470,10 @@ PAGES.sports = (main) => {
   }
 };
 
+// v6.839 (X-01) — reception may VIEW the Sports screen (owner, v6.327) but cannot change sports or prices: the controls are disabled and every handler refuses
+{ const _ps = PAGES.sports; PAGES.sports = function (main) { const r = _ps.apply(this, arguments); if (currentRole() !== 'admin') main.querySelectorAll('button, input, select').forEach(e => { e.disabled = true; }); return r; }; }
 window.addSport = function() {
+  if (currentRole() !== 'admin') { toast(t('Sports and prices are for the admin only', 'الرياضات والأسعار للمسؤول فقط'), 'error'); return; }   // v6.839 (X-01)
   showModal({
     title: 'Add New Sport',
     body: `
@@ -23372,6 +23517,7 @@ window.makePrivateVariant = function(name) {
 };
 
 window.editSport = function(oldName) {
+  if (currentRole() !== 'admin') { toast(t('Sports and prices are for the admin only', 'الرياضات والأسعار للمسؤول فقط'), 'error'); return; }   // v6.839 (X-01)
   const s = state.settings.sports.find(x => x.name === oldName);
   if (!s) return;
   showModal({
@@ -23449,6 +23595,7 @@ window.editSport = function(oldName) {
 };
 
 window.toggleSport = function(name) {
+  if (currentRole() !== 'admin') { toast(t('Sports and prices are for the admin only', 'الرياضات والأسعار للمسؤول فقط'), 'error'); return; }   // v6.839 (X-01)
   const s = state.settings.sports.find(x => x.name === name);
   if (!s) return;
   s.enabled = !(s.enabled !== false); // flip
@@ -23457,6 +23604,9 @@ window.toggleSport = function(name) {
 };
 
 window.deleteSport = function(name) {
+  if (currentRole() !== 'admin') { toast(t('Sports and prices are for the admin only', 'الرياضات والأسعار للمسؤول فقط'), 'error'); return; }   // v6.839 (X-01)
+  { const n = (state.members || []).filter(m => m && !m.deleted && (m.sport === name || (m.enrollments || []).some(e => e.sport === name))).length;
+    if (n > 0) { toast(t('"' + name + '" has ' + n + ' enrolled member(s) — it cannot be deleted. Disable it instead.', '"' + name + '" فيها ' + n + ' عضو مسجّل — لا يمكن حذفها. عطّلها بدلاً من ذلك.'), 'error'); return; } }
   if (!confirm(`Delete sport "${name}"? This is only allowed because no member is currently enrolled in it. This cannot be undone.`)) return;
   state.settings.sports = state.settings.sports.filter(s => s.name !== name);
   render();
@@ -23464,6 +23614,7 @@ window.deleteSport = function(name) {
 };
 
 window.moveSport = function(name, delta) {
+  if (currentRole() !== 'admin') { toast(t('Sports and prices are for the admin only', 'الرياضات والأسعار للمسؤول فقط'), 'error'); return; }   // v6.839 (X-01)
   const sports = state.settings.sports;
   sports.sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
   const idx = sports.findIndex(s => s.name === name);
@@ -25145,6 +25296,26 @@ PAGES.attendance = (main) => {
         ],
       });
       return;
+    }
+    // v6.839 (X-06) — a first mark on a day NO package of this sport covers: ask before saving (the class would count for nobody and the member is not renewed)
+    {
+      const m2 = state.members.find(x => x.id === memberId);
+      const base = String(sport).replace(/ \d+$/, '');
+      const iso = gridMonth() + '-' + String(day).padStart(2, '0');
+      const subs = (m2 && m2.subscriptions || []).filter(s => s && (s.activity || '') === base && String(s.status || '').toLowerCase() !== 'withdrawn');
+      if (m2 && subs.length && !subs.some(s => (!s.start || String(s.start).slice(0, 10) <= iso) && (!s.end || iso <= String(s.end).slice(0, 10)))) {
+        const lastEnd = subs.map(s => String(s.end || '').slice(0, 10)).filter(Boolean).sort().pop();
+        showModal({
+          title: t('No package on this day', 'لا توجد باقة في هذا اليوم'),
+          body: '<div style="font-size:13px;line-height:1.7"><p><b>' + escapeHtml(m2.name) + '</b> · ' + escapeHtml(base) + ' — ' + fmtDate(iso) + '</p><p style="margin-top:8px">' + t('No package covers this day' + (lastEnd ? ' (the last one ended ' + fmtDate(lastEnd) + ')' : '') + '. The class would count for nobody. Renew first, or mark it anyway.', 'لا توجد باقة تغطي هذا اليوم' + (lastEnd ? ' (آخر باقة انتهت ' + fmtDate(lastEnd) + ')' : '') + '. الحصة لن تُحتسب لأحد. جدّد أولاً أو سجّلها رغم ذلك.') + '</p></div>',
+          actions: [
+            { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
+            { label: t('Mark anyway', 'سجّل رغم ذلك'), class: 'btn ghost', onclick: () => { closeModal(); applyMark(memberId, sport, day, next); } },
+            ...(currentRole() !== 'coach' ? [{ label: t('Renew', 'تجديد'), class: 'btn primary', onclick: () => { closeModal(); if (typeof addRenewal === 'function') addRenewal(memberId); } }] : []),
+          ],
+        });
+        return;
+      }
     }
     applyMark(memberId, sport, day, next);
   }
@@ -27036,6 +27207,7 @@ window.withdrawSport = function(memberId, sport) {
     actions: [
       { label: 'Cancel', class: 'btn ghost', onclick: closeModal },
       { label: '↩ Confirm Withdrawal', class: 'btn danger', onclick: () => {
+        if ((parseFloat(document.getElementById('wd-refund').value) || 0) < 0) { toast(t('The refund cannot be negative', 'الاسترداد لا يكون سالباً'), 'error'); return; }   // v6.841 (X-12)
         const refund = Math.max(0, parseFloat(document.getElementById('wd-refund').value) || 0);
         const refundDate = document.getElementById('wd-date').value || TODAY;
         const method = document.getElementById('wd-method').value || 'cash';
@@ -27277,6 +27449,8 @@ window.switchSport = function(memberId) {
       if (later.length) { later.sort(); return { kind: 'later', n: later.length, last: later[later.length - 1] }; }
     }
     const subs = (m.subscriptions || []).filter(s => (s.activity || '') === from.sport && same(s.coachId, from.coachId));
+    // v6.838 — an enrollment with NO package row has nothing to split (the invoice would be divided onto packages that do not exist): create the package first
+    if (!subs.length && from.sport !== MIXED && !isCampSport(from.sport)) return { kind: 'nopkg' };
     const live = subs.filter(s => s.status !== 'completed' && !s.switchedAwayTo);
     if (subs.length && !live.length && subs.some(s => s.switchedAwayTo)) return { kind: 'already' };
     // v6.753 — a switch cannot be dated before the package it switches even began
@@ -27285,6 +27459,7 @@ window.switchSport = function(memberId) {
   }
   function switchBlockToast(r, from, switchDate) {
     if (r.kind === 'later') { toast(t(r.n + ' class' + (r.n === 1 ? ' is' : 'es are') + ' already marked in ' + from.sport + ' after ' + fmtDate(switchDate) + ' (the last on ' + fmtDate(r.last) + ') — pick a switch date on or after ' + fmtDate(r.last) + ', or switch the coach inside the same sport.', 'هناك ' + r.n + ' حصة مسجّلة في ' + from.sport + ' بعد ' + fmtDate(switchDate) + ' (آخرها ' + fmtDate(r.last) + ') — اختر تاريخ تبديل في أو بعد ' + fmtDate(r.last) + '.'), 'error'); return; }
+    if (r.kind === 'nopkg') { toast(t(from.sport + ' with ' + coachName(from.coachId) + ' has no package record (old data) — nothing to switch. Renew it first to create the package, then switch.', from.sport + ' مع ' + coachName(from.coachId) + ' ليس لها باقة مسجّلة (بيانات قديمة) — لا شيء للتبديل. جدّدها أولاً لإنشاء الباقة ثم بدّل.'), 'error'); return; }
     if (r.kind === 'before') { toast(t('The switch date is before this package starts (' + fmtDate(r.start) + ') — pick a date on or after the start.', 'تاريخ التبديل قبل بداية هذه الباقة (' + fmtDate(r.start) + ') — اختر تاريخاً في أو بعد البداية.'), 'error'); return; }
     toast(t('This package (' + from.sport + ' with ' + coachName(from.coachId) + ') was already switched — nothing left to switch.', 'هذه الباقة (' + from.sport + ' مع ' + coachName(from.coachId) + ') تم تبديلها مسبقاً — لا يوجد ما يُبدَّل.'), 'error');
   }
@@ -27517,8 +27692,9 @@ window.switchSport = function(memberId) {
         const remaining = Math.max(0, totalClasses - attendedA);
         const moved = remaining + carried;
         const _enteredPrice = parseFloat(($('#sw-price') || {}).value);
+        const _exactB = Math.round((price - aShare) * 100) / 100;   // v6.838 — the dialog pre-fills a ROUNDED price; if it is left as it was, use the exact rest so the invoice total never drifts by 0.01
         const bPrice = skipReconciliation ? (parseFloat(from.price) || 0)
-          : (Number.isFinite(_enteredPrice) && _enteredPrice >= 0 ? Math.round(_enteredPrice * 100) / 100 : Math.round(bShare * 100) / 100);   // v6.532: carried classes are a FREE bonus — default charges only the remaining (bShare), so money stays conserved
+          : (Number.isFinite(_enteredPrice) && _enteredPrice >= 0 ? (Math.abs(_enteredPrice - _exactB) <= 0.0101 ? _exactB : Math.round(_enteredPrice * 100) / 100) : Math.round(bShare * 100) / 100);   // v6.532: carried classes are a FREE bonus — default charges only the remaining (bShare), so money stays conserved
 
         // v6.740 — only REMAINING classes can move: a fully used package has nothing to transfer.
         if (!skipReconciliation && totalClasses > 0 && remaining <= 0) {
@@ -27526,6 +27702,11 @@ window.switchSport = function(memberId) {
           return;
         }
         if (!skipReconciliation) { const _bk = switchBlockReason(from, switchDate, [toSport]); if (_bk) { switchBlockToast(_bk, from, switchDate); return; } }
+        // v6.838 — switching a package that already ENDED: the old coach's end-of-package pay for its unused classes is not paid after the switch, and the new package starts already expired. Make the owner choose.
+        if (!skipReconciliation && totalClasses > 0) {
+          const _ended = (m.subscriptions || []).filter(s => (s.activity || '') === from.sport && String(s.coachId) === String(from.coachId) && s.status !== 'completed' && !s.switchedAwayTo && s.end).map(s => String(s.end).slice(0, 10)).sort().pop();
+          if (_ended && _ended < switchDate && !confirm(t('This package ended on ' + fmtDate(_ended) + '.\n\nAfter the switch ' + coachName(from.coachId) + ' is NOT paid for its unused classes, and the new package starts already expired (it earns nobody).\n\nIf the member should keep training, use Renew instead. Switch anyway?', 'هذه الباقة انتهت في ' + fmtDate(_ended) + '.\n\nبعد التبديل لن يُدفع لـ ' + coachName(from.coachId) + ' عن حصصها غير المستخدمة، وتبدأ الباقة الجديدة منتهية (لا تُحتسب لأحد).\n\nلو العضو سيكمل التدريب استخدم التجديد. تبدّل رغم ذلك؟'))) return;
+        }
         // …and the same switch (same package → same destination, same day) pressed twice never runs twice.
         if ((m.sportSwitches || []).some(sw => sw.fromSport === from.sport && String(sw.fromCoachId) === String(from.coachId) && sw.toSport === toSport && String(sw.toCoachId) === String(toCoachId) && sw.date === switchDate && (Date.now() - Date.parse(sw.createdAt || 0)) < 120000)) {
           toast(t('This switch was just made — not repeated.', 'تم هذا التبديل للتو — لن يتكرر.'), 'error');
@@ -27809,7 +27990,9 @@ window.switchSport = function(memberId) {
     if (!sportSel || !coachSel) return;
     const sport = sportSel.value;
     if (_noCoachSport(sport)) { coachSel.innerHTML = '<option value="">— none (' + (sport === MIXED ? 'mixed' : 'camp') + ') —</option>'; targets[i].coachId = null; return; }
-    const prev = targets[i].coachId || null;
+    // v6.838 — keep the previously picked coach only if he teaches this sport; otherwise the first coach who does is picked (no "doesn't teach" default)
+    const _p0 = targets[i].coachId || null;
+    const prev = (_p0 != null && coachTeachesSport((state.coaches || []).find(c => String(c.id) === String(_p0)), sport)) ? _p0 : null;
     const list = coachesForSport(sport, prev);
     coachSel.innerHTML = list.length
       ? coachOptionsHtml(list, sport, prev)
@@ -28254,7 +28437,7 @@ window.addRenewal = function(memberId) {
         <div class="field"><label>Amount / Fee (QAR)</label><input id="rn-amount" type="number" step="0.01" min="0" value="${(renewalStandardFor(m, enrolledUnique[0]?.sport, enrolledUnique[0]?.coachId) || {}).price || enrolledUnique[0]?.price || ''}" /></div>
       </div>
       <div class="form-row">
-        <div class="field"><label>Start / renewal date <span class="text-mute" style="font-size:10px;font-weight:400">(moves to the first attended class)</span></label><input id="rn-start" type="date" value="${computeRenewalStart(m, (enrolledUnique[0]?.sport || m.sport)).start}" /><div id="rn-start-hint" class="text-mute" style="font-size:10px;margin-top:3px"></div></div>
+        <div class="field"><label>Start / renewal date <span class="text-mute" style="font-size:10px;font-weight:400">(moves to the first attended class)</span></label><input id="rn-start" type="date" value="${computeRenewalStart(m, (enrolledUnique[0]?.sport || m.sport), null, true).start}" /><div id="rn-start-hint" class="text-mute" style="font-size:10px;margin-top:3px"></div></div>
         <div class="field"><label>Expiry date <span class="text-mute" style="font-size:10px;font-weight:400">(auto · override allowed)</span></label><input id="rn-end" type="date" /><div id="rn-end-hint" class="text-mute" style="font-size:10px;margin-top:3px"></div></div>
       </div>
       <div id="rn-priv-box" style="margin-top:6px;padding:9px 12px;border:1px dashed var(--border);border-radius:8px;display:grid;gap:6px">
@@ -28299,6 +28482,9 @@ window.addRenewal = function(memberId) {
         // Camp has no coach; for camp renewals a missing/NaN coach is fine (null).
         const coachId = isCampSport(renewedSport) ? null : (parseInt($('#rn-coach').value) || null);
         if (!start) { toast('Start date required', 'error'); return; }
+        if (sanityDateToast(start, 'Renewal start', 'بداية التجديد', { past: 400, future: 366 })) return;   // v6.839 (X-02)
+        if (sanityAmountToast(amount, 'The amount', 'المبلغ', 100000)) return;
+        if (classesRaw < 0 || classesRaw > 365) { toast(t('Classes must be between 1 and 365', 'عدد الحصص بين 1 و 365'), 'error'); return; }
         // v6.660 — Private: when ticked, who approached the customer is required (nothing is saved otherwise)
         const _pvOn = !!($('#rn-private') || {}).checked && !isCampSport(renewedSport) && renewedSport !== MIXED;
         const _pvAp = ($('#rn-approach') || {}).value || '';
@@ -28578,9 +28764,9 @@ window.addRenewal = function(memberId) {
   let _rnStartTouched = false, _rnRule = null;
   function applyRnStartRule(force) {
     const sp = (document.getElementById('rn-act') || {}).value || (enrolledUnique[0]?.sport || m.sport), st = document.getElementById('rn-start'), hint = document.getElementById('rn-start-hint');
-    _rnRule = computeRenewalStart(m, sp);
+    _rnRule = computeRenewalStart(m, sp, null, true);
     if (st && (force || !_rnStartTouched)) st.value = _rnRule.start;
-    if (hint) hint.textContent = (_rnRule.source === 'attendance' ? t('first class attended after expiry (' + fmtDate(_rnRule.firstClass) + ')', 'أول حصة حضرها بعد الانتهاء (' + fmtDate(_rnRule.firstClass) + ')') : (_rnRule.prevExpiry ? t('no class after expiry (' + fmtDate(_rnRule.prevExpiry) + ') → today', 'لا حضور بعد الانتهاء (' + fmtDate(_rnRule.prevExpiry) + ') ← اليوم') : t('no previous package → today', 'لا باقة سابقة ← اليوم'))) + (st && st.value !== _rnRule.start ? ' · ' + t('edited by hand', 'عُدّل يدوياً') : '');
+    if (hint) hint.textContent = (_rnRule.source === 'attendance' ? t('first class attended after expiry (' + fmtDate(_rnRule.firstClass) + ')', 'أول حصة حضرها بعد الانتهاء (' + fmtDate(_rnRule.firstClass) + ')') : (_rnRule.source === 'running' ? t('current package runs to ' + fmtDate(_rnRule.prevExpiry) + ' → starts the day after', 'الباقة الحالية تنتهي ' + fmtDate(_rnRule.prevExpiry) + ' ← تبدأ في اليوم التالي') : _rnRule.prevExpiry ? t('no class after expiry (' + fmtDate(_rnRule.prevExpiry) + ') → today', 'لا حضور بعد الانتهاء (' + fmtDate(_rnRule.prevExpiry) + ') ← اليوم') : t('no previous package → today', 'لا باقة سابقة ← اليوم'))) + (st && st.value !== _rnRule.start ? ' · ' + t('edited by hand', 'عُدّل يدوياً') : '');
   }
   document.getElementById('rn-start')?.addEventListener('input', () => { _rnStartTouched = true; applyRnStartRule(false); });
   document.getElementById('rn-act')?.addEventListener('change', () => { _rnStartTouched = false; applyRnStartRule(true); recalcRnExpiry(); });
@@ -29068,6 +29254,19 @@ window.deleteSubscription = function(memberId, sid) {
       } else {
         inv.deleted = true;   // whole invoice was for this sub
       }
+    }
+  }
+  // v6.838 — a switch DESTINATION owns no invoice number of its own: its value sits as a line on the source invoice. Remove that line too, or the member stays billed for a sport he no longer has (the paid money then shows as an overpayment to refund).
+  if (!hasTwin && !ref) {
+    for (const inv of (state.invoices || [])) {
+      if (inv.deleted || inv.customerId !== m.id || !(inv.lineItems && inv.lineItems.length > 1)) continue;
+      const others = m.subscriptions.some(o => (o._sid || o._rid) !== sid && (o.activity || '') === (sub.activity || '') && String(o.coachId) === String(sub.coachId));
+      if (others) continue;
+      const drop = inv.lineItems.filter(li => li.sport === sub.activity && String(li.coachId) === String(sub.coachId));
+      if (!drop.length) continue;
+      inv.lineItems = inv.lineItems.filter(li => drop.indexOf(li) < 0);
+      inv.amount = Math.max(0, (inv.amount || 0) - drop.reduce((s, li) => s + (Number(li.price) || 0), 0));
+      if (typeof stampUpdate === 'function') stampUpdate(inv);
     }
   }
   // TOMBSTONE the row so the sync merge can NEVER resurrect it (v6.303.0), then remove
@@ -29603,6 +29802,8 @@ PAGES.expiring = (main) => {
   function matchFilter({ m, days }) {
     // "Recently expired" bucket: only expired within the last N days.
     if (filter.bucket === 'recent' && !(days < 0 && days >= -recentDays)) return false;
+    // v6.841 — CALL TODAY: about to expire (within the alert window) or expired within the win-back window
+    if (filter.bucket === 'calltoday' && !(days <= threshold && days >= -recentDays)) return false;
     // "Expiring in ≤ 7 days" bucket: active memberships whose expiry is 0–7 days out. (v6.358)
     if (filter.bucket === 'd7' && !(days >= 0 && days <= 7)) return false;
     if (filter.sports.length) {   // v6.519: multi-select — keep if the member does ANY chosen sport
@@ -29688,7 +29889,7 @@ PAGES.expiring = (main) => {
     if (phone) {
       // 'completed' when the member finished their classes (camp limit reached OR live attendance
       // completed a sport) — a more accurate, congratulatory message; else expired/expiring by date.
-      const kind = (completed || _completedRenewIds.has(m.id)) ? 'completed' : (bucket === 'expired' ? 'expired' : 'expiring');
+      const kind = (completed || _completedRenewIds.has(m.id)) ? 'completed' : ((bucket === 'expired' || days < 0) ? 'expired' : 'expiring');
       const msg = buildReminderMessage(m, kind, days);
       const cleanPhone = String(phone).replace(/[^\d]/g, '');
       reminderHref = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`;
@@ -29784,6 +29985,7 @@ PAGES.expiring = (main) => {
         <div class="subtitle">Members needing renewal · alert window: ${threshold} days <a href="#" onclick="event.preventDefault();navigate('settings')" style="color:var(--blue)">(change)</a></div>
       </div>
       <div class="topbar-actions">
+        <button class="btn primary" title="${t('Everyone to call today: expiring soon + recently expired, not-yet-reminded first', 'من تتصل بهم اليوم: قاربت على الانتهاء + انتهت حديثاً، ومن لم يُذكَّر أولاً')}" onclick="document.getElementById('exp-bucket').value='calltoday';document.getElementById('exp-bucket').dispatchEvent(new Event('change'))">📞 ${t('Call today', 'اتصل اليوم')} · ${expiringSoon.length + recentCount}</button>
         <button class="btn ghost" title="Show members who expired within the last ${recentDays} days (set in Settings)" onclick="document.getElementById('exp-bucket').value='recent';document.getElementById('exp-bucket').dispatchEvent(new Event('change'))">🔴 Recently expired (≤${recentDays}d) · ${recentCount}</button>
         ${isViewerRole() ? '' : '<button class="btn ghost" id="export-expiring">📥 Export CSV</button>'}
       </div>
@@ -29837,6 +30039,7 @@ PAGES.expiring = (main) => {
       <div class="filter-bar" style="flex-wrap:wrap">
         <select id="exp-bucket" class="btn ghost">
           <option value="all">All statuses</option>
+          <option value="calltoday">📞 ${t('Call today', 'اتصل اليوم')}</option>
           <option value="soon">⏰ Expiring in ≤ ${threshold} days</option>
           <option value="d7">⏳ Expiring in ≤ 7 days</option>
           <option value="recent">🔴 Recently expired (≤ ${recentDays} days)</option>
@@ -29904,6 +30107,12 @@ PAGES.expiring = (main) => {
     const uFiltered = applySort(upcoming.filter(matchFilter));
     const cFiltered = applySort(completed.filter(matchFilter));
     const parts = [];
+    if (filter.bucket === 'calltoday') {
+      // not-yet-reminded first, then the soonest to expire / most recently expired
+      const _rc = x => (typeof reminderInfo === 'function' ? reminderInfo(x.m).count : 0);
+      const ctList = [...expiringSoon, ...expired].filter(matchFilter).sort((a, b) => (_rc(a) > 0) - (_rc(b) > 0) || b.days - a.days);
+      parts.push(section(t('Call today — about to expire or just expired', 'اتصل اليوم — قاربت على الانتهاء أو انتهت حديثاً'), 'var(--accent)', '📞', ctList, 'soon'));
+    }
     if (filter.bucket === 'recent') {
       parts.push(section(`Recently expired — within ${recentDays} days`, 'var(--red)', '🔴', eFiltered, 'expired'));
     }
@@ -29960,7 +30169,8 @@ PAGES.expiring = (main) => {
         const bucket = e.target.dataset.bucket;
         // The ≤7-day view is ONE section spanning both soon + upcoming, so select-all must
         // cover the whole combined list, not just the 'soon' half. (v6.358)
-        const list = filter.bucket === 'd7' ? [...expiringSoon, ...week, ...upcoming].filter(matchFilter)
+        const list = filter.bucket === 'calltoday' ? [...expiringSoon, ...expired].filter(matchFilter)
+                   : filter.bucket === 'd7' ? [...expiringSoon, ...week, ...upcoming].filter(matchFilter)
                    : bucket === 'soon' ? expiringSoon.filter(matchFilter)
                    : bucket === 'week' ? week.filter(matchFilter)
                    : bucket === 'expired' ? expired.filter(matchFilter)
