@@ -13306,13 +13306,16 @@ PAGES.invoices = (main) => {
       // so reception can track the payment. LIST-ONLY: revenue stays on the sport's start
       // month (invoiceMonthShares is untouched); this never moves a QAR of revenue.
       const _paidInMonth = (inv, ym) => (inv.payments || []).some(p => p && String((p.month || p.date || '')).slice(0, 7) === ym);
-      if (!_range && !filter.day && filter.months.length && !filter.months.some(m => invoiceTouchesMonth(i, m) || _paidInMonth(i, m))) return false;
+      // v6.857 — the list shows START DATE and PAID ON, so the month / day / range filters answer on exactly those: the start date shown, each activity's start, and every payment date (LIST-ONLY — revenue is untouched)
+      const _startMonth = (inv, ym) => String(invoiceStartDate(inv) || '').slice(0, 7) === ym;
+      if (!_range && !filter.day && filter.months.length && !filter.months.some(m => invoiceTouchesMonth(i, m) || _paidInMonth(i, m) || _startMonth(i, m))) return false;
       // Date filters (single day + From/To range) match the INVOICE date OR any
       // ACTIVITY's start date. An invoice with several activities on different start
       // dates is returned for each of those dates (and its own date). Walk-in / unlinked
       // invoices have no activity dates, so they match on the invoice date only.
       if (filter.day || _range) {
-        const dates = [i.date, ...invoiceActivityStartDates(i)].filter(Boolean);
+        const _sd = [invoiceStartDate(i), ...invoiceActivityStartDates(i), ...((typeof invoicePaymentDates === 'function') ? invoicePaymentDates(i) : [])].filter(Boolean).map(d => String(d).slice(0, 10));
+        const dates = _sd.length ? _sd : [i.date].filter(Boolean);   // an invoice with no start / payment date falls back to its own date
         if (filter.day && !dates.includes(filter.day)) return false;
         if (_range && !dates.some(d => (!filter.from || d >= filter.from) && (!filter.to || d <= filter.to))) return false;
       }
@@ -17032,6 +17035,7 @@ window.editInvoiceQuick = function(id) {
           inv.customerPhone = _wp || null;
           if (_wn) walkInRemember(_wn, _wp);   // v6.727 — remember this walk-in for next time
         }
+        { const _newM = $('#ef-method').value; if (!document.getElementById('ef-split')?.checked) { const _n = cascadePaymentMethod(inv, inv.method, _newM); if (_n && typeof audit === 'function') audit('invoice.payment_method', 'invoice:' + inv.id, (inv.ref || '') + ': payment method → ' + _newM + ' (' + _n + ' payment row(s))'); } }   // v6.858
         inv.method = $('#ef-method').value;
         inv.amount = parseFloat($('#ef-amt').value) || 0;
         inv.date = $('#ef-date').value;
@@ -22439,9 +22443,8 @@ window.downloadPayrollCSV = function(monthKey, coachSet) {
 // subtracted at import time, so we skip them here.
 // v6.826 — products with the same name + category are ONE product with several SKUs: the cart picks the product first, then the SKU
 function productGroupKey(p) { return String(p && p.name || '').trim().toLowerCase() + '|' + String(p && p.category || '').trim().toLowerCase(); }
-function productCurrentStock(productId) {
-  const p = (state.products || []).find(x => x.id === productId);
-  if (!p) return 0;
+// v6.859 — what the sales took off a product (non-historical), so the Edit form can show and save the CURRENT stock the lists show
+function productSoldQty(productId) {
   let sold = 0;
   for (const s of (state.sales || [])) {
     if (s.historical) continue;   // historical = stock already accounted for
@@ -22449,7 +22452,12 @@ function productCurrentStock(productId) {
       if (it.productId === productId) sold += it.qty || 0;
     }
   }
-  return Math.max(0, (p.stock || 0) - sold);
+  return sold;
+}
+function productCurrentStock(productId) {
+  const p = (state.products || []).find(x => x.id === productId);
+  if (!p) return 0;
+  return Math.max(0, (p.stock || 0) - productSoldQty(productId));
 }
 
 // ─── PRODUCTS PAGE ─────────────────────────────────────────────────────
@@ -22669,7 +22677,7 @@ function productFormHtml(p) {
       <div class="field"><label>Sell price (QAR) *</label><input id="p-price" type="number" min="0" step="0.01" value="${p.price ?? ''}" /></div>
     </div>
     <div class="form-row">
-      <div class="field"><label>Stock quantity</label><input id="p-stock" type="number" min="0" step="1" value="${p.stock ?? 0}" /></div>
+      <div class="field"><label>${t('Stock quantity (now)', 'الكمية الحالية بالمخزون')}</label><input id="p-stock" type="number" min="0" step="1" value="${p.id != null ? productCurrentStock(p.id) : (p.stock ?? 0)}" />${(p.id != null && productSoldQty(p.id) > 0) ? `<div class="text-mute" style="font-size:10px;margin-top:3px">${t('what is on the shelf now — started with', 'الموجود الآن — بدأ بـ')} ${p.stock ?? 0}, ${t('sold', 'بِيع')} ${productSoldQty(p.id)}</div>` : ''}</div>
       <div class="field"><label>Low stock threshold</label><input id="p-lowst" type="number" min="0" step="1" value="${p.lowStockThreshold ?? 3}" /></div>
     </div>
   `;
@@ -22715,7 +22723,7 @@ function saveProduct(existingId) {
     category: $('#p-cat').value.trim() || 'Other',
     cost,
     price,
-    stock: parseInt($('#p-stock').value) || 0,
+    stock: (parseInt($('#p-stock').value) || 0) + (existingId ? productSoldQty(existingId) : 0),   // v6.859 — the box holds the CURRENT stock; the stored starting stock = current + sold
     lowStockThreshold: parseInt($('#p-lowst').value) || 3,
   };
   let _prodId, _prodMsg;
@@ -37179,6 +37187,7 @@ function saveRental(existingId, onDone) {
       const inv = rentalInvoiceFor(old);
       if (inv) {
         inv.date = date; inv.description = desc; inv.amount = amount;
+        { const _n = cascadePaymentMethod(inv, inv.method || old.method, method); if (_n && typeof audit === 'function') audit('invoice.payment_method', 'invoice:' + inv.id, (inv.ref || '') + ': payment method → ' + method + ' (' + _n + ' payment row(s))'); }   // v6.858
         inv.method = method; inv.month = month; inv.sport = facility;
         inv.customerName = name;
         inv.customerId = matchedMember ? matchedMember.id : null;
@@ -37296,6 +37305,7 @@ window.collectRental = function(rentalId) {
     ],
   });
   setTimeout(() => {
+    { const _mm = $('#cr-mth'); if (_mm) _mm.value = normalizeMethod(r.method || inv.method); }   // v6.858 — the booking's own method, not always Cash
     const cb = $('#cr-split'), boxes = $('#cr-split-boxes'), sum = $('#cr-split-sum');
     if (!cb) return;
     const upd = () => {
