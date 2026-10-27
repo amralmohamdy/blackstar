@@ -101,6 +101,10 @@
   // included because the portal must find the signed-in member's OWN record; per-
   // record isolation of the roster needs auth custom claims — a later step.)
   const MEMBER_READABLE = new Set(['members', 'schedule', 'advices', 'posts', 'swimGroups']);
+  // v6.872 — what a RECEPTIONIST login never receives: the pay fields of a coach (read from the pay-free staffDirectory instead) and the
+  // expense rows below (firestore.rules refuses them too — keep both lists identical).
+  const STAFF_DIR_FIELDS = ['id', 'name', 'role', 'active', 'sports', 'email', 'phone', 'gender', 'joinedDate', 'leftOn', 'noBonus'];
+  const EXPENSE_HIDDEN_FROM_RECEPTION = ['Salary', 'salary', 'Salaries', 'Rent', 'rent', 'Bank Commission', 'Citadel Company Share', 'Owner Net Profit'];
   // A MEMBER portal login is created as `<mobile>@blackstars.com` — the local part is
   // ALL DIGITS. STAFF (admin / receptionist) are commonly created on the SAME domain
   // with a NAMED local part (receptionist@…, test@…, admin@…), so we must NOT scope
@@ -380,8 +384,9 @@
     let _coachScope = null;            // { ids:[…] } while a coach-mapped login is signed in (v6.739)
     // v6.870 — MEMBER own-record scope. A member login reads only the member record(s) stamped with its login keys; a reception login
     // never loads the salaries collection (the rules deny it). _memberQ stays false while the OLD open rules are live (legacy full load).
-    let _memberQ = false, _recepScope = false;
+    let _memberQ = false, _recepScope = false, _dirMode = false;   // _dirMode: a reception login reads staffDirectory instead of coaches
     const _keysKnown = new Map();      // member id → JSON of the stored loginKeys | 'null'
+    const _dirKnown = new Map();       // coach id → JSON of the staffDirectory doc this session last wrote
     // The keys a member record is reachable by: the phone digits in the forms people sign in with (full, without 00, last 8, 974+8, 00974+8)
     // and the e-mail. The portal queries with exactly [<local part of its login>, <its e-mail>] (see firestore.rules _myLoginKeys).
     function _loginKeysFor(m) {
@@ -440,6 +445,8 @@
     const _readRef = name => _coachScope ? _coachQuery(name)
       : (_memberQ && name === 'members') ? (_myMemberKeys().length ? colRef(name).where('loginKeys', 'array-contains-any', _myMemberKeys()) : null)   // v6.870 — a member reads only its own record
       : (_recepScope && name === 'salaries') ? null                                                                                                   // v6.870 — reception never loads pay
+      : (_recepScope && name === 'coaches') ? colRef(_dirMode ? 'staffDirectory' : 'coaches')                                                         // v6.872 — the pay-free staff list
+      : (_recepScope && name === 'expenses') ? colRef(name).where('category', 'not-in', EXPENSE_HIDDEN_FROM_RECEPTION)                                // v6.872 — no salary / rent / bank / Citadel rows
       : colRef(name);
     // Write the missing/changed coachIds stamps (full-access staff only). One update() per record, a few at a time:
     // update() — never a merge-set — so a record deleted meanwhile is not resurrected as a stub.
@@ -447,6 +454,15 @@
       if (_stampBusy || _coachScope || _scopedLogin || !src || typeof window === 'undefined' || typeof window.coachAccessStamps !== 'function') return;
       _stampBusy = true;
       try {
+        if (!_recepScope && Array.isArray(src.coaches)) {   // v6.872 — the pay-free staff list for reception logins
+          for (const c of src.coaches) {
+            if (!c || c.id == null) continue;
+            const d = {}; for (const k of STAFF_DIR_FIELDS) if (c[k] !== undefined) d[k] = c[k];
+            const s = JSON.stringify(d);
+            if (_dirKnown.get(String(c.id)) === s) continue;
+            try { await colRef('staffDirectory').doc(String(c.id)).set(d); _dirKnown.set(String(c.id), s); } catch (e) { console.warn('[Storage] staffDirectory write skipped', c.id, (e && e.code) || e); break; }
+          }
+        }
         const stamps = window.coachAccessStamps(src);
         const todo = [];
         if (Array.isArray(src.members)) for (const m of src.members) {   // v6.870 — member login keys
@@ -662,6 +678,10 @@
             try { if (typeof window !== 'undefined' && typeof window.__onCloudWriteBlocked === 'function') window.__onCloudWriteBlocked(baseN, 'suspicious bulk delete in ' + name + ' (' + baseN + '→' + curIdx.size + ') — skipped'); } catch (_) {}
           } else { for (var di = 0; di < delIds.length; di++) ops.push({ kind: 'del', name, id: delIds[di] }); }
         }
+      }
+      // RECEPTION (v6.872): its coaches list is the pay-free directory — never write it back as a coach record (the rules refuse it anyway)
+      if (_recepScope && _dirMode) {
+        for (let oi = ops.length - 1; oi >= 0; oi--) { if (ops[oi].name === 'coaches') { console.warn('[Storage] reception login — coach record change not persisted: ' + ops[oi].kind + ' coaches/' + ops[oi].id); ops.splice(oi, 1); } }
       }
       // COACH LOGIN (v6.739): send only what a coach may write — attendance on his students, his own advice /
       // posts / trials (a new one carries its own stamp; he may delete his own), the audit trail. No member deletes, no new members, no
@@ -883,6 +903,10 @@
             && (((parent && parent.settings && parent.settings.unmappedRole) || 'student') === 'student');
           const memberScope = (_isMemberEmail(_email) && !_mappedStaff) || _unmappedStudent;
           _recepScope = !!(_roleEntry && _roleEntry.role === 'receptionist');
+          _dirMode = false;
+          if (_recepScope) {   // v6.872 — use the pay-free staff list when the admin's app has written it; otherwise (not yet rolled out) the old coaches read
+            try { const ds = await colRef('staffDirectory').limit(1).get({ source: 'server' }); _dirMode = !ds.empty; } catch (_) { _dirMode = false; }
+          }
           _memberQ = false;
           // ROLLOUT SAFETY (members): while the OLD open rules are live and the records are not stamped yet, a keyed query would return
           // nothing. A plain one-record read succeeds only under the old rules; if it carries no loginKeys keep the legacy full load.

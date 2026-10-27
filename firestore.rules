@@ -144,7 +144,20 @@ service cloud.firestore {
     // v6.870 — what a RECEPTIONIST may not touch on the server: pay (the salaries collection), hard deletes of money records
     // (invoices / expenses / salaries / sales — the app soft-deletes, so a real delete is tampering) and the safeguard settings.
     function recepBlocked(collection) {
-      return isReception() && collection == 'salaries';
+      return isReception() && collection in ['salaries', 'coaches'];   // v6.872 — coaches carry the pay fields (rate, fixedSalary…); reception reads the pay-free staffDirectory instead
+    }
+    // v6.872 — the pay-free staff list (name, role, active, sports, contact…) is written by the admin's app only
+    function recepNoWrite(collection) {
+      return isReception() && collection == 'staffDirectory';
+    }
+    // v6.872 — expense rows a receptionist must not see: salaries, rent, the auto bank-commission / Citadel rows, the owner's net-profit row.
+    // The check is a PLAIN `in` on resource.data.category (a get(…, default) here would let a plain list slip through — verified in the emulator);
+    // the reception app reads with the matching query where('category','not-in',[…]).
+    function expenseHiddenFromReception(d) {
+      return d.category in ['Salary', 'salary', 'Salaries', 'Rent', 'rent', 'Bank Commission', 'Citadel Company Share', 'Owner Net Profit'];
+    }
+    function recepCanReadDoc(collection, d) {
+      return !(isReception() && collection == 'expenses') || !expenseHiddenFromReception(d);
     }
     function recepNoDelete(collection) {
       return isReception() && collection in ['invoices', 'expenses', 'salaries', 'sales'];
@@ -190,16 +203,16 @@ service cloud.firestore {
       // the portal collections (memberReadable) — the club's financial/operational
       // data is never exposed to a member login; a COACH reads/writes only his own stamped records.
       match /{collection}/{docId} {
-        allow read:   if (isFullStaff() && !recepBlocked(collection)) || (isMember() && memberCanRead(collection, resource.data))
+        allow read:   if (isFullStaff() && !recepBlocked(collection) && recepCanReadDoc(collection, resource.data)) || (isMember() && memberCanRead(collection, resource.data))
                       || (isCoach() && coachCanRead(collection, resource.data));
         // v6.634 (#13) — exclude loginLogs too (like auditLog): the specific match above makes it
         // append-only, but Firestore UNIONS rules, so this generic write would otherwise re-grant staff
         // update/delete on the login audit. Keep both append-only logs out of the generic write.
-        allow create: if (isFullStaff() && !recepBlocked(collection) && collection != 'auditLog' && collection != 'loginLogs')
+        allow create: if (isFullStaff() && !recepBlocked(collection) && !recepNoWrite(collection) && collection != 'auditLog' && collection != 'loginLogs')
                       || (isCoach() && coachCanCreate(collection, request.resource.data));
-        allow update: if (isFullStaff() && !recepBlocked(collection) && collection != 'auditLog' && collection != 'loginLogs')
+        allow update: if (isFullStaff() && !recepBlocked(collection) && !recepNoWrite(collection) && collection != 'auditLog' && collection != 'loginLogs')
                       || (isCoach() && coachCanUpdate(collection, resource.data, request.resource.data));
-        allow delete: if (isFullStaff() && !recepBlocked(collection) && !recepNoDelete(collection) && collection != 'auditLog' && collection != 'loginLogs')
+        allow delete: if (isFullStaff() && !recepBlocked(collection) && !recepNoWrite(collection) && !recepNoDelete(collection) && collection != 'auditLog' && collection != 'loginLogs')
                       || (isCoach() && (collection in ['advices', 'posts', 'trials']) && coachMine(resource.data));
       }
     }

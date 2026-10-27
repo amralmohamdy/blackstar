@@ -526,6 +526,7 @@ function collapseCollectionRows(rows) {
 }
 // The 💵 Today's revenue box: every payment of today / yesterday against the month it belongs to; a month badge jumps to that month.
 window.showDayCollections = function () {
+  if (isViewerRole()) { toast(t('Not available for your role', 'غير متاح لصلاحيتك'), 'error'); return; }   // v6.872
   const yday = addDays(TODAY, -1);
   const rows = collapseCollectionRows(paymentsByBillMonth([TODAY, yday]));
   const mLabel = mk => (typeof fmtMonth === 'function') ? fmtMonth(mk) : mk;
@@ -1088,6 +1089,7 @@ function drawRecentInvoices() {
 
 // ─── Export dashboard CSV ──────────────────────────────────
 function exportDashboardCSV() {
+  if (currentRole() !== 'admin') { toast(t('Admins only', 'للمسؤولين فقط'), 'error'); return; }   // v6.872
   const s = computeStats();
   const rows = [
     ['Metric', s.prevShort, s.periodShort, 'Change'],
@@ -3186,7 +3188,7 @@ window.freezeMember = function(id) {
           <div id="freeze-date-days" class="text-mute" style="font-size:11px;margin-top:6px;display:none"></div>
         </div>
         <div>
-          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:6px">Reason (optional)</label>
+          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:6px">${t('Reason', 'السبب')} * <span class="text-mute" style="font-weight:400">(${t('required', 'مطلوب')})</span></label>
           <input type="text" id="freeze-reason" placeholder="e.g. travel, injury, vacation" style="width:100%;padding:10px 14px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text)" maxlength="80" />
         </div>
         <div id="freeze-preview" style="background:var(--surface-2);border-radius:8px;padding:12px;font-size:12px">
@@ -3222,6 +3224,9 @@ window.freezeMember = function(id) {
           if (!isAdmin && days > allow.remainingDays) { toast(`Only ${allow.remainingDays} freeze day${allow.remainingDays === 1 ? '' : 's'} remaining for this membership cycle.`, 'error'); return; }
           const reason = document.getElementById('freeze-reason').value.trim();
           { const _ps = _fzPicked(); if (_ps && !_ps.length) { toast(t('Tick at least one sport to freeze', 'اختر رياضة واحدة على الأقل للتجميد'), 'error'); return; }
+            const _bad = freezeGuard(m, from, until, days, _ps, { isAdmin, reason }); if (_bad) { toast(_bad, 'error'); return; }   // v6.871
+            const _go = () => { applyFreeze(m, days, reason, { start: from, end: until, sports: _ps }); closeModal(); withCloudConfirm({ verify: [{ collection: 'members', id: m.id }], okMsg: `${m.name} frozen ${fmtDate(from)} → ${fmtDate(until)} (${days} day${days === 1 ? '' : 's'})`, afterOk: () => viewMember(m.id) }); };
+            if (!isAdmin && days > freezeApprovalDays()) { askSystemPin(_go, t('A freeze longer than ' + freezeApprovalDays() + ' days needs the admin PIN.', 'تجميد أطول من ' + freezeApprovalDays() + ' يوماً يحتاج رمز المسؤول.')); return; }
             applyFreeze(m, days, reason, { start: from, end: until, sports: _ps }); }
           closeModal();
           // Confirm the freeze reached the cloud (it shifts the expiry) + show the member as
@@ -3235,6 +3240,9 @@ window.freezeMember = function(id) {
         if (!isAdmin && days > allow.remainingDays) { toast(`Only ${allow.remainingDays} freeze day${allow.remainingDays === 1 ? '' : 's'} remaining for this membership cycle.`, 'error'); return; }
         const reason = document.getElementById('freeze-reason').value.trim();
         { const _ps = _fzPicked(); if (_ps && !_ps.length) { toast(t('Tick at least one sport to freeze', 'اختر رياضة واحدة على الأقل للتجميد'), 'error'); return; }
+          const _bad = freezeGuard(m, TODAY, addDays(TODAY, days), days, _ps, { isAdmin, reason }); if (_bad) { toast(_bad, 'error'); return; }   // v6.871
+          const _go = () => { applyFreeze(m, days, reason, { sports: _ps }); closeModal(); withCloudConfirm({ verify: [{ collection: 'members', id: m.id }], okMsg: `${m.name} frozen for ${days} day${days === 1 ? '' : 's'}`, afterOk: () => viewMember(m.id) }); };
+          if (!isAdmin && days > freezeApprovalDays()) { askSystemPin(_go, t('A freeze longer than ' + freezeApprovalDays() + ' days needs the admin PIN.', 'تجميد أطول من ' + freezeApprovalDays() + ' يوماً يحتاج رمز المسؤول.')); return; }
           applyFreeze(m, days, reason, { sports: _ps }); }
         closeModal();
         withCloudConfirm({ verify: [{ collection: 'members', id: m.id }], okMsg: `${m.name} frozen for ${days} day${days === 1 ? '' : 's'}`, afterOk: () => viewMember(m.id) });
@@ -4895,6 +4903,7 @@ function memberExportStats(m) {
 }
 
 function exportMembersCSV(list) {
+  if (isViewerRole()) { toast(t('Not available for your role', 'غير متاح لصلاحيتك'), 'error'); return; }   // v6.872
   const members = Array.isArray(list) ? list : state.members;
   if (!members.length) { toast('No members to export', 'error'); return; }
   const num = n => Math.round((Number(n) || 0) * 100) / 100;   // clean 2dp, no currency symbol so cells stay numeric
@@ -9009,6 +9018,45 @@ function dueAgeDays(dates) {
   if (!d) return 0;
   return Math.max(0, Math.round((new Date(TODAY + 'T00:00:00') - new Date(d + 'T00:00:00')) / 86400000));
 }
+// v6.872 — the club's outstanding dues, computed EXACTLY like the Due Payment screen with no filter: one row per member (netted membership due
+// + their other invoices) and one per invoice of a non-member (walk-in rental / hall / shop, an archived member); under 0.5 QAR is noise.
+function clubOutstandingDues() {
+  let total = 0, customers = 0;
+  const live = new Set();
+  for (const m of (state.members || [])) {
+    if (!m || m.deleted) continue;
+    live.add(m.id);
+    const invs = (state.invoices || []).filter(i => i && !i.deleted && i.customerId === m.id && !i.switchCredit);
+    if (!invs.length) continue;
+    const t1 = Math.round((memberOutstanding(m.id) + invs.filter(i => (i.category || 'Membership') !== 'Membership').reduce((s, i) => s + invoiceBalance(i), 0)) * 100) / 100;
+    if (t1 >= 0.5) { total += t1; customers++; }
+  }
+  for (const inv of (state.invoices || [])) {
+    if (!inv || inv.deleted || inv.switchCredit || inv.activityType === 'switch-credit' || (inv.customerId != null && live.has(inv.customerId))) continue;
+    const bal = Math.round(invoiceBalance(inv) * 100) / 100;
+    if (bal >= 0.5) { total += bal; customers++; }
+  }
+  return { total: Math.round(total * 100) / 100, customers };
+}
+// v6.872 — after a rental / hall booking is edited to a LOWER price, the customer may have paid more than is now owed. Ask at once: refund the
+// difference (a refund payment, same method — a cash refund leaves the drawer) or leave it as an overpayment (it then shows in Needs Attention).
+window.offerOverpaymentRefund = function (inv) {
+  try {
+    if (!inv || !Array.isArray(inv.payments) || !inv.payments.length) return;
+    const over = Math.round((invoicePaid(inv) - invoiceTotal(inv)) * 100) / 100;
+    if (over < 0.5) return;
+    const lastPos = [...inv.payments].reverse().find(p => p && Number(p.amount) > 0);
+    const method = (lastPos && lastPos.method) || inv.method || 'cash';
+    const who = inv.customerName || (typeof customerInfo === 'function' ? (customerInfo(inv) || {}).name : '') || '';
+    if (confirm(t('The booking is now cheaper: ' + who + ' paid ' + fmt(invoicePaid(inv)) + ' but owes ' + fmt(invoiceTotal(inv)) + '. Refund the extra ' + fmt(over) + ' QAR now (' + method + ')?\n\nOK = refund · Cancel = keep it as an overpayment (it will show in Needs Attention)',
+        'الحجز أصبح أرخص: ' + who + ' دفع ' + fmt(invoicePaid(inv)) + ' والمستحق ' + fmt(invoiceTotal(inv)) + '. استرداد الزيادة ' + fmt(over) + ' ر.ق الآن (' + method + ')؟\n\nموافق = استرداد · إلغاء = تبقى زيادة تظهر في يحتاج متابعة'))) {
+      const row = recordPayment(inv, { amount: -over, date: TODAY, method });
+      if (row) { row.refund = true; row.note = 'Refund after the booking price was lowered'; }
+    } else {
+      toast(t('Left as an overpayment of ' + fmt(over) + ' QAR — see Needs Attention', 'تُركت كزيادة دفع ' + fmt(over) + ' ر.ق — راجع يحتاج متابعة'), 'info');
+    }
+  } catch (_) {}
+};
 PAGES.duepayment = (main) => {
   if (window._dueFilter == null) window._dueFilter = { search: '', status: 'all', sport: 'all', range: 'all', months: [] };
   const f = window._dueFilter;
@@ -10162,12 +10210,8 @@ function computeMonthlyReport(ym) {
   }
 
   // 4) Outstanding dues — TOTAL across the club as of now (a running figure).
-  let duesTotal = 0, duesMembers = 0;
-  for (const m of (state.members || [])) {
-    if (m.deleted) continue;
-    const out = (typeof memberOutstanding === 'function') ? memberOutstanding(m.id) : 0;
-    if (out > 0.001) { duesTotal += out; duesMembers++; }
-  }
+  const _cd = clubOutstandingDues();   // v6.872 — same figure as the Due Payment screen (members + walk-ins / rentals / hall / shop)
+  let duesTotal = _cd.total, duesMembers = _cd.customers;
 
   // 6) Top payers (members) + top families this month.
   const topMembers = Object.entries(payerTotals)
@@ -10487,12 +10531,8 @@ function computeDashboard(ymSel) {
   const collectionRate = billed > 0 ? Math.round(collected / billed * 100) : 0;
 
   // Outstanding dues (club-wide).
-  let duesTotal = 0, duesMembers = 0;
-  for (const m of (state.members || [])) {
-    if (m.deleted) continue;
-    const out = (typeof memberOutstanding === 'function') ? memberOutstanding(m.id) : 0;
-    if (out > 0.001) { duesTotal += out; duesMembers++; }
-  }
+  const _cd2 = clubOutstandingDues();   // v6.872 — same figure as the Due Payment screen
+  let duesTotal = _cd2.total, duesMembers = _cd2.customers;
 
   // Today's attendance (present marks dated today across all members).
   const dayNum = String(parseInt((today || '').slice(8, 10), 10));
@@ -19587,14 +19627,16 @@ function attentionData() {
     if (late.length) outside.push({ m, late: late.sort() });
   }
   const incomplete = (typeof incompleteProducts === 'function') ? incompleteProducts() : [];
-  return { sales, rentals, lowStock, incomplete, outside, over: (typeof overpaidInvoices === 'function') ? overpaidInvoices() : [] };
+  const dupRefs = (typeof duplicateInvoiceRefs === 'function') ? duplicateInvoiceRefs() : [];
+  const noPaid = (state.invoices || []).filter(i => i && !i.deleted && i.paidAssumed && !i.paidReviewed);
+  return { sales, rentals, lowStock, incomplete, dupRefs, noPaid, outside, over: (typeof overpaidInvoices === 'function') ? overpaidInvoices() : [] };
 }
 PAGES.attention = (main) => {
   const D = attentionData(), isAdmin = currentRole() === 'admin';
   const sec = (icon, title, n, body, hint) => `<div class="card" style="margin-bottom:12px;padding:12px 14px"><div style="font-weight:800;font-size:14px">${icon} ${title} <span class="num" style="color:${n ? 'var(--red)' : 'var(--green)'}">${n ? n : '✓ 0'}</span></div><div class="text-mute" style="font-size:11px;margin:2px 0 6px">${hint}</div>${body}</div>`;
   const row = (a, b, c) => `<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:5px 0;border-top:1px solid var(--border);font-size:12px"><span style="flex:1;min-width:160px">${a}</span><span class="text-mute">${b}</span>${c || ''}</div>`;
   const more = (arr, n) => arr.length > n ? `<div class="text-mute" style="font-size:11px;padding-top:4px">+ ${arr.length - n} ${t('more', 'أخرى')}</div>` : '';
-  const total = D.outside.length + D.sales.length + D.rentals.length + D.lowStock.length + D.incomplete.length + (isAdmin ? D.over.length : 0);
+  const total = D.outside.length + D.sales.length + D.rentals.length + D.lowStock.length + D.incomplete.length + (isAdmin ? D.dupRefs.length + D.noPaid.length : 0) + (isAdmin ? D.over.length : 0);
   main.innerHTML = `
     <div class="topbar"><div><h1>🔔 ${t('Needs Attention', 'يحتاج متابعة')}</h1>
       <div class="subtitle">${total ? total + ' ' + t('item(s) to check', 'بند للمراجعة') : '✓ ' + t('Nothing to check — all clear', 'لا شيء للمراجعة — كله سليم')}</div></div></div>
@@ -19610,6 +19652,12 @@ PAGES.attention = (main) => {
     ${sec('🏟', t('Court bookings with no invoice', 'حجوزات ملاعب بدون فاتورة'), D.rentals.length,
       D.rentals.slice(0, 30).map(r => row('<b>' + escapeHtml(r.customerName || '—') + '</b>', fmtDate(r.date) + ' · ' + fmt(r.amount || 0) + ' QAR', isAdmin ? `<button class="btn ghost sm" onclick="_fixUnlinked('rental',${r.id},'paid')">${t('Create invoice (paid)', 'إنشاء فاتورة (مدفوعة)')}</button><button class="btn ghost sm" onclick="_fixUnlinked('rental',${r.id},'due')">${t('Create (due)', 'إنشاء (آجلة)')}</button>` : '')).join('') + more(D.rentals, 30),
       t('The booking is recorded but its invoice is missing or archived.', 'الحجز مسجّل لكن فاتورته ناقصة أو مؤرشفة.'))}
+    ${isAdmin ? sec('🔢', t('Invoice numbers used twice', 'أرقام فواتير مكررة'), D.dupRefs.length,
+      D.dupRefs.slice(0, 30).map(g => row('<b>' + escapeHtml(String(g.ref)) + '</b> · ' + g.invoices.map(i => escapeHtml(i.customerName || (customerInfo(i) || {}).name || '—')).join(' / '), g.invoices.map(i => fmt(i.amount || 0)).join(' / ') + ' QAR', `<button class="btn ghost sm" onclick="_renumberInvoice(${g.invoices[g.invoices.length - 1].id})">${t('Give the newer one a new number', 'رقم جديد للأحدث')}</button>`)).join('') + more(D.dupRefs, 30),
+      t('Two desks issued the same number. The newer invoice gets a fresh number (its package rows follow when the customer differs).', 'مكتبان أصدرا نفس الرقم. الفاتورة الأحدث تأخذ رقماً جديداً.')) : ''}
+    ${isAdmin ? sec('❓', t('Invoices assumed paid (no paid figure)', 'فواتير افتُرض أنها مدفوعة (بلا رقم مدفوع)'), D.noPaid.length,
+      D.noPaid.slice(0, 30).map(i => row('<b>' + escapeHtml(String(i.ref || i.id)) + '</b> · ' + escapeHtml(i.customerName || (customerInfo(i) || {}).name || '—'), fmtDate(i.date) + ' · ' + fmt(i.amount || 0) + ' QAR', `<button class="btn ghost sm" onclick="_fixPaidFigure(${i.id},'paid')">${t('It was paid in full', 'كانت مدفوعة بالكامل')}</button><button class="btn ghost sm" onclick="_fixPaidFigure(${i.id},'due')">${t('Nothing paid (due)', 'لم يُدفع شيء')}</button>`)).join('') + more(D.noPaid, 30),
+      t('These invoices had no paid figure, so the app assumed they were paid in full. Confirm what was really paid — if nothing, they become due.', 'هذه الفواتير بلا رقم مدفوع فافترض التطبيق أنها مدفوعة بالكامل. أكّد ما دُفع فعلاً — وإن لم يُدفع شيء تصبح مستحقة.')) : ''}
     ${sec('👻', t('Incomplete products (no name or price)', 'منتجات ناقصة (بدون اسم أو سعر)'), D.incomplete.length,
       D.incomplete.slice(0, 40).map(p => row('<b>' + (escapeHtml(p.name || '') || t('(no name)', '(بدون اسم)')) + '</b> <span class="text-mute">#' + escapeHtml(String(p.id)) + '</span>', t('stock', 'مخزون') + ' ' + (parseInt(p.stock) || 0) + ' · ' + t('price', 'سعر') + ' ' + fmt(p.price || 0), isAdmin ? `<button class="btn ghost sm" onclick="editProduct(${p.id})">${t('Edit', 'تعديل')}</button><button class="btn ghost sm" onclick="deleteProduct(${p.id});setTimeout(()=>render(),50)">🗑</button>` : '')).join('') + more(D.incomplete, 40),
       t('A product record that lost its details (often a stale device) — complete it or delete it.', 'سجل منتج فقد بياناته (غالباً من جهاز قديم) — كمّله أو احذفه.'))}
@@ -20086,7 +20134,7 @@ PAGES.expenses = (main) => {
     saveFilter('expenses', filter);
     // Keep the auto Bank Commission rows up to date (card payments × the month's bank rate).
     // v6.804 — Citadel is no longer automatic: old auto rows become ordinary expenses.
-    if ([syncBankCommission(), releaseAutoCitadelRows()].some(Boolean)) save();
+    if (!isViewerRole() && [syncBankCommission(), releaseAutoCitadelRows()].some(Boolean)) save();   // v6.872 — reception cannot see those rows: running the sync there would duplicate them
     // Cash collections (owner taking cash out) are tracked on their own Cash
     // Collection screen — they are NOT real expenses, so keep them off this page.
     // Reception (viewer role) does not see Rent-category expenses at all.
@@ -20943,6 +20991,7 @@ PAGES.salaries = (main) => {
 
 // Record (or edit) an advance for a specific person+month
 window.recordAdvance = function(coachId, monthKey) {
+  if (currentRole() !== 'admin') { toast(t('Admins only', 'للمسؤولين فقط'), 'error'); return; }   // v6.872
   const c = state.coaches.find(x => x.id === coachId);
   if (!c) return;
   const existing = (state.salaries || []).find(s => s.coachId === coachId && s.month === monthKey && s.kind === 'advance');
@@ -21520,6 +21569,7 @@ window._salMarkUnpaid = function (coachId, monthKey) {
 // only shows one month at a time. Read-only figures + a Pay/Manage button per month (opens the
 // normal pay dialog). Total outstanding across all months is summarised at the bottom.
 window.showCoachSalaryHistory = function (coachId) {
+  if (currentRole() !== 'admin') { toast(t('Admins only', 'للمسؤولين فقط'), 'error'); return; }   // v6.872
   const c = state.coaches.find(x => x.id === coachId);
   if (!c) { toast(t('Coach not found', 'المدرب غير موجود'), 'error'); return; }
   const months = availableMonths({ includeFuture: true }).slice().reverse();   // newest first
@@ -22454,6 +22504,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
 
 // Export the current month's payroll as CSV
 window.downloadPayrollCSV = function(monthKey, coachSet) {
+  if (currentRole() !== 'admin') { toast(t('Admins only', 'للمسؤولين فقط'), 'error'); return; }   // v6.872
   const set = coachSet || 'active';   // v6.645: follows the Salaries coach filter (active / inactive / all)
   const people = (state.coaches || [])
     .filter(c => set === 'all' ? true : (set === 'inactive' ? !isCoachActive(c) : isCoachActive(c)))
@@ -31135,6 +31186,7 @@ window.studentFreeze = function(memberId) {
       { label: '❄️ ' + t('Freeze', 'تجميد'), primary: true, onclick: () => {
         let days = parseInt(document.getElementById('sfz-days').value) || 0;
         days = Math.max(1, Math.min(days, maxReq));
+        { const _bad = freezeGuard(m, TODAY, addDays(TODAY, days), days, null, { isAdmin: true }); if (_bad) { toast(_bad, 'error'); return; } }   // v6.871 — no overlapping freeze
         applyFreeze(m, days, 'Self-service freeze');
         if (typeof audit === 'function') audit('member.freeze', 'member:' + m.id, `student froze ${days}d`);
         closeModal(); render();
@@ -36210,7 +36262,7 @@ function saveLamaaBooking(existingId, onDone) {
   if (existingId) {
     const idx = state.hallBookings.findIndex(x => x.id === existingId); const old = state.hallBookings[idx];
     state.hallBookings[idx] = { ...old, date, startTime, endTime, packageLabel, amount, setupBuffer, guests, occasion, customerName: name, customerPhone: phone, customerQid: qid, customerRentalId: rcust ? rcust.id : (old.customerRentalId ?? null), memberId: matchedMember ? matchedMember.id : (old.memberId ?? null), notes, referrer, referralPct };
-    if (old.invoiceId) { const inv = (state.invoices || []).find(i => i.id === old.invoiceId); if (inv) { inv.date = date; inv.description = desc; inv.amount = amount; inv.month = month; inv.customerName = name; inv.customerPhone = phone; inv.customerId = matchedMember ? matchedMember.id : null; if (Array.isArray(inv.lineItems) && inv.lineItems[0]) inv.lineItems[0].price = amount; if (typeof stampUpdate === 'function') stampUpdate(inv); } }
+    if (old.invoiceId) { const inv = (state.invoices || []).find(i => i.id === old.invoiceId); if (inv) { inv.date = date; inv.description = desc; inv.amount = amount; inv.month = month; inv.customerName = name; inv.customerPhone = phone; inv.customerId = matchedMember ? matchedMember.id : null; if (Array.isArray(inv.lineItems) && inv.lineItems[0]) inv.lineItems[0].price = amount; if (typeof stampUpdate === 'function') stampUpdate(inv); offerOverpaymentRefund(inv); } }
     if (typeof stampUpdate === 'function') stampUpdate(state.hallBookings[idx]);
     closeModal(); if (onDone) onDone(); else render(); if (typeof confirmSaved === 'function') confirmSaved(t('Booking updated', 'تم تحديث الحجز')); else { save(); toast(t('Booking updated', 'تم تحديث الحجز')); }
     return;
@@ -37389,6 +37441,7 @@ function saveRental(existingId, onDone) {
         inv.customerName = name;
         inv.customerId = matchedMember ? matchedMember.id : null;
         inv.category = facility === 'Boxing Room' ? 'Boxing Room' : 'Court Rental';
+        offerOverpaymentRefund(inv);   // v6.872
       }
     }
     closeModal();
