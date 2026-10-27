@@ -25,17 +25,37 @@ service cloud.firestore {
     function isMappedStaff() {
       return _mappedRole() in ['coach', 'admin', 'receptionist'];
     }
+    // v6.870 — EFFECTIVE ROLE, the same decision app.js roleForEmail makes:
+    //   1. the admin's role map (settings.userRoles) wins;
+    //   2. a mobile-number login (digits@blackstars.com / members.blackstars.qa) is a MEMBER;
+    //   3. an empty role map = a brand-new club: the first login is the admin (bootstrap);
+    //   4. any OTHER login the admin never mapped gets settings.unmappedRole — 'student' unless the admin chose otherwise.
+    // Before this, step 4 did not exist: a member who signed in with a real e-mail counted as FULL STAFF on the server.
+    function _digitLogin() {
+      return request.auth.token.email.matches('^[0-9]+@(blackstars[.]com|members[.]blackstars[.]qa)$');
+    }
+    function _unmappedRole() {
+      return get(/databases/$(database)/documents/clubs/blackstars).data
+        .get('settings', {}).get('unmappedRole', 'student');
+    }
+    function effRole() {
+      return (request.auth == null || request.auth.token.email == null) ? 'none'
+        : isMappedStaff() ? _mappedRole()
+        : _digitLogin() ? 'student'
+        : (_userRoles().size() == 0) ? 'admin'
+        : _unmappedRole();
+    }
     function isMember() {
-      return request.auth != null
-        && request.auth.token.email != null
-        && request.auth.token.email.matches('^[0-9]+@(blackstars[.]com|members[.]blackstars[.]qa)$')
-        && !isMappedStaff();
+      return request.auth != null && !(effRole() in ['admin', 'receptionist', 'coach']);
     }
     function isStaff() {
       return request.auth != null && !isMember();
     }
     function isAdmin() {
-      return _mappedRole() == 'admin';
+      return effRole() == 'admin';
+    }
+    function isReception() {
+      return effRole() == 'receptionist';
     }
 
     // ── COACH ROLE (v6.739) ─────────────────────────────────────────────────────────────────
@@ -44,7 +64,7 @@ service cloud.firestore {
     // the shared 'M' stamp that marks a live Mixed member / Mixed invoice (any coach may mark Mixed).
     // Admin / receptionist / any other staff login keeps exactly the access it had (isFullStaff()).
     function isCoach() {
-      return _mappedRole() == 'coach';
+      return effRole() == 'coach';
     }
     function isFullStaff() {
       return request.auth != null && !isMember() && !isCoach();
@@ -109,13 +129,44 @@ service cloud.firestore {
     function memberReadable(collection) {
       return collection in ['members', 'schedule', 'advices', 'posts', 'swimGroups'];
     }
+    // v6.870 — the roster is NOT open to every member any more. A member reads only the member record(s) the app has
+    // stamped with that person's login keys (`loginKeys`: the phone digits in the usual forms + the e-mail, written by the
+    // staff app's stamp pass). The keys the portal queries with are exactly [<local part of the login>, <the login e-mail>].
+    function _myLoginKeys() {
+      return [request.auth.token.email.lower().split('@')[0], request.auth.token.email.lower()];
+    }
+    function memberOwns(d) {
+      return d.get('loginKeys', []).hasAny(_myLoginKeys());
+    }
+    function memberCanRead(collection, d) {
+      return memberReadable(collection) && (collection != 'members' || memberOwns(d));
+    }
+    // v6.870 — what a RECEPTIONIST may not touch on the server: pay (the salaries collection), hard deletes of money records
+    // (invoices / expenses / salaries / sales — the app soft-deletes, so a real delete is tampering) and the safeguard settings.
+    function recepBlocked(collection) {
+      return isReception() && collection == 'salaries';
+    }
+    function recepNoDelete(collection) {
+      return isReception() && collection in ['invoices', 'expenses', 'salaries', 'sales'];
+    }
+    function _setting(d, k) {
+      return d.get('settings', {}).get(k, null);
+    }
+    function _protectedSettingsUnchanged() {
+      return resource == null || (
+        _setting(resource.data, 'lockedThrough') == _setting(request.resource.data, 'lockedThrough')
+        && _setting(resource.data, 'systemPinHash') == _setting(request.resource.data, 'systemPinHash')
+        && _setting(resource.data, 'auditEnabled') == _setting(request.resource.data, 'auditEnabled')
+        && _setting(resource.data, 'unmappedRole') == _setting(request.resource.data, 'unmappedRole'));
+    }
 
     match /clubs/{clubId} {
       allow read:  if request.auth != null;   // parent meta doc (settings / camp schedule)
       // Staff may write the club meta doc (settings, camp schedule, sport list, prices…), BUT
       // changing the ROLE MAP is admin-only — otherwise any staff login could escalate itself.
       // A coach never writes the club meta doc (settings, prices, the role map…).
-      allow write: if isFullStaff() && (_rolesUnchanged() || isAdmin() || _rolesEmptyBefore());
+      allow write: if isFullStaff() && (_rolesUnchanged() || isAdmin() || _rolesEmptyBefore())
+                   && (!isReception() || _protectedSettingsUnchanged());   // v6.870 — reception cannot lift the month lock, change the PIN, the audit switch or the default role
 
       // AUDIT TRAIL is IMMUTABLE (req #8): STAFF may CREATE + READ audit entries, but
       // NOBODY may update or delete, and MEMBERS may not read it at all. Declared
@@ -139,16 +190,16 @@ service cloud.firestore {
       // the portal collections (memberReadable) — the club's financial/operational
       // data is never exposed to a member login; a COACH reads/writes only his own stamped records.
       match /{collection}/{docId} {
-        allow read:   if isFullStaff() || (isMember() && memberReadable(collection))
+        allow read:   if (isFullStaff() && !recepBlocked(collection)) || (isMember() && memberCanRead(collection, resource.data))
                       || (isCoach() && coachCanRead(collection, resource.data));
         // v6.634 (#13) — exclude loginLogs too (like auditLog): the specific match above makes it
         // append-only, but Firestore UNIONS rules, so this generic write would otherwise re-grant staff
         // update/delete on the login audit. Keep both append-only logs out of the generic write.
-        allow create: if (isFullStaff() && collection != 'auditLog' && collection != 'loginLogs')
+        allow create: if (isFullStaff() && !recepBlocked(collection) && collection != 'auditLog' && collection != 'loginLogs')
                       || (isCoach() && coachCanCreate(collection, request.resource.data));
-        allow update: if (isFullStaff() && collection != 'auditLog' && collection != 'loginLogs')
+        allow update: if (isFullStaff() && !recepBlocked(collection) && collection != 'auditLog' && collection != 'loginLogs')
                       || (isCoach() && coachCanUpdate(collection, resource.data, request.resource.data));
-        allow delete: if (isFullStaff() && collection != 'auditLog' && collection != 'loginLogs')
+        allow delete: if (isFullStaff() && !recepBlocked(collection) && !recepNoDelete(collection) && collection != 'auditLog' && collection != 'loginLogs')
                       || (isCoach() && (collection in ['advices', 'posts', 'trials']) && coachMine(resource.data));
       }
     }

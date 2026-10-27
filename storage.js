@@ -378,6 +378,28 @@
     for (const name of COLLECTIONS) _live[name] = new Map();
     let _liveMeta = {};
     let _coachScope = null;            // { ids:[…] } while a coach-mapped login is signed in (v6.739)
+    // v6.870 — MEMBER own-record scope. A member login reads only the member record(s) stamped with its login keys; a reception login
+    // never loads the salaries collection (the rules deny it). _memberQ stays false while the OLD open rules are live (legacy full load).
+    let _memberQ = false, _recepScope = false;
+    const _keysKnown = new Map();      // member id → JSON of the stored loginKeys | 'null'
+    // The keys a member record is reachable by: the phone digits in the forms people sign in with (full, without 00, last 8, 974+8, 00974+8)
+    // and the e-mail. The portal queries with exactly [<local part of its login>, <its e-mail>] (see firestore.rules _myLoginKeys).
+    function _loginKeysFor(m) {
+      const out = new Set();
+      for (const p of [m && m.phone, m && m.phone2]) {
+        const d = String(p || '').replace(/\D/g, '');
+        if (d.length < 7) continue;
+        const l8 = d.slice(-8);
+        out.add(d); out.add(d.replace(/^00/, '')); out.add(l8); out.add('974' + l8); out.add('00974' + l8);
+      }
+      const em = m && m.email ? String(m.email).trim().toLowerCase() : '';
+      if (em) out.add(em);
+      return Array.from(out).sort();
+    }
+    function _myMemberKeys() {
+      const em = (() => { try { return ((auth.currentUser && auth.currentUser.email) || '').toLowerCase(); } catch (_) { return ''; } })();
+      return em ? [em.split('@')[0], em] : [];
+    }
     let _stampBusy = false;
     const _stampKnown = {};            // collection → Map<id, JSON of the stored coachIds | 'null'>
     for (const name of COACH_STAMPED_COLS) _stampKnown[name] = new Map();
@@ -386,6 +408,10 @@
     function _ingest(name, data, docId) {
       if (!data || !_stampKnown[name]) return data;
       const id = String(docId != null ? docId : data.id);
+      if (name === 'members') {   // v6.870 — loginKeys is a storage detail too: strip it, remember what the server holds
+        if (Object.prototype.hasOwnProperty.call(data, 'loginKeys')) { _keysKnown.set(id, JSON.stringify(Array.isArray(data.loginKeys) ? data.loginKeys : null)); const r2 = Object.assign({}, data); delete r2.loginKeys; data = r2; }
+        else _keysKnown.set(id, 'null');
+      }
       if (Object.prototype.hasOwnProperty.call(data, 'coachIds')) {
         _stampKnown[name].set(id, JSON.stringify(Array.isArray(data.coachIds) ? data.coachIds : null));
         const rest = Object.assign({}, data); delete rest.coachIds; return rest;
@@ -411,7 +437,10 @@
       if (!Object.prototype.hasOwnProperty.call(COACH_QUERY, name)) return null;
       return colRef(name).where('coachIds', 'array-contains-any', (COACH_QUERY[name] ? ids.concat(['M']) : ids).slice(0, 30));
     }
-    const _readRef = name => _coachScope ? _coachQuery(name) : colRef(name);
+    const _readRef = name => _coachScope ? _coachQuery(name)
+      : (_memberQ && name === 'members') ? (_myMemberKeys().length ? colRef(name).where('loginKeys', 'array-contains-any', _myMemberKeys()) : null)   // v6.870 — a member reads only its own record
+      : (_recepScope && name === 'salaries') ? null                                                                                                   // v6.870 — reception never loads pay
+      : colRef(name);
     // Write the missing/changed coachIds stamps (full-access staff only). One update() per record, a few at a time:
     // update() — never a merge-set — so a record deleted meanwhile is not resurrected as a stub.
     async function _stampPass(src) {
@@ -420,6 +449,11 @@
       try {
         const stamps = window.coachAccessStamps(src);
         const todo = [];
+        if (Array.isArray(src.members)) for (const m of src.members) {   // v6.870 — member login keys
+          if (!m || m.id == null) continue;
+          const arr = _loginKeysFor(m), s = JSON.stringify(arr.length ? arr : null);
+          if ((_keysKnown.get(String(m.id)) || 'null') !== s && !(s === 'null' && !_keysKnown.has(String(m.id)))) todo.push({ name: 'members', id: String(m.id), arr, s, field: 'loginKeys' });
+        }
         for (const name of COACH_STAMPED_COLS) {
           if (!Array.isArray(src[name])) continue;
           const known = _stampKnown[name];
@@ -430,7 +464,10 @@
         const worker = async () => {
           while (i < todo.length) {
             const t = todo[i++];
-            try { await colRef(t.name).doc(t.id).update({ coachIds: t.arr }); _stampKnown[t.name].set(t.id, t.s); done++; }
+            try {
+              if (t.field === 'loginKeys') { await colRef(t.name).doc(t.id).update({ loginKeys: t.arr }); _keysKnown.set(t.id, t.s); done++; }
+              else { await colRef(t.name).doc(t.id).update({ coachIds: t.arr }); _stampKnown[t.name].set(t.id, t.s); done++; }
+            }
             catch (e) { fail++; if (fail === 1) console.warn('[Storage] coach-access stamp skipped ' + t.name + '/' + t.id + ':', (e && e.code) || e, (e && e.message) || ''); }
           }
         };
@@ -839,7 +876,25 @@
           const _email = (() => { try { return ((auth.currentUser && auth.currentUser.email) || '').toLowerCase(); } catch (_) { return ''; } })();
           const _roleEntry = (parent && parent.settings && parent.settings.userRoles) ? parent.settings.userRoles[_email] : null;
           const _mappedStaff = !!(_roleEntry && ['coach', 'admin', 'receptionist'].indexOf(_roleEntry.role) !== -1);
-          const memberScope = _isMemberEmail(_email) && !_mappedStaff;
+          // v6.870 — the same decision the server rules make: a mapped staff login is staff; a mobile login is a member; with an empty role map
+          // the first login is the admin; any OTHER login the admin never mapped gets settings.unmappedRole (default 'student' = a member).
+          const _roleMapSize = (parent && parent.settings && parent.settings.userRoles) ? Object.keys(parent.settings.userRoles).length : 0;
+          const _unmappedStudent = !_mappedStaff && !_isMemberEmail(_email) && _roleMapSize > 0 && !!_email
+            && (((parent && parent.settings && parent.settings.unmappedRole) || 'student') === 'student');
+          const memberScope = (_isMemberEmail(_email) && !_mappedStaff) || _unmappedStudent;
+          _recepScope = !!(_roleEntry && _roleEntry.role === 'receptionist');
+          _memberQ = false;
+          // ROLLOUT SAFETY (members): while the OLD open rules are live and the records are not stamped yet, a keyed query would return
+          // nothing. A plain one-record read succeeds only under the old rules; if it carries no loginKeys keep the legacy full load.
+          // Under the new rules the probe is DENIED → the member stays scoped to its own record.
+          if (memberScope) {
+            _memberQ = true;
+            try {
+              const probe = await colRef('members').limit(1).get({ source: 'server' });
+              let unstamped = false; probe.forEach(d => { if (!Object.prototype.hasOwnProperty.call(d.data() || {}, 'loginKeys')) unstamped = true; });
+              if (unstamped) { console.warn('[Storage] member login: records not stamped yet and rules still open → legacy load'); _memberQ = false; }
+            } catch (_) { /* denied → the new rules are live: stay scoped */ }
+          }
           // COACH scope (v6.739): a coach-mapped login reads only its own records (stamped coachIds) + its own coach profile.
           _coachScope = memberScope ? null : _detectCoachScope(parent);
           // ROLLOUT SAFETY: while the records are not stamped yet AND the old (permissive) rules are still live, a coach-scoped
@@ -857,6 +912,7 @@
           // Load the HOT collections only — auditLog is lazy (fetched on demand, see loadAuditLog).
           const readCols = memberScope ? HOT_COLLECTIONS.filter(c => MEMBER_READABLE.has(c))
             : _coachScope ? HOT_COLLECTIONS.filter(c => c === 'coaches' || Object.prototype.hasOwnProperty.call(COACH_QUERY, c))
+            : _recepScope ? HOT_COLLECTIONS.filter(c => c !== 'salaries')
             : HOT_COLLECTIONS;
           const colResults = await Promise.all(readCols.map(name => {
             const q = _readRef(name);
@@ -869,7 +925,7 @@
           for (const [name, arr] of colResults) { if (arr === null) { anyReadFail = true; continue; } assembled[name] = arr; if (arr.length) anySubData = true; }
           // Collections a member is not allowed to read are present as empty arrays,
           // so the app has a consistent shape (and never shows stale local copies).
-          if (memberScope || _coachScope) for (const name of COLLECTIONS) if (!(name in assembled)) assembled[name] = [];
+          if (memberScope || _coachScope || _recepScope) for (const name of COLLECTIONS) if (!(name in assembled)) assembled[name] = [];   // v6.870 — reception: salaries is present but empty
 
           // A partial/failed SERVER read → don't trust it, block writes (read-only). The PARENT
           // read already succeeded here (auth was fine), so a failed SUBcollection read is a
