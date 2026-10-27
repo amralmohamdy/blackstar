@@ -264,6 +264,24 @@ function _targetDial(value, tiers, unit) {
     <text x="${cx}" y="${cy + 36}" text-anchor="middle" font-size="14" font-weight="800" fill="${done ? '#0f9d58' : 'var(--text-dim,#aaa)'}">${escapeHtml(bonusLine)}</text>
   </svg>`;
 }
+// v6.866 — the receptionist's income target WITHOUT money: goals reached, a % bar toward the top goal, and the bonus each goal pays (their own bonus, not the club income)
+function _targetCardNoIncome(emoji, title, subtitle, value, tiers) {
+  const top = tiers.length ? tiers[tiers.length - 1].at : 1;
+  const pct = Math.max(0, Math.min(100, Math.round(value / top * 100)));
+  const got = tiers.filter(tr => value >= tr.at).length;
+  const legend = tiers.map((tr, i) => {
+    const reached = value >= tr.at;
+    return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 8px;border-radius:7px"><span style="font-size:12px;color:${reached ? 'var(--green,#0f9d58)' : 'var(--text-mute)'};font-weight:${reached ? 700 : 500}">${reached ? '✓' : '○'} ${t('Goal', 'الهدف')} ${i + 1}</span><span style="font-size:12px;font-weight:700;color:${reached ? 'var(--green,#0f9d58)' : 'var(--text-dim)'}">${fmt(tr.bonus)} QAR</span></div>`;
+  }).join('');
+  return `<div class="card" style="text-align:center;padding:16px 16px 12px">
+    <div style="font-weight:800;font-size:15px;margin-bottom:2px">${emoji} ${escapeHtml(title)}</div>
+    <div class="text-mute" style="font-size:11px;margin-bottom:10px">${escapeHtml(subtitle)}</div>
+    <div style="font-size:34px;font-weight:800">${pct}%</div>
+    <div style="height:10px;border-radius:6px;background:var(--surface-2);overflow:hidden;margin:6px 0 4px"><div style="height:100%;width:${pct}%;background:var(--green,#0f9d58)"></div></div>
+    <div class="text-mute" style="font-size:12px;margin-bottom:8px">${got} / ${tiers.length} ${t('goals reached', 'أهداف محققة')}</div>
+    <div style="display:grid;gap:2px;text-align:left">${legend}</div>
+  </div>`;
+}
 // A full target card: dial + a tier legend (each tier ticked when reached).
 function _targetCard(emoji, title, subtitle, value, tiers, unit) {
   const tt = targetTier(value, tiers);
@@ -375,7 +393,7 @@ PAGES.targets = (main) => {
     // ACTIVE receptionists. v6.636 — the RECEPTION role sees the dial + THEIR (equal) share only; ADMIN
     // sees the full split (all receptionist staff) + every coach's dial ("all coaches and staff").
     const income = receptionIncome(ym);
-    const receptionCard = `<div style="max-width:420px;margin:0 auto 6px">${_targetCard('🧾', t('Reception — Income Target', 'الاستقبال — هدف الدخل'), t('Income this month (membership + rentals + shop)', 'الدخل هذا الشهر (اشتراكات + إيجارات + متجر)'), income, receptionTargets(), 'QAR')}</div>`;
+    const receptionCard = `<div style="max-width:420px;margin:0 auto 6px">${role === 'admin' ? _targetCard('🧾', t('Reception — Income Target', 'الاستقبال — هدف الدخل'), t('Income this month (membership + rentals + shop)', 'الدخل هذا الشهر (اشتراكات + إيجارات + متجر)'), income, receptionTargets(), 'QAR') : _targetCardNoIncome('🧾', t('Reception — Income Target', 'الاستقبال — هدف الدخل'), t('Progress this month', 'التقدم هذا الشهر'), income, receptionTargets())}</div>`;
     const _recTT = targetTier(income, receptionTargets());
     const _recAll = (state.coaches || []).filter(c => _coachActive(c) && isReceptionStaff(c));
     const _recps = _recAll;   // v6.840 — equal slices for ALL receptionists; an unticked one forfeits his slice
@@ -413,7 +431,7 @@ PAGES.targets = (main) => {
             <div style="font-weight:800;font-size:15px;color:var(--green)">${t('Your bonus', 'مكافأتك')}: ${fmt(per)} QAR</div>
             <div class="text-mute" style="font-size:11px;margin-top:3px">${t('Reception bonus', 'مكافأة الاستقبال')} ${fmt(_recTT.bonus)} QAR${_n > 1 ? ` · ${t('split', 'مقسّمة')} ${_n} ${t('ways', 'حصص')}` : ''}</div>
           </div>`
-        : `<div class="card" style="max-width:420px;margin:6px auto 0;padding:12px 14px;text-align:center"><div style="font-size:12px">${_recTT.next ? `🎯 ${fmt(_recTT.next.at - income)} QAR ${t('more to reach', 'للوصول إلى')} <b style="color:var(--green)">${fmt(_recTT.next.bonus)} QAR</b>${_n > 1 ? ` (${t('split', 'مقسّمة')} ${_n} ${t('ways', 'حصص')})` : ''}` : ''}</div></div>`;
+        : `<div class="card" style="max-width:420px;margin:6px auto 0;padding:12px 14px;text-align:center"><div style="font-size:12px">${_recTT.next ? `🎯 ${t('Next goal pays', 'الهدف التالي يدفع')} <b style="color:var(--green)">${fmt(_recTT.next.bonus)} QAR</b>${_n > 1 ? ` (${t('split', 'مقسّمة')} ${_n} ${t('ways', 'حصص')})` : ''}` : ''}</div></div>`;
       bodyHtml = receptionCard + mine;
     }
   }
@@ -622,7 +640,7 @@ PAGES.dashboard = (main) => {
 
   // ─── "Needs attention today" — consolidated action items ───
   const threshold = state.settings?.expiringSoonDays || 3;
-  const lowStockThreshold = state.settings?.lowStockThreshold || 3;
+  const lowStockThreshold = state.settings?.lowStockThreshold ?? 3;
   const expiredList = [], expiringList = [], finishedList = [], lowStockList = [];
   for (const m of state.members) {
     if (m.deleted) continue;  // archived members don't trigger alerts
@@ -654,7 +672,7 @@ PAGES.dashboard = (main) => {
   // low stock (products tracked in state.products if present)
   for (const p of (state.products || [])) {
     const liveStock = typeof productCurrentStock === 'function' ? productCurrentStock(p.id) : (p.stock || 0);
-    const threshold = p.lowStockThreshold || lowStockThreshold;
+    const threshold = (p.lowStockThreshold != null && !isNaN(parseInt(p.lowStockThreshold))) ? parseInt(p.lowStockThreshold) : lowStockThreshold;
     if (liveStock <= threshold) {
       lowStockList.push({ ...p, stock: liveStock });
     }
@@ -3721,7 +3739,7 @@ function renderEnrollRows() {
       showModal({
         title: '🔒 ' + t('Sport locked — already attended', 'الرياضة مقفلة — تم الحضور'),
         body: `<div style="font-size:13px;line-height:1.8">
-          <div>${t('This member has already attended', 'لقد حضر هذا العضو بالفعل')} <b>${row.attended}</b> ${t('class', 'حصة')}${(row.attended) === 1 ? '' : (t('es','')) } ${t('of', 'من')} <b>${escapeHtml(row.sport)}</b>.</div>
+          <div>${t('This member has already attended', 'لقد حضر هذا العضو بالفعل')} <b>${row.attended}</b> ${t('class', 'حصة')}${(row.attended) === 1 ? '' : (getLang() === 'en' ? 'es' : '')} ${t('of', 'من')} <b>${escapeHtml(row.sport)}</b>.</div>
           <div class="text-mute" style="font-size:12px;margin-top:8px">${t('Because real classes were attended, the sport can\u2019t simply be changed here — the coach earned commission for those classes. Choose the correct tool:', '\u0644\u0623\u0646 \u0627\u0644\u0639\u0636\u0648 \u062d\u0636\u0631 \u062d\u0635\u0635\u0627\u064b \u0641\u0639\u0644\u064a\u0629\u060c \u0644\u0627 \u064a\u0645\u0643\u0646 \u062a\u063a\u064a\u064a\u0631 \u0627\u0644\u0631\u064a\u0627\u0636\u0629 \u0645\u0646 \u0647\u0646\u0627 \u0645\u0628\u0627\u0634\u0631\u0629.')}</div>
           <ul style="font-size:12px;margin:10px 0 0;padding-left:18px;line-height:1.9">
             <li><b style="color:var(--accent-2)">↩ ${t('Withdraw', 'سحب')}</b> — ${t('refund the member based on classes attended.', 'استرداد بناءً على الحصص المحضورة.')}</li>
@@ -7817,7 +7835,7 @@ window.editMemberPricing = function(memberId) {
 // pure sum of the rows. This is the only place to correct a payment's date, and
 // it cannot reintroduce the old re-derivation corruption.
 window.editInvoicePayments = function(invoiceId) {
-  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast('Admins or receptionists only', 'error'); return; }
+  if (currentRole() !== 'admin') { toast(t('Only an admin can edit payment rows.', 'المسؤول فقط يستطيع تعديل صفوف المدفوعات.'), 'error'); return; }   // v6.868 — reception collects with the 💵 Pay button; it no longer edits or removes payment rows
   const inv = (state.invoices || []).find(i => i.id === invoiceId && !i.deleted);
   if (!inv) { toast('Invoice not found', 'error'); return; }
   if (typeof dedupeInvoicePayments === 'function') dedupeInvoicePayments(inv);   // v6.534: clean merge-duplicate rows before editing (no doubling)
@@ -8258,7 +8276,7 @@ PAGES.clubrevenue = (main) => {
   function resolveRange(preset, fromIn, toIn) {
     const today = TODAY;
     const d = new Date(today + 'T00:00:00');
-    const iso = x => x.toISOString().slice(0, 10);
+    const iso = x => x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0');   // v6.867 — local parts, not UTC
     if (preset === 'today') return { from: today, to: today };
     if (preset === 'yesterday') { const y = new Date(d); y.setDate(d.getDate() - 1); return { from: iso(y), to: iso(y) }; }
     if (preset === 'this_week') {
@@ -8709,6 +8727,7 @@ PAGES.citadel = (main) => {
   const detailRows = details.length ? details.map((d, i) => `<tr>
     <td class="text-mute" style="text-align:center;font-size:12px">${i + 1}</td>
     <td class="text-mute" style="font-size:12px;white-space:nowrap">${fmtMonth(d.month)}</td>
+    <td style="font-size:12px;white-space:nowrap">${d.date ? fmtDate(d.date) : '—'}</td>
     <td class="font-bold" style="font-size:12px">${escapeHtml(d.ref)}</td>
     <td style="font-size:12px">${escapeHtml(d.customer)}</td>
     <td>${d.group.icon} ${escapeHtml(d.group.label)}</td>
@@ -8717,7 +8736,7 @@ PAGES.citadel = (main) => {
       : `<span class="badge" style="background:rgba(16,185,129,.14);color:var(--green);font-size:10px">🎟 ${t('Membership', 'اشتراك')}</span>`}
       <span class="text-mute" style="font-size:10px">${escapeHtml(d.sport)}</span></td>
     <td class="text-right num">${fmt(d.amount)}</td>
-  </tr>`).join('') : `<tr><td colspan="7" class="text-mute" style="text-align:center;padding:16px">${t('No Football / Swimming revenue in the selected month(s).', 'لا يوجد إيراد كرة قدم / سباحة في الأشهر المحددة.')}</td></tr>`;
+  </tr>`).join('') : `<tr><td colspan="8" class="text-mute" style="text-align:center;padding:16px">${t('No Football / Swimming revenue in the selected month(s).', 'لا يوجد إيراد كرة قدم / سباحة في الأشهر المحددة.')}</td></tr>`;
 
   main.innerHTML = `
     <div class="topbar">
@@ -8812,6 +8831,7 @@ PAGES.citadel = (main) => {
         <thead><tr>
           <th style="width:36px;text-align:center">#</th>
           <th>${t('Month', 'الشهر')}</th>
+          <th>${t('Date', 'التاريخ')}</th>
           <th>${t('Invoice', 'الفاتورة')}</th>
           <th>${t('Customer', 'العميل')}</th>
           <th>${t('Activity', 'النشاط')}</th>
@@ -8850,8 +8870,8 @@ function citadelExportXlsx(RATE, scopeLabel) {
   summary.push(['Collected from members', '', '', '', r2(paid || 0)]);
   summary.push(['Paid to company', '', '', '', r2(paidToCompany)]);
   summary.push(['Balance due to company', '', '', '', r2(share - paidToCompany)]);
-  const inv = [['#', 'Month', 'Invoice', 'Customer', 'Activity', 'Type', 'Sport', 'Amount (QAR)']];
-  details.forEach((d, i) => inv.push([i + 1, d.month, d.ref, d.customer, d.group.label, d.type === 'rent' ? 'Rent' : 'Membership', d.sport || '', r2(d.amount)]));
+  const inv = [['#', 'Month', 'Date', 'Invoice', 'Customer', 'Activity', 'Type', 'Sport', 'Amount (QAR)']];
+  details.forEach((d, i) => inv.push([i + 1, d.month, d.date || '', d.ref, d.customer, d.group.label, d.type === 'rent' ? 'Rent' : 'Membership', d.sport || '', r2(d.amount)]));
   const tag = (window._citMonths && window._citMonths.length) ? window._citMonths.slice().sort().join('_') : 'all-months';
   try {
     window.XlsxMini.downloadFile(`citadel-${tag}.xlsx`, { sheets: [{ name: 'Summary', rows: summary }, { name: 'Invoices', rows: inv }] });
@@ -8870,7 +8890,7 @@ function citadelExportPdf(RATE, scopeLabel) {
   const _cats = citadelCategories({ GROUPS, agg });
   const _catTotal = _cats.reduce((s, c) => s + c.amount, 0);
   const catRowsPdf = _cats.map(c => `<tr><td>${escapeHtml(c.label)}</td><td class="n b">${fmt(c.amount)}</td><td class="n" style="color:#dc2626">${fmt(c.amount * RATE / 100)}</td></tr>`).join('');
-  const detRows = details.map((d, i) => `<tr><td class="mut">${i + 1}</td><td class="mut">${escapeHtml(d.month)}</td><td>${escapeHtml(d.ref)}</td><td>${escapeHtml(d.customer)}</td><td>${escapeHtml(d.group.label)}</td><td>${d.type === 'rent' ? 'Rent' : 'Membership'}${d.sport ? ' · ' + escapeHtml(d.sport) : ''}</td><td class="n">${fmt(d.amount)}</td></tr>`).join('');
+  const detRows = details.map((d, i) => `<tr><td class="mut">${i + 1}</td><td class="mut">${escapeHtml(d.month)}</td><td>${escapeHtml(d.date || '')}</td><td>${escapeHtml(d.ref)}</td><td>${escapeHtml(d.customer)}</td><td>${escapeHtml(d.group.label)}</td><td>${d.type === 'rent' ? 'Rent' : 'Membership'}${d.sport ? ' · ' + escapeHtml(d.sport) : ''}</td><td class="n">${fmt(d.amount)}</td></tr>`).join('');
   w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Citadel-${escapeHtml(scopeLabel || '')}</title>
     <style>body{font-family:'Helvetica Neue',Arial,sans-serif;color:#1a1a1a;padding:36px;max-width:900px;margin:0 auto}
       .hd{display:flex;justify-content:space-between;border-bottom:3px solid #f26060;padding-bottom:12px;margin-bottom:18px}
@@ -8900,7 +8920,7 @@ function citadelExportPdf(RATE, scopeLabel) {
       <tr class="tot"><td class="lab">${t('Balance due to company', 'المتبقي للشركة')}</td><td class="n" style="color:${balanceDue > 0.5 ? '#dc2626' : '#059669'}">${fmt(balanceDue)}</td></tr>
     </tbody></table>
     <h2>Contributing invoices (${details.length})</h2>
-    <table><thead><tr><th>#</th><th>Month</th><th>Invoice</th><th>Customer</th><th>Activity</th><th>Type</th><th class="n">Amount</th></tr></thead><tbody>${detRows}</tbody></table>
+    <table><thead><tr><th>#</th><th>Month</th><th>Date</th><th>Invoice</th><th>Customer</th><th>Activity</th><th>Type</th><th class="n">Amount</th></tr></thead><tbody>${detRows}</tbody></table>
     </body></html>`);
   w.document.close();
   setTimeout(() => { try { w.print(); } catch (_) {} }, 350);
@@ -9259,17 +9279,17 @@ Black Stars Academy`;
     <div class="topbar">
       <div>
         <h1>💰 ${t('Due Payment', 'المدفوعات المستحقة')}</h1>
-        <div class="subtitle">${list.length} ${t('of', 'من')} ${all.length} ${t('customers with an outstanding balance (members + walk-ins)', 'عميلاً عليه مبلغ مستحق (أعضاء + غير أعضاء)')}${filtersOn ? '' : ` · ${fmt(grandTotal)} QAR`}</div>
+        <div class="subtitle">${list.length} ${t('of', 'من')} ${all.length} ${t('customers with an outstanding balance (members + walk-ins)', 'عميلاً عليه مبلغ مستحق (أعضاء + غير أعضاء)')}${(filtersOn || isViewerRole()) ? '' : ` · ${fmt(grandTotal)} QAR`}</div>
       </div>
     </div>
     ${overpaidPanelHtml()}
     ${(() => { if (currentRole() !== 'admin') return ''; const _lv = id => id != null && (state.members || []).some(m => m && m.id === id && !m.deleted); const _o = (state.invoices || []).filter(i => i && !i.deleted && !i.switchCredit && i.customerId != null && !i.rentalId && !_lv(i.customerId) && invoiceBalance(i) >= 0.5); if (!_o.length) return ''; return `<div style="margin-bottom:12px;padding:10px 14px;border:1px solid rgba(239,68,68,.4);background:rgba(239,68,68,.06);border-radius:10px;display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap"><div style="font-size:13px">⚠ <b>${_o.length}</b> ${t('due invoice(s) belong to people who are no longer members', 'فاتورة مستحقة لأشخاص لم يعودوا أعضاء')} (${fmt(Math.round(_o.reduce((s, i) => s + invoiceBalance(i), 0) * 100) / 100)} QAR)</div><button class="btn danger sm" onclick="dueArchiveOrphans()">🗑 ${t('Archive them all', 'أرشفتها كلها')}</button></div>`; })()}
     ${(() => { if (currentRole() !== 'admin') return ''; let n = 0, amt = 0; for (const mm of (state.members || [])) { if (mm.deleted) continue; for (const x of _memberMisallocations(mm)) { n++; amt += x.amount; } } return n ? `<div style="margin-bottom:12px;padding:10px 14px;border:1px solid rgba(245,158,11,.5);background:rgba(245,158,11,.08);border-radius:10px;font-size:12.5px">⚠ ${n} ${t('payment(s) sit on the wrong invoice', 'دفعة على فاتورة خطأ')} (${fmt(amt)} QAR) — ${t('an invoice is overpaid while another invoice of the same member is unpaid.', 'فاتورة مدفوعة بزيادة بينما فاتورة أخرى لنفس العضو غير مدفوعة.')} <button class="btn sm" style="margin-inline-start:8px" onclick="window._rebalanceAllMembers()">${t('Move them', 'انقلها')}</button></div>` : ''; })()}
-    <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
+    ${isViewerRole() ? '' : `<div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
       <div class="kpi" style="border-color:var(--red);background:rgba(239,68,68,.06)"><div class="kpi-label" style="color:var(--red)">⚠ ${t('Total due (shown)', 'إجمالي المستحق (المعروض)')}</div><div class="kpi-value num" style="color:var(--red)">${fmt(grandTotal)}</div><div class="kpi-sub">QAR · ${list.length} ${t('customers', 'عميل')}</div></div>
       <div class="kpi"><div class="kpi-label">${t('Total due (all)', 'إجمالي المستحق (الكل)')}</div><div class="kpi-value num">${fmt(overallTotal)}</div><div class="kpi-sub">QAR · ${all.length} ${t('customers', 'عميل')}</div></div>
       <div class="kpi" style="cursor:pointer" onclick="window._dueFilter={...window._dueFilter,range:window._dueFilter.range==='1000+'?'all':'1000+'};render()" title="${t('Click to show only large balances', 'اضغط لإظهار المبالغ الكبيرة فقط')}"><div class="kpi-label">${t('Big balances (≥1000)', 'مبالغ كبيرة (≥1000)')}</div><div class="kpi-value num">${all.filter(r => r.total >= 1000).length}</div><div class="kpi-sub">${t('customers', 'عميل')} · ${fmt(all.filter(r => r.total >= 1000).reduce((s, r) => s + r.total, 0))} QAR</div></div>
-    </div>
+    </div>`}
     <div class="card">
       <div class="filter-bar" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">
         <input id="dp-search" class="btn ghost" type="text" placeholder="${t('Search name or phone…', 'ابحث بالاسم أو الهاتف…')}" value="${escapeHtml(f.search)}" style="flex:1;min-width:180px" />
@@ -9309,7 +9329,7 @@ Black Stars Academy`;
             <th data-sortable="0" class="text-right"></th>
           </tr></thead>
           <tbody>${rowHtml}</tbody>
-          ${list.length ? `<tfoot><tr style="border-top:2px solid var(--border);font-weight:800">
+          ${(list.length && !isViewerRole()) ? `<tfoot><tr style="border-top:2px solid var(--border);font-weight:800">
             <td colspan="6">${t('Total', 'الإجمالي')} (${list.length} ${t('customers', 'عميل')})</td>
             <td class="text-right num" style="color:var(--red);font-size:15px">${fmt(grandTotal)} QAR</td>
             <td colspan="2"></td>
@@ -13446,7 +13466,8 @@ PAGES.invoices = (main) => {
           ${i.customerId && !isViewerRole() ? `<button class="btn ghost sm" onclick="showInvoiceHistory(${i.customerId})" title="See all invoices for this customer">📜</button>` : ''}
           ${isViewerRole() ? '' : `<button class="btn ghost sm" onclick="printInvoicePDF(${i.id})" title="Export invoice as PDF (filename = customer name)">⬇ Export</button>`}
           <button class="btn ghost sm" onclick="sendInvoiceWhatsApp(${i.id})" title="Send invoice as WhatsApp message" style="color:#25D366">💬</button>
-          ${isViewerRole() ? '' : `<button class="btn ghost sm" onclick="editInvoiceQuick(${i.id})" title="Edit coach/sport">✏️</button>`}
+          ${(i.category === 'Product' && (state.sales || []).some(x => x.invoiceId === i.id && !x.historical)) ? `<button class="btn ghost sm" onclick="addProductToInvoice(${i.id})" title="${t('Add another product to this invoice', 'إضافة منتج آخر لنفس الفاتورة')}" style="color:var(--green)">➕</button><button class="btn ghost sm" onclick="returnSale(${(state.sales.find(x => x.invoiceId === i.id) || {}).id})" title="${t('Return / refund', 'مرتجع / استرداد')}">↩</button>` : ''}
+          <button class="btn ghost sm" onclick="editInvoiceQuick(${i.id})" title="${isViewerRole() ? t('Edit customer / description', 'تعديل العميل / الوصف') : 'Edit coach/sport'}">✏️</button>
           ${currentRole() === 'admin' && (i.category || 'Membership') === 'Membership' && i.customerId ? `<button class="btn ghost sm" onclick="regenerateInvoice(${i.id})" title="Regenerate from current enrollment (e.g. if duration changed)" style="color:var(--blue)">🔄</button>` : ''}
           ${isViewerRole() ? '' : `<button class="btn ghost sm" onclick="editInvoicePayments(${i.id})" title="View / edit payments (date, method)">💳</button>`}
           <button class="btn ghost sm" onclick="deleteInvoice(${i.id})" title="${t('Delete (archive — recoverable by an admin)', 'حذف (أرشفة — يمكن للمشرف الاسترجاع)')}">🗑</button>`}
@@ -13630,6 +13651,7 @@ PAGES.invoices = (main) => {
   $('#inv-delete-sel')?.addEventListener('click', () => deleteSelectedInvoices());
 
   function deleteSelectedInvoices() {
+    if (currentRole() !== 'admin') { toast(t('Only an admin can delete invoices in bulk.', 'المسؤول فقط يستطيع الحذف الجماعي للفواتير.'), 'error'); return; }   // v6.868
     const invs = state.invoices.filter(i => selected.has(i.id));
     if (!invs.length) { toast('No invoices selected', 'info'); return; }
     const totalAmt = invs.reduce((s, i) => s + (i.amount || 0), 0);
@@ -16802,6 +16824,8 @@ window.recordPaymentUI = function(id) {
       { label: '💵 Record payment', class: 'btn primary', onclick: () => {
         if (typeof assertCloudWritable === 'function' && !assertCloudWritable('record this payment', 'تسجيل هذه الدفعة')) return;
         const date = $('#pay-date').value || TODAY;
+        if (guardBooksLocked(date)) return;   // v6.868
+        if (isViewerRole()) { const lim = new Date(TODAY + 'T00:00:00'); lim.setDate(lim.getDate() - 31); const li = lim.getFullYear() + '-' + String(lim.getMonth() + 1).padStart(2, '0') + '-' + String(lim.getDate()).padStart(2, '0'); if (date < li) { toast(t('Reception cannot date a payment more than 31 days back — ask the admin.', 'الاستقبال لا يستطيع تأريخ دفعة قبل أكثر من ٣١ يوماً — اطلب من المسؤول.'), 'error'); return; } }
         const isSplit = $('#pay-split').checked;
         if (isSplit) {
           // v6.602 — split across ALL four methods (cash / card / fawran / transfer). One payment
@@ -16893,9 +16917,10 @@ window._efSplitSum = function() {
   if (bal && amtEl) bal.textContent = Math.max(0, (parseFloat(amtEl.value) || 0) - tot).toFixed(2);
 };
 window.editInvoiceQuick = function(id) {
-  if (currentRole() !== 'admin') { toast('Only admins can edit invoices', 'error'); return; }
+  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast('Only admins can edit invoices', 'error'); return; }
   const inv = state.invoices.find(i => i.id === id);
   if (!inv) return;
+  if (guardBooksLocked(inv.month || inv.date)) return;   // v6.868
   const sports = ['MMA','Boxing','Kick Boxing','Karate','Taekwondo','Gymnastic','Football','Swimming','Zumba','Court Rental','Merchandise'];
   const coachOptions = state.coaches.map(c => c.name).concat(['Yasmin (guest)','Ibrahim (guest)']);
 
@@ -16927,6 +16952,8 @@ window.editInvoiceQuick = function(id) {
     linkedSoft.splice(5);
   }
   const linkedItems = [...linkedExplicit, ...linkedSoft];
+  // v6.864 — a customer who takes one more item: add it to THIS invoice instead of opening a new one
+  const _addProdBtn = (linkedSale && !linkedSale.historical && inv.category === 'Product') ? `<div style="margin-top:8px"><button class="btn ghost sm" style="color:var(--green);border-color:var(--green)" onclick="closeModal();addProductToInvoice(${inv.id})">➕ ${t('Add another product to this invoice', 'إضافة منتج آخر لنفس الفاتورة')}</button> <span class="text-mute" style="font-size:10px">${t('(unsaved edits in this window are discarded)', '(أي تعديل غير محفوظ هنا سيُلغى)')}</span></div>` : '';
 
   const stockPanel = linkedItems.length ? `
     <div style="margin-top:8px;padding:12px;background:rgba(91,141,239,.08);border:1px solid rgba(91,141,239,.25);border-radius:8px">
@@ -16935,7 +16962,7 @@ window.editInvoiceQuick = function(id) {
       </div>
       ${linkedItems.map(({item, qty, hard}) => {
         const remaining = item.id ? (typeof productCurrentStock === 'function' ? productCurrentStock(item.id) : (item.stock || 0)) : 0;
-        const threshold = item.lowStockThreshold || 3;
+        const threshold = prodThreshold(item);
         const stockColor = remaining <= 0 ? 'var(--red)' : remaining <= threshold ? 'var(--accent-2)' : 'var(--green)';
         const stockLabel = remaining <= 0 ? 'OUT' : remaining <= threshold ? 'LOW' : 'OK';
         return `
@@ -16970,6 +16997,12 @@ window.editInvoiceQuick = function(id) {
           ${p._correction || p._adj ? `<span class="text-mute" style="font-size:10px">${t('correction', 'تصحيح')}</span>` : ''}</div>`).join('')}
       </div>`
     : `<div class="text-mute" style="font-size:11.5px;margin:2px 0 8px">${t('No payment recorded yet — nothing to date.', 'لا توجد دفعة مسجلة بعد.')}</div>`;
+  const _recepEdit = isViewerRole();   // v6.865 — reception edits the customer / description only; every money field is hidden and left untouched
+  setTimeout(() => { if (!_recepEdit) return; try {
+    ['ef-category', 'ef-sport', 'ef-coach', 'ef-method', 'ef-amt', 'ef-paid', 'ef-date', 'ef-balance'].forEach(x => { const el = document.getElementById(x); const f = el && (el.closest('.field') || el.parentElement); if (f) f.style.display = 'none'; });
+    ['ef-split', 'ef-split-rows'].forEach(x => { const el = document.getElementById(x); const f = el && (x === 'ef-split' ? el.closest('label') : el); if (f) f.style.display = 'none'; });
+    document.querySelectorAll('.ef-pdate').forEach(el => { const f = el.closest('.field'); if (f) f.style.display = 'none'; });
+  } catch (_) {} }, 0);
   showModal({
     title: `Edit Invoice ${inv.ref || '#'+inv.id}`,
     body: `
@@ -17009,6 +17042,7 @@ window.editInvoiceQuick = function(id) {
       <div class="field"><label>Date</label><input id="ef-date" type="date" value="${inv.date}" /></div>
       ${_efPayHtml}
       ${stockPanel}
+      ${_addProdBtn}
     `,
     actions: [
       { label: 'Cancel', class: 'btn ghost', onclick: closeModal },
@@ -17188,6 +17222,8 @@ window.deleteInvoice = function(id) {
   if (_role !== 'admin' && _role !== 'receptionist') { toast('You do not have permission to delete invoices', 'error'); return; }
   const inv = state.invoices.find(i => i.id === id);
   if (!inv) { toast('Invoice not found', 'error'); return; }
+  if (_role !== 'admin' && invoicePaid(inv) > 0.004) { toast(t('Only an admin can delete an invoice that has payments on it.', 'المسؤول فقط يستطيع حذف فاتورة عليها مدفوعات.'), 'error'); return; }   // v6.868
+  if (guardBooksLocked(inv.month || inv.date)) return;
   const cust = customerInfo(inv);
   const paid = invoicePaid(inv);
   const bal = invoiceBalance(inv);
@@ -18752,6 +18788,9 @@ function cashDrawerFrom(c, upper) {
         if (!after(p.date, p.at)) return;
         (p.noDrawer ? hidden : moves).push({ when: p.at || p.date, amount: amt, label: who, ref, kind: 'in', inv: i.id, pi });
       });
+    } else if (i.withdrawCredit && normalizeMethod(i.method) === 'cash') {   // v6.867 — a withdrawal refund handed back in cash leaves the drawer (its WD- invoice has no payment rows)
+      const amt = Number(i.amount) || 0;
+      if (amt < 0 && after(i.date, i.createdAt)) (i.noDrawer ? hidden : moves).push({ when: i.createdAt || i.date, amount: amt, label: t('Refund to ', 'استرداد إلى ') + who, ref, kind: 'refund', inv: i.id, pi: -1 });
     } else if (normalizeMethod(i.method) === 'cash') {   // legacy invoice with no ledger = paid in full on its date
       const amt = invoicePaid(i);
       if (amt > 0 && after(i.date, i.createdAt)) (i.noDrawer ? hidden : moves).push({ when: i.createdAt || i.date, amount: amt, label: who, ref, kind: 'in', inv: i.id, pi: -1 });
@@ -18815,7 +18854,7 @@ function cashCountVariance(amount, dateStr) {
   return { expected: D.expected, diff: Math.round((amount - D.expected) * 100) / 100 };
 }
 function cashVarianceText(v) {
-  if (!v) return '';
+  if (!v || isViewerRole()) return '';   // v6.866 — a blind count: reception is never told the expected figure
   if (Math.abs(v.diff) < 0.5) return t('matches the expected ', 'مطابق للمتوقع ') + fmt(v.expected);
   return t('expected ', 'المتوقع ') + fmt(v.expected) + ' → ' + (v.diff < 0 ? t('SHORT ', 'عجز ') : t('OVER ', 'زيادة ')) + fmt(Math.abs(v.diff));
 }
@@ -18851,8 +18890,8 @@ PAGES.cashinhand = (main) => {
 
     <div class="card" style="margin-bottom:16px;text-align:center;padding:28px 18px;background:linear-gradient(135deg,rgba(16,185,129,.10),transparent 70%)">
       <div class="text-mute" style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;font-weight:700">${t('Current cash in hand', 'النقد الحالي في الصندوق')}</div>
-      <div style="font-size:46px;font-weight:800;color:${LD && LD.expected < 0 ? 'var(--red)' : 'var(--green)'};line-height:1.1;margin:6px 0">${LD ? fmtMoney(LD.expected) : '—'}</div>
-      ${LD ? `<div style="font-size:12px;margin-bottom:2px"><span class="badge active" style="font-size:9px">● ${t('live', 'مباشر')}</span> <span class="text-mute">${t('last count', 'آخر جرد')} <b>${fmtMoney(LD.base)}</b> · <span style="color:var(--green)">+${fmtMoney(LD.receipts)} ${t('cash in', 'نقد وارد')}</span> · <span style="color:var(--red)">−${fmtMoney(LD.collections)} ${t('collected by owner', 'استلمه المالك')}</span></span></div>` : ''}
+      <div style="font-size:46px;font-weight:800;color:${(!isViewerRole() && LD && LD.expected < 0) ? 'var(--red)' : 'var(--green)'};line-height:1.1;margin:6px 0">${isViewerRole() ? (latest ? fmtMoney(latest.amount) : '—') : (LD ? fmtMoney(LD.expected) : '—')}</div>
+      ${(LD && !isViewerRole()) ? `<div style="font-size:12px;margin-bottom:2px"><span class="badge active" style="font-size:9px">● ${t('live', 'مباشر')}</span> <span class="text-mute">${t('last count', 'آخر جرد')} <b>${fmtMoney(LD.base)}</b> · <span style="color:var(--green)">+${fmtMoney(LD.receipts)} ${t('cash in', 'نقد وارد')}</span> · <span style="color:var(--red)">−${fmtMoney(LD.collections)} ${t('collected by owner', 'استلمه المالك')}</span></span></div>` : ''}
       ${latest ? `<div class="text-mute" style="font-size:12px">${t('Last counted', 'آخر جرد')}: <b>${fmtDate(latest.date)}</b>${latest.by ? ' · ' + escapeHtml(latest.by) : ''}${latest.note ? ' · ' + escapeHtml(latest.note) : ''}</div>` : `<div class="text-mute" style="font-size:13px">${t('No cash count recorded yet. Click “Record cash count” to enter your first one.', 'لا يوجد جرد مسجّل بعد. اضغط «تسجيل جرد النقد» لإدخال أول جرد.')}</div>`}
       ${delta != null ? `<div style="font-size:12px;margin-top:6px;color:${delta >= 0 ? 'var(--green)' : 'var(--red)'}">${delta >= 0 ? '▲' : '▼'} ${fmtMoney(Math.abs(delta))} ${t('vs previous count', 'مقارنة بالجرد السابق')}</div>` : ''}
       <div style="display:flex;gap:8px;justify-content:center;align-items:center;margin-top:16px;flex-wrap:wrap">
@@ -18860,7 +18899,8 @@ PAGES.cashinhand = (main) => {
         <button class="btn primary" id="cih-quick-save">✓ ${t('Update', 'تحديث')}</button>
         <button class="btn ghost" id="cih-deposit" title="${t('Cash the owner put INTO the drawer — so it is expected, not an over', 'نقد وضعه المالك في الصندوق — فيُحسب متوقعاً وليس زيادة')}">➕ ${t('Cash added by owner', 'نقد أضافه المالك')}</button>
       </div>
-      <div class="text-mute" style="font-size:11px;margin-top:6px">${t('The figure above goes up with every cash payment a member makes and down with every cash collection by the owner. Expenses, salaries and refunds are NOT deducted — count the drawer and enter it here: the screen tells you if it is short or over.', 'الرقم أعلاه يزيد مع كل دفعة نقدية من عضو وينقص مع كل استلام نقدي للمالك. المصروفات والرواتب والمبالغ المستردة لا تُخصم — عُدّ الصندوق وأدخله هنا: ستظهر لك الشاشة إن كان هناك عجز أو زيادة.')}</div>
+      ${isViewerRole() ? `<div class="text-mute" style="font-size:11px;margin-top:6px">${t('Count the drawer and enter the amount. The figure above is your last count.', 'عُدّ الصندوق وأدخل المبلغ. الرقم أعلاه هو آخر جرد.')}</div>` : ''}
+      ${isViewerRole() ? '' : `<div class="text-mute" style="font-size:11px;margin-top:6px">${t('The figure above goes up with every cash payment a member makes and down with every cash collection by the owner. Expenses, salaries and refunds are NOT deducted — count the drawer and enter it here: the screen tells you if it is short or over.', 'الرقم أعلاه يزيد مع كل دفعة نقدية من عضو وينقص مع كل استلام نقدي للمالك. المصروفات والرواتب والمبالغ المستردة لا تُخصم — عُدّ الصندوق وأدخله هنا: ستظهر لك الشاشة إن كان هناك عجز أو زيادة.')}</div>`}
     </div>
 
     ${(LD && currentRole() === 'admin') ? `<div class="card" style="margin-bottom:16px"><details${LD.moves.length && LD.moves.length <= 12 ? ' open' : ''}><summary style="cursor:pointer;font-weight:700">💵 ${t('Cash payments & collections since the last count', 'المدفوعات النقدية والاستلامات منذ آخر جرد')} <span class="text-mute" style="font-weight:500">(${LD.moves.length})</span></summary>${LD.moves.length ? `<div style="overflow:auto;margin-top:8px"><table class="data-table" style="width:100%"><thead><tr><th>${t('When', 'الوقت')}</th><th>${t('Member (English · Arabic · mobile)', 'العضو (إنجليزي · عربي · موبايل)')}</th><th>${t('Invoice', 'الفاتورة')}</th><th class="text-right">${t('Current amount (before)', 'المبلغ الحالي (قبل)')}</th><th class="text-right" style="color:var(--green)">${t('Collected cash (+)', 'النقد المحصّل (+)')}</th><th class="text-right" style="color:var(--red)">${t('Decreased (−)', 'النقص (−)')}</th><th class="text-right">${t('Amount after', 'المبلغ بعد')}</th><th></th></tr></thead><tbody>${_mvRows}${_openRow}</tbody></table></div>` : `<div class="text-mute" style="font-size:13px;padding:8px 0">${t('No cash payment or collection since the last count.', 'لا مدفوعات نقدية ولا استلامات منذ آخر جرد.')}</div>`}</details></div>` : ''}
@@ -18870,7 +18910,7 @@ PAGES.cashinhand = (main) => {
     <div class="card">
       <div class="card-header"><div><div class="card-title">🧾 ${t('Count history', 'سجل الجرد')}</div><div class="card-subtitle">${t('Every cash count you have recorded, newest first', 'كل عمليات جرد النقد المسجّلة، الأحدث أولاً')}</div></div></div>
       ${allRecs.length ? `<div style="overflow:auto"><table class="data-table" style="width:100%"><thead><tr>
-        <th>${t('Date', 'التاريخ')}</th><th class="text-right">${t('Amount', 'المبلغ')}</th><th class="text-right">${t('Change', 'التغير')}</th><th class="text-right">${t('Expected', 'المتوقع')}</th><th class="text-right">${t('Short / over', 'عجز / زيادة')}</th><th>${t('Counted by', 'الجرد بواسطة')}</th><th>${t('Note', 'ملاحظة')}</th><th></th>
+        <th>${t('Date', 'التاريخ')}</th><th class="text-right">${t('Amount', 'المبلغ')}</th><th class="text-right">${t('Change', 'التغير')}</th>${isViewerRole() ? '' : `<th class="text-right">${t('Expected', 'المتوقع')}</th><th class="text-right">${t('Short / over', 'عجز / زيادة')}</th>`}<th>${t('Counted by', 'الجرد بواسطة')}</th><th>${t('Note', 'ملاحظة')}</th><th></th>
       </tr></thead><tbody>
       ${allRecs.map((c, i) => {
         if (c.kind === 'deposit') return `<tr style="background:rgba(59,130,246,.06)"><td>${fmtDate(c.date)}</td><td class="text-right num font-bold" style="color:var(--blue)">+${fmtMoney(c.amount)}</td><td class="text-mute" colspan="3">💵 ${t('Cash added to the drawer by the owner', 'نقد أضافه المالك للصندوق')}</td><td class="text-mute">${c.by ? escapeHtml(c.by) : '—'}</td><td class="text-mute">${c.note ? escapeHtml(c.note) : '—'}</td><td class="text-right">${currentRole() === 'admin' ? `<button class="btn ghost sm" onclick="window.deleteCashCount('${c.id}')" title="${t('Delete this entry', 'حذف هذا السجل')}">🗑</button>` : ''}</td></tr>`;
@@ -18881,8 +18921,8 @@ PAGES.cashinhand = (main) => {
           <td>${fmtDate(c.date)}${_cur ? ` <span class="badge active" style="font-size:9px">${t('current', 'الحالي')}</span>` : ''}</td>
           <td class="text-right num font-bold">${fmtMoney(c.amount)}</td>
           <td class="text-right num" style="${d == null ? 'color:var(--text-mute)' : d >= 0 ? 'color:var(--green)' : 'color:var(--red)'}">${d == null ? '—' : (d >= 0 ? '+' : '−') + fmtMoney(Math.abs(d))}</td>
-          <td class="text-right num text-mute">${c.expected != null ? fmtMoney(c.expected) : '—'}</td>
-          <td class="text-right num" style="${c.diff == null ? 'color:var(--text-mute)' : Math.abs(c.diff) < 0.5 ? 'color:var(--green)' : 'color:var(--red);font-weight:700'}">${c.diff == null ? '—' : (Math.abs(c.diff) < 0.5 ? '✓' : (c.diff < 0 ? '−' : '+') + fmtMoney(Math.abs(c.diff)))}</td>
+          ${isViewerRole() ? '' : `<td class="text-right num text-mute">${c.expected != null ? fmtMoney(c.expected) : '—'}</td>
+          <td class="text-right num" style="${c.diff == null ? 'color:var(--text-mute)' : Math.abs(c.diff) < 0.5 ? 'color:var(--green)' : 'color:var(--red);font-weight:700'}">${c.diff == null ? '—' : (Math.abs(c.diff) < 0.5 ? '✓' : (c.diff < 0 ? '−' : '+') + fmtMoney(Math.abs(c.diff)))}</td>`}
           <td class="text-mute">${c.by ? escapeHtml(c.by) : '—'}</td>
           <td class="text-mute">${c.note ? escapeHtml(c.note) : '—'}</td>
           <td class="text-right" style="white-space:nowrap">${currentRole() === 'admin' ? `<button class="btn ghost sm" onclick="window.openCashCountDialog('${c.id}')" title="${t('Edit this entry', 'تعديل هذا السجل')}">✏️</button> ` : ''}<button class="btn ghost sm" onclick="window.deleteCashCount('${c.id}')" title="${t('Delete this entry', 'حذف هذا السجل')}">🗑</button></td>
@@ -18903,10 +18943,10 @@ PAGES.cashinhand = (main) => {
     if (_v) { entry.expected = _v.expected; entry.diff = _v.diff; }
     if (!Array.isArray(state.cashCounts)) state.cashCounts = [];
     state.cashCounts.push(entry);
-    if (typeof audit === 'function') audit('cash.count', 'cashinhand', `Recorded cash count ${fmt(amount)} QAR (quick)` + (_v ? ' · ' + cashVarianceText(_v) : ''));
+    if (typeof audit === 'function') audit('cash.count', 'cashinhand', `Recorded cash count ${fmt(amount)} QAR (quick)` + (_v && cashVarianceText(_v) ? ' · ' + cashVarianceText(_v) : ''));
     render();
     // v6.388: confirm the cash count reached the cloud before saying it recorded.
-    confirmSaved(`✓ ${t('Cash count recorded', 'تم تسجيل الجرد')}: ${fmt(amount)} QAR` + (_v ? ' · ' + cashVarianceText(_v) : ''));
+    confirmSaved(`✓ ${t('Cash count recorded', 'تم تسجيل الجرد')}: ${fmt(amount)} QAR` + (_v && cashVarianceText(_v) ? ' · ' + cashVarianceText(_v) : ''));
   };
   $('#cih-quick-save')?.addEventListener('click', quickSave);
   $('#cih-quick')?.addEventListener('keydown', e => { if (e.key === 'Enter') quickSave(); });
@@ -18980,9 +19020,9 @@ window.openCashCountDialog = function(existingId) {
           if (_v) { entry.expected = _v.expected; entry.diff = _v.diff; }
           if (!Array.isArray(state.cashCounts)) state.cashCounts = [];
           state.cashCounts.push(entry);
-          if (typeof audit === 'function') audit('cash.count', 'cashinhand', `Recorded cash count ${fmt(amount)} QAR` + (_v ? ' · ' + cashVarianceText(_v) : ''));
+          if (typeof audit === 'function') audit('cash.count', 'cashinhand', `Recorded cash count ${fmt(amount)} QAR` + (_v && cashVarianceText(_v) ? ' · ' + cashVarianceText(_v) : ''));
           closeModal();
-          withCloudConfirm({ verify: [{ collection: 'cashCounts', id: entry.id }], okMsg: `${t('Cash count recorded', 'تم تسجيل الجرد')}: ${fmt(amount)} QAR` + (_v ? ' · ' + cashVarianceText(_v) : ''), afterOk: () => render() });
+          withCloudConfirm({ verify: [{ collection: 'cashCounts', id: entry.id }], okMsg: `${t('Cash count recorded', 'تم تسجيل الجرد')}: ${fmt(amount)} QAR` + (_v && cashVarianceText(_v) ? ' · ' + cashVarianceText(_v) : ''), afterOk: () => render() });
         }
       }},
     ],
@@ -19525,7 +19565,7 @@ function attentionData() {
   const _un = (typeof computeUnlinkedRentalsSales === 'function') ? computeUnlinkedRentalsSales() : [];
   const sales = _un.filter(x => x.kind === 'sale').map(x => x.rec);
   const rentals = _un.filter(x => x.kind === 'rental' && !x.rec.cancelled).map(x => x.rec);
-  const lowStock = (state.products || []).filter(p => p && !p.deleted && (parseInt(p.stock) || 0) <= (p.lowStockThreshold != null ? parseInt(p.lowStockThreshold) : 3)).sort((a, b) => (parseInt(a.stock) || 0) - (parseInt(b.stock) || 0));
+  const lowStock = (state.products || []).filter(p => p && !p.deleted && productStockRaw(p.id) <= prodThreshold(p)).map(p => ({ ...p, stock: productStockRaw(p.id) })).sort((a, b) => a.stock - b.stock);   // v6.862 — CURRENT stock, not the starting number
   const since = new Date(TODAY + 'T00:00:00'); since.setDate(since.getDate() - 14);
   const iso = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   const sinceIso = iso(since);
@@ -19546,14 +19586,15 @@ function attentionData() {
     }
     if (late.length) outside.push({ m, late: late.sort() });
   }
-  return { sales, rentals, lowStock, outside, over: (typeof overpaidInvoices === 'function') ? overpaidInvoices() : [] };
+  const incomplete = (typeof incompleteProducts === 'function') ? incompleteProducts() : [];
+  return { sales, rentals, lowStock, incomplete, outside, over: (typeof overpaidInvoices === 'function') ? overpaidInvoices() : [] };
 }
 PAGES.attention = (main) => {
   const D = attentionData(), isAdmin = currentRole() === 'admin';
   const sec = (icon, title, n, body, hint) => `<div class="card" style="margin-bottom:12px;padding:12px 14px"><div style="font-weight:800;font-size:14px">${icon} ${title} <span class="num" style="color:${n ? 'var(--red)' : 'var(--green)'}">${n ? n : '✓ 0'}</span></div><div class="text-mute" style="font-size:11px;margin:2px 0 6px">${hint}</div>${body}</div>`;
   const row = (a, b, c) => `<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:5px 0;border-top:1px solid var(--border);font-size:12px"><span style="flex:1;min-width:160px">${a}</span><span class="text-mute">${b}</span>${c || ''}</div>`;
   const more = (arr, n) => arr.length > n ? `<div class="text-mute" style="font-size:11px;padding-top:4px">+ ${arr.length - n} ${t('more', 'أخرى')}</div>` : '';
-  const total = D.outside.length + D.sales.length + D.rentals.length + D.lowStock.length + (isAdmin ? D.over.length : 0);
+  const total = D.outside.length + D.sales.length + D.rentals.length + D.lowStock.length + D.incomplete.length + (isAdmin ? D.over.length : 0);
   main.innerHTML = `
     <div class="topbar"><div><h1>🔔 ${t('Needs Attention', 'يحتاج متابعة')}</h1>
       <div class="subtitle">${total ? total + ' ' + t('item(s) to check', 'بند للمراجعة') : '✓ ' + t('Nothing to check — all clear', 'لا شيء للمراجعة — كله سليم')}</div></div></div>
@@ -19569,6 +19610,9 @@ PAGES.attention = (main) => {
     ${sec('🏟', t('Court bookings with no invoice', 'حجوزات ملاعب بدون فاتورة'), D.rentals.length,
       D.rentals.slice(0, 30).map(r => row('<b>' + escapeHtml(r.customerName || '—') + '</b>', fmtDate(r.date) + ' · ' + fmt(r.amount || 0) + ' QAR', isAdmin ? `<button class="btn ghost sm" onclick="_fixUnlinked('rental',${r.id},'paid')">${t('Create invoice (paid)', 'إنشاء فاتورة (مدفوعة)')}</button><button class="btn ghost sm" onclick="_fixUnlinked('rental',${r.id},'due')">${t('Create (due)', 'إنشاء (آجلة)')}</button>` : '')).join('') + more(D.rentals, 30),
       t('The booking is recorded but its invoice is missing or archived.', 'الحجز مسجّل لكن فاتورته ناقصة أو مؤرشفة.'))}
+    ${sec('👻', t('Incomplete products (no name or price)', 'منتجات ناقصة (بدون اسم أو سعر)'), D.incomplete.length,
+      D.incomplete.slice(0, 40).map(p => row('<b>' + (escapeHtml(p.name || '') || t('(no name)', '(بدون اسم)')) + '</b> <span class="text-mute">#' + escapeHtml(String(p.id)) + '</span>', t('stock', 'مخزون') + ' ' + (parseInt(p.stock) || 0) + ' · ' + t('price', 'سعر') + ' ' + fmt(p.price || 0), isAdmin ? `<button class="btn ghost sm" onclick="editProduct(${p.id})">${t('Edit', 'تعديل')}</button><button class="btn ghost sm" onclick="deleteProduct(${p.id});setTimeout(()=>render(),50)">🗑</button>` : '')).join('') + more(D.incomplete, 40),
+      t('A product record that lost its details (often a stale device) — complete it or delete it.', 'سجل منتج فقد بياناته (غالباً من جهاز قديم) — كمّله أو احذفه.'))}
     ${sec('📦', t('Low stock — time to reorder', 'مخزون منخفض — وقت إعادة الطلب'), D.lowStock.length,
       D.lowStock.slice(0, 40).map(p => row('<b>' + escapeHtml(p.name) + '</b>' + (p.sku ? ' <span class="text-mute">' + escapeHtml(p.sku) + '</span>' : ''), (parseInt(p.stock) || 0) + ' ' + t('left', 'متبقي') + ' · ' + t('alert at', 'تنبيه عند') + ' ' + (p.lowStockThreshold != null ? p.lowStockThreshold : 3))).join('') + more(D.lowStock, 40),
       t('Stock at or below each product alert level.', 'المخزون عند أو أقل من حد التنبيه للمنتج.'))}`;
@@ -19608,7 +19652,7 @@ PAGES.cashcollection = (main) => {
       <td>${e.date ? fmtDate(e.date) : '—'}</td>
       <td><div class="font-bold">${escapeHtml(e.collectedBy || '—')}</div>${e.note ? `<div class="text-mute" style="font-size:11px">${escapeHtml(e.note)}</div>` : ''}</td>
       <td class="text-mute" style="font-size:11px">${e.month ? fmtMonth(e.month) : (e.date ? fmtMonth(e.date.slice(0, 7)) : '—')}</td>
-      <td class="text-right num" style="color:var(--red);font-weight:800;font-size:14px">${fmt(e.amount)} <span class="text-mute" style="font-size:10px;font-weight:400">QAR</span></td>
+      <td class="text-right num" style="color:var(--red);font-weight:800;font-size:14px">${isAdmin ? `${fmt(e.amount)} <span class="text-mute" style="font-size:10px;font-weight:400">QAR</span>` : '—'}</td>
       <td class="text-right" style="white-space:nowrap">
         ${isAdmin ? `<button class="btn ghost sm" onclick="openCashCollectionModal(${e.id})" title="${t('Edit', 'تعديل')}">✏️</button>` : ''}
         ${isAdmin ? `<button class="btn ghost sm" onclick="deleteCashCollection(${e.id})" title="${t('Delete', 'حذف')}" style="color:var(--red)">🗑</button>` : ''}
@@ -20433,6 +20477,7 @@ function showExpenseForm(id) {
         };
         if (salaryCoachId != null) data.coachId = salaryCoachId;
         if (salaryCoachName) data.coachName = salaryCoachName;
+        if (guardBooksLocked(date)) return;   // v6.868
         if (isNew) {
           var _expNew = { id: nextId(state.expenses), ...data, createdAt: new Date().toISOString() };   // v6.767 — timestamp (the drawer orders a cash collection by it)
           state.expenses.push(_expNew);
@@ -22449,10 +22494,17 @@ function productSoldQty(productId) {
   for (const s of (state.sales || [])) {
     if (s.historical) continue;   // historical = stock already accounted for
     for (const it of (s.items || [])) {
-      if (it.productId === productId) sold += it.qty || 0;
+      if (it.productId === productId) sold += (it.qty || 0) - (it.returnedQty || 0);   // v6.863 — a returned unit is back on the shelf
     }
   }
   return sold;
+}
+// v6.862 — the alert level of a product: 0 is a real value (alert only when out), blank = 3
+function prodThreshold(p) { const n = parseInt(p && p.lowStockThreshold); return isNaN(n) ? 3 : n; }
+// v6.862 — stock WITHOUT the floor at 0, so an oversell shows as a shortfall instead of vanishing
+function productStockRaw(productId) {
+  const p = (state.products || []).find(x => x.id === productId);
+  return p ? (p.stock || 0) - productSoldQty(productId) : 0;
 }
 function productCurrentStock(productId) {
   const p = (state.products || []).find(x => x.id === productId);
@@ -22468,18 +22520,15 @@ PAGES.products = (main) => {
   function applyFilter() {
     return (state.products || []).filter(p => {
       if (filter.search) {
-        const q = filter.search.toLowerCase();
-        const hay = [p.name, p.category, p.sku].filter(Boolean).join(' ').toLowerCase();
-        if (!hay.includes(q)) return false;
+        if (!searchMatchesFields(filter.search, [p.name, p.category, p.sku].filter(Boolean))) return false;   // v6.862 — Arabic-normalised
       }
       if (filter.fname) {
-        const q = filter.fname.toLowerCase();
-        if (!`${p.name || ''} ${p.sku || ''}`.toLowerCase().includes(q)) return false;
+        if (!searchMatchesFields(filter.fname, [p.name || '', p.sku || ''])) return false;
       }
       if (filter.fcat && `${p.category || ''}` !== filter.fcat) return false;
       if (filter.category !== 'all' && p.category !== filter.category) return false;
       const stock = productCurrentStock(p.id);
-      if (filter.stock === 'low' && stock > (p.lowStockThreshold || 3)) return false;
+      if (filter.stock === 'low' && stock > prodThreshold(p)) return false;
       if (filter.stock === 'out' && stock > 0) return false;
       if (filter.stock === 'available' && stock <= 0) return false;
       return true;
@@ -22494,7 +22543,7 @@ PAGES.products = (main) => {
     return out;
   }
   const _range = (vals, money) => { const v = vals.filter(x => x > 0); if (!v.length) return '<span class="text-mute">—</span>'; const lo = Math.min(...v), hi = Math.max(...v); return lo === hi ? fmt(lo) : fmt(lo) + ' – ' + fmt(hi); };
-  const _stat = p => { const s = productCurrentStock(p.id), th = p.lowStockThreshold || 3; return s === 0 ? 'out' : s <= th ? 'low' : 'ok'; };
+  const _stat = p => { const s = productCurrentStock(p.id), th = prodThreshold(p); return s === 0 ? 'out' : s <= th ? 'low' : 'ok'; };
   function groupRowHtml(g, n) {
     const items = g.items, stock = items.reduce((s, p) => s + productCurrentStock(p.id), 0), value = items.reduce((s, p) => s + productCurrentStock(p.id) * (p.price || 0), 0);
     const st = items.map(_stat), worst = st.includes('out') ? 'out' : st.includes('low') ? 'low' : 'ok';
@@ -22539,7 +22588,7 @@ PAGES.products = (main) => {
       if (g.items.length > 1) return groupRowHtml(g, _rowOffset + _i + 1);
       const p = g.items[0];
       const stock = productCurrentStock(p.id);
-      const threshold = p.lowStockThreshold || 3;
+      const threshold = prodThreshold(p);
       const stockColor = stock === 0 ? 'var(--red)' : stock <= threshold ? 'var(--accent-2)' : 'var(--green)';
       const stockLabel = stock === 0 ? t('Out of stock', 'نفد المخزون') : stock <= threshold ? t('Low', 'منخفض') : t('In stock', 'متوفر');
       return `
@@ -22713,10 +22762,15 @@ function saveProduct(existingId) {
   if (!name) { toast('Name required', 'error'); return; }
   const price = parseFloat($('#p-price').value) || 0;
   if (price <= 0) { toast('Sell price must be > 0', 'error'); return; }
+  if (!isFinite(price)) { toast(t('Sell price is not a valid number', 'سعر البيع غير صالح'), 'error'); return; }
   const cost = parseFloat($('#p-cost').value) || 0;
+  if (!isFinite(cost) || cost < 0) { toast(t('Cost cannot be negative', 'التكلفة لا تكون سالبة'), 'error'); return; }   // v6.862
+  if (cost > price && !confirm(t('The cost is higher than the sell price — save anyway?', 'التكلفة أعلى من سعر البيع — حفظ رغم ذلك؟'))) return;
   { const _stk = parseInt($('#p-stock').value) || 0; if (_stk < 0) { toast(t('Stock cannot be negative', 'المخزون لا يكون سالباً'), 'error'); return; }   // v6.841 (X-10)
     const _sku = $('#p-sku').value.trim().toLowerCase();
-    if (_sku && (state.products || []).some(p => p && p.id !== existingId && String(p.sku || '').trim().toLowerCase() === _sku)) { toast(t('Another product already has this SKU — SKUs must be unique', 'منتج آخر يحمل نفس الـ SKU — يجب أن يكون فريداً'), 'error'); return; } }
+    // v6.860 — a SKU is often a SIZE ('m', 'l', 'YS', '12') used by many different products, so it must be unique only inside ONE product (same name + category), not across the shop
+    const _gk = name.trim().toLowerCase() + '|' + String(($('#p-cat').value || 'Other')).trim().toLowerCase();
+    if (_sku && (state.products || []).some(p => p && p.id !== existingId && productGroupKey(p) === _gk && String(p.sku || '').trim().toLowerCase() === _sku)) { toast(t('This product already has a variant with this SKU — each SKU of one product must be different', 'هذا المنتج لديه بالفعل نسخة بنفس الـ SKU — يجب أن يختلف كل SKU لنفس المنتج'), 'error'); return; } }
   const data = {
     name,
     sku: $('#p-sku').value.trim() || null,
@@ -22724,7 +22778,7 @@ function saveProduct(existingId) {
     cost,
     price,
     stock: (parseInt($('#p-stock').value) || 0) + (existingId ? productSoldQty(existingId) : 0),   // v6.859 — the box holds the CURRENT stock; the stored starting stock = current + sold
-    lowStockThreshold: parseInt($('#p-lowst').value) || 3,
+    lowStockThreshold: (() => { const n = parseInt($('#p-lowst').value); return isNaN(n) || n < 0 ? 3 : n; })(),   // v6.862 — 0 is allowed
   };
   let _prodId, _prodMsg;
   if (existingId) {
@@ -22749,21 +22803,25 @@ window.deleteProduct = function(id) {
   if (usedIn > 0) {
     if (!confirm(`"${p.name}" appears in ${usedIn} past sale${usedIn===1?'':'s'}. Delete anyway? (Sales history won't be affected)`)) return;
   } else if (!confirm(`Delete product "${p.name}"?`)) return;
+  for (const s of (state.sales || [])) for (const it of (s.items || [])) if (it.productId === id) { if (it.category == null) it.category = p.category || null; if (it.unitCost == null) it.unitCost = Number(p.cost) || 0; if (!it.name) it.name = p.name; }   // v6.862 — the sale keeps what it needs
   state.products = state.products.filter(x => x.id !== id);
+  state.settings = state.settings || {};
+  state.settings.deletedProductIds = [...(state.settings.deletedProductIds || []), id].slice(-5000);   // v6.861 — remember the delete
   withCloudConfirm({ verify: [{ collection: 'products', id, absent: true, label: p.name, snapshot: p }], okMsg: 'Product deleted', afterOk: () => render() });
 };
 
 window.restockProduct = function(id) {
   const p = (state.products || []).find(x => x.id === id);
   if (!p) return;
-  const currentStock = productCurrentStock(id);
+  const currentStock = productCurrentStock(id), _raw = productStockRaw(id);
   showModal({
     title: `➕ Restock: ${escapeHtml(p.name)}`,
     body: `
-      <div class="text-mute" style="font-size:13px;margin-bottom:12px">Current stock: <b>${currentStock}</b></div>
+      <div class="text-mute" style="font-size:13px;margin-bottom:12px">Current stock: <b>${currentStock}</b>${_raw < 0 ? ` <span style="color:var(--red)">· ${t('oversold by', 'مباع بالزيادة')} ${-_raw} — ${t('the first units you add cover it', 'أول وحدات تضيفها تغطيها')}</span>` : ''}</div>
       <div class="form-row">
         <div class="field"><label>Add quantity</label><input id="rs-qty" type="number" min="1" step="1" value="10" /></div>
         <div class="field"><label>Cost per unit (optional)</label><input id="rs-cost" type="number" min="0" step="0.01" placeholder="for expense log" /></div>
+        <div class="field"><label>${t('Paid by', 'طريقة الدفع')}</label><select id="rs-method"><option value="cash">${t('Cash', 'نقدي')}</option><option value="card">${t('Card', 'بطاقة')}</option><option value="transfer">${t('Transfer', 'تحويل')}</option></select></div>
       </div>
       <div class="form-row">
         <div class="field" style="flex:1"><label>Note (optional)</label><input id="rs-note" type="text" placeholder="Supplier / receipt ref" /></div>
@@ -22790,8 +22848,10 @@ window.restockProduct = function(id) {
             description: `Restock: ${qty}× ${p.name}` + (note ? ` (${note})` : ''),
             category: 'Equipment',
             amount: qty * cost,
-            method: 'cash',
+            method: ($('#rs-method') || {}).value || 'cash',   // v6.862 — was always cash
+            productId: id,
           });
+          state.products[idx].cost = cost;   // v6.862 — the latest purchase price becomes the product cost
         }
         closeModal();
         render();
@@ -22853,6 +22913,7 @@ PAGES.sales = (main) => {
           <td class="text-right" style="white-space:nowrap">
             ${s.invoiceId && !isViewerRole() ? `<button class="btn ghost sm" onclick="printInvoicePDF(${s.invoiceId})" title="Print invoice">📄</button>` : ''}
             <button class="btn ghost sm" onclick="viewSaleDetail(${s.id})" title="Details">👁</button>
+            ${(currentRole() === 'admin' && !s.historical) ? `<button class="btn ghost sm" onclick="returnSale(${s.id})" title="${t('Return / refund', 'مرتجع / استرداد')}">↩</button>` : ''}
             ${isViewerRole() ? '' : `<button class="btn ghost sm" onclick="deleteSale(${s.id})" title="Delete">🗑</button>`}
           </td>
         </tr>`;
@@ -23049,7 +23110,7 @@ function renderSaleLines() {
           </div>
           ${line.productId ? (() => {
             const p = products.find(x => x.id === line.productId) || {};
-            const threshold = p.lowStockThreshold || 3;
+            const threshold = prodThreshold(p);
             const color = (overStock || inStock === 0) ? 'var(--red)' : (inStock <= threshold ? 'var(--accent-2)' : 'var(--text-mute)');
             const note = overStock ? ` — only ${inStock} available, reduce qty` : (inStock === 0 ? ' — out of stock' : (inStock <= threshold ? ' · low' : ''));
             return `<div style="font-size:11px;color:${color};margin-top:6px;font-weight:${overStock || inStock === 0 ? '600' : '400'}">📦 ${p.sku ? '<b>SKU ' + escapeHtml(p.sku) + '</b> · ' : ''}${inStock} in stock${note}</div>`;
@@ -23184,6 +23245,8 @@ function completeSale(onDone) {
       productId: l.productId,
       name: l.name,
       sku: ((state.products || []).find(x => x.id === l.productId) || {}).sku || null,   // v6.824 — which product (size / variant) was deducted
+      category: ((state.products || []).find(x => x.id === l.productId) || {}).category || null,   // v6.862 — snapshot, survives a later product delete
+      unitCost: Number(((state.products || []).find(x => x.id === l.productId) || {}).cost) || 0,
       qty: l.qty,
       unitPrice: l.unitPrice,
       lineTotal: l.qty * l.unitPrice,
@@ -23315,6 +23378,7 @@ window.viewSaleDetail = function(id) {
         ${saleBalanceNow(s) > 0 ? `<div style="display:flex;justify-content:space-between;padding:2px 0;color:var(--accent-2)"><span class="text-mute">Balance</span><span class="font-bold">${fmt(saleBalanceNow(s))}</span></div>` : ''}
       </div>
       ${s.notes ? `<div class="text-mute" style="font-size:12px;margin-top:10px">📝 ${escapeHtml(s.notes)}</div>` : ''}
+      ${(s.returns || []).length ? `<div style="margin-top:10px;font-size:12px;color:var(--accent-2)"><b>↩ ${t('Returns', 'المرتجعات')}</b>${s.returns.map(r => `<div>${fmtDate(r.date)} · ${r.items.map(i => i.qty + '× ' + escapeHtml(i.name || '')).join(', ')} · ${t('refunded', 'مُسترد')} ${fmt(r.refund || 0)} (${escapeHtml(String(r.method || ''))})</div>`).join('')}</div>` : ''}
     `,
     actions: [
       ...(inv ? [{ label: '📄 Print Invoice', class: 'btn ghost', onclick: () => { closeModal(); printInvoicePDF(inv.id); } }] : []),
@@ -23323,6 +23387,132 @@ window.viewSaleDetail = function(id) {
   });
 };
 
+// v6.863 — RETURN / REFUND of a product sale: units go back on the shelf, the sale + invoice shrink by the returned value, and any money handed back is a refund payment (a cash refund leaves the drawer)
+function saleReturnCalc(s, qtys) {
+  const k = (Number(s.discount) > 0 && Number(s.subtotal) > 0) ? Math.max(0, 1 - Number(s.discount) / Number(s.subtotal)) : 1;
+  let gross = 0;
+  (s.items || []).forEach((it, i) => { gross += (Number(qtys[i]) || 0) * (Number(it.unitPrice) || 0); });
+  return Math.round(gross * k * 100) / 100;
+}
+window.returnSale = function(id) {
+  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast(t('Only admins can return sales', 'المرتجعات للمدير فقط'), 'error'); return; }
+  const s = (state.sales || []).find(x => x.id === id);
+  if (!s) return;
+  const inv = saleInvoiceFor(s);
+  if (guardBooksLocked((inv && (inv.month || inv.date)) || s.date)) return;   // v6.868
+  const paidNow = inv ? Math.max(0, invoicePaid(inv)) : Math.max(0, (Number(s.total) || 0) - (Number(s.balance) || 0));
+  const rows = (s.items || []).map((it, i) => { const left = (it.qty || 0) - (it.returnedQty || 0); return left > 0 ? `<tr><td>${escapeHtml(it.name || '')}${it.sku ? ' <span class="text-mute">' + escapeHtml(String(it.sku)) + '</span>' : ''}</td><td class="text-right num">${left}</td><td class="text-right num">${fmt(it.unitPrice)}</td><td class="text-right"><input type="number" class="rt-q" data-i="${i}" min="0" max="${left}" step="1" value="0" style="width:70px" oninput="_retRecalc(${id})"></td></tr>` : ''; }).join('');
+  if (!rows) { toast(t('Everything on this sale is already returned', 'تم إرجاع كل بنود هذا البيع'), 'error'); return; }
+  showModal({
+    title: '↩ ' + t('Return / refund', 'مرتجع / استرداد'),
+    body: `<div class="table-wrap"><table><thead><tr><th>${t('Item', 'الصنف')}</th><th class="text-right">${t('Can return', 'متاح للإرجاع')}</th><th class="text-right">${t('Unit', 'السعر')}</th><th class="text-right">${t('Return qty', 'كمية المرتجع')}</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="form-row" style="margin-top:10px">
+        <div class="field"><label>${t('Returned value', 'قيمة المرتجع')}</label><input id="rt-val" type="number" readonly value="0"></div>
+        <div class="field"><label>${t('Refund now (QAR)', 'المبلغ المسترد الآن')} <span class="text-mute" style="font-size:10px">${t('max paid', 'الحد الأقصى المدفوع')}: ${fmt(paidNow)}</span></label><input id="rt-refund" type="number" min="0" step="0.01" value="0"></div>
+        <div class="field"><label>${t('Refunded by', 'طريقة الاسترداد')}</label><select id="rt-method"><option value="cash">${t('Cash', 'نقدي')}</option><option value="card">${t('Card', 'بطاقة')}</option><option value="transfer">${t('Transfer', 'تحويل')}</option></select></div>
+      </div>
+      <div class="text-mute" style="font-size:11px">${t('Returned units go back to stock. A cash refund leaves the cash drawer. Refund 0 = no money handed back (the invoice is just reduced).', 'الوحدات المرتجعة ترجع للمخزون. الاسترداد النقدي يخرج من الخزنة. صفر = لا يُرد مبلغ (تُخفَّض الفاتورة فقط).')}</div>`,
+    actions: [
+      { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
+      { label: '↩ ' + t('Confirm return', 'تأكيد المرتجع'), class: 'btn primary', onclick: () => {
+        const qtys = (s.items || []).map(() => 0);
+        document.querySelectorAll('.rt-q').forEach(el => { const i = parseInt(el.dataset.i); const it = s.items[i]; const left = (it.qty || 0) - (it.returnedQty || 0); qtys[i] = Math.max(0, Math.min(left, parseInt(el.value) || 0)); });
+        if (!qtys.some(q => q > 0)) { toast(t('Enter a return quantity', 'أدخل كمية المرتجع'), 'error'); return; }
+        const val = saleReturnCalc(s, qtys);
+        const refund = Math.round((parseFloat($('#rt-refund').value) || 0) * 100) / 100;
+        if (refund < 0 || refund > paidNow + 0.004) { toast(t('The refund cannot exceed what was paid (' + fmt(paidNow) + ')', 'الاسترداد لا يتجاوز المدفوع (' + fmt(paidNow) + ')'), 'error'); return; }
+        const method = ($('#rt-method') || {}).value || 'cash';
+        const done = [];
+        (s.items || []).forEach((it, i) => { if (qtys[i] > 0) { it.returnedQty = (it.returnedQty || 0) + qtys[i]; done.push({ productId: it.productId, name: it.name, qty: qtys[i] }); } });
+        s.returns = s.returns || [];
+        s.returns.push({ id: Date.now(), date: TODAY, items: done, value: val, refund, method, by: (typeof currentUserName === 'function' ? currentUserName() : 'admin') });
+        s.total = Math.max(0, Math.round(((Number(s.total) || 0) - val) * 100) / 100);
+        if (inv) {
+          inv.amount = Math.max(0, Math.round(((Number(inv.amount) || 0) - val) * 100) / 100);
+          if (refund > 0) { const row = recordPayment(inv, { amount: -refund, date: TODAY, method }); if (row) { row.refund = true; row.note = 'Product return'; } }
+          stampUpdate(inv);
+          s.balance = Math.max(0, Math.round((inv.amount - invoicePaid(inv)) * 100) / 100);   // v6.867 — keep the sale record in step with its invoice (no false 'sale due mismatch')
+          s.paid = Math.max(0, Math.round((s.total - s.balance) * 100) / 100);
+        }
+        if (typeof audit === 'function') audit('sale.return', 'sale:' + s.id, done.map(d => d.qty + '× ' + d.name).join(', ') + ' · value ' + val + ' · refunded ' + refund + ' ' + method);
+        closeModal();
+        withCloudConfirm({ verify: inv ? [{ collection: 'invoices', id: inv.id }, { collection: 'sales', id: s.id }] : [{ collection: 'sales', id: s.id }], okMsg: t('Return recorded · refunded ', 'تم المرتجع · مُسترد ') + fmt(refund) + ' QAR', afterOk: () => render() });
+      } },
+    ],
+  });
+};
+window._retRecalc = function(id) {
+  const s = (state.sales || []).find(x => x.id === id); if (!s) return;
+  const qtys = (s.items || []).map(() => 0);
+  document.querySelectorAll('.rt-q').forEach(el => { qtys[parseInt(el.dataset.i)] = Math.max(0, parseInt(el.value) || 0); });
+  const val = saleReturnCalc(s, qtys), inv = saleInvoiceFor(s);
+  const paid = inv ? Math.max(0, invoicePaid(inv)) : 0;
+  const newAmt = Math.max(0, (inv ? Number(inv.amount) || 0 : Number(s.total) || 0) - val);
+  $('#rt-val').value = val;
+  $('#rt-refund').value = Math.max(0, Math.round(Math.min(paid, paid - newAmt) * 100) / 100);   // default = what was paid above the reduced invoice
+};
+// v6.864 — ADD A PRODUCT TO AN EXISTING PRODUCT INVOICE: the sale gets the line (stock drops), the invoice total grows, and anything paid now is a new payment dated today
+window.addProductToInvoice = function(invId) {
+  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast(t('Only admins can edit invoices', 'تعديل الفواتير للمدير فقط'), 'error'); return; }
+  const inv = (state.invoices || []).find(i => i && i.id === invId);
+  const s = inv ? (state.sales || []).find(x => x.invoiceId === inv.id) : null;
+  if (inv && guardBooksLocked(inv.month || inv.date)) return;   // v6.868
+  if (!inv || !s) { toast(t('This invoice has no sale record to add to', 'هذه الفاتورة ليس لها سجل بيع للإضافة إليه'), 'error'); return; }
+  const prods = (state.products || []).filter(p => p && !p.deleted && String(p.name || '').trim()).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const opts = prods.map(p => `<option value="${p.id}" data-price="${p.price || 0}">${escapeHtml(p.name)}${p.sku ? ' · SKU ' + escapeHtml(String(p.sku)) : ''} · ${productCurrentStock(p.id)} ${t('in stock', 'بالمخزون')} · ${fmt(p.price || 0)}</option>`).join('');
+  showModal({
+    title: '➕ ' + t('Add product to invoice', 'إضافة منتج للفاتورة') + ' ' + escapeHtml(inv.ref || ''),
+    body: `<div class="text-mute" style="font-size:12px;margin-bottom:8px">${escapeHtml(inv.customerName || '')} · ${t('current total', 'الإجمالي الحالي')} ${fmt(inv.amount || 0)} · ${t('due', 'المتبقي')} ${fmt(Math.max(0, invoiceBalance(inv)))}</div>
+      <div class="field"><label>${t('Product', 'المنتج')}</label><select id="ap-prod" onchange="_apPrice()"><option value="">— ${t('pick', 'اختر')} —</option>${opts}</select></div>
+      <div class="form-row">
+        <div class="field"><label>${t('Qty', 'الكمية')}</label><input id="ap-qty" type="number" min="1" step="1" value="1" oninput="_apPrice()"></div>
+        <div class="field"><label>${t('Unit price (QAR)', 'سعر الوحدة')}</label><input id="ap-price" type="number" min="0" step="0.01" value="0" oninput="_apPrice(true)"></div>
+        <div class="field"><label>${t('Line total', 'إجمالي البند')}</label><input id="ap-total" type="number" readonly value="0"></div>
+      </div>
+      <div class="form-row">
+        <div class="field"><label>${t('Paid now (QAR)', 'المدفوع الآن')}</label><input id="ap-pay" type="number" min="0" step="0.01" value="0"></div>
+        <div class="field"><label>${t('Method', 'الطريقة')}</label><select id="ap-method"><option value="cash">${t('Cash', 'نقدي')}</option><option value="card">${t('Card', 'بطاقة')}</option><option value="transfer">${t('Transfer', 'تحويل')}</option><option value="fawran">Fawran</option></select></div>
+      </div>
+      <div class="text-mute" style="font-size:11px">${t('Stock goes down by the quantity. What is not paid now stays due on this invoice.', 'المخزون ينقص بالكمية. ما لم يُدفع الآن يبقى مستحقاً على هذه الفاتورة.')}</div>`,
+    actions: [
+      { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
+      { label: '➕ ' + t('Add to invoice', 'أضف للفاتورة'), class: 'btn primary', onclick: () => {
+        const pid = parseInt($('#ap-prod').value), p = (state.products || []).find(x => x.id === pid);
+        const qty = parseInt($('#ap-qty').value) || 0, price = Math.round((parseFloat($('#ap-price').value) || 0) * 100) / 100;
+        if (!p) { toast(t('Pick a product', 'اختر المنتج'), 'error'); return; }
+        if (qty <= 0) { toast(t('Quantity must be at least 1', 'الكمية 1 على الأقل'), 'error'); return; }
+        if (!(price >= 0) || !isFinite(price)) { toast(t('Price is not valid', 'السعر غير صالح'), 'error'); return; }
+        const left = productCurrentStock(pid);
+        if (qty > left && !confirm(t('Only ' + left + ' in stock — add anyway?', 'المتاح ' + left + ' فقط — المتابعة؟'))) return;
+        const add = Math.round(qty * price * 100) / 100;
+        const pay = Math.round((parseFloat($('#ap-pay').value) || 0) * 100) / 100;
+        const due = Math.max(0, invoiceBalance(inv)) + add;
+        if (pay < 0 || pay > due + 0.004) { toast(t('Paid now cannot exceed what is due (' + fmt(due) + ')', 'المدفوع لا يتجاوز المستحق (' + fmt(due) + ')'), 'error'); return; }
+        s.items = s.items || [];
+        const same = s.items.find(it => it.productId === pid && Number(it.unitPrice) === price);
+        if (same) { same.qty += qty; same.lineTotal = Math.round(same.qty * price * 100) / 100; }
+        else s.items.push({ productId: pid, name: p.name, sku: p.sku || null, category: p.category || null, unitCost: Number(p.cost) || 0, qty, unitPrice: price, lineTotal: add });
+        s.subtotal = Math.round(((Number(s.subtotal) || 0) + add) * 100) / 100;
+        s.total = Math.round(((Number(s.total) || 0) + add) * 100) / 100;
+        inv.amount = Math.round(((Number(inv.amount) || 0) + add) * 100) / 100;
+        if (pay > 0) recordPayment(inv, { amount: pay, date: TODAY, method: ($('#ap-method') || {}).value || 'cash' });
+        s.balance = Math.max(0, Math.round((inv.amount - invoicePaid(inv)) * 100) / 100);
+        s.paid = Math.max(0, Math.round((s.total - s.balance) * 100) / 100);
+        stampUpdate(inv);
+        if (typeof audit === 'function') audit('sale.add_item', 'sale:' + s.id, qty + '× ' + p.name + ' added to ' + (inv.ref || '') + ' · +' + add + ' · paid ' + pay);
+        closeModal();
+        withCloudConfirm({ verify: [{ collection: 'invoices', id: inv.id }, { collection: 'sales', id: s.id }], okMsg: t('Added ' + qty + '× ' + p.name + ' · invoice total ' + fmt(inv.amount) + ' QAR', 'تمت الإضافة · إجمالي الفاتورة ' + fmt(inv.amount)), afterOk: () => render() });
+      } },
+    ],
+  });
+};
+window._apPrice = function(fromPrice) {
+  const sel = $('#ap-prod'), opt = sel && sel.options[sel.selectedIndex];
+  if (!fromPrice && opt && opt.dataset && opt.dataset.price != null && sel.dataset.last !== sel.value) { $('#ap-price').value = opt.dataset.price; sel.dataset.last = sel.value; }
+  const tot = Math.round(((parseInt($('#ap-qty').value) || 0) * (parseFloat($('#ap-price').value) || 0)) * 100) / 100;
+  $('#ap-total').value = tot;
+  $('#ap-pay').value = tot;
+};
 window.deleteSale = function(id) {
   if (currentRole() !== 'admin') { toast('Only admins can delete sales', 'error'); return; }
   const s = (state.sales || []).find(x => x.id === id);
@@ -23697,6 +23887,7 @@ window.setAuditEnabled = function(on) {
   if (currentRole() !== 'admin') { toast(t('Admins only', 'للمسؤولين فقط'), 'error'); return; }
   if (!state.settings) state.settings = {};
   state.settings.auditEnabled = !!on;
+  audit('settings.audit_toggle', 'settings:audit', 'Full audit log turned ' + (on ? 'ON' : 'OFF'));   // v6.868 — always logged
   if (typeof save === 'function') save();
   toast(on ? t('Audit logging turned on', 'تم تشغيل سجل التدقيق') : t('Audit logging turned off', 'تم إيقاف سجل التدقيق'));
   if (typeof render === 'function') render();
@@ -23710,7 +23901,7 @@ PAGES.audit = (main) => {
   }
   // v6.580 — the audit log is OFF by default (it grew unbounded and dominated storage). When disabled,
   // show an explainer + an opt-in toggle instead of trying to load it.
-  if (!(state.settings && state.settings.auditEnabled)) {
+  if (false) {   // v6.868 — the page always shows now (money actions are always logged)
     main.innerHTML = `<div class="card" style="max-width:560px;margin:24px auto;text-align:center;padding:34px 28px">
       <div style="font-size:40px">📋</div>
       <h2 style="margin:8px 0 4px">${t('Audit Log is off', 'سجل التدقيق متوقف')}</h2>
@@ -24000,6 +24191,11 @@ PAGES.settings = (main, section) => {
         </div>
       </div>
       <div class="form-row">
+        <div class="field"><label>🔒 ${t('Close the books through', 'إقفال الدفاتر حتى')}</label><select id="pref-lockedthrough"><option value="">${t('— not locked —', '— غير مقفل —')}</option>${(() => { const o = []; const d = new Date(TODAY + 'T00:00:00'); for (let k = 0; k < 24; k++) { const ym = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); o.push(`<option value="${ym}" ${cur.lockedThrough === ym ? 'selected' : ''}>${ym}</option>`); d.setMonth(d.getMonth() - 1); } return o.join(''); })()}</select>
+          <div class="text-mute" style="font-size:11px;margin-top:4px">${t('Reception can no longer add or change payments, invoices, returns or expenses dated in or before this month. Admin is not blocked.', 'الاستقبال لا يستطيع إضافة أو تعديل مدفوعات أو فواتير أو مرتجعات أو مصروفات في هذا الشهر أو قبله. المسؤول غير مقيّد.')}</div></div>
+        <div class="field"><label>🔑 ${t('System PIN', 'رمز النظام')}</label><button type="button" class="btn ghost" onclick="changeSystemPin()">${t('Change PIN', 'تغيير الرمز')}</button></div>
+      </div>
+      <div class="form-row">
         <div class="field">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input id="pref-auditenabled" type="checkbox" ${cur.auditEnabled ? 'checked' : ''} style="width:auto" /> 📋 ${t('Enable audit log (record every edit)', 'تفعيل سجل التدقيق (تسجيل كل تعديل)')}</label>
           <div class="text-mute" style="font-size:11px;margin-top:4px">${t('OFF by default. The audit log traces who changed what, but it grows forever and can fill the app’s storage, so it is off unless you need it. Turning it on starts recording from now — it does not recover past history. The Audit Log screen only appears when this is on.', 'متوقف افتراضياً. يتتبع السجل من غيّر ماذا، لكنه ينمو بلا حدود وقد يملأ مساحة التخزين، لذا يبقى متوقفاً ما لم تحتجه. تفعيله يبدأ التسجيل من الآن — لا يستعيد السجل السابق. تظهر شاشة السجل فقط عند تفعيله.')}</div>
@@ -24242,7 +24438,9 @@ PAGES.settings = (main, section) => {
       }
     }
     const auditEl = $('#pref-auditenabled');
-    if (auditEl && currentRole() === 'admin') state.settings.auditEnabled = !!auditEl.checked;   // v6.580
+    if (auditEl && currentRole() === 'admin') { if (!!state.settings.auditEnabled !== !!auditEl.checked) audit('settings.audit_toggle', 'settings:audit', 'Full audit log turned ' + (auditEl.checked ? 'ON' : 'OFF')); state.settings.auditEnabled = !!auditEl.checked; }   // v6.580
+    const lockEl = $('#pref-lockedthrough');
+    if (lockEl && currentRole() === 'admin') { const nv = lockEl.value || null; if ((state.settings.lockedThrough || null) !== nv) audit('settings.lock', 'settings:lock', 'Books locked through ' + (nv || '(none)') + ' (was ' + (state.settings.lockedThrough || 'none') + ')'); state.settings.lockedThrough = nv; }   // v6.868
 
     confirmSaved(`Preferences saved (alert ${days} days before expiry)`);
   });
@@ -24518,13 +24716,12 @@ PAGES.settings = (main, section) => {
 
   // Shared guard for destructive actions: admin-only, force a backup download, then
   // require TWO confirmations before running.
-  const DANGER_PIN = '4242';
   const dangerAction = (firstMsg, secondMsg, run) => {
     if (currentRole() !== 'admin') { toast('Only an admin can perform this action', 'error'); return; }
     // v6.428 — require a security PIN before any destructive Danger Zone action.
     const pin = prompt(t('Enter the security PIN to continue:', 'أدخل رمز الأمان للمتابعة:'));
     if (pin === null) return;   // cancelled
-    if (String(pin).trim() !== DANGER_PIN) { toast(t('Incorrect PIN — action cancelled', 'رمز غير صحيح — أُلغي الإجراء'), 'error'); return; }
+    if (!systemPinOk(pin)) { toast(t('Incorrect PIN — action cancelled', 'رمز غير صحيح — أُلغي الإجراء'), 'error'); return; }
     if (!confirm(firstMsg)) return;
     try { if (typeof window.downloadBackup === 'function') window.downloadBackup(); } catch (_) {}
     if (!confirm(secondMsg)) return;
@@ -33674,7 +33871,7 @@ PAGES.enrolled = (main) => {
     const totalClasses = allRows.reduce((s, r) => s + r.totalClasses, 0);
     const uniqueMembers = new Set(allRows.map(r => r.m.id)).size;
 
-    $('#enr-count').innerHTML = `<b>${allRows.length}</b> enrollment row${allRows.length === 1 ? '' : 's'} · <b>${uniqueMembers}</b> member${uniqueMembers === 1 ? '' : 's'} · <b>${fmt(totalPaid)} QAR</b> paid · <b>${totalAttended}</b>/${totalClasses} classes attended`;
+    $('#enr-count').innerHTML = `<b>${allRows.length}</b> enrollment row${allRows.length === 1 ? '' : 's'} · <b>${uniqueMembers}</b> member${uniqueMembers === 1 ? '' : 's'} · ${isViewerRole() ? '' : `<b>${fmt(totalPaid)} QAR</b> paid · `}<b>${totalAttended}</b>/${totalClasses} classes attended`;
 
     // "Filters hiding rows" banner — shows when filters reduce visible rows.
     // Helps admin spot the case where a new member doesn't appear because of
@@ -33730,7 +33927,7 @@ PAGES.enrolled = (main) => {
           </td>
           <td><span class="badge ${isCamp ? 'orange' : ''}">${escapeHtml(r.sport)}</span></td>
           <td class="text-mute" style="font-size:12px">${isCamp ? '<span style="font-style:italic">no coach</span>' : escapeHtml(coachName(r.coachId))}</td>
-          <td class="text-right num font-bold">${fmt(r.paid)}</td>
+          ${isViewerRole() ? '' : `<td class="text-right num font-bold">${fmt(r.paid)}</td>`}
           <td class="text-right num">
             <span style="font-weight:600">${r.attended}</span>
             <span class="text-mute" style="font-size:11px">/ ${r.totalClasses || '—'}</span>
@@ -33797,7 +33994,7 @@ PAGES.enrolled = (main) => {
               <th>Member</th>
               <th>Sport</th>
               <th>Coach</th>
-              <th class="text-right">Paid (QAR)</th>
+              ${isViewerRole() ? '' : '<th class="text-right">Paid (QAR)</th>'}
               <th class="text-right">Attended</th>
               <th>Period</th>
               <th>Status</th>
@@ -33821,7 +34018,7 @@ PAGES.enrolled = (main) => {
   $('#enr-export').addEventListener('click', () => {
     const allRows = applyFilter(buildRows()).sort((a, b) => a.m.name.localeCompare(b.m.name));
     if (!allRows.length) { toast('No rows to export', 'error'); return; }
-    const csvRows = [['Member','Mobile','QID','Sport','Coach','Paid (QAR)','Attended','Total Classes','Attendance %','Start','End','Status']];
+    const csvRows = [['Member','Mobile','QID','Sport','Coach', ...(isViewerRole() ? [] : ['Paid (QAR)']),'Attended','Total Classes','Attendance %','Start','End','Status']];
     for (const r of allRows) {
       const rate = r.totalClasses > 0 ? Math.round(r.attended / r.totalClasses * 100) + '%' : '';
       csvRows.push([
@@ -33830,7 +34027,7 @@ PAGES.enrolled = (main) => {
         r.m.qid || '',
         r.sport,
         isCampSport(r.sport) ? '' : coachName(r.coachId),
-        r.paid,
+        ...(isViewerRole() ? [] : [r.paid]),
         r.attended,
         r.totalClasses,
         rate,
@@ -35827,7 +36024,7 @@ PAGES.lamaa = (main) => {
     $('#lam-tbody').innerHTML = rows.length ? rows.map(b => { const _due = bDue(b); const _ref = (typeof hallReferralAmount === 'function') ? hallReferralAmount(b) : 0; return `
       <tr>
         <td class="text-dim" style="white-space:nowrap">${b.date ? fmtDate(b.date) : '—'}${(b.startTime || b.endTime) ? `<div class="text-mute" style="font-size:10px">${escapeHtml(b.startTime || '')}${b.endTime ? '–' + escapeHtml(b.endTime) : ''}</div>` : ''}</td>
-        <td><div class="font-bold">${escapeHtml(b.customerName || '—')}</div>${b.customerPhone ? `<div class="text-mute" style="font-size:11px">${phoneCell(b.customerPhone)}</div>` : ''}${b.referrer ? `<div style="font-size:10px;color:var(--accent-2);margin-top:2px" title="${t('Referral payout', 'مستحق الإحالة')}">🤝 ${escapeHtml(b.referrer)} · ${fmt(_ref)} (${b.referralPct != null ? b.referralPct : 10}%)</div>` : ''}</td>
+        <td><div class="font-bold">${escapeHtml(b.customerName || '—')}</div>${b.customerPhone ? `<div class="text-mute" style="font-size:11px">${phoneCell(b.customerPhone)}</div>` : ''}${(b.referrer && !isViewerRole()) ? `<div style="font-size:10px;color:var(--accent-2);margin-top:2px" title="${t('Referral payout', 'مستحق الإحالة')}">🤝 ${escapeHtml(b.referrer)} · ${fmt(_ref)} (${b.referralPct != null ? b.referralPct : 10}%)</div>` : ''}</td>
         <td>${b.occasion ? `<span class="badge">${escapeHtml(b.occasion)}</span>` : '<span class="text-mute">—</span>'}${b.packageLabel ? `<div class="text-mute" style="font-size:10px">${escapeHtml(b.packageLabel)}</div>` : ''}</td>
         <td class="text-right num">${b.guests ? b.guests : '—'}</td>
         <td class="text-right num font-bold">${fmt(b.amount || 0)}${_due > 0.5 ? `<div style="font-size:10px;color:var(--red);font-weight:700">⏳ ${fmt(_due)} due</div>` : ''}</td>
@@ -36441,7 +36638,7 @@ PAGES.rentals = (main) => {
           ${isViewerRole() ? '' : `<button class="btn ghost sm" onclick="deleteRental(${r.id})" title="Delete">🗑</button>`}
         </td>
       </tr>`; }).join('') : `<tr><td colspan="9" class="empty"><div class="empty-icon">🏟</div>No rentals match the filter</td></tr>`;
-    $('#rent-count').textContent = (isViewerRole() ? `${all.length} booking${all.length===1?'':'s'} · ${totalHrs}h` : `${all.length} booking${all.length===1?'':'s'} · ${totalHrs}h · ${fmt(totalAmt)} QAR`) + (totalDue > 0.5 ? ` · ⏳ ${fmt(totalDue)} due` : '');
+    $('#rent-count').textContent = (isViewerRole() ? `${all.length} booking${all.length===1?'':'s'} · ${totalHrs}h` : `${all.length} booking${all.length===1?'':'s'} · ${totalHrs}h · ${fmt(totalAmt)} QAR`) + ((totalDue > 0.5 && !isViewerRole()) ? ` · ⏳ ${fmt(totalDue)} due` : '');
     renderPagination('rent-pagination', pg, all.length, () => refresh());
   }
 
@@ -38965,7 +39162,9 @@ PAGES.productsales = (main) => {
         const prod = it.productId != null ? (state.products || []).find(p => p.id === it.productId) : null;
         const displayName = (prod && prod.name) || it.name || '—';
         const key = 'n:' + displayName.trim().toLowerCase();   // group by name
-        const rev = (it.qty || 0) * (it.unitPrice || 0);
+        const _k = (Number(sale.discount) > 0 && Number(sale.subtotal) > 0) ? Math.max(0, 1 - Number(sale.discount) / Number(sale.subtotal)) : 1;   // v6.862 — a sale discount is shared across its lines
+        const _nq = (it.qty || 0) - (it.returnedQty || 0);   // v6.863 — net of returns
+        const rev = _nq * (it.unitPrice || 0) * _k;
         if (!byProduct[key]) {
           // Stock = sum across ALL product records sharing this name.
           const sameName = (state.products || []).filter(p => (p.name || '').trim().toLowerCase() === displayName.trim().toLowerCase());
@@ -38973,16 +39172,16 @@ PAGES.productsales = (main) => {
           if (sameName.length) {
             stock = sameName.reduce((s, p) => s + (typeof productCurrentStock === 'function' ? productCurrentStock(p.id) : (p.stock || 0)), 0);
           }
-          byProduct[key] = { productId: (prod && prod.id) != null ? prod.id : it.productId, name: displayName, category: (prod && prod.category) || (sameName[0] && sameName[0].category) || '', units: 0, revenue: 0, txns: 0, stock, buyers: new Map() };
+          byProduct[key] = { productId: (prod && prod.id) != null ? prod.id : it.productId, name: displayName, category: (prod && prod.category) || it.category || (sameName[0] && sameName[0].category) || '', units: 0, revenue: 0, txns: 0, stock, buyers: new Map() };
         }
-        byProduct[key].units += it.qty || 0;
+        byProduct[key].units += _nq;
         byProduct[key].revenue += rev;
         byProduct[key].txns += 1;
         // Track distinct buyers of THIS product with their total qty (for sort + tooltip).
         const bkey = (buyerId != null ? 'm:' + buyerId : 'n:' + buyerName.toLowerCase());
         const prevB = byProduct[key].buyers.get(bkey);
         byProduct[key].buyers.set(bkey, { name: buyerName, member: buyerIsMember, id: buyerId, qty: (prevB ? prevB.qty : 0) + (it.qty || 0) });
-        totalUnits += it.qty || 0;
+        totalUnits += _nq;
         totalRevenue += rev;
         saleHasItem = true;
       }
