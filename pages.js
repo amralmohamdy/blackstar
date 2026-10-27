@@ -100,6 +100,7 @@ function expPendingList() {
   const raw = Number(state.settings && state.settings.citadelRate), rate = (isNaN(raw) || raw < 0) ? 30 : raw;
   if (u.rent > 0.004) out.push({ kind: 'rent', month: cm, amount: u.rent, category: 'Rent', label: t('Monthly rent', 'إيجار الشهر') + ' — ' + fmtMonth(cm), note: t('not paid yet · not in the total', 'غير مدفوع · غير محسوب في الإجمالي') });
   if (u.citadel > 0.004) out.push({ kind: 'citadel', month: cm, amount: u.citadel, category: CITADEL_SHARE_CATEGORY, label: t('Citadel company share', 'حصة شركة سيتادل') + ' (' + rate + '%) — ' + fmtMonth(cm), note: t('not paid yet · not in the total', 'غير مدفوع · غير محسوب في الإجمالي') });
+  if (u.advertising > 0.004) { const cfg = adShareSettings(); out.push({ kind: 'advertising', month: cm, amount: u.advertising, category: ADVERTISING_CATEGORY, label: t('Advertising', 'دعاية وإعلان') + ' (' + cfg.rate + '% ' + t('of income above', 'من الدخل فوق') + ' ' + Number(cfg.threshold).toLocaleString('en-US') + ') — ' + fmtMonth(cm), note: t('due on the last day of the month · income so far ' + Math.round(billedInMonth(cm) || 0).toLocaleString('en-US') + ' · not paid yet · not in the total', 'مستحق آخر الشهر · الدخل حتى الآن ' + Math.round(billedInMonth(cm) || 0).toLocaleString('en-US') + ' · غير مدفوع · غير محسوب في الإجمالي') }); }
   return out;
 }
 window.expPay = function (kind) {
@@ -135,7 +136,7 @@ window.expPay = function (kind) {
 };
 function dashUnpaidAccruals(months) {
   const cm = String(TODAY || '').slice(0, 7);
-  if (!(months || []).includes(cm)) return { rent: 0, citadel: 0, total: 0 };
+  if (!(months || []).includes(cm)) return { rent: 0, citadel: 0, advertising: 0, total: 0 };
   const rent = Math.max(0, Math.round((dashUnpaidRent() - expPaidFor('rent', cm)) * 100) / 100);   // v6.832 — what the Expenses "Pay" button already recorded comes off
   let citadel = 0;
   try {
@@ -143,7 +144,10 @@ function dashUnpaidAccruals(months) {
     const rate = (isNaN(raw) || raw < 0) ? 30 : raw;
     citadel = Math.max(0, Math.round((citadelCompute([cm]).grand * rate / 100 - citadelPaidToCompany([cm])) * 100) / 100);
   } catch (_) {}
-  return { rent, citadel, total: rent + citadel };
+  // v6.877 — advertising: 25% of the month's income above 52,000 (see advertisingAmount), minus what the Pay button already recorded
+  let advertising = 0;
+  try { advertising = Math.max(0, Math.round((advertisingAmount(billedInMonth(cm)) - expPaidFor('advertising', cm)) * 100) / 100); } catch (_) {}
+  return { rent, citadel, advertising, total: rent + citadel + advertising };
 }
 function computeStats(arg) {
   const period = normalizeDashPeriod(arg);
@@ -20028,6 +20032,17 @@ function syncBankCommission() {
   return changed;
 }
 
+// v6.877 — ADVERTISING (دعاية وإعلان): a share of the month's income above a threshold — by default 25% of what the month earns beyond 52,000 QAR
+// (income so far 62,000 → 2,500). Like the monthly rent and the Citadel share it is a PENDING row on the Expenses screen — owed, due on the last day of the
+// month, not in the totals — with a Pay button; paying records the real expense. Income = the same "billed this month" figure the reception target uses.
+const ADVERTISING_CATEGORY = 'Advertising';
+function adShareSettings() {
+  const s = (state.settings && state.settings.adShare) || {};
+  const thr = Number(s.threshold), rate = Number(s.rate);
+  return { threshold: isFinite(thr) && thr >= 0 ? thr : 52000, rate: isFinite(rate) && rate >= 0 ? rate : 25, startMonth: /^\d{4}-\d{2}$/.test(String(s.startMonth || '')) ? s.startMonth : null };
+}
+function advertisingAmount(income, cfg) { cfg = cfg || adShareSettings(); return Math.round(Math.max(0, (Number(income) || 0) - cfg.threshold) * cfg.rate) / 100; }
+function _monthEndIso(ym) { const y = parseInt(ym.slice(0, 4), 10), m = parseInt(ym.slice(5, 7), 10); return ym + '-' + String(new Date(y, m, 0).getDate()).padStart(2, '0'); }
 // v6.804 — the Citadel company share is NO LONGER an automatic expense (only the Bank Commission is). Rows that were auto-posted before are kept as ordinary expenses
 // (same amount, month and category, so profit and "Paid to company" do not move): the auto flag is removed and the row is now editable / deletable like any other.
 // Idempotent. Returns true if anything changed (so the caller can save).
@@ -20132,7 +20147,7 @@ PAGES.expensereport = (main) => {
 // v6.782 — what reception must NOT see on the Expenses screen: rent, salary payments, and the two AUTO rows whose base is the club's card takings / Football+Swimming revenue.
 function expenseCategoryHiddenFromViewer(cat) {
   const c = String(cat || '').trim();
-  return /^rent$/i.test(c) || isSalaryCategory(c) || c === BANK_COMMISSION_CATEGORY || c === CITADEL_SHARE_CATEGORY;
+  return /^rent$/i.test(c) || isSalaryCategory(c) || c === BANK_COMMISSION_CATEGORY || c === CITADEL_SHARE_CATEGORY || /^advertising$/i.test(c);   // v6.877 — + advertising (its amount reveals the month's income)
 }
 function expenseHiddenFromViewer(e) { return !!e && (expenseCategoryHiddenFromViewer(e.category) || !!e.autoBankCommission || !!e.autoCitadelShare); }
 PAGES.expenses = (main) => {
@@ -24280,6 +24295,9 @@ PAGES.settings = (main, section) => {
         </div>
       </div>
       <div class="form-row">
+        <div class="field"><label>📣 ${t('Advertising: % of income above', 'دعاية وإعلان: نسبة من الدخل فوق')}</label><div style="display:flex;gap:8px"><input id="pref-ad-rate" type="number" min="0" max="100" step="0.5" value="${adShareSettings().rate}" style="width:90px" /><span style="align-self:center">%</span><input id="pref-ad-threshold" type="number" min="0" step="500" value="${adShareSettings().threshold}" style="flex:1" /><span style="align-self:center">QAR</span></div><div class="text-mute" style="font-size:11px;margin-top:4px">${t('Shown each month on the Expenses screen as a pending item (like rent and Citadel), due on the last day. Press Pay there to record it.', 'تظهر كل شهر في المصروفات كبند مستحق (مثل الإيجار وسيتادل) وتُستحق آخر يوم. اضغط سداد لتسجيلها.')}</div></div>
+      </div>
+      <div class="form-row">
         <div class="field"><label>🔒 ${t('Close the books through', 'إقفال الدفاتر حتى')}</label><select id="pref-lockedthrough"><option value="">${t('— not locked —', '— غير مقفل —')}</option>${(() => { const o = []; const d = new Date(TODAY + 'T00:00:00'); for (let k = 0; k < 24; k++) { const ym = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); o.push(`<option value="${ym}" ${cur.lockedThrough === ym ? 'selected' : ''}>${ym}</option>`); d.setMonth(d.getMonth() - 1); } return o.join(''); })()}</select>
           <div class="text-mute" style="font-size:11px;margin-top:4px">${t('Reception can no longer add or change payments, invoices, returns or expenses dated in or before this month. Admin is not blocked.', 'الاستقبال لا يستطيع إضافة أو تعديل مدفوعات أو فواتير أو مرتجعات أو مصروفات في هذا الشهر أو قبله. المسؤول غير مقيّد.')}</div></div>
         <div class="field"><label>🔑 ${t('System PIN', 'رمز النظام')}</label><button type="button" class="btn ghost" onclick="changeSystemPin()">${t('Change PIN', 'تغيير الرمز')}</button></div>
@@ -24528,6 +24546,7 @@ PAGES.settings = (main, section) => {
     }
     const auditEl = $('#pref-auditenabled');
     if (auditEl && currentRole() === 'admin') { if (!!state.settings.auditEnabled !== !!auditEl.checked) audit('settings.audit_toggle', 'settings:audit', 'Full audit log turned ' + (auditEl.checked ? 'ON' : 'OFF')); state.settings.auditEnabled = !!auditEl.checked; }   // v6.580
+    { const _r = $('#pref-ad-rate'), _t = $('#pref-ad-threshold'); if (_r && _t && currentRole() === 'admin') { const rate = parseFloat(_r.value), thr = parseFloat(_t.value); if (isFinite(rate) && rate >= 0 && isFinite(thr) && thr >= 0) state.settings.adShare = Object.assign({}, state.settings.adShare, { rate, threshold: thr }); } }   // v6.877
     const lockEl = $('#pref-lockedthrough');
     if (lockEl && currentRole() === 'admin') { const nv = lockEl.value || null; if ((state.settings.lockedThrough || null) !== nv) audit('settings.lock', 'settings:lock', 'Books locked through ' + (nv || '(none)') + ' (was ' + (state.settings.lockedThrough || 'none') + ')'); state.settings.lockedThrough = nv; }   // v6.868
 

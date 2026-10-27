@@ -104,7 +104,7 @@
   // v6.872 — what a RECEPTIONIST login never receives: the pay fields of a coach (read from the pay-free staffDirectory instead) and the
   // expense rows below (firestore.rules refuses them too — keep both lists identical).
   const STAFF_DIR_FIELDS = ['id', 'name', 'role', 'active', 'sports', 'email', 'phone', 'gender', 'joinedDate', 'leftOn', 'noBonus'];
-  const EXPENSE_HIDDEN_FROM_RECEPTION = ['Salary', 'salary', 'Salaries', 'Rent', 'rent', 'Bank Commission', 'Citadel Company Share', 'Owner Net Profit'];
+  const EXPENSE_HIDDEN_FROM_RECEPTION = ['Salary', 'salary', 'Salaries', 'Rent', 'rent', 'Bank Commission', 'Citadel Company Share', 'Owner Net Profit', 'Advertising'];
   // A MEMBER portal login is created as `<mobile>@blackstars.com` — the local part is
   // ALL DIGITS. STAFF (admin / receptionist) are commonly created on the SAME domain
   // with a NAMED local part (receptionist@…, test@…, admin@…), so we must NOT scope
