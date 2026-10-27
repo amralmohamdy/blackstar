@@ -426,6 +426,7 @@ select option:hover {
 .sidebar-collapse-btn .icon { font-size: 15px; }
 .sidebar-collapse-btn:hover { background: var(--surface); color: var(--text); }
 .sidebar-collapsed .sidebar-collapse-btn { justify-content: center; padding: 9px 0; }
+.sidebar-collapsed .sidebar-tools { flex-direction: column; }   /* v6.873 — the four tool buttons stack in the narrow collapsed menu */
 .sidebar-collapsed .sidebar-collapse-btn .lbl { display: none; }
 
 .brand {
