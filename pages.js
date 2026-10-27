@@ -6883,7 +6883,7 @@ function _memberPaymentList(m) {
     if (i.deleted || i.customerId !== m.id || (i.category || 'Membership') !== 'Membership' || i.switchCredit || i.activityType === 'switch-credit') continue;
     const pays = Array.isArray(i.payments) ? i.payments : [];
     if (pays.length) {
-      for (const p of pays) { const a = Number(p.amount) || 0; if (a > 0) out.push({ date: String(p.date || i.date || '').slice(0, 10), amount: a, method: p.method || i.method || '', ref: i.ref || '', sport: p.sport || '' }); }
+      for (const p of pays) { const a = Number(p.amount) || 0; if (Math.abs(a) > 0.0001) out.push({ date: String(p.date || i.date || '').slice(0, 10), amount: a, method: p.method || i.method || '', ref: i.ref || '', sport: p.sport || '', reversal: a < 0 }); }   // v6.874 — a reversal / refund is a row too (it used to be dropped, so a corrected payment counted twice)
     } else if ((Number(i.amountPaid) || 0) > 0) {
       out.push({ date: String(i.date || '').slice(0, 10), amount: Number(i.amountPaid), method: i.method || '', ref: i.ref || '', sport: '' });   // legacy: no ledger → invoice date
     }
@@ -6896,7 +6896,7 @@ function _paymentListHtml(m, compact) {
   const ic = { cash: '💵', card: '💳', transfer: '🏦', fawran: '📲' };
   const lab = { cash: t('Cash', 'نقدي'), card: t('Card', 'بطاقة'), transfer: t('Transfer', 'تحويل'), fawran: 'Fawran' };
   const total = Math.round(list.reduce((s, p) => s + p.amount, 0) * 100) / 100;
-  const rows = list.map(p => { const mk = String(p.method || '').toLowerCase(); return `<tr><td style="white-space:nowrap">${p.date ? fmtDate(p.date) : '—'}</td><td class="num" style="font-weight:700;color:var(--green)">${fmt(p.amount)}</td><td>${ic[mk] || ''} ${escapeHtml(lab[mk] || p.method || '—')}</td>${compact ? '' : `<td class="text-mute" style="font-size:11px">${escapeHtml(p.ref)}${p.sport ? ' · ' + escapeHtml(p.sport) : ''}</td>`}</tr>`; }).join('');
+  const rows = list.map(p => { const mk = String(p.method || '').toLowerCase(); return `<tr><td style="white-space:nowrap">${p.date ? fmtDate(p.date) : '—'}</td><td class="num" style="font-weight:700;color:${p.amount < 0 ? 'var(--red)' : 'var(--green)'}">${fmt(p.amount)}</td><td>${ic[mk] || ''} ${escapeHtml(lab[mk] || p.method || '—')}</td>${compact ? '' : `<td class="text-mute" style="font-size:11px">${escapeHtml(p.ref)}${p.sport ? ' · ' + escapeHtml(p.sport) : ''}</td>`}</tr>`; }).join('');
   return `<div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-mute);margin:14px 2px 4px">${t('Payments', 'الدفعات')} (${list.length}) · ${fmt(total)} QAR</div>
     <div class="table-wrap" style="max-height:${compact ? 170 : 260}px;overflow:auto"><table style="font-size:12px"><thead><tr><th>${t('Date', 'التاريخ')}</th><th>${t('Amount', 'المبلغ')}</th><th>${t('Method', 'الطريقة')}</th>${compact ? '' : `<th>${t('Invoice', 'الفاتورة')}</th>`}</tr></thead><tbody>${rows}</tbody></table></div>`;
 }
@@ -18509,8 +18509,28 @@ window.printInvoicePDF = function(id, opts) {   // opts.returnHtml → give the 
     </div>
     <div class="payment-method">
       <span dir="ltr">Payment method: <strong>${escapeHtml(inv.method || 'Cash')}</strong></span> <span dir="rtl">طريقة الدفع</span>
+      ${(() => {
+        const rows = (Array.isArray(inv.payments) ? inv.payments : []).filter(p => p && Math.abs(Number(p.amount) || 0) > 0.0001);
+        if (rows.length !== 1 || !(Number(rows[0].amount) > 0)) return '';
+        const d = String(rows[0].date || inv.date || '').slice(0, 10);
+        return d ? `<br><span dir="ltr">Payment date: <strong>${escapeHtml(fmtDate(d))}</strong></span> <span dir="rtl">تاريخ الدفع</span>` : '';
+      })()}
     </div>
   </div>
+  ${(() => {
+    const rows = (Array.isArray(inv.payments) ? inv.payments : []).filter(p => p && Math.abs(Number(p.amount) || 0) > 0.0001)
+      .slice().sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+    if (rows.length < 2) return '';   // a single payment is shown beside the method above
+    const th = 'text-align:left;padding:4px 8px;border-bottom:1px solid #d1d5db;font-size:10.5px;color:#374151';
+    const td = 'padding:4px 8px;border-bottom:1px solid #eee;font-size:11.5px';
+    const net = rows.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    return `<div style="margin:10px 0 4px;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px">
+      <div style="font-weight:700;font-size:12px;margin-bottom:4px"><span dir="ltr">Payments (instalments)</span> <span dir="rtl" style="float:right">الدفعات</span></div>
+      <table style="width:100%;border-collapse:collapse"><thead><tr><th style="${th}">Date · التاريخ</th><th style="${th}">Amount · المبلغ</th><th style="${th}">Method · الطريقة</th></tr></thead><tbody>
+      ${rows.map(p => { const a = Number(p.amount) || 0; return `<tr><td style="${td}">${escapeHtml(fmtDate(String(p.date || inv.date || '').slice(0, 10)))}</td><td style="${td};${a < 0 ? 'color:#b91c1c' : ''}">${a < 0 ? '−' : ''}${Math.abs(a).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} QAR${a < 0 ? ' <span style="font-size:10px">(refund / reversal · استرداد)</span>' : ''}</td><td style="${td}">${escapeHtml(String(p.method || inv.method || ''))}</td></tr>`; }).join('')}
+      </tbody><tfoot><tr><td style="${td};font-weight:700">Total paid · إجمالي المدفوع</td><td style="${td};font-weight:700" colspan="2">${net.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} QAR</td></tr></tfoot></table>
+    </div>`;
+  })()}
 
   <div class="terms">
     <div class="terms-heading">
