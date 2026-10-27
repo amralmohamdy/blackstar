@@ -16956,6 +16956,23 @@ window._efSplitSum = function() {
   const amtEl = document.getElementById('ef-amt'); const bal = document.getElementById('ef-balance');
   if (bal && amtEl) bal.textContent = Math.max(0, (parseFloat(amtEl.value) || 0) - tot).toFixed(2);
 };
+// v6.876 — delete ONE wrong payment row of an invoice (admin). The row is checked against what the dialog showed, a delete tombstone stops a stale
+// device from bringing it back, the paid total is recomputed from the rows left, and the delete is logged. The dialog reopens on the fresh ledger.
+window._efDeletePayment = function (invId, idx, amount, date) {
+  if (currentRole() !== 'admin') { toast(t('Admins only', 'للمسؤولين فقط'), 'error'); return; }
+  const inv = (state.invoices || []).find(i => i && i.id === invId);
+  const p = inv && Array.isArray(inv.payments) ? inv.payments[idx] : null;
+  if (!p || Math.abs((Number(p.amount) || 0) - Number(amount)) > 0.001 || String(p.date || '').slice(0, 10) !== String(date)) { toast(t('The payment list changed — reopen the invoice', 'تغيّرت قائمة الدفعات — أعد فتح الفاتورة'), 'error'); return; }
+  const lbl = (Number(p.amount) < 0 ? '−' : '') + fmt(Math.abs(Number(p.amount) || 0)) + ' QAR · ' + (p.method || '') + ' · ' + fmtDate(String(p.date || '').slice(0, 10));
+  if (!confirm(t('Delete this payment entry?\n\n' + lbl + '\n\nThe invoice paid total, that month\'s cash and the cash drawer change. This is logged.', 'حذف قيد الدفع هذا؟\n\n' + lbl + '\n\nسيتغيّر إجمالي المدفوع وكاش ذلك الشهر والصندوق. يُسجَّل الحذف.'))) return;
+  inv.payments.splice(idx, 1);
+  try { if (typeof window._tombstoneEl === 'function') window._tombstoneEl(p, 'invoices:' + inv.id + ':payments'); } catch (_) {}
+  inv.amountPaid = Math.round(inv.payments.reduce((s, x) => s + (Number(x.amount) || 0), 0) * 100) / 100;
+  stampUpdate(inv);
+  audit('payment.delete', 'invoice:' + inv.id, (inv.ref || '#' + inv.id) + ': deleted payment ' + lbl, { customerName: inv.customerName, old: { amount: p.amount, method: p.method, date: p.date } });
+  closeModal();
+  withCloudConfirm({ verify: [{ collection: 'invoices', id: inv.id }], okMsg: t('Payment entry deleted', 'تم حذف قيد الدفع'), afterOk: () => { render(); editInvoiceQuick(inv.id); } });
+};
 window.editInvoiceQuick = function(id) {
   if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast('Only admins can edit invoices', 'error'); return; }
   const inv = state.invoices.find(i => i.id === id);
@@ -17034,7 +17051,8 @@ window.editInvoiceQuick = function(id) {
           <input type="date" class="ef-pdate" data-i="${i}" value="${escapeHtml(String(p.date || '').slice(0, 10))}" style="flex:0 0 170px" />
           <span class="num" style="font-weight:700;font-size:13px;${Number(p.amount) < 0 ? 'color:var(--red)' : ''}">${fmt(p.amount)} QAR</span>
           <span class="badge" style="font-size:10px">${escapeHtml(p.method || '')}</span>
-          ${p._correction || p._adj ? `<span class="text-mute" style="font-size:10px">${t('correction', 'تصحيح')}</span>` : ''}</div>`).join('')}
+          ${p._correction || p._adj ? `<span class="text-mute" style="font-size:10px">${t('correction', 'تصحيح')}</span>` : ''}
+          ${currentRole() === 'admin' ? `<button type="button" class="btn ghost sm" style="color:var(--red);padding:2px 8px" title="${t('Delete this payment entry', 'حذف قيد الدفع هذا')}" onclick="_efDeletePayment(${inv.id}, ${i}, ${Number(p.amount) || 0}, '${String(p.date || '').slice(0, 10)}')">🗑</button>` : ''}</div>`).join('')}
       </div>`
     : `<div class="text-mute" style="font-size:11.5px;margin:2px 0 8px">${t('No payment recorded yet — nothing to date.', 'لا توجد دفعة مسجلة بعد.')}</div>`;
   const _recepEdit = isViewerRole();   // v6.865 — reception edits the customer / description only; every money field is hidden and left untouched
