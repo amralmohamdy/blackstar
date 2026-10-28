@@ -26303,12 +26303,7 @@ PAGES.attendance = (main) => {
         <span ${myCoachId != null ? 'style="display:none"' : ''}>${multiFilterHTML('att-coach', state.coaches.filter(c => isCoachRole(c)).map(c => [String(c.id), c.name + (c.nameArabic ? ' · ' + c.nameArabic : '')]), filter.coaches, { allText: t('All coaches', 'كل المدربين'), noun: t('coaches', 'مدربين'), minWidth: 150, search: true })}</span>
         ${multiFilterHTML('att-mstatus', [['Active', '🟢 ' + t('Active', 'نشط')], ['Frozen', '🔵 ' + t('Frozen', 'مجمّد')], ['Expired', '⚪ ' + t('Expired', 'منتهي')], ['Completed', '🟣 ' + t('Completed', 'مكتمل')], ['Withdrawn', '🔴 ' + t('Withdrawn', 'منسحب')]], filter.statuses, { allText: t('All statuses', 'كل الحالات'), noun: t('statuses', 'حالات'), minWidth: 150 })}
         ${multiFilterHTML('att-status', [['attended', '✓ ' + t('Attended', 'حضر')], ['notattended', '✗ ' + t('Not attended', 'لم يحضر')]], filter.atts, { allText: t('All attendance', 'كل الحضور'), noun: t('selected', 'محدد'), minWidth: 150 })}
-        <div style="position:relative">
-          <button type="button" id="att-sports-btn" style="min-width:150px;text-align:left;display:inline-flex;align-items:center;justify-content:space-between;gap:8px">${t('All sports', 'كل الرياضات')} <span style="opacity:.6">▾</span></button>
-          <div id="att-sports-menu" style="display:none;position:absolute;left:0;top:100%;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-top:4px;padding:8px;min-width:180px;box-shadow:0 8px 24px rgba(0,0,0,.4)">
-            ${_attSportList.map(s => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px"><input type="checkbox" class="att-sport-cb" value="${s}" /> ${s}</label>`).join('')}
-          </div>
-        </div>
+        ${multiFilterHTML('att-sport', _attSportList, filter.sports, { allText: t('All sports', 'كل الرياضات'), noun: t('sports', 'رياضات'), minWidth: 150, sort: false })}
         <div style="min-width:260px;flex:1;max-width:340px">${memberPickerHtml('att-student', { placeholder: t('All students (type to search)', 'كل الطلاب (اكتب للبحث)') })}${recentSearchChipsHtml('attendance', 'att-recent-search', 3)}</div>
         <div class="text-mute" style="margin-left:auto;font-size:11px;align-self:center">
           <span class="att-cell att-y" style="display:inline-block;padding:2px 6px;border-radius:3px">Y</span> ${t('present', 'حاضر')} ·
@@ -26423,22 +26418,8 @@ PAGES.attendance = (main) => {
     refresh();
   });
 
-  // Multi-select sports dropdown
-  const sportsBtn = $('#att-sports-btn');
-  const sportsMenu = $('#att-sports-menu');
-  if (sportsBtn) {
-    sportsBtn.addEventListener('click', () => {
-      sportsMenu.style.display = sportsMenu.style.display === 'none' ? 'block' : 'none';
-    });
-    document.addEventListener('click', e => {
-      if (!sportsBtn.contains(e.target) && !sportsMenu.contains(e.target)) sportsMenu.style.display = 'none';
-    });
-    $$('.att-sport-cb').forEach(cb => cb.addEventListener('change', () => {
-      filter.sports = $$('.att-sport-cb').filter(x => x.checked).map(x => x.value);
-      sportsBtn.innerHTML = (filter.sports.length ? `${filter.sports.length} sport${filter.sports.length > 1 ? 's' : ''}` : 'All sports') + ' <span style="opacity:.6">▾</span>';
-      refresh();
-    }));
-  }
+  // Multi-select sports dropdown (searchable — see multiFilterHTML)
+  bindMultiFilter('att-sport', v => { filter.sports = v; refresh(); }, { allText: t('All sports', 'كل الرياضات'), noun: t('sports', 'رياضات') });
 
   // All-months summary PDF: one column per month with present (Y) counts + year total.
   function exportAttendanceMonthsPdf(rows) {
@@ -36443,7 +36424,7 @@ const COURT = 'Football Court';
 function courtHours() {
   const h = (state.settings && state.settings.courtHours) || {};
   const ok = s => /^\d{2}:\d{2}$/.test(String(s || ''));
-  return { open: ok(h.open) ? h.open : '16:00', close: (ok(h.close) || h.close === '24:00') ? h.close : '24:00' };   // v6.846 — the court takes bookings from 4 PM to midnight (owner)
+  return { open: '15:00', close: '24:00' };   // v6.886 — the court is open 3 PM to midnight, fixed (owner); no other hours are shown
 }
 const cbMin = s => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || '')); return m ? (+m[1]) * 60 + (+m[2]) : null; };
 const cbClock = n => { n = Math.max(0, Math.round(n)); const h = Math.floor(n / 60) % 24, m = n % 60; return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0'); };
@@ -36591,7 +36572,7 @@ window.scheduleRentalsDialog = function () {
   };
   setTimeout(() => { plan(); ['#sr-until'].concat(labels.map((_, i) => '#sr-r' + i)).forEach(sel => { const el = $(sel); if (el) el.addEventListener('input', plan); }); }, 30);
 };
-window._cb = window._cb || { date: null, view: 'day' };
+window._cb = window._cb || { date: null, view: 'day', hour: '', q: '' };
 PAGES.courtbookings = (main) => {
   const S = window._cb; if (!S.date) S.date = TODAY;
   const money = !isViewerRole();   // reception sees the board and books, not the money
@@ -36601,12 +36582,20 @@ PAGES.courtbookings = (main) => {
   const dayName = d => new Date(d + 'T12:00:00').toLocaleDateString(getLang() === 'ar' ? 'ar' : 'en', { weekday: 'short' });
   const timed = list => list.filter(r => cbMin(r.startTime) != null);
   const sum = list => ({ n: list.length, hours: list.reduce((s, r) => s + (Number(r.hours) || 0), 0), amount: list.reduce((s, r) => s + (Number(r.amount) || 0), 0), due: Math.round(list.reduce((s, r) => s + courtBookingDue(r), 0) * 100) / 100 });
+  // v6.887 — board filters: an HOUR (bookings touching that hour) and a customer NAME / PHONE (digits-only match for phones)
+  const _fq = () => { const q = normalizeArabicForSearch(S.q || ''); return { q, qd: q.replace(/D/g, '') }; };
+  const cbMatch = r => {
+    if (S.hour) { const a = cbMin(r.startTime), h = +S.hour * 60; if (a == null || !(a < h + 60 && a + Math.round((r.hours || 1) * 60) > h)) return false; }
+    const f = _fq(); if (!f.q) return true;
+    if (normalizeArabicForSearch(r.customerName || '').includes(f.q)) return true;
+    return f.qd.length > 0 && String(r.customerPhone || '').replace(/D/g, '').includes(f.qd);
+  };
+  const bookingsOn = d => courtBookingsOn(d).filter(cbMatch);
   const pickSlot = (date, start) => addRental(() => render(), { facility: COURT, date, startTime: start, hours: 1 });
 
   function dayHtml() {
-    const date = S.date, list = courtBookingsOn(date), tm = timed(list), untimed = list.filter(r => cbMin(r.startTime) == null);
+    const date = S.date, list = bookingsOn(date), tm = timed(list), untimed = list.filter(r => cbMin(r.startTime) == null);
     const H = courtHours(); let open = cbMin(H.open), close = cbMin(H.close);
-    if (date < TODAY) { open = Math.min(open, 360); close = 1440; }   // v6.846 — back-dating: a past day shows 06:00–24:00
     for (const r of tm) { open = Math.min(open, Math.floor(cbMin(r.startTime) / 60) * 60); close = Math.max(close, Math.ceil((cbMin(r.startTime) + Math.round((r.hours || 1) * 60)) / 60) * 60); }
     const ROW = 56, rows = Math.max(1, Math.round((close - open) / 60)), height = rows * ROW;
     const lanes = courtLanes(tm), sm = sum(list), openMin = cbMin(H.open), closeMin = cbMin(H.close);
@@ -36634,14 +36623,14 @@ PAGES.courtbookings = (main) => {
   }
   function weekHtml() {
     const ws = weekStart(S.date), days = Array.from({ length: 7 }, (_, i) => addDays_(ws, i));
-    const all = days.flatMap(d => courtBookingsOn(d)), tot = sum(all);
+    const all = days.flatMap(d => bookingsOn(d)), tot = sum(all);
     return `<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:14px">
         <div class="kpi green"><div class="kpi-label">⚽ ${t('Bookings this week', 'حجوزات الأسبوع')}</div><div class="kpi-value num">${tot.n}</div></div>
         <div class="kpi blue"><div class="kpi-label">⏱ ${t('Hours booked', 'ساعات محجوزة')}</div><div class="kpi-value num">${tot.hours}h</div></div>
         ${money ? `<div class="kpi"><div class="kpi-label">💰 ${t('Billed', 'المفوتر')}</div><div class="kpi-value num">${fmt(tot.amount)}</div><div class="kpi-sub">QAR</div></div><div class="kpi${tot.due > 0.5 ? ' orange' : ''}"><div class="kpi-label">⏳ ${t('Due', 'متبقي')}</div><div class="kpi-value num">${fmt(tot.due)}</div></div>` : ''}
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">${days.map(d => {
-        const l = courtBookingsOn(d).sort((x, y) => (cbMin(x.startTime) ?? 9999) - (cbMin(y.startTime) ?? 9999)), s = sum(l);
+        const l = bookingsOn(d).sort((x, y) => (cbMin(x.startTime) ?? 9999) - (cbMin(y.startTime) ?? 9999)), s = sum(l);
         return `<div class="card cb-day" data-date="${d}" style="cursor:pointer;padding:10px 12px;${d === TODAY ? 'border:2px solid var(--accent)' : ''}">
           <div style="display:flex;justify-content:space-between;align-items:baseline"><b>${dayName(d)} ${d.slice(8)}</b><span class="text-mute" style="font-size:11px">${s.n ? s.n + ' · ' + s.hours + 'h' : t('free', 'متاح')}</span></div>
           ${l.slice(0, 6).map(r => `<div style="font-size:11px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${courtBookingDue(r) > 0.5 ? 'color:var(--red)' : ''}">${r.startTime ? escapeHtml(r.startTime) + ' ' : ''}${escapeHtml(r.customerName || '—')} · ${r.hours || 1}h</div>`).join('')}
@@ -36695,6 +36684,7 @@ PAGES.courtbookings = (main) => {
     });
   }
 
+  let _quiet = false;   // a filter repaint must not scroll the board
   function paint() {
     const date = S.date, step = S.view === 'week' ? 7 : 1;
     const label = S.view === 'week' ? (fmtDate(weekStart(date)) + ' – ' + fmtDate(addDays_(weekStart(date), 6))) : (dayName(date) + ' · ' + fmtDate(date));
@@ -36702,7 +36692,6 @@ PAGES.courtbookings = (main) => {
       <div class="topbar">
         <div><h1>⚽ ${t('Court Bookings', 'حجوزات ملعب كرة القدم')}</h1><div class="subtitle">${t('Football Court', 'ملعب كرة القدم')} · ${courtHours().open}–${courtHours().close}</div></div>
         <div class="topbar-actions">
-          ${currentRole() === 'admin' ? `<button class="btn ghost" id="cb-hours" title="${t('Opening hours', 'ساعات العمل')}">⚙</button>` : ''}
           <button class="btn ghost" id="cb-rentals" title="${t('The full rentals list', 'قائمة الإيجارات الكاملة')}">📋 ${t('All rentals', 'كل الإيجارات')}</button>
           ${currentRole() === 'admin' ? `<button class="btn ghost" id="cb-sched-rent" title="${t('Turn the customers\' weekly schedule slots (e.g. Yarid) into rentals left due, until month end', 'حوّل حجوزات العملاء الأسبوعية من الجدول (مثل Yarid) إلى حجوزات آجلة حتى آخر الشهر')}">📅 ${t('Schedule → rentals', 'الجدول ← حجوزات')}</button>` : ''}
           <button class="btn ghost" id="cb-academy" title="${t('Block the court for the academy — free, no invoice', 'احجز الملعب للأكاديمية — مجاني بدون فاتورة')}">🏫 ${t('Academy (free)', 'الأكاديمية (مجاني)')}</button>
@@ -36713,10 +36702,16 @@ PAGES.courtbookings = (main) => {
         <button class="btn ghost sm" id="cb-prev">◀</button><button class="btn ghost sm" id="cb-today">${t('Today', 'اليوم')}</button><button class="btn ghost sm" id="cb-next">▶</button>
         <input type="date" id="cb-date" value="${date}" style="max-width:160px" />
         <b style="margin:0 8px">${label}</b>
+        <select id="cb-hour" title="${t('Filter by hour', 'تصفية بالساعة')}" style="max-width:130px"><option value="">${t('All hours', 'كل الساعات')}</option>${Array.from({ length: Math.max(1, Math.round((cbMin(courtHours().close) - cbMin(courtHours().open)) / 60)) }, (_, i) => { const m = cbMin(courtHours().open) + i * 60; return `<option value="${m / 60}"${String(m / 60) === String(S.hour) ? ' selected' : ''}>${cbClock(m)}</option>`; }).join('')}</select>
+        <input type="search" id="cb-q" value="${escapeHtml(S.q || '')}" placeholder="${t('Customer name or phone', 'اسم العميل أو رقم الهاتف')}" style="max-width:210px" />
+        ${(S.hour || S.q) ? `<button class="btn ghost sm" id="cb-fclear">✕ ${t('Clear', 'مسح')}</button>` : ''}
         <span style="margin-inline-start:auto;display:flex;gap:6px"><button class="btn sm ${S.view === 'day' ? 'primary' : 'ghost'}" id="cb-vday">${t('Day', 'يوم')}</button><button class="btn sm ${S.view === 'week' ? 'primary' : 'ghost'}" id="cb-vweek">${t('Week', 'أسبوع')}</button></span>
       </div></div>
       ${S.view === 'week' ? weekHtml() : dayHtml()}`;
     const go = d => { S.date = d; paint(); };
+    $('#cb-hour').onchange = e => { S.hour = e.target.value; _quiet = true; paint(); };
+    { const qi = $('#cb-q'); qi.oninput = e => { S.q = e.target.value; const p = qi.selectionStart; _quiet = true; paint(); const n = $('#cb-q'); if (n) { n.focus(); try { n.setSelectionRange(p, p); } catch (_) {} } }; }
+    { const fc = $('#cb-fclear'); if (fc) fc.onclick = () => { S.hour = ''; S.q = ''; paint(); }; }
     $('#cb-prev').onclick = () => go(addDays_(S.date, -step)); $('#cb-next').onclick = () => go(addDays_(S.date, step)); $('#cb-today').onclick = () => go(TODAY);
     $('#cb-date').onchange = e => { if (e.target.value) go(e.target.value); };
     $('#cb-vday').onclick = () => { S.view = 'day'; paint(); }; $('#cb-vweek').onclick = () => { S.view = 'week'; paint(); };
@@ -36729,7 +36724,8 @@ PAGES.courtbookings = (main) => {
     main.querySelectorAll('.cb-block').forEach(el => el.addEventListener('click', e => { e.stopPropagation(); openBooking(el.dataset.sch ? el.dataset.id : +el.dataset.id); }));
     main.querySelectorAll('.cb-day').forEach(el => el.addEventListener('click', () => { S.date = el.dataset.date; S.view = 'day'; paint(); }));
     // bring the current time (today) or the first booking of the day into view — the early rows are usually empty
-    if (S.view === 'day') { const tg = main.querySelector('#cb-now') || main.querySelector('#cb-board .cb-block'); if (tg && tg.scrollIntoView) tg.scrollIntoView({ block: 'center' }); }
+    if (S.view === 'day' && !_quiet) { const tg = main.querySelector('#cb-now') || main.querySelector('#cb-board .cb-block'); if (tg && tg.scrollIntoView) tg.scrollIntoView({ block: 'center' }); }
+    _quiet = false;
   }
   paint();
 };

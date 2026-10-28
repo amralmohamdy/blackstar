@@ -506,6 +506,10 @@
     // backoff (base is NOT advanced on failure, so the same delta is re-sent), and
     // keep retrying until it lands. `retryNow()` lets the UI force an immediate try.
     let _retryTimer = null, _retryAttempt = 0, _lastState = null, _lastErrorCode = null, _isolating = false;
+    // v6.885 — which failures are TEMPORARY (retry the same thing) and which are a REFUSAL of that exact change (send the others on their own)
+    const _TRANSIENT_CODES = new Set(['unavailable', 'deadline-exceeded', 'aborted', 'cancelled', 'resource-exhausted', 'internal', 'unknown', 'network-request-failed']);
+    const _isRefusalCode = c => !!c && !_TRANSIENT_CODES.has(c) && c !== 'unauthenticated';
+    const _auditRetry = new Set();   // 'collection/id' of create-only rows (audit / login logs) whose commit failed for a temporary reason — they are sent again, never dropped
     const RETRY_DELAYS = [2000, 5000, 15000, 30000, 60000];   // ms; last value repeats
     function _clearRetry() { if (_retryTimer) { clearTimeout(_retryTimer); _retryTimer = null; } _retryAttempt = 0; }
     // A 'permission-denied' / 'unauthenticated' WRITE is almost always a LAPSED ID token — the
@@ -725,6 +729,10 @@
 
       if (ops.length === 0 && !metaChanged) {
         writeInFlight = false;
+        if (lastWriteFailed) {   // v6.885 — the failed change was undone / deleted, so the cloud already matches: clear the red state, the journal and the retry
+          lastWriteFailed = false; _lastErrorCode = null; _clearRetry(); clearPendingJournal();
+          try { window.__refusedWrites = null; if (typeof window !== 'undefined' && typeof window.__onCloudSaveStatus === 'function') window.__onCloudSaveStatus({ phase: 'saved', records: 0, at: Date.now() }); } catch (_) {}
+        }
         if (pendingAfterWrite) { const n = pendingAfterWrite; pendingAfterWrite = null; _flushWrite(n); }
         else _resolveConfirmWaiters({ ok: true, noop: true });   // nothing to write → already persisted
         return;
@@ -770,6 +778,7 @@
       // rejected op fails every other op in it. Audit entries are a bookkeeping side-effect, so
       // they must never be able to take a member/invoice/payment down with them. They go in
       // their own commit, and a failure there is logged but does NOT fail the save.
+      const _badOps = [];   // v6.885 — changes that threw while being prepared (see below)
       const batchCommits = batches.map((group, bi) => {
         const bizOps = group.filter(op => !op._audit);
         const auditOps = group.filter(op => op._audit);
@@ -777,24 +786,36 @@
         if (bizOps.length || (bi === 0 && metaChanged)) {
           const batch = db.batch();
           for (const op of bizOps) {
-            const ref = colRef(op.name).doc(op.id);
-            if (op.kind === 'del') batch.delete(ref);
-            else batch.set(ref, op.data, { merge: true });
+            try {
+              const ref = colRef(op.name).doc(op.id);
+              if (op.kind === 'del') batch.delete(ref);
+              else batch.set(ref, op.data, { merge: true });
+            } catch (bad) { _badOps.push({ kind: op.kind, doc: PARENT + '/' + op.name + '/' + op.id, code: 'client-error: ' + ((bad && bad.message) || bad), name: op.name, id: op.id }); console.error('[Storage] a record the database cannot accept was set aside:', op.name + '/' + op.id, bad); }
           }
           if (bi === 0 && metaChanged) batch.set(parentRef(), metaWrite, { merge: true });
           commits.push(batch.commit());
         }
         if (auditOps.length) {
-          const ab = db.batch();
           // create-only: no merge, so this is a CREATE and never trips the immutability rule.
-          for (const op of auditOps) ab.set(colRef(op.name).doc(op.id), op.data);
-          commits.push(ab.commit()
-            .then(() => { for (const op of auditOps) { _auditKnown.add(String(op.id)); try { if (window.__auditCreated) window.__auditCreated.delete(op.id); } catch (_) {} } })
-            .catch(e => {
+          // v6.885 — rows are marked "known" ONLY when the server really has them: a temporary failure keeps them queued (and schedules a retry),
+          // and a permission-denied batch (= some row already exists) is settled row by row so the NEW rows in it are not lost with the old ones.
+          const _markKnown = op => { _auditKnown.add(String(op.id)); _auditRetry.delete(op.name + '/' + op.id); try { if (window.__auditCreated) window.__auditCreated.delete(op.id); } catch (_) {} };
+          commits.push((async () => {
+            try {
+              const ab = db.batch();
+              for (const op of auditOps) ab.set(colRef(op.name).doc(op.id), op.data);
+              await ab.commit();
+              auditOps.forEach(_markKnown);
+            } catch (e) {
               console.warn('[Storage] audit entry not written (non-fatal) — audit or login-log row:', (e && e.code) || e);
-              // create-only rows: a denial here means the row ALREADY exists (an earlier attempt landed) — remember it so it is never re-sent
-              if (e && e.code === 'permission-denied') for (const op of auditOps) { _auditKnown.add(String(op.id)); try { if (window.__auditCreated) window.__auditCreated.delete(op.id); } catch (_) {} }
-            }));
+              if (e && e.code === 'permission-denied') {
+                for (const op of auditOps) {
+                  try { await colRef(op.name).doc(op.id).set(op.data); _markKnown(op); }
+                  catch (e2) { if (e2 && e2.code === 'permission-denied') _markKnown(op); else _auditRetry.add(op.name + '/' + op.id); }
+                }
+              } else { for (const op of auditOps) _auditRetry.add(op.name + '/' + op.id); }
+            }
+          })());
         }
         return Promise.all(commits);
       });
@@ -840,15 +861,15 @@
           if (op._audit) continue;
           const ref = colRef(op.name).doc(op.id);
           try { if (op.kind === 'del') await ref.delete(); else await ref.set(op.data, { merge: true }); okRec(op.name, op.id, op.kind); }
-          catch (e) { refused.push({ kind: op.kind, doc: PARENT + '/' + op.name + '/' + op.id, code: e && e.code }); }
+          catch (e) { if (!_isRefusalCode(e && e.code)) throw e; refused.push({ kind: op.kind, doc: PARENT + '/' + op.name + '/' + op.id, code: e && e.code }); }
         }
         for (const op of txnOps) {
           try { await _runTxnOp(op); okRec(op.name, op.id, 'set'); }
-          catch (e) { refused.push({ kind: 'txnset', doc: PARENT + '/' + op.name + '/' + op.id, code: e && e.code }); }
+          catch (e) { if (!_isRefusalCode(e && e.code)) throw e; refused.push({ kind: 'txnset', doc: PARENT + '/' + op.name + '/' + op.id, code: e && e.code }); }
         }
         if (metaChanged) {
           try { await parentRef().set(metaWrite, { merge: true }); if (!_coachScope) _baseMeta = metaStr; }
-          catch (e) { refused.push({ kind: 'set', doc: PARENT + ' (settings)', code: e && e.code }); }
+          catch (e) { if (!_isRefusalCode(e && e.code)) throw e; refused.push({ kind: 'set', doc: PARENT + ' (settings)', code: e && e.code }); }
         }
         return { refused };
       };
@@ -861,6 +882,7 @@
           // was silently swallowing in-flight edits (same-day data loss). Anything edited during the
           // round-trip stays "dirty" vs this base, so the follow-up flush below really writes it. (v6.368)
           for (const name of COLLECTIONS) _base[name] = sentBase[name] || new Map();
+          for (const k of _auditRetry) { const p = k.indexOf('/'); const nm = k.slice(0, p), id = k.slice(p + 1); if (_base[nm]) _base[nm].delete(id); }   // v6.885 — a row that did not reach the server stays 'new'
           if (!_coachScope) _baseMeta = metaStr;
           _lastFlushResult = { ok: true, records: ops.length };
           if (!_coachScope) _scheduleStamp(state);   // v6.739 — keep coachIds stamps current
@@ -869,10 +891,24 @@
           try { window.__refusedWrites = null; } catch (_) {}
         };
       Promise.all([...batchCommits, ...txnCommits])
-        .then(_onFlushOk)
+        .then(() => {
+          if (!_badOps.length) { _onFlushOk(); return; }
+          // everything else was saved: advance the base for those records only, keep the set-aside ones pending and name them
+          const badKey = new Set(_badOps.map(b => b.name + '/' + b.id));
+          for (const name of COLLECTIONS) {
+            const sb = sentBase[name] || new Map(), nb = new Map(_base[name] || []);
+            for (const [id, v] of sb) if (!badKey.has(name + '/' + id)) nb.set(id, v);
+            for (const id of Array.from(nb.keys())) if (!sb.has(id) && !badKey.has(name + '/' + id)) nb.delete(id);
+            _base[name] = nb;
+          }
+          if (!_coachScope) _baseMeta = metaStr;
+          try { window.__refusedWrites = _badOps; } catch (_) {}
+          const err = new Error('client-error'); err.code = 'client-error';
+          throw err;
+        })
         .catch(async e0 => {
           const e = e0;
-          if (e && e.code === 'permission-denied' && !_isolating) {
+          if (e && _isRefusalCode(e.code) && e.code !== 'client-error' && !_isolating) {   // v6.885 — permission-denied, invalid-argument (oversize / bad data), failed-precondition …
             _isolating = true;
             try {
               const iso = await _isolateFlush();
@@ -905,7 +941,7 @@
           else {
             _resolveConfirmWaiters(_lastFlushResult);
             // Chain drained on a FAILURE → keep trying automatically until it lands.
-            if (_lastFlushResult && _lastFlushResult.ok === false) _scheduleRetry();
+            if ((_lastFlushResult && _lastFlushResult.ok === false) || _auditRetry.size) _scheduleRetry();   // v6.885 — also when only audit / login-log rows are still waiting
           }
         });
     }
@@ -1127,7 +1163,7 @@
       // Also TRUE while a save is QUEUED behind an in-flight write (`pendingAfterWrite`): it has
       // not been sent yet, so a reload in that window would lose it. Counting it here makes the
       // leave-page guard hold the tab until it is really flushed. (v6.368)
-      hasUnsaved() { return !!lastWriteFailed || !!pendingAfterWrite; },
+      hasUnsaved() { return !!lastWriteFailed || !!pendingAfterWrite || _auditRetry.size > 0; },   // v6.885 — unsent audit / login-log rows count
       // TRUE when the cloud could NOT be confirmed on load (working from the read-only offline
       // copy) — every write is blocked, so the UI must PREVENT creating records that would be
       // lost on reload, not just warn. (v6.331)
@@ -1148,7 +1184,7 @@
         if (_retryTimer) { clearTimeout(_retryTimer); _retryTimer = null; }
         _retryAttempt = 0;
         if (writeInFlight) return new Promise(resolve => _confirmWaiters.push(resolve));   // ride the in-flight write
-        if (!_lastState || !lastWriteFailed) return Promise.resolve({ ok: true, noop: true });
+        if (!_lastState || (!lastWriteFailed && !_auditRetry.size)) return Promise.resolve({ ok: true, noop: true });
         return new Promise(resolve => {
           _confirmWaiters.push(resolve);
           // Same stale-token recovery as the auto-retry: force a fresh token before a manual
