@@ -25897,9 +25897,13 @@ PAGES.attendance = (main) => {
     return `<td class="att-cell ${has ? 'att-y' : 'att-empty'}" title="${escapeHtml(tip)}" onclick="window._attMarkMixed(${memberId}, ${day})">${has ? (recs.length > 1 ? 'Y×' + recs.length : 'Y') : '·'}</td>`;
   }
   // Mixed marks for a month as a {day:'Y'} map (so the shared Y/N counters work for a Mixed row).
+  // the coaches whose Mixed classes the screen is limited to (null = all coaches)
+  function _mixedScope() { return filter.coaches.length ? new Set(filter.coaches.map(String)) : (myCoachId != null ? new Set([String(myCoachId)]) : null); }
+  function _mixedRecOk(r) { const sc = _mixedScope(); return !sc || (!!r && r.coachId != null && sc.has(String(r.coachId))); }
   function mixedDayMarks(m, mo) {
     const src = (m && m.mixedAttendance && m.mixedAttendance[mo]) || {};
-    const o = {}; for (const d in src) { const r = src[d]; if (r && r.mark !== 'N') o[d] = 'Y'; }
+    // a day key can carry several classes ('27', '27_2' …): each class keeps its own key, so the class total stays a class count
+    const o = {}; for (const d in src) { const r = src[d]; if (r && r.mark !== 'N' && _mixedRecOk(r)) o[d] = 'Y'; }
     return o;
   }
 
@@ -26021,7 +26025,7 @@ PAGES.attendance = (main) => {
       // dates are off) and sees the reason. Marking writes this row's own cell (aKey), so no double-count.
       // v6.570: a Mixed row renders its own cells (each day carries a chosen sport+coach chooser).
       const cells = dayList.map(d => _isMixedRow
-        ? cellRenderMixed(m.id, d, mixedDayEntries(m, gMonth, d).map(e => e.rec))
+        ? cellRenderMixed(m.id, d, mixedDayEntries(m, gMonth, d).map(e => e.rec).filter(_mixedRecOk))   // v6.883 — only the chosen coach's classes
         : (inWin(window, gMonth, d)
           ? cellRender(m.id, aKey, d, dayData[String(d)])
           : cellRender(m.id, aKey, d, dayData[String(d)], `Outside ${coachName(coachId)}'s period for this membership — logging is allowed; check the dates (Switch review / Edit) if this looks wrong.`, (hist && switchedAway) ? t('This package was switched to ' + (histTo || 'another sport') + ' — mark the new package instead.', 'تم تبديل هذه الباقة إلى ' + (histTo || 'رياضة أخرى') + ' — سجّل الحضور على الباقة الجديدة.') : null))).join('');
