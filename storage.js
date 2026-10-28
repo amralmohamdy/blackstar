@@ -505,7 +505,7 @@
     // another change. On failure we re-flush the LATEST state automatically with
     // backoff (base is NOT advanced on failure, so the same delta is re-sent), and
     // keep retrying until it lands. `retryNow()` lets the UI force an immediate try.
-    let _retryTimer = null, _retryAttempt = 0, _lastState = null, _lastErrorCode = null;
+    let _retryTimer = null, _retryAttempt = 0, _lastState = null, _lastErrorCode = null, _isolating = false;
     const RETRY_DELAYS = [2000, 5000, 15000, 30000, 60000];   // ms; last value repeats
     function _clearRetry() { if (_retryTimer) { clearTimeout(_retryTimer); _retryTimer = null; } _retryAttempt = 0; }
     // A 'permission-denied' / 'unauthenticated' WRITE is almost always a LAPSED ID token — the
@@ -635,6 +635,12 @@
           // the new member/invoice with it. It looked like an expired session; the session was
           // fine. An audit entry is never edited, so: only ever CREATE one we have not already
           // sent, and never re-send one the server is known to hold.
+          // v6.882 — loginLogs is append-only on the server too (rules: no update). It used to ride in the business batch, so a half-failed save re-sent it as an UPDATE and the denial blocked every later change.
+          if (name === 'loginLogs') {
+            if (prevStr !== undefined || _auditKnown.has(id)) continue;   // already on the server → never update
+            ops.push({ kind: 'set', name, id, data: rec, _audit: true });
+            continue;
+          }
           if (name === 'auditLog') {
             if (prevStr !== undefined || _auditKnown.has(id)) continue;   // already on the server → never update
             ops.push({ kind: 'set', name, id, data: rec, _audit: true });
@@ -784,7 +790,11 @@
           for (const op of auditOps) ab.set(colRef(op.name).doc(op.id), op.data);
           commits.push(ab.commit()
             .then(() => { for (const op of auditOps) { _auditKnown.add(String(op.id)); try { if (window.__auditCreated) window.__auditCreated.delete(op.id); } catch (_) {} } })
-            .catch(e => { console.warn('[Storage] audit entry not written (non-fatal):', (e && e.code) || e); }));
+            .catch(e => {
+              console.warn('[Storage] audit entry not written (non-fatal) — audit or login-log row:', (e && e.code) || e);
+              // create-only rows: a denial here means the row ALREADY exists (an earlier attempt landed) — remember it so it is never re-sent
+              if (e && e.code === 'permission-denied') for (const op of auditOps) { _auditKnown.add(String(op.id)); try { if (window.__auditCreated) window.__auditCreated.delete(op.id); } catch (_) {} }
+            }));
         }
         return Promise.all(commits);
       });
@@ -795,7 +805,7 @@
       // FieldValue for the map-key delete sentinel below. Deliberately re-read here: the `_FV`
       // above lives inside the `if (metaChanged)` block and is NOT in scope in this closure.
       const _txnFV = (typeof window !== 'undefined' && window.firebase && window.firebase.firestore) ? window.firebase.firestore.FieldValue : null;
-      const txnCommits = txnOps.map(op => {
+      const _runTxnOp = op => {
         const ref = colRef(op.name).doc(op.id);
         return db.runTransaction(async t => {
           const snap = await t.get(ref);
@@ -815,9 +825,34 @@
           for (const f of (op.mapFields || [])) merged[f] = window._mergeRecord(op.base[f], op.cur[f], cloud[f], op.name + ':' + op.id + ':' + f, _delSentinel);
           t.set(ref, merged, { merge: true });
         });
-      });
-      Promise.all([...batchCommits, ...txnCommits])
-        .then(() => {
+      };
+      const txnCommits = txnOps.map(_runTxnOp);
+      // v6.882 — after a rules REFUSAL (permission-denied while signed in) the whole atomic batch used to fail again and again, so ONE bad change froze every later change.
+      // Now each change is sent on its own: the ones the server accepts are saved (and leave the queue), the refused ones are named in the red bar.
+      const _isolateFlush = async () => {
+        const refused = [];
+        const okRec = (name, id, kind) => {
+          if (kind === 'del') { if (_base[name]) _base[name].delete(id); return; }
+          if (!_base[name]) _base[name] = new Map();
+          const v = sentBase[name] && sentBase[name].get(id); if (v !== undefined) _base[name].set(id, v);
+        };
+        for (const op of batchOps) {
+          if (op._audit) continue;
+          const ref = colRef(op.name).doc(op.id);
+          try { if (op.kind === 'del') await ref.delete(); else await ref.set(op.data, { merge: true }); okRec(op.name, op.id, op.kind); }
+          catch (e) { refused.push({ kind: op.kind, doc: PARENT + '/' + op.name + '/' + op.id, code: e && e.code }); }
+        }
+        for (const op of txnOps) {
+          try { await _runTxnOp(op); okRec(op.name, op.id, 'set'); }
+          catch (e) { refused.push({ kind: 'txnset', doc: PARENT + '/' + op.name + '/' + op.id, code: e && e.code }); }
+        }
+        if (metaChanged) {
+          try { await parentRef().set(metaWrite, { merge: true }); if (!_coachScope) _baseMeta = metaStr; }
+          catch (e) { refused.push({ kind: 'set', doc: PARENT + ' (settings)', code: e && e.code }); }
+        }
+        return { refused };
+      };
+      const _onFlushOk = () => {
           lastWriteFailed = false; _lastErrorCode = null; _clearRetry();
           // The cloud now HAS this state — the local safety journal is obsolete. (v6.389)
           clearPendingJournal();
@@ -831,8 +866,22 @@
           if (!_coachScope) _scheduleStamp(state);   // v6.739 — keep coachIds stamps current
           console.log(`%c[Storage] ✅ stored in Firestore — ${nSet} written, ${nDel} deleted${metaChanged ? ', settings updated' : ''} @ ${new Date().toLocaleTimeString()}`, 'color:#16a34a;font-weight:700');
           try { if (typeof window !== 'undefined') { const L = window.__cloudWriteLog; if (L && L.length) L[L.length - 1].ok = true; if (typeof window.__onCloudSaveStatus === 'function') window.__onCloudSaveStatus({ phase: 'saved', records: ops.length, at: Date.now(), byCollection: perCol }); } } catch (_) {}
-        })
-        .catch(e => {
+          try { window.__refusedWrites = null; } catch (_) {}
+        };
+      Promise.all([...batchCommits, ...txnCommits])
+        .then(_onFlushOk)
+        .catch(async e0 => {
+          const e = e0;
+          if (e && e.code === 'permission-denied' && !_isolating) {
+            _isolating = true;
+            try {
+              const iso = await _isolateFlush();
+              if (!iso.refused.length) { _onFlushOk(); return; }   // every change was accepted on its own — the batch itself was the problem
+              try { window.__refusedWrites = iso.refused; } catch (_) {}
+              console.error('[Storage] the server rules REFUSED these changes (everything else was saved):', iso.refused);
+            } catch (_) { /* fall through to the normal failure path */ }
+            finally { _isolating = false; }
+          }
           lastWriteFailed = true; _lastErrorCode = (e && e.code) || null; _lastFlushResult = { ok: false, error: (e && e.code) || String(e) };
           // DURABILITY FIRST (v6.389): before anything else, put the unsaved state on disk
           // SYNCHRONOUSLY. Until this line existed, a failed write lived only in the page's
