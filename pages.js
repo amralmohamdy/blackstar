@@ -9138,7 +9138,8 @@ PAGES.duepayment = (main) => {
     }
     const _rem = reminderInfo(m);
     const _age = dueAgeDays(invs.filter(i => invoiceBalance(i) >= 0.5).map(i => i.date));
-    all.push({ m, total, bySport, st: memberStatus(m), expiry: m.expiryDate, lastReminded: m.lastRemindedAt || null, remind: _rem, age: _age, needs: dueReminderStage(_age) > (_rem.count || 0) });
+    const _refs = invs.filter(i => invoiceBalance(i) >= 0.5).map(i => String(i.ref || '#' + i.id));
+    all.push({ m, refs: _refs, total, bySport, st: memberStatus(m), expiry: m.expiryDate, lastReminded: m.lastRemindedAt || null, remind: _rem, age: _age, needs: dueReminderStage(_age) > (_rem.count || 0) });
   }
 
   // v6.769 — EVERY due: also the invoices of people who are NOT members (walk-in rentals, hall, products, an archived member).
@@ -9152,7 +9153,7 @@ PAGES.duepayment = (main) => {
     const info = (typeof customerInfo === 'function' ? (customerInfo(inv) || {}) : {});
     const nm = inv.customerName || info.name || inv.description || '—';
     const cat = inv.category || inv.sport || 'Other';
-    all.push({ walk: true, inv, m: { id: null, name: nm, nameArabic: '', phone: inv.customerPhone || info.phone || '' }, total: bal, bySport: { [cat]: bal }, st: 'Walk-in', expiry: null, lastReminded: null, remind: { count: 0, last: null }, age: 0, needs: false });
+    all.push({ walk: true, inv, refs: [String(inv.ref || '#' + inv.id)], m: { id: null, name: nm, nameArabic: '', phone: inv.customerPhone || info.phone || '' }, total: bal, bySport: { [cat]: bal }, st: 'Walk-in', expiry: null, lastReminded: null, remind: { count: 0, last: null }, age: 0, needs: false });
   }
 
   // Apply filters
@@ -9169,7 +9170,7 @@ PAGES.duepayment = (main) => {
     }
     if (f.search) {
       const q = f.search.toLowerCase();
-      if (!searchMatchesFields(q, [r.m.name, r.m.nameArabic, r.m.phone, r.m.phone2, r.m.qid], [r.m.phone, r.m.phone2])) return false;
+      if (!searchMatchesFields(q, [r.m.name, r.m.nameArabic, r.m.phone, r.m.phone2, r.m.qid, ...(r.refs || [])], [r.m.phone, r.m.phone2])) return false;
     }
     return true;
   }).sort((a, b) => b.total - a.total);
@@ -9297,7 +9298,8 @@ Black Stars Academy`;
     const sportChips = Object.entries(r.bySport).map(([sp, amt]) => `<span class="badge" style="font-size:10px;background:rgba(242,163,60,.15);color:var(--accent-2)" title="${escapeHtml(sp)}: ${fmt(amt)} QAR due">${escapeHtml(sp)} · ${fmt(amt)}</span>`).join(' ');
     return `<tr>
       <td class="text-mute" style="text-align:center;font-size:12px">${i + 1}</td>
-      <td><div class="font-bold">${escapeHtml(r.m.name)}</div>${r.m.nameArabic ? `<div class="text-mute" style="font-size:11px" dir="rtl">${escapeHtml(r.m.nameArabic)}</div>` : ''}${r.walk ? `<div class="text-mute font-mono" style="font-size:10px">${escapeHtml(r.inv.ref || '#' + r.inv.id)}${r.inv.date ? ' · ' + fmtDate(r.inv.date) : ''}</div>` : ''}</td>
+      <td><div class="font-bold">${escapeHtml(r.m.name)}</div>${r.m.nameArabic ? `<div class="text-mute" style="font-size:11px" dir="rtl">${escapeHtml(r.m.nameArabic)}</div>` : ''}</td>
+      <td class="font-mono" style="font-size:11px">${(r.refs || []).map(x => `<div>${escapeHtml(x)}</div>`).join('') || '—'}${r.walk && r.inv.date ? `<div class="text-mute" style="font-size:10px">${fmtDate(r.inv.date)}</div>` : ''}</td>
       <td style="font-size:12px">${r.m.phone ? phoneCell(r.m.phone) : '—'}</td>
       <td><span class="badge ${r.st.toLowerCase()}" style="font-size:10px">${r.st}</span></td>
       <td>${r.expiry ? fmtDate(r.expiry) : '—'}</td>
@@ -9325,7 +9327,7 @@ Black Stars Academy`;
         ${(r.walk && r.inv && r.inv.customerId != null && !r.inv.rentalId && currentRole() === 'admin') ? `<button class="btn ghost sm" style="color:var(--red)" onclick="dueArchiveInvoice(${r.inv.id})" title="${t('This person is no longer a member — archive this invoice (it leaves Due Payment)', 'لم يعد عضواً — أرشفة هذه الفاتورة (تخرج من المستحقات)')}">🗑 ${t('Archive', 'أرشفة')}</button>` : ''}
       </td>
     </tr>`;
-  }).join('') : `<tr><td colspan="9" class="empty"><div class="empty-icon">🎉</div>${filtersOn ? t('No members match these filters', 'لا يوجد أعضاء يطابقون المرشحات') : t('All settled — no outstanding balances', 'كل شيء مسوّى — لا توجد مبالغ مستحقة')}</td></tr>`;
+  }).join('') : `<tr><td colspan="10" class="empty"><div class="empty-icon">🎉</div>${filtersOn ? t('No members match these filters', 'لا يوجد أعضاء يطابقون المرشحات') : t('All settled — no outstanding balances', 'كل شيء مسوّى — لا توجد مبالغ مستحقة')}</td></tr>`;
 
   main.innerHTML = `
     <div class="topbar">
@@ -9344,7 +9346,7 @@ Black Stars Academy`;
     </div>`}
     <div class="card">
       <div class="filter-bar" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">
-        <input id="dp-search" class="btn ghost" type="text" placeholder="${t('Search name or phone…', 'ابحث بالاسم أو الهاتف…')}" value="${escapeHtml(f.search)}" style="flex:1;min-width:180px" />
+        <input id="dp-search" class="btn ghost" type="text" placeholder="${t('Search name, phone or invoice #…', 'ابحث بالاسم أو الهاتف أو رقم الفاتورة…')}" value="${escapeHtml(f.search)}" style="flex:1;min-width:180px" />
         ${monthMultiHTML('dp-month', dueMonths, f.months)}
         <select id="dp-status" class="btn ghost">
           <option value="all">${t('All statuses', 'كل الحالات')}</option>
@@ -9372,6 +9374,7 @@ Black Stars Academy`;
           <thead><tr>
             <th style="width:36px;text-align:center" data-sortable="0">#</th>
             <th>${t('Member', 'العضو')}</th>
+            <th data-sortable="0">${t('Invoice #', 'رقم الفاتورة')}</th>
             <th>${t('Phone', 'الهاتف')}</th>
             <th>${t('Status', 'الحالة')}</th>
             <th>${t('Expiry', 'الانتهاء')}</th>
@@ -9382,7 +9385,7 @@ Black Stars Academy`;
           </tr></thead>
           <tbody>${rowHtml}</tbody>
           ${(list.length && !isViewerRole()) ? `<tfoot><tr style="border-top:2px solid var(--border);font-weight:800">
-            <td colspan="6">${t('Total', 'الإجمالي')} (${list.length} ${t('customers', 'عميل')})</td>
+            <td colspan="7">${t('Total', 'الإجمالي')} (${list.length} ${t('customers', 'عميل')})</td>
             <td class="text-right num" style="color:var(--red);font-size:15px">${fmt(grandTotal)} QAR</td>
             <td colspan="2"></td>
           </tr></tfoot>` : ''}
@@ -10264,7 +10267,8 @@ function computeMonthlyReport(ym) {
 PAGES.monthlyreport = (main) => {
   const months = (typeof availableMonths === 'function') ? availableMonths({ includeFuture: true }) : [];
   if (!window._mrMonth || !months.includes(window._mrMonth)) {
-    window._mrMonth = months.length ? months[months.length - 1] : (TODAY || '').slice(0, 7);
+    const _cur = (TODAY || '').slice(0, 7);   // v6.888 — open on the CURRENT month; a record dated in a future month must not become the default
+    window._mrMonth = months.includes(_cur) ? _cur : (months.length ? months.filter(m => m <= _cur).pop() || months[months.length - 1] : _cur);
   }
   const ym = window._mrMonth;
   const R = computeMonthlyReport(ym);
@@ -25041,8 +25045,8 @@ PAGES.attendance = (main) => {
   // Defaults: pick today's month if we have data for it (else latest month with
   // data), and pre-select today's day so marking is one-click for the common
   // "open the page, mark attendance for now" workflow.
-  const _now = new Date();
-  const _todayMonth = `${_now.getFullYear()}-${String(_now.getMonth()+1).padStart(2,'0')}`;
+  const _now = { getDate: () => +TODAY.slice(8, 10) };   // v6.889 — Qatar date (TODAY)
+  const _todayMonth = TODAY.slice(0, 7);
   const _availMonths = availableMonths({ includeFuture: true });
   const _defaultMonth = _availMonths.includes(_todayMonth) ? _todayMonth : latestDataMonth();
   // filter.days is an array of day-numbers; empty = all days
@@ -26365,8 +26369,8 @@ PAGES.attendance = (main) => {
     });
     $('#att-day-none').addEventListener('click', () => { filter.days = []; buildDayGrid(); applyDays(); });
     $('#att-day-today').addEventListener('click', () => {
-      const n = new Date();
-      const tm = `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;
+      const n = { getDate: () => +TODAY.slice(8, 10) };   // v6.889 — Qatar date
+      const tm = TODAY.slice(0, 7);
       if (tm === filter.month) { filter.days = [n.getDate()]; buildDayGrid(); applyDays(); }
       else toast('Today is not in the selected month');
     });
