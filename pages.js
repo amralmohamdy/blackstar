@@ -325,14 +325,16 @@ function _lineComm(l, rate, coachPct, allPriv) {
   if (!l || l._dupIgnored) return 0;
   const pct = (typeof privateBonusPct === 'function') ? privateBonusPct() : 10, cp = (coachPct != null ? coachPct : ((typeof privateCoachPctDefault === 'function') ? privateCoachPctDefault() : pct));
   const extra = (l.priv === 'coach' || (l.priv === 'reception' && allPriv)) ? l.price * cp / 100 : 0;
-  return l.price * rate / 100 + extra;
+  const brought = (l.priv === 'coach' && allPriv) ? l.price * pct / 100 : 0;   // v6.891 — he brought the customer: + the brought-in %
+  return l.price * rate / 100 + extra + brought;
 }
 function _privBonusNote(l, plain, coachPct, allPriv, rate) {
   if (!l || l._dupIgnored || !(Number(l.price) > 0)) return '';
   const pct = (typeof privateBonusPct === 'function') ? privateBonusPct() : 10, cp = (coachPct != null ? coachPct : ((typeof privateCoachPctDefault === 'function') ? privateCoachPctDefault() : pct));
   const coachHas = l.priv === 'coach' || (l.priv === 'reception' && allPriv);
   const parts = [];
-  if (coachHas && rate != null) parts.push(`${Math.round((Number(rate) + cp) * 100) / 100}% (${rate}% + ${cp}%)`);
+  const _br = (l.priv === 'coach' && allPriv) ? pct : 0;   // v6.891 — brought-in %
+  if (coachHas && rate != null) parts.push(`${Math.round((Number(rate) + cp + _br) * 100) / 100}% (${rate}% + ${cp}%${_br ? ' + ' + _br + '%' : ''})`);
   if (l.priv === 'reception') parts.push(`${(typeof t === 'function') ? t('reception', 'الاستقبال') : 'reception'} ${pct}% = ${fmt(l.price * pct / 100)}`);
   return parts.length ? `<div style="font-size:9px;font-weight:600;color:#7c3aed">${parts.join(' · ')}</div>` : '';
 }
@@ -342,7 +344,8 @@ function _privPendingNote(pl, plain, coachPct, allPriv, rate) {
   const pct = (typeof privateBonusPct === 'function') ? privateBonusPct() : 10, cp = (coachPct != null ? coachPct : ((typeof privateCoachPctDefault === 'function') ? privateCoachPctDefault() : pct));
   const coachHas = pl.priv === 'coach' || (pl.priv === 'reception' && allPriv);
   const parts = [];
-  if (coachHas && rate != null) parts.push(`${Math.round((Number(rate) + cp) * 100) / 100}% (${rate}% + ${cp}%)`);
+  const _brP = (pl.priv === 'coach' && allPriv) ? pct : 0;   // v6.891
+  if (coachHas && rate != null) parts.push(`${Math.round((Number(rate) + cp + _brP) * 100) / 100}% (${rate}% + ${cp}%${_brP ? ' + ' + _brP + '%' : ''})`);
   if (pl.priv === 'reception') parts.push(`${(typeof t === 'function') ? t('reception', 'الاستقبال') : 'reception'} ${pct}% = ${fmt(pl.amountBase * pct / 100)}`);
   return parts.length ? `<div style="font-size:9px;font-weight:600;color:#7c3aed">${parts.join(' · ')}</div>` : '';
 }
@@ -9191,6 +9194,86 @@ PAGES.duepayment = (main) => {
   // Build the warm, academy-style reminder (Arabic first, then English). When the member
   // belongs to a family, it lists ALL the family's kids that have dues, each with their
   // pending amount, plus the combined total — in ONE message to the parent.
+  // v6.892 — when everything still owed is a PRODUCT purchase: a warmer, specific reminder (what was bought, when, how much is left) in three gentle levels.
+  // It never says "fee" or threatens to pause training — it asks for the balance at the next visit and invites a reply.
+  const _prodOf = k => (state.invoices || []).filter(i => i && !i.deleted && i.customerId === k.id && !i.switchCredit && invoiceBalance(i) > 0.005);
+  const _isProdInv = i => (i.category || '') === 'Product' || i.activityType === 'sale';
+  const _prodItems = inv => {
+    const sale = (state.sales || []).find(s => s && s.invoiceId === inv.id);
+    const items = sale && Array.isArray(sale.items) && sale.items.length ? sale.items.map(l => ((Number(l.qty) || 1) > 1 ? (Number(l.qty) || 1) + '× ' : '') + (l.name || '')).filter(Boolean).join('، ') : '';
+    return items || String(inv.description || '').replace(/^Sale:\s*/i, '').split(' — ')[0].trim() || '';
+  };
+  const buildProductDueReminderMsg = (kids, lvl) => {
+    const lines = [], total = kids.reduce((s, x) => s + x.due, 0);
+    for (const x of kids) for (const inv of _prodOf(x.k)) {
+      const bal = invoiceBalance(inv), paid = Math.max(0, invoiceTotal(inv) - bal), what = _prodItems(inv), d = inv.date ? fmtDate(inv.date) : '';
+      lines.push({ ar: `• ${x.k.nameArabic || x.k.name}${what ? ': ' + what : ''}${d ? ' (' + d + ')' : ''} — المتبقي ${fmt(bal)} ر.ق${paid > 0.005 ? ' من أصل ' + fmt(invoiceTotal(inv)) : ''}`,
+        en: `• ${x.k.name}${what ? ': ' + what : ''}${d ? ' (' + d + ')' : ''} — ${fmt(bal)} QAR left${paid > 0.005 ? ' of ' + fmt(invoiceTotal(inv)) : ''}` });
+    }
+    const arL = lines.map(l => l.ar).join('\n'), enL = lines.map(l => l.en).join('\n');
+    let ar, en;
+    if (lvl === 1) {
+      ar = `أهلاً بكم 🌟
+شكراً لثقتكم بأكاديمية بلاك ستارز، ونتمنى أن ينال مشتراكم إعجابكم 😊
+لاحظنا أن مبلغاً بسيطاً لا يزال مفتوحاً على مشترياتكم:
+
+${arL}
+الإجمالي المتبقي: ${fmt(total)} ر.ق
+
+يسعدنا استلامه منكم عند زيارتكم القادمة للأكاديمية (نقداً أو بطاقة أو تحويل/فوران).
+وإن كنتم قد سددتم بالفعل، نعتذر عن الإزعاج وشكراً لكم 🙏
+أكاديمية بلاك ستارز 🖤`;
+      en = `Hello 🌟
+Thank you for choosing Black Stars Academy — we hope you are enjoying your purchase 😊
+We noticed a small balance is still open on it:
+
+${enL}
+Total left: ${fmt(total)} QAR
+
+We would be glad to receive it on your next visit to the academy (cash, card or bank transfer / Fawran).
+If you have already paid, please excuse the reminder and thank you 🙏
+Black Stars Academy 🖤`;
+    } else if (lvl === 2) {
+      ar = `أهلاً بكم 👋
+تذكير لطيف من أكاديمية بلاك ستارز — ربما سها عن البال 😊
+
+${arL}
+الإجمالي المتبقي: ${fmt(total)} ر.ق
+
+يمكنكم السداد عند أقرب زيارة، أو الرد على هذه الرسالة لنرتّب لكم الطريقة الأنسب.
+إن كنتم قد سددتم، فشكراً لكم ونعتذر عن الإزعاج 🙏
+أكاديمية بلاك ستارز 🖤`;
+      en = `Hello 👋
+A friendly reminder from Black Stars Academy — it may simply have slipped your mind 😊
+
+${enL}
+Total left: ${fmt(total)} QAR
+
+You can settle it on your next visit, or just reply to this message and we will arrange whatever is easiest for you.
+If you have already paid, thank you and sorry for the bother 🙏
+Black Stars Academy 🖤`;
+    } else {
+      ar = `أهلاً بكم، نعتذر عن تكرار التذكير 🙏
+نود فقط إقفال حساب مشترياتكم مع أكاديمية بلاك ستارز:
+
+${arL}
+الإجمالي المتبقي: ${fmt(total)} ر.ق
+
+إن كان هناك أي ظرف أو استفسار، يسعدنا أن نساعدكم — فقط أخبرونا بالرد على هذه الرسالة لنرتّب السداد بما يناسبكم.
+شكراً لتفهّمكم ودعمكم 🖤
+أكاديمية بلاك ستارز`;
+      en = `Hello — sorry for the repeat reminder 🙏
+We would just like to close your purchase account with Black Stars Academy:
+
+${enL}
+Total left: ${fmt(total)} QAR
+
+If anything is in the way, or you have a question, we are happy to help — simply reply to this message and we will arrange the payment in a way that suits you.
+Thank you for your understanding and support 🖤
+Black Stars Academy`;
+    }
+    return ar + '\n\n———\n\n' + en;
+  };
   const buildDueReminderMsg = (m, level) => {
     let kids;
     if (m.familyId && typeof familyMembers === 'function') {
@@ -9204,6 +9287,7 @@ PAGES.duepayment = (main) => {
     const arList = kids.map(x => `\u2022 ${x.k.nameArabic || x.k.name}: ${fmt(x.due)} \u0631.\u0642`).join('\n');
     const enList = kids.map(x => `\u2022 ${x.k.name}: ${fmt(x.due)} QAR`).join('\n');
     const lvl = Math.max(1, Math.min(3, parseInt(level) || 1));
+    if (kids.every(x => { const iv = _prodOf(x.k); return iv.length > 0 && iv.every(_isProdInv); })) return buildProductDueReminderMsg(kids, lvl);   // v6.892 — product purchases only: the gentler message
     const childAr = multi ? '\u0623\u0637\u0641\u0627\u0644\u0643\u0645' : '\u0637\u0641\u0644\u0643\u0645';
     const childEn = multi ? 'children' : 'child';
     const feesAr = multi ? '\u0623\u0642\u0633\u0627\u0637 \u0645\u0633\u062a\u062d\u0642\u0629' : '\u0642\u0633\u0637 \u0645\u0633\u062a\u062d\u0642';
@@ -20758,7 +20842,8 @@ PAGES.salaries = (main) => {
       if (p.commissionRate > 0) {
         breakdown.push(`${p.commissionRate}% × ${fmt(p.commissionBase)} = ${fmt(p.commissionAmount)}`);
       }
-      if (p.privateBonus > 0) breakdown.push(`🔒 private +${p.privateBonusPct}% × ${fmt(p.privateBonusBase)} = ${fmt(p.privateBonus)}`);   // v6.653
+      if (p.privateBonus > 0) breakdown.push(`🔒 private +${p.privateBonusPct}% × ${fmt(p.privateBonusBase)} = ${fmt(p.privateBonus - (p.approachBonus || 0))}`);   // v6.653
+      if ((p.approachBonus || 0) > 0) breakdown.push(`🤝 brought-in +${p.receptionSharePct}% × ${fmt(p.approachBase)} = ${fmt(p.approachBonus)}`);   // v6.891
       if (p.receptionBonus > 0) breakdown.push(`🔒 reception share ${p.receptionSharePct}% × ${fmt(p.receptionPoolBase)} ÷ ${p.receptionStaffCount} = ${fmt(p.receptionBonus)}`);
       if (p.targetBonus > 0) breakdown.push(`🎯 target bonus ${fmt(p.targetBonus)}${p.targetKind === 'reception' ? ` (${fmt(p.targetTierBonus)} ÷ ${p.targetStaff})` : ` (${p.targetValue} new/renew)`}`);   // v6.655
       const breakdownStr = breakdown.join(' + ') || '—';
@@ -21834,7 +21919,7 @@ window.downloadPayslipPDF = function(coachId, monthKey) {
         <div class="row"><span>Commission earned</span><span>${fmt(pay.commissionAmount)} QAR</span></div>
         ${pay.basis === 'attendance' && pay.commissionPending > 0 ? `<div class="row" style="color:#b45309"><span>Pending (not yet earned — see rule below)</span><span>${fmt(pay.commissionPending)} QAR</span></div>` : ''}
       ` : ''}
-      ${pay.privateBonus > 0 ? `<div class="row"><span>Private bonus (+${pay.privateBonusPct}% on ${fmt(pay.privateBonusBase)} QAR of private packages${pay.privateExtraAll ? "" : " you brought in"})</span><span>${fmt(pay.privateBonus)} QAR</span></div>` : ''}
+      ${pay.privateBonus > 0 ? `<div class="row"><span>Private bonus (+${pay.privateBonusPct}% on ${fmt(pay.privateBonusBase)} QAR of private packages${pay.privateExtraAll ? "" : " you brought in"})</span><span>${fmt(pay.privateBonus - (pay.approachBonus || 0))} QAR</span></div>` : ''}${(pay.approachBonus || 0) > 0 ? `<div class="row"><span>Brought-in bonus (+${pay.receptionSharePct}% on ${fmt(pay.approachBase)} QAR of private customers you brought)</span><span>${fmt(pay.approachBonus)} QAR</span></div>` : ''}
       ${pay.receptionBonus > 0 ? `<div class="row"><span>Reception private share (${pay.receptionSharePct}% of ${fmt(pay.receptionPoolBase)} QAR ÷ ${pay.receptionStaffCount} staff)</span><span>${fmt(pay.receptionBonus)} QAR</span></div>` : ''}
       ${(pay.privateBonusPending || 0) + (pay.receptionBonusPending || 0) > 0.005 ? `<div class="row" style="color:#7c3aed"><span>⏳ Pending private ${pay.receptionBonusPending > 0 ? 'share' : 'bonus'} (not in gross — ${pay.receptionBonusPending > 0 ? 'paid in full next month' : 'earned as the private member attends'})</span><span>${fmt((pay.privateBonusPending || 0) + (pay.receptionBonusPending || 0))} QAR</span></div>` : ''}
       ${pay.targetBonus > 0 ? `<div class="row"><span>Target bonus (${pay.targetKind === 'reception' ? 'reception income target ' + fmt(pay.targetTierBonus) + ' ÷ ' + pay.targetStaff + ' staff' : pay.targetValue + ' new/renew this month'})</span><span>${fmt(pay.targetBonus)} QAR</span></div>` : ''}
@@ -25503,6 +25588,10 @@ PAGES.attendance = (main) => {
       name: m.name, memberId: m.id, mobile: m.phone || '', sport, date: _markISO,
       old: _prevMark, new: next || 'cleared',
     });
+    // v6.890 — a class marked after the package END DATE while paid classes are left: a MESSAGE only — the mark is kept as typed, nothing is removed or moved
+    if (next === 'Y' && ['admin', 'receptionist'].includes(currentRole()) && typeof packageEndedWithClassesLeft === 'function') {
+      try { const _pe = packageEndedWithClassesLeft(m, String(sport).replace(/ \d+$/, ''), _markISO); if (_pe) toast(t(`⚠ ${_pe.sport} package ended on ${fmtDate(_pe.end)} with ${_pe.left} paid class(es) left — this class is recorded, but it will not count in that package until its end date is extended (Edit package).`, `⚠ باقة ${_pe.sport} انتهت يوم ${fmtDate(_pe.end)} وفيها ${_pe.left} حصة مدفوعة باقية — الحصة اتسجّلت، لكن مش هتتحسب في الباقة إلا لو مدّدت تاريخ النهاية (تعديل الباقة).`), 'info'); } catch (e) { console.error('package-ended check failed', e); }
+    }
     // v6.770 — a coach marking a class that earns him nothing (package ended / its paid classes used up) is told why, instead of silently seeing no change in his pay
     if (next === 'Y' && _g0 != null) {
       try { const _cid = effectiveCoachId(); if (coachPayGross(_cid, mo) - _g0 < 0.005) toast('⚠ ' + coachNoPayReason(_cid, m, String(sport).replace(/ \d+$/, ''), _markISO), 'info'); } catch (e) { console.error(e); }
@@ -29630,6 +29719,7 @@ window.editSubscription = function(memberId, sid) {
           inv = _tgt;
           if (typeof audit === 'function') audit('subscription.attach_invoice', 'member:' + m.id, (line && line !== _nl ? 'Linked ' : 'Billed ') + sub.activity + ' (' + fmt(price) + ') on ' + (_tgt.ref || '#' + _tgt.id) + ' from the profile edit', { memberId: m.id, invoiceId: _tgt.id });
         }
+        const _clsWas = parseInt(sub.totalClasses) || 0;   // v6.890
         sub.totalClasses = cls;
         sub.status = st;
         // v6.855 — a changed Validity moves THIS package's end date (start + validity), its renewal record, the current enrollment's validity and, when this package ends last, the member's expiry
@@ -29701,6 +29791,8 @@ window.editSubscription = function(memberId, sid) {
         if (typeof stampUpdate === 'function') stampUpdate(m);
         if (typeof audit === 'function') audit('subscription.edit', 'member:' + m.id, `Edited ${sub.activity}: ${cls} classes · ${fmt(isNaN(price) ? linePrice : price)} · ${st}${newCoachId !== undefined ? ' · coach ' + (coachName(newCoachId) || '—') : ''} (profile+invoice synced)`, { memberId: m.id, sport: sub.activity });
         closeModal();
+        // v6.890 — classes raised but the end date stayed in the past: tell the desk (a message only — no mark is touched)
+        if (cls > _clsWas && sub.end && String(sub.end).slice(0, 10) < TODAY && !isCampSport(sub.activity || '')) toast(t(`⚠ Classes raised to ${cls}, but this package still ends on ${fmtDate(sub.end)} — classes after that date do not count in it. Change the Validity if the member should keep training.`, `⚠ رفعت الحصص إلى ${cls} لكن الباقة لسه بتنتهي يوم ${fmtDate(sub.end)} — الحصص بعد التاريخ ده مش بتتحسب فيها. غيّر المدة (Validity) لو العضو هيكمّل تدريب.`), 'info');
         const _balNow = (inv && !_lineShared && typeof invoiceBalance === 'function') ? invoiceBalance(inv) : 0;   // v6.666: a raised price leaves a balance — say so
         confirmSaved(_lineShared
           ? t('Sport updated (this period only). Its invoice line is SHARED with another period, so it was left unchanged to protect the other period — split them into separate invoices to edit the price here.', 'تم تحديث هذه الفترة فقط. بند فاتورتها مشترك مع فترة أخرى، لذا تُرك دون تغيير لحماية الفترة الأخرى — افصلهما في فاتورتين منفصلتين لتعديل السعر هنا.')
