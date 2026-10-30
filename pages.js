@@ -335,7 +335,6 @@ function _privBonusNote(l, plain, coachPct, allPriv, rate) {
   const parts = [];
   const _br = (l.priv === 'coach' && allPriv) ? pct : 0;   // v6.891 — brought-in %
   if (coachHas && rate != null) parts.push(`${Math.round((Number(rate) + cp + _br) * 100) / 100}% (${rate}% + ${cp}%${_br ? ' + ' + _br + '%' : ''})`);
-  if (l.priv === 'reception') parts.push(`${(typeof t === 'function') ? t('reception', 'الاستقبال') : 'reception'} ${pct}% = ${fmt(l.price * pct / 100)}`);
   return parts.length ? `<div style="font-size:9px;font-weight:600;color:#7c3aed">${parts.join(' · ')}</div>` : '';
 }
 // Pending (paid, not yet attended) row: the same two percentages.
@@ -346,7 +345,6 @@ function _privPendingNote(pl, plain, coachPct, allPriv, rate) {
   const parts = [];
   const _brP = (pl.priv === 'coach' && allPriv) ? pct : 0;   // v6.891
   if (coachHas && rate != null) parts.push(`${Math.round((Number(rate) + cp + _brP) * 100) / 100}% (${rate}% + ${cp}%${_brP ? ' + ' + _brP + '%' : ''})`);
-  if (pl.priv === 'reception') parts.push(`${(typeof t === 'function') ? t('reception', 'الاستقبال') : 'reception'} ${pct}% = ${fmt(pl.amountBase * pct / 100)}`);
   return parts.length ? `<div style="font-size:9px;font-weight:600;color:#7c3aed">${parts.join(' · ')}</div>` : '';
 }
 // v6.678 — one-row summary strip shared by Invoices and Transactions: count · charged · collected (cash / card + fawran) · due (by the
@@ -19335,7 +19333,8 @@ function monthRecCompute(ym, bankOverride) {
   }
   const have = cash != null && bank != null && isFinite(bank);
   const total = r2((cash || 0) + due + expenses + (have ? bank : 0)), diff = r2(revenue - total);
-  return { ym, revenue, cash, due, dueMem: r2(dueMem), dueOth: r2(dueOth), dueOthRows: othRows.sort((a, b) => b.due - a.due), expenses, citadel: X.citadel, bankComm: X.bankComm, bank, have, total, diff, match: have && Math.abs(diff) < 1 };
+  const bankExpected = cash != null ? r2(revenue - cash - due - expenses) : null;   // v6.893 — what the bank SHOULD hold for the four boxes to equal revenue
+  return { ym, revenue, bankExpected, cash, due, dueMem: r2(dueMem), dueOth: r2(dueOth), dueOthRows: othRows.sort((a, b) => b.due - a.due), expenses, citadel: X.citadel, bankComm: X.bankComm, bank, have, total, diff, match: have && Math.abs(diff) < 1 };
 }
 window._mrDueDetail = function () {
   const ym = TODAY.slice(0, 7), R = monthRecCompute(ym), money = n => fmt(Math.round(n * 100) / 100);
@@ -19462,7 +19461,7 @@ PAGES.monthrec = (main) => {
       box('linear-gradient(135deg,#10b981,#047857)', '🧮', t('Cash in hand', 'النقد في الصندوق'), R.cash == null ? '—' : money(R.cash) + ' <span style="font-size:13px;font-weight:600">QAR</span>', R.cash == null ? t('no cash count yet — tap to record one', 'لا يوجد جرد بعد — اضغط لتسجيله') : t('live drawer: last count + cash since · tap to open', 'الصندوق الحالي: آخر جرد + النقد منذ ذلك · اضغط للفتح'), 'cashinhand') +
       box('linear-gradient(135deg,#f59e0b,#c2410c)', '📋', t('Due this month', 'المستحق هذا الشهر'), money(R.due) + ' <span style="font-size:13px;font-weight:600">QAR</span>', t('billed THIS month, not yet collected', 'مفوتر هذا الشهر ولم يُحصّل بعد') + ' · ' + t('members', 'أعضاء') + ' ' + money(R.dueMem) + (R.dueOth > 0.5 ? ' + ' + t('rentals / others', 'إيجارات / أخرى') + ' ' + money(R.dueOth) : '') + ' · ' + t('tap for the list', 'اضغط للقائمة'), 'js:_mrDueDetail()') +
       box('linear-gradient(135deg,#ef4444,#9f1239)', '💸', t('Expenses', 'المصروفات'), money(R.expenses) + ' <span style="font-size:13px;font-weight:600">QAR</span>', t('all expenses + bank commission + salary payments', 'كل المصروفات + عمولة البنك + دفعات الرواتب') + (R.citadel ? ' · ' + t('Citadel share', 'حصة سيتاديل') + ' ' + money(R.citadel) + ' ' + t('not counted', 'غير محتسبة') : '') + ' · ' + t('tap to open', 'اضغط للفتح'), 'expenses') +
-      box('linear-gradient(135deg,#3b82f6,#4338ca)', '🏦', t('Cash in bank', 'الرصيد البنكي'), '<input id="mr-bank" type="number" step="0.01" min="0" inputmode="decimal" value="' + (R.bank != null ? R.bank : '') + '" oninput="_mrShow()" onclick="event.stopPropagation()" placeholder="0.00" style="width:100%;font-size:26px;font-weight:800;padding:6px 10px;border:2px solid rgba(255,255,255,.55);border-radius:10px;background:rgba(255,255,255,.16);color:#fff;outline:none" />', t('type the bank balance by hand', 'اكتب رصيد البنك يدوياً')) +
+      box('linear-gradient(135deg,#3b82f6,#4338ca)', '🏦', t('Cash in bank', 'الرصيد البنكي'), '<input id="mr-bank" type="number" step="0.01" min="0" inputmode="decimal" value="' + (R.bank != null ? R.bank : '') + '" oninput="_mrShow()" onclick="event.stopPropagation()" placeholder="0.00" style="width:100%;font-size:26px;font-weight:800;padding:6px 10px;border:2px solid rgba(255,255,255,.55);border-radius:10px;background:rgba(255,255,255,.16);color:#fff;outline:none" />', t('type the bank balance by hand', 'اكتب رصيد البنك يدوياً') + (R.bankExpected != null ? '<div style="margin-top:6px;font-weight:700;font-size:12px;cursor:pointer" onclick="event.stopPropagation();var e=document.getElementById(\'mr-bank\');e.value=' + R.bankExpected + ';_mrShow()" title="' + t('Tap to use this number', 'اضغط لاستخدام هذا الرقم') + '">🎯 ' + t('Expected in bank', 'المتوقع في البنك') + ': ' + money(R.bankExpected) + ' QAR</div>' : '')) +
     '</div>' +
     '<div id="mr-band" style="background:' + bandBg + ';color:#fff;border-radius:16px;padding:18px 22px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;align-items:center;box-shadow:0 6px 18px rgba(0,0,0,.18)">' +
       '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;opacity:.9">' + t('Sum of the four boxes', 'مجموع الصناديق الأربعة') + '</div><div id="mr-total" style="font-size:26px;font-weight:800">' + (R.have ? money(R.total) : '—') + '</div></div>' +
