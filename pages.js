@@ -31908,7 +31908,6 @@ PAGES.coachhome = (main) => {
           <div class="text-mute" style="font-size:11px;text-transform:uppercase;letter-spacing:.5px">${t('Your new / renew this month', 'جديد / تجديد هذا الشهر')} · ${escapeHtml(fmtMonth(currentMonth()))}</div>
           <div style="font-size:26px;font-weight:800">${cnt} <span style="font-size:13px;font-weight:500" class="text-mute">${t('new/renew', 'جديد/تجديد')}</span></div>
         </div>
-        <button class="btn ghost sm" onclick="navigate('targets')">🎯 ${t('My target', 'هدفي')} →</button>
       </div>
     </div>`;
   }
@@ -31931,7 +31930,7 @@ PAGES.coachhome = (main) => {
         ${(typeof coachAvatarHtml === 'function') ? coachAvatarHtml(coach, 44) : ''}
         <div>
           <h1 style="margin:0">${escapeHtml(coach.name)}</h1>
-          <div class="subtitle">${t('Your students, salary and advice', 'طلابك وراتبك ونصائحك')} · ${coach.rate ? coach.rate + '% ' + t('commission', 'عمولة') : ''}${coach.fixedSalary ? (coach.rate ? ' · ' : '') + t('Fixed', 'ثابت') + ' ' + fmt(coach.fixedSalary) : ''}</div>
+          <div class="subtitle">${t('Your students, attendance and advice', 'طلابك وحضورهم ونصائحك')}</div>
         </div>
       </div>
       <div class="topbar-actions">
@@ -31952,12 +31951,6 @@ PAGES.coachhome = (main) => {
         <div class="kpi-label">${t('My Students', 'طلابي')}</div>
         <div class="kpi-value num">${students.length}</div>
         <div class="kpi-delta flat">${t('active roster', 'القائمة الحالية')}</div>
-      </div>
-      <div class="kpi">
-        <div class="kpi-icon">💰</div>
-        <div class="kpi-label">${t('This month salary', 'راتب هذا الشهر')}${thisMonth ? ' (' + fmtMonth(thisMonth).split(' ')[0] + ')' : ''}</div>
-        <div class="kpi-value num">${fmt(cur.total)}</div>
-        <div class="kpi-delta flat">${t('Fixed', 'ثابت')} ${fmt(cur.fixed)} + ${t('commission', 'عمولة')} ${fmt(cur.commission)}</div>
       </div>
       <div class="kpi">
         <div class="kpi-icon">💬</div>
