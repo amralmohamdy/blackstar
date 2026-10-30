@@ -25190,6 +25190,7 @@ PAGES.attendance = (main) => {
   }
   // v6.702 — a coach's Sports filter lists only the sports HE teaches (his profile sports + every sport of his members' enrollments / packages / Mixed classes he taught);
   // admin / reception keep the full list. Falls back to the full list if nothing is found, so the menu is never empty.
+  const _canExportAtt = currentRole() === 'admin';   // v6.903 — only the admin exports attendance (a coach or reception sees no Export / PDF / Image buttons)
   const _attSportList = (() => {
     if (myCoachId == null) return SPORTS;
     const c = (state.coaches || []).find(x => String(x.id) === String(myCoachId));
@@ -26079,12 +26080,12 @@ PAGES.attendance = (main) => {
             </td>
             ${cells}
             <td class="att-total"><span style="color:var(--green);font-weight:700">${grandY}</span></td>
-            <td class="att-export-cell" style="text-align:center;white-space:nowrap">${needsRenewal2 ? `<button class="btn sm" style="background:var(--accent-2);border-color:var(--accent-2);color:#fff;margin-right:4px" onclick="window.addRenewal(${m.id})" title="Renew ${escapeHtml(m.name)}'s membership">🔄 ${t('Renew', 'تجديد')}</button>` : ''}<button class="btn ghost sm" onclick="window._attPdf(${m.id}, null, '${sportEsc}')" title="Export ${escapeHtml(m.name)} attendance">⬇ PDF</button></td>
+            <td class="att-export-cell" style="text-align:center;white-space:nowrap">${needsRenewal2 ? `<button class="btn sm" style="background:var(--accent-2);border-color:var(--accent-2);color:#fff;margin-right:4px" onclick="window.addRenewal(${m.id})" title="Renew ${escapeHtml(m.name)}'s membership">🔄 ${t('Renew', 'تجديد')}</button>` : ''}${_canExportAtt ? `<button class="btn ghost sm" onclick="window._attPdf(${m.id}, null, '${sportEsc}')" title="Export ${escapeHtml(m.name)} attendance">⬇ PDF</button>` : ''}</td>
           </tr>`;
       }).join('');
       $('#att-table-wrap').innerHTML = `
         <table class="att-table">
-          <thead><tr><th class="att-name-h">${t('Student', 'الطالب')}</th>${monthHeaders}<th class="att-total-h">${t('Total Y', 'إجمالي Y')}</th><th class="text-right">${t('Export', 'تصدير')}</th></tr></thead>
+          <thead><tr><th class="att-name-h">${t('Student', 'الطالب')}</th>${monthHeaders}<th class="att-total-h">${t('Total Y', 'إجمالي Y')}</th><th class="text-right">${_canExportAtt ? t('Export', 'تصدير') : ''}</th></tr></thead>
           <tbody>${body || `<tr><td colspan="${months.length + 3}" class="empty">No attendance recorded yet.</td></tr>`}</tbody>
         </table>`;
       const distinctMembers = new Set(rows.map(r => r.m.id)).size;
@@ -26227,7 +26228,7 @@ PAGES.attendance = (main) => {
           ${cells}
           <td class="att-total"><span style="color:var(--green);font-weight:600">${y}</span><span class="text-mute"> / ${total || '—'}</span></td>
           <td class="text-right" style="color:${rate >= 75 ? 'var(--green)' : rate >= 40 ? 'var(--accent-2)' : rate > 0 ? 'var(--red)' : 'var(--text-mute)'};font-weight:600">${total ? rate + '%' : '—'}</td>
-          <td class="att-export-cell" style="text-align:center;white-space:nowrap">${needsRenewal ? `<button class="btn sm" style="background:var(--accent-2);border-color:var(--accent-2);color:#fff;margin-right:4px" onclick="window.addRenewal(${m.id})" title="Renew ${escapeHtml(m.name)}'s membership">🔄 ${t('Renew', 'تجديد')}</button>` : ''}<button class="btn ghost sm" onclick="window._attPdf(${m.id}, null, '${sportEsc}')" title="Export ${escapeHtml(m.name)} · ${escapeHtml(sport)} attendance">⬇ PDF</button></td>
+          <td class="att-export-cell" style="text-align:center;white-space:nowrap">${needsRenewal ? `<button class="btn sm" style="background:var(--accent-2);border-color:var(--accent-2);color:#fff;margin-right:4px" onclick="window.addRenewal(${m.id})" title="Renew ${escapeHtml(m.name)}'s membership">🔄 ${t('Renew', 'تجديد')}</button>` : ''}${_canExportAtt ? `<button class="btn ghost sm" onclick="window._attPdf(${m.id}, null, '${sportEsc}')" title="Export ${escapeHtml(m.name)} · ${escapeHtml(sport)} attendance">⬇ PDF</button>` : ''}</td>
         </tr>`;
     }).join('');
 
@@ -26239,7 +26240,7 @@ PAGES.attendance = (main) => {
             ${dayHeaders}
             <th class="att-total-h">${t('Total', 'الإجمالي')}</th>
             <th class="text-right">${t('Rate', 'النسبة')}</th>
-            <th class="text-right">${t('Export', 'تصدير')}</th>
+            <th class="text-right">${_canExportAtt ? t('Export', 'تصدير') : ''}</th>
           </tr>
         </thead>
         <tbody>${body || `<tr><td colspan="${dayList.length+4}" class="empty">No members match the current filters.</td></tr>`}</tbody>
@@ -26364,11 +26365,13 @@ PAGES.attendance = (main) => {
         </div>
         <button class="btn ghost" id="att-today">📍 ${t('Today', 'اليوم')}</button>
         <button class="btn ghost" id="att-import">📂 ${t('Import CSV', 'استيراد CSV')}</button>
+        ${_canExportAtt ? `
         <button class="btn ghost" id="att-export">📥 ${t('Export CSV', 'تصدير CSV')}</button>
         <button class="btn ghost" id="att-export-pdf">📄 ${t('Export PDF', 'تصدير PDF')}</button>
         <button class="btn ghost" id="att-export-details" title="${t('Detailed report over the selected months — the attended dates per student, sport and coach', 'تقرير مفصّل عبر الأشهر المحددة — أيام الحضور لكل طالب ورياضة ومدرب')}">📋 ${t('Details report', 'تقرير مفصّل')}</button>
         <button class="btn ghost" id="att-export-img-en" title="${t('Download the sheet as an image (English)', 'تنزيل الورقة كصورة (إنجليزي)')}">🖼 ${t('Image (EN)', 'صورة (EN)')}</button>
         <button class="btn ghost" id="att-export-img-ar" title="${t('Download the sheet as an image (Arabic)', 'تحميل الورقة كصورة (عربي)')}">🖼 ${t('Image (AR)', 'صورة (AR)')}</button>
+        ` : ''}
       </div>
     </div>
 
@@ -26687,7 +26690,7 @@ PAGES.attendance = (main) => {
     exportAttendanceDetailsPdf(rows);
   });
 
-  $('#att-export-pdf').addEventListener('click', () => {
+  $('#att-export-pdf')?.addEventListener('click', () => {
     const rows = getRows();
     if (!rows.length) { toast('No students to export', 'error'); return; }
     if (filter.month === 'all') { exportAttendanceMonthsPdf(rows); return; }
@@ -26885,7 +26888,7 @@ PAGES.attendance = (main) => {
   $('#att-export-img-en')?.addEventListener('click', () => exportAttendanceImage('en'));
   $('#att-export-img-ar')?.addEventListener('click', () => exportAttendanceImage('ar'));
 
-  $('#att-export').addEventListener('click', () => {
+  $('#att-export')?.addEventListener('click', () => {
     const rows = getRows();
     if (filter.month === 'all') {
       // All-months summary: one column per month (present Y count) + year total.
@@ -31760,14 +31763,14 @@ window._coachRosterCsv = function(coachId) {
   if (!students.length) { toast(t('No students to export.', 'لا يوجد طلاب للتصدير.'), 'error'); return; }
   const mo = TODAY.slice(0, 7);
   const esc = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
-  const header = ['Student', 'Sports', 'Mobile', 'Attended', 'Marked', 'Rate%', 'Status', 'Expiry'];
+  const header = ['Student', 'Sports', 'Age', 'Level', 'Attended', 'Marked', 'Rate%', 'Status', 'Expiry'];
   const lines = [header.join(',')];
   for (const s of students) {
     const mem = state.members.find(x => x.id === s.id) || {};
     let y = 0, n = 0;
     for (const sp of (s.sports || [])) { const dd = (mem.dailyAttendance?.[mo] || {})[sp] || {}; for (const d in dd) { if (dd[d] === 'Y') y++; else if (dd[d] === 'N') n++; } }
     const marked = y + n; const rate = marked ? Math.round(y / marked * 100) : '';
-    lines.push([s.name, (s.sports || []).join(' / '), mem.phone || '', y, marked, rate,
+    lines.push([s.name, (s.sports || []).join(' / '), (memberAge(mem.birthdate) != null ? memberAge(mem.birthdate) : ''), mem.level || '', y, marked, rate,
       (typeof memberStatus === 'function' ? memberStatus(mem) : ''), mem.expiryDate || ''].map(esc).join(','));
   }
   downloadFile(`${coach.name.replace(/[^a-z0-9]+/gi, '_')}_roster_${mo}.csv`, lines.join('\n'), 'text/csv');
@@ -31936,10 +31939,6 @@ PAGES.coachhome = (main) => {
           <div class="subtitle">${t('Your students, attendance and advice', 'طلابك وحضورهم ونصائحك')}</div>
         </div>
       </div>
-      <div class="topbar-actions">
-        <button class="btn ghost" onclick="window._coachSignInSheet(${coach.id})" title="${t('Printable blank attendance sheet', 'ورقة حضور فارغة للطباعة')}">🖨 ${t('Sign-in sheet', 'ورقة الحضور')}</button>
-        <button class="btn ghost" onclick="window._coachRosterCsv(${coach.id})" title="${t('Export your roster as CSV', 'تصدير قائمتك CSV')}">⬇ ${t('Roster CSV', 'تصدير القائمة')}</button>
-      </div>
     </div>
 
     ${rankCard}
@@ -31966,13 +31965,14 @@ PAGES.coachhome = (main) => {
     <div class="card" style="margin-bottom:16px">
       <div class="card-header"><div><div class="card-title">👥 ${t('My Students', 'طلابي')} (${students.length})</div><div class="card-subtitle">${t('Attendance this month · ⚠ = low attendance', 'الحضور هذا الشهر · ⚠ = حضور منخفض')}</div></div></div>
       ${roster.length ? `<div style="overflow:auto"><table class="data-table" style="width:100%"><thead><tr>
-          <th>${t('Student', 'الطالب')}</th><th>${t('Sports', 'الرياضات')}</th><th>${t('Mobile', 'الجوال')}</th>
+          <th>${t('Student', 'الطالب')}</th><th>${t('Sports', 'الرياضات')}</th><th class="text-right">${t('Age', 'العمر')}</th><th>${t('Level', 'المستوى')}</th>
           <th class="text-right">${t('This month', 'هذا الشهر')}</th><th class="text-right">${t('Rate', 'النسبة')}</th><th>${t('Last attended', 'آخر حضور')}</th>
         </tr></thead><tbody>
         ${roster.map(r => `<tr${r.atRisk ? ' style="background:rgba(239,68,68,.06)"' : ''}>
           <td>${escapeHtml(r.name)}${r.atRisk ? ` <span class="badge expired" title="${t('Low attendance', 'حضور منخفض')}">⚠ ${t('at risk', 'متعثّر')}</span>` : ''}</td>
           <td class="text-mute">${escapeHtml((r.sports || []).join(', ') || '—')}</td>
-          <td style="white-space:nowrap">${r.mem && r.mem.phone ? `<a href="https://wa.me/${String(r.mem.phone).replace(/[^\d]/g, '')}" target="_blank" onclick="event.stopPropagation()" style="color:var(--blue);text-decoration:none" title="${t('Message on WhatsApp', 'مراسلة عبر واتساب')}">${escapeHtml(r.mem.phone)}</a>` : '<span class="text-mute">—</span>'}</td>
+          <td class="text-right num">${(r.mem && memberAge(r.mem.birthdate) != null) ? memberAge(r.mem.birthdate) : '<span class="text-mute">—</span>'}</td>
+          <td>${(r.mem && r.mem.level) ? escapeHtml(r.mem.level) : '<span class="text-mute">—</span>'}</td>
           <td class="text-right num">${r.marked ? r.y + '/' + r.marked : '—'}</td>
           <td class="text-right num" style="${r.rate == null ? '' : r.rate >= 75 ? 'color:var(--green)' : r.rate >= 50 ? 'color:var(--accent-2)' : 'color:var(--red);font-weight:600'}">${r.rate == null ? '—' : r.rate + '%'}</td>
           <td class="text-mute">${r.last ? fmtDate(r.last) : '—'}</td>
