@@ -12431,6 +12431,9 @@ PAGES.schedule = (main) => {
     ? state.settings.sports.filter(s => s.enabled !== false && !isCampSport(s.name))
         .slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map(s => s.name)
     : Object.keys(SPORT_THEME);
+  // v6.899 — a coach's Sports filter lists only the sports he teaches (his own classes on the schedule), never the whole club
+  const _mySportSet = myCoachId != null ? new Set([...(state.schedule || []).filter(c => String(c.coachId) === String(myCoachId)).map(c => baseSportName(c.sport)), ...(((state.coaches || []).find(x => String(x.id) === String(myCoachId)) || {}).sports || []).map(baseSportName)]) : null;
+  const _filterSports = _mySportSet ? scheduleSports.filter(x => _mySportSet.has(baseSportName(x))) : scheduleSports.concat([SCHEDULE_EXTERNAL]);
   // Sport palette (draggable tiles) — admins only
   const sportTiles = !canEdit ? '' : scheduleSports.concat([SCHEDULE_EXTERNAL]).map(sport => `
     <div class="sport-tile" draggable="true" data-sport="${escapeHtml(sport)}" title="${t('Click to filter the schedule by this sport · drag onto a cell to add a class', 'اضغط لتصفية الجدول حسب هذه الرياضة · اسحب إلى خانة لإضافة حصة')}"
@@ -12532,7 +12535,7 @@ PAGES.schedule = (main) => {
             <span style="opacity:.6;font-size:10px">▾</span>
           </button>
           <div id="sch-filter-sport-menu" style="display:none;position:absolute;left:0;top:100%;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-top:4px;padding:8px;min-width:200px;max-height:300px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.4)">
-            ${scheduleSports.concat([SCHEDULE_EXTERNAL]).map(s => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px"><input type="checkbox" class="sch-sport-cb" value="${escapeHtml(s)}" ${filter.sports.includes(s) ? 'checked' : ''} /> ${sportEmoji(s)} ${escapeHtml(s)}</label>`).join('')}
+            ${_filterSports.map(s => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px"><input type="checkbox" class="sch-sport-cb" value="${escapeHtml(s)}" ${filter.sports.includes(s) ? 'checked' : ''} /> ${sportEmoji(s)} ${escapeHtml(s)}</label>`).join('')}
             <div style="border-top:1px solid var(--border);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between"><button type="button" class="btn ghost sm" id="sch-filter-sport-all">All</button><button type="button" class="btn ghost sm" id="sch-filter-sport-clear">Clear</button></div>
           </div>
         </div>
