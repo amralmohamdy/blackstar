@@ -26261,7 +26261,8 @@ PAGES.attendance = (main) => {
     }
     const distinctMembers = new Set(rows.map(r => r.m.id)).size;
     const rowText = `${rows.length} attendance row${rows.length === 1 ? '' : 's'} · ${distinctMembers} student${distinctMembers === 1 ? '' : 's'}`;
-    $('#att-count').textContent = `${rowText} · ${dayNote}`;
+    const _viewNote = (_coachLockToday && filter.month !== 'all' && (!filter.days.length ? filter.month < TODAY.slice(0, 7) : filter.days.some(d => `${filter.month}-${String(d).padStart(2, '0')}` < TODAY))) ? ` · 👁 ${t('view only', 'عرض فقط')}` : '';   // v6.906
+    $('#att-count').textContent = `${rowText} · ${dayNote}${_viewNote}`;
   }
 
   main.innerHTML = `
@@ -26380,8 +26381,7 @@ PAGES.attendance = (main) => {
     </div>
 
     <div class="card">
-      <div class="filter-bar att-filter-bar" style="flex-wrap:wrap;align-items:flex-start">
-        ${_coachLockToday ? `<div class="btn ghost" style="pointer-events:none;font-weight:700;background:rgba(16,185,129,.10);border-color:rgba(16,185,129,.4);color:var(--green)" title="${t('You mark today only; earlier days are view-only', 'تسجّل اليوم فقط؛ الأيام السابقة للعرض فقط')}">📅 ${t('Today', 'اليوم')} · ${fmtDate(TODAY)} · 👁 ${t('past days: view only', 'الأيام السابقة: عرض فقط')}</div>` : ''}
+      <div class="filter-bar att-filter-bar${_coachLockToday ? ' att-bar-coach' : ''}" style="flex-wrap:wrap;align-items:${_coachLockToday ? 'center' : 'flex-start'}">
         ${monthMultiHTML('att-month', availableMonths({ includeFuture: !_coachLockToday }), filter.months)}
         <div style="position:relative">
           <button type="button" id="att-day-btn" class="btn ghost" style="min-width:130px;text-align:left;display:inline-flex;align-items:center;justify-content:space-between;gap:8px" title="${t('Pick one or more days', 'اختر يوماً أو أكثر')}">${t('All days', 'كل الأيام')} <span style="opacity:.6">▾</span></button>
@@ -26403,7 +26403,7 @@ PAGES.attendance = (main) => {
           <option value="5">${t('Week', 'أسبوع')} 5 (29–${t('end', 'النهاية')})</option>
         </select>
         <span ${myCoachId != null ? 'style="display:none"' : ''}>${multiFilterHTML('att-coach', state.coaches.filter(c => isCoachRole(c)).map(c => [String(c.id), c.name + (c.nameArabic ? ' · ' + c.nameArabic : '')]), filter.coaches, { allText: t('All coaches', 'كل المدربين'), noun: t('coaches', 'مدربين'), minWidth: 150, search: true })}</span>
-        ${multiFilterHTML('att-mstatus', [['Active', '🟢 ' + t('Active', 'نشط')], ['Frozen', '🔵 ' + t('Frozen', 'مجمّد')], ['Expired', '⚪ ' + t('Expired', 'منتهي')], ['Completed', '🟣 ' + t('Completed', 'مكتمل')], ['Withdrawn', '🔴 ' + t('Withdrawn', 'منسحب')]], filter.statuses, { allText: t('All statuses', 'كل الحالات'), noun: t('statuses', 'حالات'), minWidth: 150 })}
+        ${_coachLockToday ? '' : `${multiFilterHTML('att-mstatus', [['Active', '🟢 ' + t('Active', 'نشط')], ['Frozen', '🔵 ' + t('Frozen', 'مجمّد')], ['Expired', '⚪ ' + t('Expired', 'منتهي')], ['Completed', '🟣 ' + t('Completed', 'مكتمل')], ['Withdrawn', '🔴 ' + t('Withdrawn', 'منسحب')]], filter.statuses, { allText: t('All statuses', 'كل الحالات'), noun: t('statuses', 'حالات'), minWidth: 150 })}`}
         ${multiFilterHTML('att-status', [['attended', '✓ ' + t('Attended', 'حضر')], ['notattended', '✗ ' + t('Not attended', 'لم يحضر')]], filter.atts, { allText: t('All attendance', 'كل الحضور'), noun: t('selected', 'محدد'), minWidth: 150 })}
         ${multiFilterHTML('att-sport', _attSportList, filter.sports, { allText: t('All sports', 'كل الرياضات'), noun: t('sports', 'رياضات'), minWidth: 150, sort: false })}
         <div style="min-width:260px;flex:1;max-width:340px">${memberPickerHtml('att-student', { placeholder: t('All students (type to search)', 'كل الطلاب (اكتب للبحث)') })}${recentSearchChipsHtml('attendance', 'att-recent-search', 3)}</div>
@@ -26432,8 +26432,23 @@ PAGES.attendance = (main) => {
     }).join('');
     grid.querySelectorAll('.att-day-cb').forEach(cb => cb.addEventListener('change', applyDays));
   }
+  // v6.906 — a coach looking at PAST days only (a day before today, or a whole earlier month) gets the "Attended" filter switched on by itself; today / mixed views go back to "All attendance"
+  function _coachAutoAttFilter() {
+    if (!_coachLockToday) return;
+    const iso = d => `${filter.month}-${String(d).padStart(2, '0')}`;
+    const past = filter.month !== 'all' && ((filter.days.length > 0 && filter.days.every(d => iso(d) < TODAY)) || (!filter.days.length && filter.month < TODAY.slice(0, 7)));
+    const want = past ? ['attended'] : [];
+    if (JSON.stringify(filter.atts) === JSON.stringify(want)) return;
+    filter.atts = want;
+    const wrap = $('#att-status');
+    if (wrap) {
+      wrap.querySelectorAll('.mf-cb').forEach(cb => { cb.checked = want.includes(cb.value); });
+      const lbl = wrap.querySelector('.mf-label'); if (lbl) lbl.textContent = want.length ? '✓ ' + t('Attended', 'حضر') : t('All attendance', 'كل الحضور');
+    }
+  }
   function applyDays() {
     filter.days = $$('.att-day-cb').filter(cb => cb.checked).map(cb => parseInt(cb.value));
+    _coachAutoAttFilter();
     const btn = $('#att-day-btn');
     if (btn) btn.innerHTML = (filter.days.length ? (filter.days.length === 1 ? `${t('Day', 'يوم')} ${filter.days[0]}` : `${filter.days.length} ${t('days', 'أيام')}`) : t('All days', 'كل الأيام')) + ' <span style="opacity:.6">▾</span>';
     refresh();

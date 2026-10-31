@@ -1947,3 +1947,8 @@ body.modal-open #bs-notif-float { z-index: 60 !important; }   /* v6.776 — belo
 
 /* v6.799 — any width: a card whose table is wider than the card (Camp / Winter members 1,223px on a 1440 laptop) scrolls inside the card instead of running past the page edge */
 .main .card:has(> table) { overflow-x: auto; }
+
+/* v6.906 — coach Attendance: a tidy filter bar (one row of equal controls on a soft panel) */
+.att-filter-bar.att-bar-coach { gap: 10px 12px; padding: 12px 14px; margin-bottom: 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 14px; }
+.att-filter-bar.att-bar-coach .mf-btn, .att-filter-bar.att-bar-coach #att-day-btn, .att-filter-bar.att-bar-coach > select.btn, .att-filter-bar.att-bar-coach .month-multi .mf-btn { height: 40px; border-radius: 10px; background: var(--surface); font-weight: 600; }
+.att-filter-bar.att-bar-coach .member-picker input[type="text"] { height: 40px; border-radius: 10px; background: var(--surface); }
