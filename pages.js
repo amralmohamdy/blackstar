@@ -12375,7 +12375,7 @@ PAGES.schedule = (main) => {
         const coach = state.coaches.find(co => co.id === c.coachId);
         // v6.530: bilingual custom class name — Arabic poster prefers the Arabic label, English poster
         // the English label; each falls back to the other label, then the sport name in that language.
-        const nm = ar ? (c.labelAr || c.label || sportNameAR(c.sport)) : (c.label || c.sport);
+        const nm = ar ? (c.labelAr || (c.label ? sportNameAR(c.label) : sportNameAR(c.sport))) : (c.label || c.sport);
         const TX = ar ? W - PAD - 28 : PAD + 28;
         // White text with a subtle dark shadow so it stays readable on ANY chip colour (even the light greens/cyans).
         ctx.save();
@@ -12392,11 +12392,30 @@ PAGES.schedule = (main) => {
         // Isolating the name keeps the label + colon on the right and the name as its own run. FSI also
         // handles an Arabic coach/sport name correctly, so it is safe for both directions.
         const _iso = s => '⁨' + String(s == null ? '' : s) + '⁩';
-        ctx.fillText(sportEmoji(c.sport) + '  ' + _iso(nm), TX, y + (coach ? 54 : cardH / 2 + 14));
-        if (coach) {
-          ctx.font = '28px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.95)';
-          const cn = (ar && coach.nameArabic) ? coach.nameArabic : coach.name;
-          ctx.fillText((ar ? 'المدرب: ' : 'Coach: ') + _iso(cn), TX, y + 96);
+        if (ar) {
+          // v6.908 — the Arabic poster drew "emoji + name" and "المدرب: name" as ONE string; some browsers (Firefox) laid it out wrongly, so the label and the emoji ran off the card (white on white) and only the last letter of "المدرب" showed. Each run is now drawn separately and right-aligned at its own x.
+          const hasAr = s => /[\u0600-\u06FF]/.test(String(s || ''));
+          const AR_FONT = '"Segoe UI", Tahoma, Arial, sans-serif', EMO_FONT = '"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
+          const yT = y + (coach ? 54 : cardH / 2 + 14);
+          let x = TX;
+          const em = sportEmoji(c.sport);
+          ctx.textAlign = 'right';
+          if (em) { ctx.direction = 'ltr'; ctx.font = 'bold 40px ' + EMO_FONT; ctx.fillText(em, x, yT); x -= ctx.measureText(em).width + 16; }
+          ctx.direction = hasAr(nm) ? 'rtl' : 'ltr'; ctx.font = 'bold 40px ' + AR_FONT; ctx.fillText(nm, x, yT);
+          if (coach) {
+            const cn = coach.nameArabic || coach.name;
+            ctx.fillStyle = 'rgba(255,255,255,0.95)'; ctx.font = '28px ' + AR_FONT;
+            const lab = 'المدرب:';
+            ctx.direction = 'rtl'; ctx.fillText(lab, TX, y + 96);
+            const lw = ctx.measureText(lab).width;
+            ctx.direction = hasAr(cn) ? 'rtl' : 'ltr'; ctx.fillText(cn, TX - lw - 12, y + 96);
+          }
+        } else {
+          ctx.fillText(sportEmoji(c.sport) + '  ' + _iso(nm), TX, y + (coach ? 54 : cardH / 2 + 14));
+          if (coach) {
+            ctx.font = '28px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.95)';
+            ctx.fillText('Coach: ' + _iso(coach.name), TX, y + 96);
+          }
         }
         ctx.restore();
         ctx.direction = 'ltr';   // reset for the LTR header/footer/time labels drawn outside this block
