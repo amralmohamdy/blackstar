@@ -26381,7 +26381,7 @@ PAGES.attendance = (main) => {
     </div>
 
     <div class="card">
-      <div class="filter-bar att-filter-bar${_coachLockToday ? ' att-bar-coach' : ''}" style="flex-wrap:wrap;align-items:${_coachLockToday ? 'center' : 'flex-start'}">
+      <div class="filter-bar att-filter-bar${_coachLockToday ? ' att-bar-coach' : ''}" style="flex-wrap:wrap;align-items:flex-start">
         ${monthMultiHTML('att-month', availableMonths({ includeFuture: !_coachLockToday }), filter.months)}
         <div style="position:relative">
           <button type="button" id="att-day-btn" class="btn ghost" style="min-width:130px;text-align:left;display:inline-flex;align-items:center;justify-content:space-between;gap:8px" title="${t('Pick one or more days', 'اختر يوماً أو أكثر')}">${t('All days', 'كل الأيام')} <span style="opacity:.6">▾</span></button>
