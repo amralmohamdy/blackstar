@@ -25528,7 +25528,7 @@ PAGES.attendance = (main) => {
     if (typeof currentRole === 'function' && currentRole() === 'coach') {
       const markISO = `${mo}-${String(day).padStart(2, '0')}`;
       if (markISO !== TODAY) {
-        toast(t('Coaches can only mark attendance for today.', 'يمكن للمدرب تسجيل الحضور لليوم الحالي فقط.'), 'error');
+        toast(t('View only — a coach marks attendance for today only.', 'للعرض فقط — المدرب يسجّل حضور اليوم الحالي فقط.'), 'error');
         return;
       }
     }
@@ -25827,7 +25827,7 @@ PAGES.attendance = (main) => {
     const mo = gridMonth();
     if (typeof currentRole === 'function' && currentRole() === 'coach') {
       const markISO = `${mo}-${String(day).padStart(2, '0')}`;
-      if (markISO !== TODAY) { toast(t('Coaches can only mark attendance for today.', 'يمكن للمدرب تسجيل الحضور لليوم الحالي فقط.'), 'error'); return; }
+      if (markISO !== TODAY) { toast(t('View only — a coach marks attendance for today only.', 'للعرض فقط — المدرب يسجّل حضور اليوم الحالي فقط.'), 'error'); return; }
     }
     const m = state.members.find(x => x.id === memberId);
     if (!m) return;
@@ -25975,9 +25975,12 @@ PAGES.attendance = (main) => {
     const sportEsc = sport.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
     return `window._attMark(${memberId}, '${sportEsc}', ${day}, ${mark === 'Y' ? "'Y'" : 'null'})`;
   };
+  // v6.905 — a coach can LOOK at the past days but only marks today: any other day's cell is a plain read-only cell
+  function _coachViewOnlyDay(day) { return myCoachId != null && `${gridMonth()}-${String(day).padStart(2, '0')}` !== TODAY; }
   function cellRender(memberId, sport, day, mark, warn, lock) {
     const cls = mark === 'Y' ? 'att-y' : 'att-empty';   // v6.803 — an old N shows as blank
     const txt = mark === 'Y' ? 'Y' : '·';
+    if (_coachViewOnlyDay(day)) return `<td class="att-cell ${cls}" data-am="${memberId}|${encodeURIComponent(sport)}|${day}" style="cursor:default" title="${escapeHtml(t('View only — a coach marks today only', 'للعرض فقط — المدرب يسجّل اليوم فقط'))}">${txt}</td>`;
     // v6.754 — a package that was SWITCHED AWAY can't take new classes after the switch day (an existing mark can still be corrected)
     if (lock && !mark) return `<td class="att-cell att-empty att-outside att-locked" data-am="${memberId}|${encodeURIComponent(sport)}|${day}" style="opacity:.4;cursor:not-allowed;background:rgba(120,120,140,.12)" title="${escapeHtml(lock)}">·</td>`;
     const style = warn ? ' style="opacity:.55;background:rgba(245,158,11,.10)"' : '';
@@ -25990,6 +25993,7 @@ PAGES.attendance = (main) => {
     recs = Array.isArray(recs) ? recs : (recs ? [recs] : []);   // v6.784 — a day can hold several classes
     const has = recs.length > 0;
     const tip = has ? recs.map(rec => `${rec.sport || ''}${rec.coachId != null ? ' · ' + (coachName(rec.coachId) || '') : ''}`).join('\n') + '\n' + t('Click to add another class', 'اضغط لإضافة حصة أخرى') : t('Log a class (pick sport + coach)', 'سجّل حصة (اختر رياضة ومدرب)');
+    if (_coachViewOnlyDay(day)) return `<td class="att-cell ${has ? 'att-y' : 'att-empty'}" style="cursor:default" title="${escapeHtml(has ? tip.split('\n')[0] : t('View only — a coach marks today only', 'للعرض فقط — المدرب يسجّل اليوم فقط'))}">${has ? (recs.length > 1 ? 'Y×' + recs.length : 'Y') : '·'}</td>`;
     return `<td class="att-cell ${has ? 'att-y' : 'att-empty'}" title="${escapeHtml(tip)}" onclick="window._attMarkMixed(${memberId}, ${day})">${has ? (recs.length > 1 ? 'Y×' + recs.length : 'Y') : '·'}</td>`;
   }
   // Mixed marks for a month as a {day:'Y'} map (so the shared Y/N counters work for a Mixed row).
@@ -26364,7 +26368,7 @@ PAGES.attendance = (main) => {
           <span id="att-grand-label" style="font-size:9px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px">${t('Attended', 'إجمالي الحضور')}</span>
         </div>
         <button class="btn ghost" id="att-today">📍 ${t('Today', 'اليوم')}</button>
-        <button class="btn ghost" id="att-import">📂 ${t('Import CSV', 'استيراد CSV')}</button>
+        ${currentRole() === 'coach' ? '' : `<button class="btn ghost" id="att-import">📂 ${t('Import CSV', 'استيراد CSV')}</button>`}
         ${_canExportAtt ? `
         <button class="btn ghost" id="att-export">📥 ${t('Export CSV', 'تصدير CSV')}</button>
         <button class="btn ghost" id="att-export-pdf">📄 ${t('Export PDF', 'تصدير PDF')}</button>
@@ -26377,9 +26381,9 @@ PAGES.attendance = (main) => {
 
     <div class="card">
       <div class="filter-bar att-filter-bar" style="flex-wrap:wrap;align-items:flex-start">
-        ${_coachLockToday ? `<div class="btn ghost" style="pointer-events:none;font-weight:700;background:rgba(16,185,129,.10);border-color:rgba(16,185,129,.4);color:var(--green)">📅 ${t('Today', 'اليوم')} · ${fmtDate(TODAY)}</div>` : ''}
-        ${_coachLockToday ? '' : monthMultiHTML('att-month', availableMonths({ includeFuture: true }), filter.months)}
-        <div style="position:relative${_coachLockToday ? ';display:none' : ''}">
+        ${_coachLockToday ? `<div class="btn ghost" style="pointer-events:none;font-weight:700;background:rgba(16,185,129,.10);border-color:rgba(16,185,129,.4);color:var(--green)" title="${t('You mark today only; earlier days are view-only', 'تسجّل اليوم فقط؛ الأيام السابقة للعرض فقط')}">📅 ${t('Today', 'اليوم')} · ${fmtDate(TODAY)} · 👁 ${t('past days: view only', 'الأيام السابقة: عرض فقط')}</div>` : ''}
+        ${monthMultiHTML('att-month', availableMonths({ includeFuture: !_coachLockToday }), filter.months)}
+        <div style="position:relative">
           <button type="button" id="att-day-btn" class="btn ghost" style="min-width:130px;text-align:left;display:inline-flex;align-items:center;justify-content:space-between;gap:8px" title="${t('Pick one or more days', 'اختر يوماً أو أكثر')}">${t('All days', 'كل الأيام')} <span style="opacity:.6">▾</span></button>
           <div id="att-day-menu" style="display:none;position:absolute;left:0;top:100%;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-top:4px;padding:8px;min-width:240px;max-height:340px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.4)">
             <div style="display:flex;gap:6px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border)">
@@ -26390,7 +26394,7 @@ PAGES.attendance = (main) => {
             <div id="att-day-grid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px"></div>
           </div>
         </div>
-        <select id="att-week" class="btn ghost" title="${t('Quick-pick a week (selects all 7 days)', 'اختيار سريع لأسبوع (يحدد كل الأيام السبعة)')}" ${_coachLockToday ? 'style="display:none"' : ''}>
+        <select id="att-week" class="btn ghost" title="${t('Quick-pick a week (selects all 7 days)', 'اختيار سريع لأسبوع (يحدد كل الأيام السبعة)')}">
           <option value="all">${t('All weeks', 'كل الأسابيع')}</option>
           <option value="1">${t('Week', 'أسبوع')} 1 (1–7)</option>
           <option value="2">${t('Week', 'أسبوع')} 2 (8–14)</option>
@@ -26420,8 +26424,9 @@ PAGES.attendance = (main) => {
     grid.innerHTML = Array.from({length: dm}, (_, i) => {
       const d = i + 1;
       const checked = (filter.days || []).includes(d) ? 'checked' : '';
-      return `<label style="display:flex;flex-direction:column;align-items:center;padding:5px 0;cursor:pointer;font-size:11px;border-radius:4px" class="att-day-cell">
-        <input type="checkbox" class="att-day-cb" value="${d}" ${checked} style="margin-bottom:2px"/>
+      const _future = _coachLockToday && filter.month !== 'all' && `${filter.month}-${String(d).padStart(2, '0')}` > TODAY;   // v6.905 — a coach looks at past days only
+      return `<label style="display:flex;flex-direction:column;align-items:center;padding:5px 0;cursor:${_future ? 'not-allowed' : 'pointer'};${_future ? 'opacity:.35;' : ''}font-size:11px;border-radius:4px" class="att-day-cell">
+        <input type="checkbox" class="att-day-cb" value="${d}" ${checked}${_future ? ' disabled' : ''} style="margin-bottom:2px"/>
         <span>${d}</span>
       </label>`;
     }).join('');
@@ -26458,7 +26463,7 @@ PAGES.attendance = (main) => {
     });
     $('#att-day-all').addEventListener('click', () => {
       const dm = filter.month === 'all' ? 31 : daysInMonth(filter.month);
-      filter.days = Array.from({length: dm}, (_, i) => i + 1);
+      filter.days = Array.from({length: dm}, (_, i) => i + 1).filter(d => !_coachLockToday || filter.month === 'all' || `${filter.month}-${String(d).padStart(2, '0')}` <= TODAY);
       buildDayGrid(); applyDays();
     });
     $('#att-day-none').addEventListener('click', () => { filter.days = []; buildDayGrid(); applyDays(); });
@@ -26945,7 +26950,7 @@ PAGES.attendance = (main) => {
     toast(`Jumped to day ${useDay} · tap names to mark present`);
   });
 
-  $('#att-import').addEventListener('click', () => {
+  $('#att-import')?.addEventListener('click', () => {
     toast('Import: drop a CSV in the same format as Export', 'success');
   });
 
