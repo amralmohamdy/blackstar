@@ -25636,9 +25636,9 @@ PAGES.attendance = (main) => {
         // other two verify silently and only speak up when the server disagrees. A cleared cell
         // that comes back still holding a mark is precisely the bug that shipped in v6.338, and
         // it must never again be discovered by the user instead of by the app. (v6.342)
-        _announceAttendanceFromCloud(_cell, next);
+        Promise.resolve(_announceAttendanceFromCloud(_cell, next)).then(shown => { if (shown === null) _showRenewOffer(); });
       });
-    } else save();
+    } else { save(); _showRenewOffer(); }
     _attCellNow(memberId, sport, day, next);
     _attRefreshSoon();
   }
@@ -25690,7 +25690,7 @@ PAGES.attendance = (main) => {
   // when the server disagrees, because those are the quiet failures. (v6.340, v6.342)
   async function _announceAttendanceFromCloud(cell, expected) {
     const S = window.Storage;
-    if (!S || typeof S.fetchDoc !== 'function') return false;
+    if (!S || typeof S.fetchDoc !== 'function') return null;   // v6.915 — nothing to confirm (offline): the caller shows the renewal offer
     let doc = null;
     try { doc = await S.fetchDoc('members', cell.id); } catch (_) { doc = null; }
     const mark = doc && doc.dailyAttendance && doc.dailyAttendance[cell.mo]
@@ -25757,6 +25757,7 @@ PAGES.attendance = (main) => {
 
     _attendanceModal({
       okay: true,
+      onClose: _showRenewOffer,   // v6.915
       title: _icon + ' ' + _title,
       body: `<div style="text-align:center">
           <div style="font-size:46px;line-height:1">${_icon}</div>
@@ -25786,7 +25787,22 @@ PAGES.attendance = (main) => {
   // The attendance confirmation popup is the shared locked modal — same shell every other
   // cloud-confirmed write uses, so there is exactly one implementation to trust. (v6.344)
   const _attendanceModal = (o) => window.showLockedModal(o);
+  // v6.915 — a mark on a day no package covers: admin / reception are offered the renewal (start = that day) once the "Attendance saved" confirmation is closed
+  let _renewOffer = null;
+  function _showRenewOffer() {
+    const o = _renewOffer; _renewOffer = null;
+    if (!o) return;
+    showModal({
+      title: t('Marked — no package on this day', 'تم التسجيل — لا توجد باقة في هذا اليوم'),
+      body: '<div style="font-size:13px;line-height:1.7"><p><b>' + escapeHtml(o.name) + '</b> · ' + escapeHtml(o.base) + ' — ' + fmtDate(o.iso) + '</p><p style="margin-top:8px">' + t('The class is saved' + (o.lastEnd ? ' (the last package ended ' + fmtDate(o.lastEnd) + ')' : '') + ', but no package covers this day. Renew now — the new package starts on ' + fmtDate(o.iso) + '.', 'تم تسجيل الحضور' + (o.lastEnd ? ' (آخر باقة انتهت ' + fmtDate(o.lastEnd) + ')' : '') + '، لكن لا توجد باقة تغطي هذا اليوم. جدّد الآن — الباقة الجديدة تبدأ يوم ' + fmtDate(o.iso) + '.') + '</p></div>',
+      actions: [
+        { label: t('Not now', 'ليس الآن'), class: 'btn ghost', onclick: closeModal },
+        { label: t('Renew', 'تجديد'), class: 'btn primary', onclick: () => { closeModal(); if (typeof addRenewal === 'function') addRenewal(o.memberId, { start: o.iso, sport: o.base }); } },
+      ],
+    });
+  }
   function markCell(memberId, sport, day, current) {
+    _renewOffer = null;
     const next = current === 'Y' ? null : 'Y';   // v6.803 — only Y and blank (blank = did not come); an old N counts as blank
     // First mark (empty → present) stays one-click for fast roll-call.
     // Removing an EXISTING present mark asks to confirm, so a stray tap can't silently erase someone's class.
@@ -25821,13 +25837,20 @@ PAGES.attendance = (main) => {
       if (m2 && subs.length && !subs.some(s => (!s.start || String(s.start).slice(0, 10) <= iso) && (!subCoverEnd(s) || iso <= subCoverEnd(s)))) {   // v6.848 (D4) — a switched-away package stops at the switch date
         const lastEnd = subs.map(s => subCoverEnd(s)).filter(Boolean).sort().pop();
         const _swSub = subs.filter(s => s.switchedAwayTo && s.switchedAt && String(s.switchedAt).slice(0, 10) <= iso).sort((a, b) => String(b.switchedAt).localeCompare(String(a.switchedAt)))[0];
+        // v6.914 — the class is ALWAYS marked (admin / reception / coach alike). Admin and reception are then OFFERED the renewal, which starts on the day that was clicked; a coach just marks.
+        if (!_swSub) {
+          // the cloud confirmation popup ("Attendance saved") comes after the write and would replace a dialog opened here — so the offer waits for its OK
+          _renewOffer = (next === 'Y' && ['admin', 'receptionist'].includes(currentRole())) ? { memberId, name: m2.name, base, iso, lastEnd } : null;
+          applyMark(memberId, sport, day, next);
+          return;
+        }
         showModal({
           title: t('No package on this day', 'لا توجد باقة في هذا اليوم'),
           body: '<div style="font-size:13px;line-height:1.7"><p><b>' + escapeHtml(m2.name) + '</b> · ' + escapeHtml(base) + ' — ' + fmtDate(iso) + '</p><p style="margin-top:8px">' + t('No package covers this day' + (_swSub ? ' — ' + base + ' was switched to ' + _swSub.switchedAwayTo + ' on ' + fmtDate(String(_swSub.switchedAt).slice(0, 10)) + ', so mark the class under ' + _swSub.switchedAwayTo : (lastEnd ? ' (the last one ended ' + fmtDate(lastEnd) + ')' : '')) + '. The class would count for nobody. Renew first, or mark it anyway.', 'لا توجد باقة تغطي هذا اليوم' + (_swSub ? ' — ' + base + ' اتبدّلت إلى ' + _swSub.switchedAwayTo + ' يوم ' + fmtDate(String(_swSub.switchedAt).slice(0, 10)) + '، فسجّل الحصة تحت ' + _swSub.switchedAwayTo : (lastEnd ? ' (آخر باقة انتهت ' + fmtDate(lastEnd) + ')' : '')) + '. الحصة لن تُحتسب لأحد. جدّد أولاً أو سجّلها رغم ذلك.') + '</p></div>',
           actions: [
             { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
             { label: t('Mark anyway', 'سجّل رغم ذلك'), class: 'btn ghost', onclick: () => { closeModal(); applyMark(memberId, sport, day, next); } },
-            ...(currentRole() !== 'coach' ? [{ label: t('Renew', 'تجديد'), class: 'btn primary', onclick: () => { closeModal(); if (typeof addRenewal === 'function') addRenewal(memberId); } }] : []),
+            ...(currentRole() !== 'coach' ? [{ label: t('Renew', 'تجديد'), class: 'btn primary', onclick: () => { closeModal(); if (typeof addRenewal === 'function') addRenewal(memberId, { start: iso, sport: base }); } }] : []),   // v6.913 — the new package starts on the day that was clicked
           ],
         });
         return;
@@ -25911,7 +25934,7 @@ PAGES.attendance = (main) => {
         actions: [
           { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
           { label: t('Mark anyway', 'سجّل رغم ذلك'), class: 'btn ghost', onclick: () => { closeModal(); markMixedCellDialog(memberId, day); } },
-          ...(currentRole() !== 'coach' ? [{ label: t('Renew', 'تجديد'), class: 'btn primary', onclick: () => { closeModal(); if (typeof addRenewal === 'function') addRenewal(memberId); } }] : []),
+          ...(currentRole() !== 'coach' ? [{ label: t('Renew', 'تجديد'), class: 'btn primary', onclick: () => { closeModal(); if (typeof addRenewal === 'function') addRenewal(memberId, { start: iso, sport: MIXED }); } }] : []),   // v6.913
         ],
       });
       return;
@@ -28932,7 +28955,7 @@ window.addRenewalMulti = function(m, picks, opts) {
           const on = !noCoach(r) && !!(document.getElementById(`rnm-priv-${r.i}`) || {}).checked;
           const ap = (document.getElementById(`rnm-app-${r.i}`) || {}).value || '';
           if (on && !(ap === 'coach' || ap === 'reception')) { toast(r.sport + ' — ' + t('Private: choose who approached the customer (coach or reception)', 'خاص: اختر من أحضر العميل (المدرب أو الاستقبال)'), 'error'); return; }
-          input.push({ sport: r.sport, coachId, originalCoachId: r.originalCoachId, classes, pkg: classesIn, price, validity, pv: privFlags(on, ap), carried, deducted, isNew: !!r.isNew });
+          input.push({ ...(opts.start && opts.sport === r.sport ? { start: opts.start } : {}), sport: r.sport, coachId, originalCoachId: r.originalCoachId, classes, pkg: classesIn, price, validity, pv: privFlags(on, ap), carried, deducted, isNew: !!r.isNew });
         }
         // v6.793 — how the renewal is paid (method / part / leave due); validated before anything is saved
         const _renTotal = input.reduce((s, x) => s + (Number(x.price) || 0), 0);
@@ -28979,7 +29002,8 @@ ${t('Add another identical period anyway?', 'إضافة فترة مطابقة أ
         const cls = parseInt(val(`rnm-cls-${r.i}`)) || 0, validity = parseInt(val(`rnm-val-${r.i}`)) || r.validity, price = parseFloat(val(`rnm-amt-${r.i}`)) || 0;
         const _hint = document.getElementById(`rnm-hint-${r.i}`), _adj = !!document.getElementById('rnm-adjust')?.checked;
         if (_hint) _hint.innerHTML = classesHint(r.prev, cls, _adj ? r.carry : 0, _adj ? r.deduct : 0);
-        const d = computeRenewalDates(m, r.sport, validity, cls);
+        let d = computeRenewalDates(m, r.sport, validity, cls);
+        if (opts.start && opts.sport === r.sport) d = Object.assign({}, d, { start: opts.start, source: 'attendance', firstClass: opts.start, end: renewalEndFor(r.sport, opts.start, validity, cls) });   // v6.913 — the clicked attendance day
         const why = d.source === 'attendance'
           ? t('first class attended after expiry', 'أول حصة حضرها بعد الانتهاء') + ' (' + fD(d.firstClass) + ')'
           : (d.prevExpiry ? t('no class after expiry (' + fD(d.prevExpiry) + ') → today', 'لا حضور بعد الانتهاء (' + fD(d.prevExpiry) + ') ← اليوم') : t('no previous package → today', 'لا باقة سابقة ← اليوم'));
@@ -29027,7 +29051,8 @@ ${t('Add another identical period anyway?', 'إضافة فترة مطابقة أ
 // ─── Add a renewal / new subscription record ──────────────────────
 // For multi-sport members, the member's enrolled sports are offered as quick
 // picks so a specific sport can be renewed — even if its classes aren't finished.
-window.addRenewal = function(memberId) {
+window.addRenewal = function(memberId, opts) {   // opts.start / opts.sport (v6.913): the day attendance was clicked on an uncovered day → the new package starts there
+  opts = opts || {};
   const m = state.members.find(x => x.id === memberId);
   if (!m) return;
   const sports = ['MMA','Boxing','Kick Boxing','Karate','Taekwondo','Gymnastic','Football','Swimming','Zumba'];
@@ -29049,7 +29074,7 @@ window.addRenewal = function(memberId) {
   // 2+ sports → smart multi-select renewal (tick which sports, per-sport amounts, live
   // total, one combined receipt). Single-sport members keep the classic modal below with
   // its per-sport deduction/carry banners + expiry override. (v6.421)
-  if (enrolledUnique.length > 1 && typeof window.addRenewalMulti === 'function') { return window.addRenewalMulti(m, enrolledUnique); }
+  if (enrolledUnique.length > 1 && typeof window.addRenewalMulti === 'function') { return window.addRenewalMulti(m, enrolledUnique, opts); }
 
   // Build a quick-pick list showing class progress so you can renew before finishing
   function progressFor(sport, coachId) {
@@ -29084,7 +29109,7 @@ window.addRenewal = function(memberId) {
       </div>` : ''}
       <div style="margin:0 0 14px"><button type="button" id="rn-addmore" style="display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:11px 14px;border:2px dashed var(--green);border-radius:12px;background:rgba(16,185,129,.09);color:var(--text);cursor:pointer;font-family:inherit" onclick="closeModal();window.addRenewalMulti(state.members.find(x => x.id === ${m.id}), ${JSON.stringify(enrolledUnique).replace(/"/g, '&quot;')}, { addNew: true })"><span style="flex:none;width:30px;height:30px;border-radius:50%;background:var(--green);color:#fff;display:grid;place-items:center;font-size:20px;font-weight:700;line-height:1">+</span><span><span style="display:block;font-weight:800;font-size:14px;color:var(--green)">${t('Add another sport', 'إضافة رياضة أخرى')}</span><span style="display:block;font-size:11.5px;color:var(--text-mute);margin-top:1px">${t('Renew one more sport — new or already enrolled — on the same invoice', 'جدّد رياضة إضافية — جديدة أو مسجّل بها — على نفس الفاتورة')}</span></span></button></div>
       <div class="form-row">
-        <div class="field"><label>Activity</label><select id="rn-act">${[...new Set([...enrolledUnique.map(e => e.sport), m.sport, ...sports].filter(Boolean))].map(s => `<option ${s===(enrolledUnique[0]?.sport||m.sport)?'selected':''}>${escapeHtml(s)}</option>`).join('')}</select></div>
+        <div class="field"><label>Activity</label><select id="rn-act">${[...new Set([...enrolledUnique.map(e => e.sport), m.sport, ...sports].filter(Boolean))].map(s => `<option ${s===(opts.sport||enrolledUnique[0]?.sport||m.sport)?'selected':''}>${escapeHtml(s)}</option>`).join('')}</select></div>
         <div class="field" id="rn-coach-field" style="${isCampSport((enrolledUnique[0]?.sport || m.sport)) ? 'display:none' : ''}"><label>Coach</label><select id="rn-coach">${coachOpts(enrolledUnique[0]?.coachId || m.coachId)}</select></div>
       </div>
       <div class="form-row">
@@ -29093,7 +29118,7 @@ window.addRenewal = function(memberId) {
         <div class="field"><label>Amount / Fee (QAR)</label><input id="rn-amount" type="number" step="0.01" min="0" value="${(renewalStandardFor(m, enrolledUnique[0]?.sport, enrolledUnique[0]?.coachId) || {}).price || enrolledUnique[0]?.price || ''}" /></div>
       </div>
       <div class="form-row">
-        <div class="field"><label>Start / renewal date <span class="text-mute" style="font-size:10px;font-weight:400">(moves to the first attended class)</span></label><input id="rn-start" type="date" value="${computeRenewalStart(m, (enrolledUnique[0]?.sport || m.sport), null, true).start}" /><div id="rn-start-hint" class="text-mute" style="font-size:10px;margin-top:3px"></div></div>
+        <div class="field"><label>Start / renewal date <span class="text-mute" style="font-size:10px;font-weight:400">(moves to the first attended class)</span></label><input id="rn-start" type="date" value="${opts.start || computeRenewalStart(m, (enrolledUnique[0]?.sport || m.sport), null, true).start}" /><div id="rn-start-hint" class="text-mute" style="font-size:10px;margin-top:3px"></div></div>
         <div class="field"><label>Expiry date <span class="text-mute" style="font-size:10px;font-weight:400">(auto · override allowed)</span></label><input id="rn-end" type="date" /><div id="rn-end-hint" class="text-mute" style="font-size:10px;margin-top:3px"></div></div>
       </div>
       <div id="rn-priv-box" style="margin-top:6px;padding:9px 12px;border:1px dashed var(--border);border-radius:8px;display:grid;gap:6px">
@@ -29421,8 +29446,9 @@ window.addRenewal = function(memberId) {
   function applyRnStartRule(force) {
     const sp = (document.getElementById('rn-act') || {}).value || (enrolledUnique[0]?.sport || m.sport), st = document.getElementById('rn-start'), hint = document.getElementById('rn-start-hint');
     _rnRule = computeRenewalStart(m, sp, null, true);
+    if (opts.start && (!opts.sport || opts.sport === sp)) _rnRule = Object.assign({}, _rnRule, { start: opts.start, source: 'attendance', firstClass: opts.start, pinned: true });   // v6.913 — the clicked attendance day wins
     if (st && (force || !_rnStartTouched)) st.value = _rnRule.start;
-    if (hint) hint.textContent = (_rnRule.source === 'attendance' ? t('first class attended after expiry (' + fmtDate(_rnRule.firstClass) + ')', 'أول حصة حضرها بعد الانتهاء (' + fmtDate(_rnRule.firstClass) + ')') : (_rnRule.source === 'running' ? t('current package runs to ' + fmtDate(_rnRule.prevExpiry) + ' → starts the day after', 'الباقة الحالية تنتهي ' + fmtDate(_rnRule.prevExpiry) + ' ← تبدأ في اليوم التالي') : _rnRule.prevExpiry ? t('no class after expiry (' + fmtDate(_rnRule.prevExpiry) + ') → today', 'لا حضور بعد الانتهاء (' + fmtDate(_rnRule.prevExpiry) + ') ← اليوم') : t('no previous package → today', 'لا باقة سابقة ← اليوم'))) + (st && st.value !== _rnRule.start ? ' · ' + t('edited by hand', 'عُدّل يدوياً') : '');
+    if (hint) hint.textContent = (_rnRule.pinned ? t('the day attendance was clicked (' + fmtDate(_rnRule.start) + ')', 'اليوم الذي تم الضغط فيه على الحضور (' + fmtDate(_rnRule.start) + ')') : _rnRule.source === 'attendance' ? t('first class attended after expiry (' + fmtDate(_rnRule.firstClass) + ')', 'أول حصة حضرها بعد الانتهاء (' + fmtDate(_rnRule.firstClass) + ')') : (_rnRule.source === 'running' ? t('current package runs to ' + fmtDate(_rnRule.prevExpiry) + ' → starts the day after', 'الباقة الحالية تنتهي ' + fmtDate(_rnRule.prevExpiry) + ' ← تبدأ في اليوم التالي') : _rnRule.prevExpiry ? t('no class after expiry (' + fmtDate(_rnRule.prevExpiry) + ') → today', 'لا حضور بعد الانتهاء (' + fmtDate(_rnRule.prevExpiry) + ') ← اليوم') : t('no previous package → today', 'لا باقة سابقة ← اليوم'))) + (st && st.value !== _rnRule.start ? ' · ' + t('edited by hand', 'عُدّل يدوياً') : '');
   }
   document.getElementById('rn-start')?.addEventListener('input', () => { _rnStartTouched = true; applyRnStartRule(false); });
   document.getElementById('rn-act')?.addEventListener('change', () => { _rnStartTouched = false; applyRnStartRule(true); recalcRnExpiry(); });
