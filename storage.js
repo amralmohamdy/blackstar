@@ -387,6 +387,8 @@
     let _memberQ = false, _recepScope = false, _dirMode = false;   // _dirMode: a reception login reads staffDirectory instead of coaches
     const _keysKnown = new Map();      // member id → JSON of the stored loginKeys | 'null'
     const _dirKnown = new Map();       // coach id → JSON of the staffDirectory doc this session last wrote
+    const _drawerKnown = new Map();    // expense id → JSON of the drawerExtra doc this session last wrote ('__unknown__' = exists in the cloud, not yet compared)
+    let _drawerSeeded = false;
     // The keys a member record is reachable by: the phone digits in the forms people sign in with (full, without 00, last 8, 974+8, 00974+8)
     // and the e-mail. The portal queries with exactly [<local part of its login>, <its e-mail>] (see firestore.rules _myLoginKeys).
     function _loginKeysFor(m) {
@@ -462,6 +464,15 @@
             if (_dirKnown.get(String(c.id)) === s) continue;
             try { await colRef('staffDirectory').doc(String(c.id)).set(d); _dirKnown.set(String(c.id), s); } catch (e) { console.warn('[Storage] staffDirectory write skipped', c.id, (e && e.code) || e); break; }
           }
+        }
+        // v6.923 — the cash expenses a receptionist cannot read, published for her Cash in Hand (staff-only collection; see drawerExtraRows in app.js)
+        if (!_recepScope && Array.isArray(src.expenses) && typeof window.drawerExtraRows === 'function') {
+          try {
+            if (!_drawerSeeded) { _drawerSeeded = true; const ex = await colRef('drawerExtra').get({ source: 'server' }); ex.forEach(d => _drawerKnown.set(d.id, '__unknown__')); }
+            const rows = window.drawerExtraRows(src.expenses), keep = new Set();
+            for (const r of rows) { const id = String(r.id); keep.add(id); const s = JSON.stringify(r); if (_drawerKnown.get(id) === s) continue; await colRef('drawerExtra').doc(id).set(r); _drawerKnown.set(id, s); }
+            for (const id of Array.from(_drawerKnown.keys())) if (!keep.has(id)) { await colRef('drawerExtra').doc(id).delete(); _drawerKnown.delete(id); }
+          } catch (e) { console.warn('[Storage] drawerExtra write skipped', (e && e.code) || e); }
         }
         const stamps = window.coachAccessStamps(src);
         const todo = [];
@@ -975,6 +986,8 @@
       async clearLock() {},
       onLockChange() {},
       needsMigration() { return needsMigrationFlag; },
+      // v6.923 — a reception login reads the cash expense rows it cannot see in `expenses` (published by the admin's app)
+      async loadDrawerExtra() { const qs = await colRef('drawerExtra').get({ source: 'server' }); const out = []; qs.forEach(d => out.push(d.data())); return out; },
 
       async load() {
         try {
@@ -1561,6 +1574,7 @@
     onRemoteUpdate(cb) { if (!activeBackend) this.init(); activeBackend.onRemoteUpdate(cb); },
     needsMigration() { if (!activeBackend) this.init(); return activeBackend.needsMigration ? activeBackend.needsMigration() : false; },
     async migrateToMultiDoc(onProgress) { if (!activeBackend) this.init(); if (!activeBackend.migrateToMultiDoc) throw new Error('Migration requires cloud sign-in (Firebase).'); return await activeBackend.migrateToMultiDoc(onProgress); },
+    async loadDrawerExtra() { if (!activeBackend) this.init(); return activeBackend.loadDrawerExtra ? await activeBackend.loadDrawerExtra() : []; },   // v6.923
     async getLock() { if (!activeBackend) this.init(); return activeBackend.getLock ? await activeBackend.getLock() : null; },
     async setLock(lock) { if (!activeBackend) this.init(); return activeBackend.setLock ? await activeBackend.setLock(lock) : true; },
     async clearLock(sessionId) { if (!activeBackend) this.init(); if (activeBackend.clearLock) await activeBackend.clearLock(sessionId); },

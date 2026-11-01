@@ -148,7 +148,7 @@ service cloud.firestore {
     }
     // v6.872 — the pay-free staff list (name, role, active, sports, contact…) is written by the admin's app only
     function recepNoWrite(collection) {
-      return isReception() && collection == 'staffDirectory';
+      return isReception() && (collection == 'staffDirectory' || collection == 'drawerExtra');   // v6.923 — drawerExtra = the cash salary / rent rows the admin's app publishes for the reception's Cash in Hand
     }
     // v6.872 — expense rows a receptionist must not see: salaries, rent, the auto bank-commission / Citadel rows, the owner's net-profit row.
     // The check is a PLAIN `in` on resource.data.category (a get(…, default) here would let a plain list slip through — verified in the emulator);

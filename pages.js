@@ -148,9 +148,14 @@ function _accrualMonthsIn(months) {
   for (let y = +from.slice(0, 4), mo = +from.slice(5, 7); ; ) { const k = y + '-' + String(mo).padStart(2, '0'); if (k > cm) break; out.push(k); if (++mo > 12) { mo = 1; y++; } }
   return out;
 }
-function rentPaidIn(ym) {   // what was recorded as rent for the month — the Pay button's rows AND a plain "Rent" expense
+function rentPaidIn(ym) {   // v6.921 — the month's rent is the FIXED monthly rent (16,500): only the Pay button's rows, or a Rent expense that is a FULL month's rent, count as paid. A small row filed under Rent (e.g. "1040 Citadel Commission") is something else and must not reduce it.
+  const full = dashUnpaidRent();
   let s = 0;
-  for (const e of (state.expenses || [])) { if (e && !e.deleted && (e.payFor === 'rent' || String(e.category || '').toLowerCase() === 'rent') && (e.month || String(e.date || '').slice(0, 7)) === ym) s += Number(e.amount) || 0; }
+  for (const e of (state.expenses || [])) {
+    if (!e || e.deleted || (e.month || String(e.date || '').slice(0, 7)) !== ym) continue;
+    const amt = Number(e.amount) || 0;
+    if (e.payFor === 'rent' || (String(e.category || '').toLowerCase() === 'rent' && amt >= full - 0.5)) s += amt;
+  }
   return Math.round(s * 100) / 100;
 }
 function _unpaidAccrualOne(cm) {
@@ -13491,6 +13496,7 @@ PAGES.invoices = (main) => {
   filter.coaches = asMulti(filter.coaches !== undefined ? filter.coaches : filter.coach);
   filter.categories = asMulti(filter.categories !== undefined ? filter.categories : filter.category);
   delete filter.method; delete filter.sport; delete filter.coach; delete filter.category;
+  if (!['start', 'paid', 'any'].includes(filter.dateBy)) filter.dateBy = 'start';   // v6.922 — what the Month / Day / From-To filters answer on: the package START date, the PAID ON date, or either
   const pg = makePager(10);
   const selected = new Set();   // invoice ids ticked for merging
 
@@ -13533,14 +13539,16 @@ PAGES.invoices = (main) => {
       const _paidInMonth = (inv, ym) => (inv.payments || []).some(p => p && String((p.month || p.date || '')).slice(0, 7) === ym);
       // v6.857 — the list shows START DATE and PAID ON, so the month / day / range filters answer on exactly those: the start date shown, each activity's start, and every payment date (LIST-ONLY — revenue is untouched)
       const _startMonth = (inv, ym) => String(invoiceStartDate(inv) || '').slice(0, 7) === ym;
-      if (!_range && !filter.day && filter.months.length && !filter.months.some(m => invoiceTouchesMonth(i, m) || _paidInMonth(i, m) || _startMonth(i, m))) return false;
+      const _by = filter.dateBy || 'start';
+      if (!_range && !filter.day && filter.months.length && !filter.months.some(m => (_by === 'paid') ? _paidInMonth(i, m) : (_by === 'start') ? (invoiceTouchesMonth(i, m) || _startMonth(i, m)) : (invoiceTouchesMonth(i, m) || _paidInMonth(i, m) || _startMonth(i, m)))) return false;
       // Date filters (single day + From/To range) match the INVOICE date OR any
       // ACTIVITY's start date. An invoice with several activities on different start
       // dates is returned for each of those dates (and its own date). Walk-in / unlinked
       // invoices have no activity dates, so they match on the invoice date only.
       if (filter.day || _range) {
-        const _sd = [invoiceStartDate(i), ...invoiceActivityStartDates(i), ...((typeof invoicePaymentDates === 'function') ? invoicePaymentDates(i) : [])].filter(Boolean).map(d => String(d).slice(0, 10));
-        const dates = _sd.length ? _sd : [i.date].filter(Boolean);   // an invoice with no start / payment date falls back to its own date
+        const _startDs = [invoiceStartDate(i), ...invoiceActivityStartDates(i)], _payDs = (typeof invoicePaymentDates === 'function') ? invoicePaymentDates(i) : [];
+        const _sd = (_by === 'paid' ? _payDs : _by === 'start' ? _startDs : [..._startDs, ..._payDs]).filter(Boolean).map(d => String(d).slice(0, 10));
+        const dates = _sd.length ? _sd : (_by === 'paid' ? [] : [i.date].filter(Boolean));   // no start date → its own date; an invoice with no payment never matches a Paid-on filter
         if (filter.day && !dates.includes(filter.day)) return false;
         if (_range && !dates.some(d => (!filter.from || d >= filter.from) && (!filter.to || d <= filter.to))) return false;
       }
@@ -13759,6 +13767,11 @@ PAGES.invoices = (main) => {
       <div class="filter-bar">
         <div class="search"><input id="inv-search" type="text" value="${escapeHtml(filter.search || '')}" placeholder="${t('Search name (EN/AR), mobile, QID, coach, sport...', 'ابحث بالاسم أو الجوال أو الهوية أو المدرب أو الرياضة...')}" /></div>
         ${monthMultiHTML('inv-month', [...new Set([(TODAY || '').slice(0, 7), ...state.invoices.map(i => i.month).filter(Boolean)])].filter(Boolean).sort().reverse(), filter.months)}
+        <select id="inv-dateby" class="btn ghost" style="padding:6px 8px" title="${t('The month / day / range filters answer on this date', 'فلاتر الشهر واليوم والفترة تعمل على هذا التاريخ')}">
+          <option value="start" ${filter.dateBy === 'start' ? 'selected' : ''}>${t('Start date', 'تاريخ البداية')}</option>
+          <option value="paid" ${filter.dateBy === 'paid' ? 'selected' : ''}>${t('Paid on', 'تاريخ الدفع')}</option>
+          <option value="any" ${filter.dateBy === 'any' ? 'selected' : ''}>${t('Start or paid', 'البداية أو الدفع')}</option>
+        </select>
         <div style="display:flex;align-items:center;gap:4px">
           <input id="inv-day" type="date" class="btn ghost" style="padding:6px 10px" value="${filter.day || ''}" title="${t('Filter by a specific day', 'تصفية بيوم محدد')}" />
           <button id="inv-day-clear" class="btn ghost sm" title="${t('Clear day filter', 'مسح تصفية اليوم')}" style="padding:6px 8px;${filter.day ? '' : 'display:none'}">✕</button>
@@ -13814,6 +13827,7 @@ PAGES.invoices = (main) => {
     if (f) f.value = ''; if (tt) tt.value = ''; if (dd) dd.value = ''; if (c) c.style.display = 'none';
     pg.page = 1; refresh();
   });
+  $('#inv-dateby')?.addEventListener('change', e => { filter.dateBy = e.target.value; pg.page = 1; refresh(); });
   $('#inv-day')?.addEventListener('change', e => {
     filter.day = e.target.value || '';
     if (filter.day) { filter.from = ''; filter.to = ''; const f = $('#inv-from'), tt = $('#inv-to'); if (f) f.value = ''; if (tt) tt.value = ''; }
@@ -19058,6 +19072,13 @@ function cashDrawerNow() {
   const c = (state.cashCounts || []).filter(x => x && x.kind !== 'deposit').slice().sort(cashCountNewer)[0];
   return c ? cashDrawerFrom(c, null) : null;
 }
+// v6.923 — a reception login cannot read the expense rows of the hidden categories (Salary, Rent, Citadel, …), but a cash salary or rent payment DOES leave the drawer. The admin's app
+// publishes just those cash rows in settings.drawerExtra (see syncDrawerExtra); the reception's drawer figure adds them, so it equals the admin's.
+function _drawerExpenses() {
+  const own = state.expenses || [], ids = new Set(own.map(e => e && String(e.id)));
+  const extra = (Array.isArray(window.__drawerExtra) ? window.__drawerExtra : []).filter(e => e && !ids.has(String(e.id)));
+  return extra.length ? own.concat(extra) : own;
+}
 // What the drawer holds after count `c`, up to now — or, with `upper`, only up to that later count (what it SHOULD have held when it was counted).
 function cashDrawerFrom(c, upper) {
   const cDate = cashCountDay(c), cAt = c.createdAt ? String(c.createdAt) : '';
@@ -19097,7 +19118,7 @@ function cashDrawerFrom(c, upper) {
     }
   }
   // v6.843 — expenses paid in CASH (incl. cash salary payments) leave the drawer too. Only rows that SAY cash count; a row can be taken out with noDrawer.
-  for (const e of (state.expenses || [])) {
+  for (const e of _drawerExpenses()) {
     if (!e || e.deleted || e.noDrawer || e.autoBankCommission || (e.category || '') === CASH_COLLECTION_CATEGORY) continue;
     if (!e.method || normalizeMethod(e.method) !== 'cash') continue;
     const amt = Number(e.amount) || 0;
@@ -19170,11 +19191,18 @@ PAGES.cashinhand = (main) => {
   const latest = counts[0] || null;
   const prev = counts[1] || null;
   const delta = latest && prev ? (Number(latest.amount) || 0) - (Number(prev.amount) || 0) : null;
+  // v6.923 — a reception login fetches the cash salary / rent rows it cannot read (published by the admin's app); the screen is drawn again when they arrive
+  if (currentRole() === 'receptionist' && window.Storage && typeof window.Storage.loadDrawerExtra === 'function' && !(window.__drawerExtraAt && Date.now() - window.__drawerExtraAt < 60000) && !window.__drawerExtraBusy) {
+    window.__drawerExtraBusy = true;
+    window.Storage.loadDrawerExtra().then(rows => { window.__drawerExtra = rows || []; window.__drawerExtraAt = Date.now(); }).catch(() => {}).then(() => { window.__drawerExtraBusy = false; if (state.route === 'cashinhand') { try { PAGES.cashinhand(main); } catch (_) {} } });
+  }
   const LD = cashDrawerNow();   // v6.700 — last count + the cash movements since
   const _isAdm = currentRole() === 'admin';
+  const _recView = false;   // v6.923 — the receptionist sees exactly the admin's view (live figure, movements, expected / short columns); only edit / delete of a count and the "removed" list stay admin
+  const _showMoves = ['admin', 'receptionist'].includes(currentRole());
   const _mvRow = (m, hid) => `<tr${hid ? ' style="opacity:.6"' : ''}><td class="text-mute" style="white-space:nowrap">${escapeHtml(String(m.when || '').replace('T', ' ').slice(0, 16))}</td><td>${escapeHtml(m.label)}${m.kind === 'collection' && String(m.ref || '').replace(/^Cash collected by owner\s*[—-]\s*/i, '') ? ' <span class="text-mute">· ' + escapeHtml(String(m.ref).replace(/^Cash collected by owner\s*[—-]\s*/i, '')) + '</span>' : ''}</td><td class="font-mono" style="font-size:12px">${m.kind === 'collection' ? '' : escapeHtml(m.ref || '')}</td><td class="text-right num text-mute">${m.before != null ? fmtMoney(m.before) : '—'}</td><td class="text-right num font-bold" style="color:var(--green)">${m.amount > 0 ? '+' + fmtMoney(m.amount) : ''}</td><td class="text-right num font-bold" style="color:var(--red)">${m.amount < 0 ? '−' + fmtMoney(Math.abs(m.amount)) : ''}</td><td class="text-right num" style="font-weight:800;${m.balance != null && m.balance < 0 ? 'color:var(--red)' : ''}">${m.balance != null ? fmtMoney(m.balance) : '—'}</td><td class="text-right" style="white-space:nowrap">${_isAdm ? (m.kind === 'collection' ? `<button class="btn ghost sm" onclick="deleteCashCollection(${m.exp})" title="${t('Delete this cash collection', 'حذف هذا الاستلام النقدي')}">🗑</button>` : (hid ? `<button class="btn ghost sm" onclick="cashDrawerHide(${m.inv}, ${m.pi}, false)" title="${t('Put it back in Cash in Hand', 'إرجاعها إلى النقد في الصندوق')}">↩ ${t('Restore', 'استرجاع')}</button>` : `<button class="btn ghost sm" onclick="cashDrawerHide(${m.inv}, ${m.pi}, true)" title="${t('Remove from Cash in Hand (the payment itself is not changed)', 'إزالة من النقد في الصندوق (الدفعة نفسها لا تتغير)')}">🗑</button>`)) : ''}</td></tr>`;
-  const _openRow = (LD && _isAdm) ? `<tr style="background:rgba(16,185,129,.06)"><td class="text-mute" style="white-space:nowrap">${escapeHtml(String(LD.count.date || '').slice(0, 10))}</td><td><b>${t('Last physical count', 'آخر جرد فعلي')}</b>${LD.count.by ? ' <span class="text-mute">· ' + escapeHtml(LD.count.by) + '</span>' : ''}</td><td></td><td></td><td></td><td></td><td class="text-right num" style="font-weight:800">${fmtMoney(LD.base)}</td><td></td></tr>` : '';
-  const _mvRows = (LD && _isAdm) ? LD.moves.slice(0, 200).map(m => _mvRow(m, false)).join('') : '';
+  const _openRow = (LD && _showMoves) ? `<tr style="background:rgba(16,185,129,.06)"><td class="text-mute" style="white-space:nowrap">${escapeHtml(String(LD.count.date || '').slice(0, 10))}</td><td><b>${t('Last physical count', 'آخر جرد فعلي')}</b>${LD.count.by ? ' <span class="text-mute">· ' + escapeHtml(LD.count.by) + '</span>' : ''}</td><td></td><td></td><td></td><td></td><td class="text-right num" style="font-weight:800">${fmtMoney(LD.base)}</td><td></td></tr>` : '';
+  const _mvRows = (LD && _showMoves) ? LD.moves.slice(0, 200).map(m => _mvRow(m, false)).join('') : '';
   const _hidRows = (LD && _isAdm) ? LD.hidden.slice(0, 100).map(m => _mvRow(m, true)).join('') : '';
 
   main.innerHTML = `
@@ -19190,8 +19218,8 @@ PAGES.cashinhand = (main) => {
 
     <div class="card" style="margin-bottom:16px;text-align:center;padding:28px 18px;background:linear-gradient(135deg,rgba(16,185,129,.10),transparent 70%)">
       <div class="text-mute" style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;font-weight:700">${t('Current cash in hand', 'النقد الحالي في الصندوق')}</div>
-      <div style="font-size:46px;font-weight:800;color:${(!isViewerRole() && LD && LD.expected < 0) ? 'var(--red)' : 'var(--green)'};line-height:1.1;margin:6px 0">${isViewerRole() ? (latest ? fmtMoney(latest.amount) : '—') : (LD ? fmtMoney(LD.expected) : '—')}</div>
-      ${(LD && !isViewerRole()) ? `<div style="font-size:12px;margin-bottom:2px"><span class="badge active" style="font-size:9px">● ${t('live', 'مباشر')}</span> <span class="text-mute">${t('last count', 'آخر جرد')} <b>${fmtMoney(LD.base)}</b> · <span style="color:var(--green)">+${fmtMoney(LD.receipts)} ${t('cash in', 'نقد وارد')}</span> · <span style="color:var(--red)">−${fmtMoney(LD.collections)} ${t('collected by owner', 'استلمه المالك')}</span></span></div>` : ''}
+      <div style="font-size:46px;font-weight:800;color:${(!_recView && LD && LD.expected < 0) ? 'var(--red)' : 'var(--green)'};line-height:1.1;margin:6px 0">${_recView ? (latest ? fmtMoney(latest.amount) : '—') : (LD ? fmtMoney(LD.expected) : '—')}</div>
+      ${(LD && !_recView) ? `<div style="font-size:12px;margin-bottom:2px"><span class="badge active" style="font-size:9px">● ${t('live', 'مباشر')}</span> <span class="text-mute">${t('last count', 'آخر جرد')} <b>${fmtMoney(LD.base)}</b> · <span style="color:var(--green)">+${fmtMoney(LD.receipts)} ${t('cash in', 'نقد وارد')}</span> · <span style="color:var(--red)">−${fmtMoney(LD.collections)} ${t('collected by owner', 'استلمه المالك')}</span></span></div>` : ''}
       ${latest ? `<div class="text-mute" style="font-size:12px">${t('Last counted', 'آخر جرد')}: <b>${fmtDate(latest.date)}</b>${latest.by ? ' · ' + escapeHtml(latest.by) : ''}${latest.note ? ' · ' + escapeHtml(latest.note) : ''}</div>` : `<div class="text-mute" style="font-size:13px">${t('No cash count recorded yet. Click “Record cash count” to enter your first one.', 'لا يوجد جرد مسجّل بعد. اضغط «تسجيل جرد النقد» لإدخال أول جرد.')}</div>`}
       ${delta != null ? `<div style="font-size:12px;margin-top:6px;color:${delta >= 0 ? 'var(--green)' : 'var(--red)'}">${delta >= 0 ? '▲' : '▼'} ${fmtMoney(Math.abs(delta))} ${t('vs previous count', 'مقارنة بالجرد السابق')}</div>` : ''}
       <div style="display:flex;gap:8px;justify-content:center;align-items:center;margin-top:16px;flex-wrap:wrap">
@@ -19199,18 +19227,18 @@ PAGES.cashinhand = (main) => {
         <button class="btn primary" id="cih-quick-save">✓ ${t('Update', 'تحديث')}</button>
         <button class="btn ghost" id="cih-deposit" title="${t('Cash the owner put INTO the drawer — so it is expected, not an over', 'نقد وضعه المالك في الصندوق — فيُحسب متوقعاً وليس زيادة')}">➕ ${t('Cash added by owner', 'نقد أضافه المالك')}</button>
       </div>
-      ${isViewerRole() ? `<div class="text-mute" style="font-size:11px;margin-top:6px">${t('Count the drawer and enter the amount. The figure above is your last count.', 'عُدّ الصندوق وأدخل المبلغ. الرقم أعلاه هو آخر جرد.')}</div>` : ''}
-      ${isViewerRole() ? '' : `<div class="text-mute" style="font-size:11px;margin-top:6px">${t('The figure above goes up with every cash payment a member makes and down with every cash collection by the owner. Expenses, salaries and refunds are NOT deducted — count the drawer and enter it here: the screen tells you if it is short or over.', 'الرقم أعلاه يزيد مع كل دفعة نقدية من عضو وينقص مع كل استلام نقدي للمالك. المصروفات والرواتب والمبالغ المستردة لا تُخصم — عُدّ الصندوق وأدخله هنا: ستظهر لك الشاشة إن كان هناك عجز أو زيادة.')}</div>`}
+      ${_recView ? `<div class="text-mute" style="font-size:11px;margin-top:6px">${t('Count the drawer and enter the amount. The figure above is your last count.', 'عُدّ الصندوق وأدخل المبلغ. الرقم أعلاه هو آخر جرد.')}</div>` : ''}
+      ${_recView ? '' : `<div class="text-mute" style="font-size:11px;margin-top:6px">${t('The figure above goes up with every cash payment a member makes and down with every cash collection by the owner. Expenses, salaries and refunds are NOT deducted — count the drawer and enter it here: the screen tells you if it is short or over.', 'الرقم أعلاه يزيد مع كل دفعة نقدية من عضو وينقص مع كل استلام نقدي للمالك. المصروفات والرواتب والمبالغ المستردة لا تُخصم — عُدّ الصندوق وأدخله هنا: ستظهر لك الشاشة إن كان هناك عجز أو زيادة.')}</div>`}
     </div>
 
-    ${(LD && currentRole() === 'admin') ? `<div class="card" style="margin-bottom:16px"><details${LD.moves.length && LD.moves.length <= 12 ? ' open' : ''}><summary style="cursor:pointer;font-weight:700">💵 ${t('Cash payments & collections since the last count', 'المدفوعات النقدية والاستلامات منذ آخر جرد')} <span class="text-mute" style="font-weight:500">(${LD.moves.length})</span></summary>${LD.moves.length ? `<div style="overflow:auto;margin-top:8px"><table class="data-table" style="width:100%"><thead><tr><th>${t('When', 'الوقت')}</th><th>${t('Member (English · Arabic · mobile)', 'العضو (إنجليزي · عربي · موبايل)')}</th><th>${t('Invoice', 'الفاتورة')}</th><th class="text-right">${t('Current amount (before)', 'المبلغ الحالي (قبل)')}</th><th class="text-right" style="color:var(--green)">${t('Collected cash (+)', 'النقد المحصّل (+)')}</th><th class="text-right" style="color:var(--red)">${t('Decreased (−)', 'النقص (−)')}</th><th class="text-right">${t('Amount after', 'المبلغ بعد')}</th><th></th></tr></thead><tbody>${_mvRows}${_openRow}</tbody></table></div>` : `<div class="text-mute" style="font-size:13px;padding:8px 0">${t('No cash payment or collection since the last count.', 'لا مدفوعات نقدية ولا استلامات منذ آخر جرد.')}</div>`}</details></div>` : ''}
+    ${(LD && _showMoves) ? `<div class="card" style="margin-bottom:16px"><details${LD.moves.length && LD.moves.length <= 12 ? ' open' : ''}><summary style="cursor:pointer;font-weight:700">💵 ${t('Cash payments & collections since the last count', 'المدفوعات النقدية والاستلامات منذ آخر جرد')} <span class="text-mute" style="font-weight:500">(${LD.moves.length})</span></summary>${LD.moves.length ? `<div style="overflow:auto;margin-top:8px"><table class="data-table" style="width:100%"><thead><tr><th>${t('When', 'الوقت')}</th><th>${t('Member (English · Arabic · mobile)', 'العضو (إنجليزي · عربي · موبايل)')}</th><th>${t('Invoice', 'الفاتورة')}</th><th class="text-right">${t('Current amount (before)', 'المبلغ الحالي (قبل)')}</th><th class="text-right" style="color:var(--green)">${t('Collected cash (+)', 'النقد المحصّل (+)')}</th><th class="text-right" style="color:var(--red)">${t('Decreased (−)', 'النقص (−)')}</th><th class="text-right">${t('Amount after', 'المبلغ بعد')}</th><th></th></tr></thead><tbody>${_mvRows}${_openRow}</tbody></table></div>` : `<div class="text-mute" style="font-size:13px;padding:8px 0">${t('No cash payment or collection since the last count.', 'لا مدفوعات نقدية ولا استلامات منذ آخر جرد.')}</div>`}</details></div>` : ''}
 
     ${(LD && _isAdm && LD.hidden.length) ? `<div class="card" style="margin-bottom:16px"><details><summary style="cursor:pointer;font-weight:700">🚫 ${t('Removed from Cash in Hand', 'أُزيلت من النقد في الصندوق')} <span class="text-mute" style="font-weight:500">(${LD.hidden.length})</span></summary><div style="overflow:auto;margin-top:8px"><table class="data-table" style="width:100%"><tbody>${_hidRows}</tbody></table></div></details></div>` : ''}
 
     <div class="card">
       <div class="card-header"><div><div class="card-title">🧾 ${t('Count history', 'سجل الجرد')}</div><div class="card-subtitle">${t('Every cash count you have recorded, newest first', 'كل عمليات جرد النقد المسجّلة، الأحدث أولاً')}</div></div></div>
       ${allRecs.length ? `<div style="overflow:auto"><table class="data-table" style="width:100%"><thead><tr>
-        <th>${t('Date', 'التاريخ')}</th><th class="text-right">${t('Amount', 'المبلغ')}</th><th class="text-right">${t('Change', 'التغير')}</th>${isViewerRole() ? '' : `<th class="text-right">${t('Expected', 'المتوقع')}</th><th class="text-right">${t('Short / over', 'عجز / زيادة')}</th>`}<th>${t('Counted by', 'الجرد بواسطة')}</th><th>${t('Note', 'ملاحظة')}</th><th></th>
+        <th>${t('Date', 'التاريخ')}</th><th class="text-right">${t('Amount', 'المبلغ')}</th><th class="text-right">${t('Change', 'التغير')}</th>${_recView ? '' : `<th class="text-right">${t('Expected', 'المتوقع')}</th><th class="text-right">${t('Short / over', 'عجز / زيادة')}</th>`}<th>${t('Counted by', 'الجرد بواسطة')}</th><th>${t('Note', 'ملاحظة')}</th><th></th>
       </tr></thead><tbody>
       ${allRecs.map((c, i) => {
         if (c.kind === 'deposit') return `<tr style="background:rgba(59,130,246,.06)"><td>${fmtDate(c.date)}</td><td class="text-right num font-bold" style="color:var(--blue)">+${fmtMoney(c.amount)}</td><td class="text-mute" colspan="3">💵 ${t('Cash added to the drawer by the owner', 'نقد أضافه المالك للصندوق')}</td><td class="text-mute">${c.by ? escapeHtml(c.by) : '—'}</td><td class="text-mute">${c.note ? escapeHtml(c.note) : '—'}</td><td class="text-right">${currentRole() === 'admin' ? `<button class="btn ghost sm" onclick="window.deleteCashCount('${c.id}')" title="${t('Delete this entry', 'حذف هذا السجل')}">🗑</button>` : ''}</td></tr>`;
@@ -19221,7 +19249,7 @@ PAGES.cashinhand = (main) => {
           <td>${fmtDate(c.date)}${_cur ? ` <span class="badge active" style="font-size:9px">${t('current', 'الحالي')}</span>` : ''}</td>
           <td class="text-right num font-bold">${fmtMoney(c.amount)}</td>
           <td class="text-right num" style="${d == null ? 'color:var(--text-mute)' : d >= 0 ? 'color:var(--green)' : 'color:var(--red)'}">${d == null ? '—' : (d >= 0 ? '+' : '−') + fmtMoney(Math.abs(d))}</td>
-          ${isViewerRole() ? '' : `<td class="text-right num text-mute">${c.expected != null ? fmtMoney(c.expected) : '—'}</td>
+          ${_recView ? '' : `<td class="text-right num text-mute">${c.expected != null ? fmtMoney(c.expected) : '—'}</td>
           <td class="text-right num" style="${c.diff == null ? 'color:var(--text-mute)' : Math.abs(c.diff) < 0.5 ? 'color:var(--green)' : 'color:var(--red);font-weight:700'}">${c.diff == null ? '—' : (Math.abs(c.diff) < 0.5 ? '✓' : (c.diff < 0 ? '−' : '+') + fmtMoney(Math.abs(c.diff)))}</td>`}
           <td class="text-mute">${c.by ? escapeHtml(c.by) : '—'}</td>
           <td class="text-mute">${c.note ? escapeHtml(c.note) : '—'}</td>
@@ -20927,6 +20955,7 @@ window.markPackagePrivate = function (idx, approach) {
   try { if (state.route === 'salaries') render(); } catch (_) {}
 };
 PAGES.salaries = (main) => {
+  if (currentRole() === 'admin' && typeof salaryBaselineBackfill === 'function') setTimeout(() => { try { if (salaryBaselineBackfill() > 0) save(); } catch (_) {} }, 2500);   // v6.924 — settled months get today's lines as their baseline
   // Persist the chosen month + settle date on `window` so paying someone (which triggers a global
   // render() → re-runs this page) KEEPS the month the user was viewing instead of snapping back to
   // the latest/current month. (v6.363)
@@ -21028,7 +21057,7 @@ PAGES.salaries = (main) => {
             ${p.paidStatus === 'paid'
               ? `<span class="badge active" title="${t('Actually paid', 'المدفوع فعلاً')} ${fmt(p.paidTotal)} QAR${p.paidDate ? (t(' on ', ' بتاريخ ') + fmtDate(p.paidDate)) : ''}${(p.net - p.paidTotal) > 0.5 ? ' — ' + t('net is now', 'الصافي الآن') + ' ' + fmt(p.net) + ' (' + t('more attendance added after payment', 'أُضيف حضور بعد الدفع') + ')' : ''}">${t('Paid', 'مدفوع')} ${fmt(p.paidTotal)}${p.paidDate ? ' · ' + fmtDate(p.paidDate) : ''}</span>${(p.net - p.paidTotal) > 0.5 ? `<div style="color:var(--accent-2);font-size:10px;margin-top:2px;font-weight:600" title="${t('More attendance was added after this coach was paid — net rose from', 'أُضيف حضور بعد دفع هذا المدرب — ارتفع الصافي من')} ${fmt(p.paidTotal)} ${t('to', 'إلى')} ${fmt(p.net)}">▲ ${fmt(p.net - p.paidTotal)} ${t('more owed since paid', 'مستحق إضافي بعد الدفع')}</div>` : ''}`
               : p.paidStatus === 'partial'
-                ? `<span class="badge" style="background:rgba(245,158,11,.16);color:#b45309;font-weight:700" title="Paid ${fmt(p.paidTotal)} of ${fmt(p.paidTarget)} — ${fmt(p.paidRemaining)} remaining">🟠 Partial · ${fmt(p.paidTotal)}/${fmt(p.paidTarget)}</span>`
+                ? `<span class="badge" style="background:rgba(245,158,11,.16);color:#b45309;font-weight:700" title="Paid ${fmt(p.paidTotal)} of ${fmt(p.paidTarget)} — ${fmt(p.paidRemaining)} remaining">🟠 Partial · ${fmt(p.paidTotal)}/${fmt(p.paidTarget)}</span>${(p.paidTotal > 0.005 && p.paidRemaining > 0.5) ? ` <button class="btn ghost sm" style="padding:1px 7px" onclick="showSalaryGrowthReason(${p.coachId}, '${p.month}')" title="${t('Why did this month grow after it was paid?', 'لماذا زاد هذا الشهر بعد الدفع؟')}">ⓘ ${t('why', 'لماذا')}</button>` : ''}`
                 : p.carriedOut > 0.005
                   ? `<span class="badge" style="background:rgba(107,114,128,.15);color:#6b7280;font-weight:700" title="Over-advance carried to next month — this month is settled at 0">↩ Carried fwd</span>`
                   : '<span class="badge">Pending</span>'}
@@ -21575,6 +21604,24 @@ window._salExtraHint = function () {
   const x = Math.round((amt - rem) * 100) / 100;
   h.textContent = x > 0.5 ? '⬆ ' + fmt(x) + ' ' + t('above what is owed now — saved as "extra paid" (a flag only, never carried to next month)', 'فوق المستحق الآن — يُحفظ كـ«دفع زائد» (علامة فقط، لا تُرحَّل للشهر القادم)') : '';
 };
+// v6.924 — "why did this month grow after it was paid": the lines that are new / bigger / smaller since the last payment
+window.showSalaryGrowthReason = function (coachId, monthKey) {
+  const c = state.coaches.find(x => x.id === coachId), R = salaryGrowthReason(coachId, monthKey);
+  const kindAr = { attended: t('attended', 'حضور'), trueup: t('expiry true-up', 'تسوية انتهاء') };
+  let body;
+  if (!R.baseline) {
+    body = '<div style="font-size:13px;line-height:1.7">' + t('This month was paid before the system started keeping the lines a payment was based on, so it cannot say what changed.', 'هذا الشهر دُفع قبل أن يبدأ النظام بحفظ الأسطر التي بُني عليها الدفع، فلا يمكنه تحديد ما تغيّر.') + '<br>' + t('Pay (or settle) the remaining amount once — from then on every later change is explained here.', 'ادفع (أو سوّ) المتبقي مرة واحدة — وبعدها يُفسَّر هنا أي تغيير لاحق.') + '</div>';
+  } else if (!R.items.length && !R.other.length) {
+    body = '<div style="font-size:13px">' + t('Nothing changed in the lines since the last payment.', 'لا تغيير في الأسطر منذ آخر دفعة.') + '</div>';
+  } else {
+    const typ = { new: t('new', 'جديد'), changed: t('changed', 'تغيّر'), removed: t('removed', 'أُزيل') };
+    body = '<div class="text-mute" style="font-size:11px;margin-bottom:8px">' + t('since the last payment', 'منذ آخر دفعة') + (R.at ? ' · ' + fmtDate(String(R.at).slice(0, 10)) : '') + '</div><table class="data-table" style="width:100%;font-size:12px"><thead><tr><th>' + t('Member', 'العضو') + '</th><th>' + t('What', 'ماذا') + '</th><th class="text-right">' + t('Pay', 'المرتب') + '</th></tr></thead><tbody>' +
+      R.items.map(i => '<tr><td>' + escapeHtml(i.n) + '</td><td><span class="badge" style="font-size:10px">' + typ[i.type] + '</span> ' + escapeHtml(i.sp) + ' · ' + (kindAr[i.kind] || escapeHtml(i.kind)) + (i.type === 'changed' ? ' · ' + i.oldCls + ' → ' + i.cls + ' ' + t('classes', 'حصص') : ' · ' + i.cls + ' ' + t('classes', 'حصص')) + '</td><td class="text-right num" style="font-weight:700;color:' + (i.dPay >= 0 ? 'var(--green)' : 'var(--red)') + '">' + (i.dPay >= 0 ? '+' : '−') + fmt(Math.abs(i.dPay)) + '</td></tr>').join('') +
+      R.other.map(o => '<tr><td colspan="2">' + escapeHtml({ bonus: t('Bonuses', 'المكافآت'), fixed: t('Fixed salary', 'الراتب الثابت'), advance: t('Advances', 'السلف') }[o.label] || o.label) + '</td><td class="text-right num" style="font-weight:700;color:' + (o.d >= 0 ? 'var(--green)' : 'var(--red)') + '">' + (o.d >= 0 ? '+' : '−') + fmt(Math.abs(o.d)) + '</td></tr>').join('') +
+      '</tbody></table><div style="margin-top:8px;font-size:12px"><b>' + t('Net change', 'صافي التغيير') + ': ' + (R.dNet >= 0 ? '+' : '−') + fmt(Math.abs(R.dNet)) + ' QAR</b></div>';
+  }
+  showModal({ title: 'ⓘ ' + t('Why did the month change after payment?', 'لماذا تغيّر الشهر بعد الدفع؟') + ' — ' + escapeHtml(c ? c.name : '') + ' · ' + fmtMonth(monthKey), body, actions: [{ label: t('Close', 'إغلاق'), class: 'btn primary', onclick: closeModal }] });
+};
 window._salAddPay = function(coachId, monthKey) {
   const splitOn = !!(document.getElementById('sp-split-cb') && document.getElementById('sp-split-cb').checked);
   const tEl = $('#sp-target');
@@ -21623,6 +21670,7 @@ window._salAddPay = function(coachId, monthKey) {
       ? `Paid ${c ? c.name : ''} ${fmt(part.amount)} QAR (${part.method}) toward ${fmtMonth(monthKey)} salary`
       : `Settled ${c ? c.name : ''} at 0 QAR for ${fmtMonth(monthKey)} (nothing due)`, { coachId, month: monthKey, amount: part.amount, method: part.method, date });
   }
+  try { const sn = salaryLinesSnapshot(coachId, monthKey); rec.snapshotLines = sn.lines; rec.snapshotTot = sn.tot; rec.snapshotAt = new Date().toISOString(); delete rec.snapshotNote; } catch (_) {}   // v6.924 — the lines this payment was based on
   render();
   // Write-through: WAIT for the cloud, show what the SERVER holds, reopen the manager on OK. (v6.344)
   if (typeof withCloudConfirm === 'function') {
