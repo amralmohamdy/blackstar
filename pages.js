@@ -6608,14 +6608,14 @@ window.deleteMemberSport = function(memberId, sport) {
       <div style="background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.45);border-radius:8px;padding:12px;margin-top:12px;font-size:13px;line-height:1.6">
         <div style="font-weight:800;color:var(--accent-2);margin-bottom:4px">🟠 This member attended classes in this sport</div>
         <div>Attended <b>${attendedClasses}</b> class${attendedClasses === 1 ? '' : 'es'} of <b>${escapeHtml(sport)}</b>${coachLabel ? ` with <b>${escapeHtml(coachLabel)}</b>` : ''}.</div>
-        <div class="text-mute" style="font-size:11px;margin-top:6px">Those attendance marks were real, and the coach earned commission for the classes attended. Deleting the sport erases this attendance and reverses that commission. If the member genuinely trained in this sport, <b>stop</b> and use <b style="color:var(--accent-2)">↩ Withdraw</b> instead — delete only if this sport was entered by mistake.</div>
+        <div class="text-mute" style="font-size:11px;margin-top:6px">Those attendance marks were real, and the coach earned commission for the classes attended. The attendance marks are <b>kept</b> (they are deleted only when the member himself is deleted permanently); with no package they count for nobody until the sport is renewed or added again. If the member genuinely trained in this sport, <b>stop</b> and use <b style="color:var(--accent-2)">↩ Withdraw</b> instead — delete only if this sport was entered by mistake.</div>
       </div>
       ` : `<div class="text-mute" style="font-size:11px;margin-top:10px">✓ No attendance recorded for ${escapeHtml(sport)} — safe to remove if it was entered by mistake.</div>`}
       <div class="text-mute" style="font-size:11px;margin-top:10px">Coach commission, Club Revenue Summary, Coach Performance, and the Team page will all reflect the removal automatically — they read live from the remaining invoice line items.</div>
     `,
     actions: [
       { label: 'Cancel', class: 'btn ghost', onclick: closeModal },
-      { label: attendedClasses > 0 ? `🗑 Delete anyway (${attendedClasses} attended)` : '🗑 Delete permanently', class: 'btn primary', style: 'background:var(--red);border-color:var(--red);color:#fff', onclick: () => {
+      { label: attendedClasses > 0 ? `🗑 Delete sport (${attendedClasses} attended — kept)` : '🗑 Delete permanently', class: 'btn primary', style: 'background:var(--red);border-color:var(--red);color:#fff', onclick: () => {
         // 0) TOMBSTONE what we're about to remove so a concurrent/stale sync merge can't
         //    resurrect it (enrollments are content-keyed → scoped per-member; v6.308.0).
         const _enrScope = 'members:' + m.id + ':enrollments';
@@ -6633,8 +6633,7 @@ window.deleteMemberSport = function(memberId, sport) {
         //     Deleting a sport must also erase its classes (the confirmation dialog above
         //     says it does) — otherwise orphan attendance marks linger and the coach keeps
         //     commission for a sport that no longer exists. Reports recompute live.
-        const removedAtt = (typeof _clearSportAttendanceWindow === 'function')
-          ? _clearSportAttendanceWindow(m, sport, null, null) : 0;
+        const removedAtt = 0;   // v6.920 — attendance is kept (it is deleted only with the member himself)
         // 4) Fix up invoices: drop matching line items, prorate payments, delete if empty
         const before = state.invoices.length;
         state.invoices = state.invoices.filter(inv => {
@@ -30188,12 +30187,13 @@ window.deleteSportFull = function(memberId, sid) {
     ? liveAttendanceCount(m, sport, sub.start || null, sub.end || null).y : 0;
   const attended = Math.max(parseInt(sub.attendedClasses) || 0, liveAtt || 0);
   const label = `${sport || 'sport'} (${sub.start ? fmtDate(sub.start) : '?'} → ${sub.end ? fmtDate(sub.end) : '?'})`;
-  if (!confirm(`⚠ DELETE this sport from the member — PERMANENT.\n\n${label}\nPaid: ${fmt(sub.amountPaid || 0)} QAR\nAttendance to be removed: ${attended} class${attended === 1 ? '' : 'es'}\n\nThis removes the subscription period, its enrollment (if no other period of this sport remains), the ${attended} attendance mark${attended === 1 ? '' : 's'} in this window, and the linked invoice line. This cannot be undone.\n\nContinue?`)) return;
+  if (!confirm(`⚠ DELETE this sport from the member — PERMANENT.\n\n${label}\nPaid: ${fmt(sub.amountPaid || 0)} QAR\nAttendance: ${attended} class${attended === 1 ? '' : 'es'} — KEPT\n\nThis removes the subscription period, its enrollment (if no other period of this sport remains) and the linked invoice line. The attendance marks are NOT deleted. This cannot be undone.\n\nContinue?`)) return;
 
   // v6.703 — an identical TWIN period still owns the attendance marks and the invoice line: removing the twin must not clear them.
   const hasTwin = m.subscriptions.some(o => (o._sid || o._rid) !== sid && (o.activity || '') === sport && (o.start || '') === (sub.start || '') && (o.end || '') === (sub.end || '') && (o.coachId || null) === (sub.coachId || null));
   // 1) Remove the attendance recorded during this period for this sport.
-  const removedAtt = hasTwin ? 0 : _clearSportAttendanceWindow(m, sport, sub.start || null, sub.end || null);
+  // v6.920 — attendance is NEVER deleted with a package (only when the member himself is deleted permanently): the marks stay in the grid and count again if the sport is renewed / re-added
+  const removedAtt = 0;
 
   // 2) Remove / shrink the linked invoice for this sub (so PAID drops), same as the
   //    quick delete.
@@ -30241,7 +30241,7 @@ window.deleteSportFull = function(memberId, sid) {
 
   if (typeof stampUpdate === 'function') stampUpdate(m);
   if (typeof audit === 'function') audit('member.sport.delete', 'member:' + memberId,
-    `Deleted sport ${label} from ${m.name} — removed ${removedAtt} attendance mark(s)${!stillHasSport ? ' + enrollment' : ''}`,
+    `Deleted sport ${label} from ${m.name} — attendance kept${!stillHasSport ? ', enrollment removed' : ''}`,
     { memberId, sport, removedAttendance: removedAtt });
   render();
   // WRITE-THROUGH (v6.387): this used to be a bare `save()` + an immediate success toast. `save()`
@@ -30253,14 +30253,14 @@ window.deleteSportFull = function(memberId, sid) {
   if (typeof withCloudConfirm === 'function') {
     withCloudConfirm({
       verify: [{ collection: 'members', id: memberId }],
-      okMsg: `Deleted ${sport} · ${removedAtt} attendance removed`,
+      okMsg: `Deleted ${sport} · attendance kept`,
       afterOk: () => { if (typeof viewMember === 'function') viewMember(memberId); },
       onFail: () => { if (typeof viewMember === 'function') viewMember(memberId); },
     });
   } else {
     save();
     if (typeof viewMember === 'function') viewMember(memberId);
-    toast(`Deleted ${sport} · ${removedAtt} attendance removed`);
+    toast(`Deleted ${sport} · attendance kept`);
   }
 };
 
