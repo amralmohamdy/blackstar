@@ -3077,6 +3077,7 @@ function viewMember(id) {
         if (!eligible.length) return [];
         return [{ label: '🎁 ' + t('Apply carry-forward', 'إضافة الرصيد المرحّل'), class: 'btn ghost', onclick: () => { applyCarryForwardToActive(id); } }];
       })()),
+      ...((['admin', 'receptionist'].includes(currentRole()) && String(memberStatus(m)).toLowerCase() === 'expired') ? [{ label: '🔄 ' + t('Renew', 'تجديد'), class: 'btn primary', onclick: () => { closeModal(); addRenewal(id); } }] : []),   // v6.918
       ...(isViewerRole() ? [] : [{ label: '📜 Full History', class: 'btn ghost', onclick: () => { closeModal(); openMemberHistory(id); } }]),
       { label: '🖼 ' + t('Attendance (EN)', 'الحضور (EN)'), class: 'btn ghost', onclick: () => { exportMemberAttendanceImage(id, 'en'); } },
       { label: '🖼 ' + t('Attendance (AR)', 'الحضور (AR)'), class: 'btn ghost', onclick: () => { exportMemberAttendanceImage(id, 'ar'); } },
@@ -9311,8 +9312,32 @@ Black Stars Academy`;
     }
     const total = kids.reduce((s, x) => s + x.due, 0);
     const multi = kids.length > 1;
-    const arList = kids.map(x => `\u2022 ${x.k.nameArabic || x.k.name}: ${fmt(x.due)} \u0631.\u0642`).join('\n');
-    const enList = kids.map(x => `\u2022 ${x.k.name}: ${fmt(x.due)} QAR`).join('\n');
+    // v6.918 — each child's line now lists the sport(s) that are unpaid with the package dates and the classes attended so far
+    const _dueDet = (k) => {
+      const out = [], seen = new Set();
+      for (const inv of (state.invoices || [])) {
+        if (!inv || inv.deleted || inv.customerId !== k.id || inv.switchCredit || invoiceBalance(inv) < 0.5) continue;
+        const lines = (Array.isArray(inv.lineItems) && inv.lineItems.length) ? inv.lineItems : [{ sport: inv.sport }];
+        for (const li of lines) {
+          const sport = li && li.sport; if (!sport || seen.has(sport + '|' + inv.id)) continue;
+          seen.add(sport + '|' + inv.id);
+          let sub = null;
+          try { sub = (typeof findSubForLine === 'function') ? findSubForLine(k, inv, li) : null; } catch (_) { sub = null; }
+          if (!sub) sub = (k.subscriptions || []).filter(s => s && (s.activity || '') === sport).sort((a, b) => String(b.start || '').localeCompare(String(a.start || '')))[0] || null;
+          let att = null, tot = null;
+          if (sub) {
+            try { tot = (typeof subClassLimit === 'function') ? subClassLimit(sub) : (sub.totalClasses || null); } catch (_) { tot = sub.totalClasses || null; }
+            try { const w = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(k, sub) : { from: sub.start, to: sub.end }; const lv = subLiveAttendance(k, sub, w); att = lv.total > 0 ? lv.y : (sub.attendedClasses || 0); } catch (_) { att = sub.attendedClasses || 0; }
+          }
+          out.push({ sport, start: sub && sub.start, end: sub && sub.end, att, tot });
+        }
+      }
+      return out;
+    };
+    const _detAr = (d) => '\n   \ud83c\udfc5 ' + sportNameAR(d.sport) + (d.start ? '\n   \ud83d\uddd3\ufe0f \u0627\u0644\u0627\u0634\u062a\u0631\u0627\u0643: ' + fmtDate(d.start) + (d.end ? ' \u2190 ' + fmtDate(d.end) : '') : '') + (d.tot ? '\n   \ud83c\udf9f\ufe0f \u0627\u0644\u062d\u0636\u0648\u0631: ' + (d.att || 0) + ' \u0645\u0646 ' + d.tot + ' \u062d\u0635\u0629' : '');
+    const _detEn = (d) => '\n   \ud83c\udfc5 ' + d.sport + (d.start ? '\n   \ud83d\uddd3\ufe0f Subscription: ' + fmtDate(d.start) + (d.end ? ' \u2192 ' + fmtDate(d.end) : '') : '') + (d.tot ? '\n   \ud83c\udf9f\ufe0f Attended: ' + (d.att || 0) + ' of ' + d.tot + ' classes' : '');
+    const arList = kids.map(x => '\u2022 ' + (x.k.nameArabic || x.k.name) + ': ' + fmt(x.due) + ' \u0631.\u0642' + _dueDet(x.k).map(_detAr).join('')).join('\n\n');
+    const enList = kids.map(x => '\u2022 ' + x.k.name + ': ' + fmt(x.due) + ' QAR' + _dueDet(x.k).map(_detEn).join('')).join('\n\n');
     const lvl = Math.max(1, Math.min(3, parseInt(level) || 1));
     if (kids.every(x => { const iv = _prodOf(x.k); return iv.length > 0 && iv.every(_isProdInv); })) return buildProductDueReminderMsg(kids, lvl);   // v6.892 — product purchases only: the gentler message
     const childAr = multi ? '\u0623\u0637\u0641\u0627\u0644\u0643\u0645' : '\u0637\u0641\u0644\u0643\u0645';
@@ -25820,16 +25845,22 @@ PAGES.attendance = (main) => {
     const leftNote = sess && sess.left === 0
       ? `<div style="font-size:12px;font-weight:700;color:var(--red);margin-top:4px">${escapeHtml(t('No sessions left — needs renewal', 'لا توجد حصص متبقية — يحتاج تجديداً'))}</div>` : '';
 
-    // v6.917 — admin / reception: the class is on a day no package covers (not renewed yet) → one tap WhatsApps a thank-you that says the renewal is due now
+    // v6.917 / v6.918 — admin / reception, on an attended class of a member who is Expired or whose day is not covered by a package (not renewed yet):
+    //   a big Renew button (the new package starts on the clicked day) and, when there is a phone, a WhatsApp "thank you — renewal is due now"
     let _dueBtn = '';
     try {
       const _m3 = state.members.find(x => x && x.id === cell.id), _b3 = String(cell.sport || '').replace(/ \d+$/, '');
-      if (want === 'Y' && _m3 && ['admin', 'receptionist'].includes(currentRole()) && typeof isRealPhone === 'function' && isRealPhone((typeof welcomeContactPhone === 'function') ? welcomeContactPhone(_m3) : _m3.phone)) {
+      if (want === 'Y' && _m3 && ['admin', 'receptionist'].includes(currentRole())) {
         const _subs3 = (_m3.subscriptions || []).filter(s => s && (s.activity || '') === _b3 && String(s.status || '').toLowerCase() !== 'withdrawn');
         const _covered = _subs3.some(s => (!s.start || String(s.start).slice(0, 10) <= cell.iso) && (!subCoverEnd(s) || cell.iso <= subCoverEnd(s)));
-        if (_subs3.length && !_covered) {
-          const _le = _subs3.map(s => subCoverEnd(s)).filter(Boolean).sort().pop() || '';
-          _dueBtn = '<button type="button" onclick="sendRenewDueWhatsApp(' + _m3.id + ',' + JSON.stringify(_b3).replace(/"/g, '&quot;') + ',' + JSON.stringify(_le).replace(/"/g, '&quot;') + ')" style="width:100%;margin-top:14px;padding:13px 16px;font-size:15px;font-weight:800;border:none;border-radius:12px;color:#fff;cursor:pointer;background:linear-gradient(135deg,#25D366,#128C7E)">💬 ' + escapeHtml(t('WhatsApp: thank you — renewal is due now', 'واتساب: شكراً لحضورك — التجديد مستحق الآن')) + '</button>';
+        const _uncovered = _subs3.length > 0 && !_covered;
+        if (_uncovered || String(status).toLowerCase() === 'expired') {
+          const _q = v => JSON.stringify(v).replace(/"/g, '&quot;');
+          _dueBtn += '<button type="button" onclick="_attRenewNow(' + _m3.id + ',' + _q(_b3) + ',' + (_uncovered ? _q(cell.iso) : 'null') + ')" style="width:100%;margin-top:14px;padding:13px 16px;font-size:15px;font-weight:800;border:none;border-radius:12px;color:#fff;cursor:pointer;background:linear-gradient(135deg,#ef4444,#dc2626)">🔄 ' + escapeHtml(t('Renew now', 'تجديد الآن')) + (_uncovered ? ' · ' + escapeHtml(t('starts ', 'يبدأ ')) + escapeHtml(fmtDate(cell.iso)) : '') + '</button>';
+          if (typeof isRealPhone === 'function' && isRealPhone((typeof welcomeContactPhone === 'function') ? welcomeContactPhone(_m3) : _m3.phone)) {
+            const _le = _subs3.map(s => subCoverEnd(s)).filter(Boolean).sort().pop() || '';
+            _dueBtn += '<button type="button" onclick="sendRenewDueWhatsApp(' + _m3.id + ',' + _q(_b3) + ',' + _q(_le) + ')" style="width:100%;margin-top:10px;padding:13px 16px;font-size:15px;font-weight:800;border:none;border-radius:12px;color:#fff;cursor:pointer;background:linear-gradient(135deg,#25D366,#128C7E)">💬 ' + escapeHtml(t('WhatsApp: thank you — renewal is due now', 'واتساب: شكراً لحضورك — التجديد مستحق الآن')) + '</button>';
+          }
         }
       }
     } catch (_) {}
@@ -25882,6 +25913,7 @@ PAGES.attendance = (main) => {
   const _attendanceModal = (o) => window.showLockedModal(o);
   // v6.915 — a mark on a day no package covers: admin / reception are offered the renewal (start = that day) once the "Attendance saved" confirmation is closed
   let _renewOffer = null;
+  window._attRenewNow = function (memberId, sport, iso) { _renewOffer = null; closeModal(); if (typeof addRenewal === 'function') addRenewal(memberId, iso ? { start: iso, sport } : { sport }); };   // v6.918
   function _showRenewOffer() {
     const o = _renewOffer; _renewOffer = null;
     if (!o) return;
