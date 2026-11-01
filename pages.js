@@ -95,13 +95,19 @@ function expPaidFor(kind, ym) {
   for (const e of (state.expenses || [])) { if (e && !e.deleted && e.payFor === kind && (e.month || String(e.date || '').slice(0, 7)) === ym) s += Number(e.amount) || 0; }
   return Math.round(s * 100) / 100;
 }
-function expPendingList() {
-  const cm = String(TODAY || '').slice(0, 7), u = dashUnpaidAccruals([cm]), out = [];
+function _expPendingFor(cm) {
+  const u = _unpaidAccrualOne(cm), out = [];
   const raw = Number(state.settings && state.settings.citadelRate), rate = (isNaN(raw) || raw < 0) ? 30 : raw;
   if (u.rent > 0.004) out.push({ kind: 'rent', month: cm, amount: u.rent, category: 'Rent', label: t('Monthly rent', 'إيجار الشهر') + ' — ' + fmtMonth(cm), note: t('not paid yet · not in the total', 'غير مدفوع · غير محسوب في الإجمالي') });
   if (u.citadel > 0.004) out.push({ kind: 'citadel', month: cm, amount: u.citadel, category: CITADEL_SHARE_CATEGORY, label: t('Citadel company share', 'حصة شركة سيتادل') + ' (' + rate + '%) — ' + fmtMonth(cm), note: t('not paid yet · not in the total', 'غير مدفوع · غير محسوب في الإجمالي') });
   if (u.advertising > 0.004) { const cfg = adShareSettings(); out.push({ kind: 'advertising', month: cm, amount: u.advertising, category: ADVERTISING_CATEGORY, label: t('Advertising', 'دعاية وإعلان') + ' (' + cfg.rate + '% ' + t('of income above', 'من الدخل فوق') + ' ' + Number(cfg.threshold).toLocaleString('en-US') + ') — ' + fmtMonth(cm), note: t('due on the last day of the month · income so far ' + Math.round(billedInMonth(cm) || 0).toLocaleString('en-US') + ' · not paid yet · not in the total', 'مستحق آخر الشهر · الدخل حتى الآن ' + Math.round(billedInMonth(cm) || 0).toLocaleString('en-US') + ' · غير مدفوع · غير محسوب في الإجمالي') }); }
   return out;
+}
+// v6.916 — rent / Citadel share / advertising still owed for EVERY month from the accrual start up to this one (it was this month only, so on the 1st the month just closed lost them)
+function expPendingList() {
+  const cur = String(TODAY || '').slice(0, 7), out = [];
+  for (const mo of _accrualMonthsIn(null)) for (const x of _expPendingFor(mo)) out.push(Object.assign(x, { baseKind: x.kind, kind: mo === cur ? x.kind : x.kind + '@' + mo }));
+  return out.sort((a, b) => String(b.month).localeCompare(String(a.month)));
 }
 window.expPay = function (kind) {
   if (currentRole() !== 'admin') { toast(t('Only an admin can record a payment', 'للمسؤول فقط'), 'error'); return; }
@@ -124,7 +130,7 @@ window.expPay = function (kind) {
         if (amt > it.amount + 0.005) { toast(t('More than what is due (' + fmt(it.amount) + ')', 'أكثر من المستحق (' + fmt(it.amount) + ')'), 'error'); return; }
         if (!date) { toast(t('Date is required', 'التاريخ مطلوب'), 'error'); return; }
         if (typeof assertCloudWritable === 'function' && !assertCloudWritable('record this payment', 'تسجيل هذا الدفع')) return;
-        const row = { id: nextId(state.expenses), date, description: it.label, amount: amt, category: it.category, method, month: it.month, payMobile: '', notes, payFor: kind, createdAt: new Date().toISOString() };
+        const row = { id: nextId(state.expenses), date, description: it.label, amount: amt, category: it.category, method, month: it.month, payMobile: '', notes, payFor: it.baseKind || kind, createdAt: new Date().toISOString() };
         state.expenses.push(row);
         try { if (typeof audit === 'function') audit('expense.pay_due', 'expense:' + row.id, it.label + ' · ' + fmt(amt) + ' · ' + method); } catch (_) {}
         closeModal(); render();
@@ -134,10 +140,21 @@ window.expPay = function (kind) {
     ],
   });
 };
-function dashUnpaidAccruals(months) {
-  const cm = String(TODAY || '').slice(0, 7);
-  if (!(months || []).includes(cm)) return { rent: 0, citadel: 0, advertising: 0, total: 0 };
-  const rent = Math.max(0, Math.round((dashUnpaidRent() - expPaidFor('rent', cm)) * 100) / 100);   // v6.832 — what the Expenses "Pay" button already recorded comes off
+// v6.916 — accrual start (first month the unpaid rent / Citadel / advertising are tracked); a past month stays owed until a payment is recorded for it
+function dashAccrualFrom() { const r = state.settings && state.settings.dashAccrualFrom; return /^d{4}-d{2}$/.test(String(r || '')) ? String(r) : '2026-10'; }
+function _accrualMonthsIn(months) {
+  const cm = String(TODAY || '').slice(0, 7), from = dashAccrualFrom(), out = [];
+  if (months) return [...new Set(months)].filter(m => m >= from && m <= cm).sort();
+  for (let y = +from.slice(0, 4), mo = +from.slice(5, 7); ; ) { const k = y + '-' + String(mo).padStart(2, '0'); if (k > cm) break; out.push(k); if (++mo > 12) { mo = 1; y++; } }
+  return out;
+}
+function rentPaidIn(ym) {   // what was recorded as rent for the month — the Pay button's rows AND a plain "Rent" expense
+  let s = 0;
+  for (const e of (state.expenses || [])) { if (e && !e.deleted && (e.payFor === 'rent' || String(e.category || '').toLowerCase() === 'rent') && (e.month || String(e.date || '').slice(0, 7)) === ym) s += Number(e.amount) || 0; }
+  return Math.round(s * 100) / 100;
+}
+function _unpaidAccrualOne(cm) {
+  const rent = Math.max(0, Math.round((dashUnpaidRent() - rentPaidIn(cm)) * 100) / 100);   // v6.832 — what the Expenses "Pay" button already recorded comes off
   let citadel = 0;
   try {
     const raw = Number(state.settings && state.settings.citadelRate);
@@ -148,6 +165,11 @@ function dashUnpaidAccruals(months) {
   let advertising = 0;
   try { advertising = Math.max(0, Math.round((advertisingAmount(billedInMonth(cm)) - expPaidFor('advertising', cm)) * 100) / 100); } catch (_) {}
   return { rent, citadel, advertising, total: rent + citadel + advertising };
+}
+function dashUnpaidAccruals(months) {
+  const t0 = { rent: 0, citadel: 0, advertising: 0, total: 0 };
+  for (const m of _accrualMonthsIn(months || [])) { const u = _unpaidAccrualOne(m); t0.rent += u.rent; t0.citadel += u.citadel; t0.advertising += u.advertising; t0.total += u.total; }
+  return t0;
 }
 function computeStats(arg) {
   const period = normalizeDashPeriod(arg);
@@ -3819,7 +3841,7 @@ function updatePaidNowHint() {
   const total = (window._enrollRows || []).reduce((s, r) => s + (parseFloat(r.price) || 0), 0);
   let entered = 0, anyEntered = !!(document.getElementById('f-leavedue') || {}).checked;   // v6.842 (X-14) — "leave due" = entered, nothing paid
   methodInputs.forEach(mi => { if (mi.value !== '' && mi.value != null) { anyEntered = true; entered += Math.max(0, parseFloat(mi.value) || 0); } });
-  const paid = anyEntered ? entered : total;   // all blank = paying in full (cash)
+  const paid = entered;   // v6.917 — all blank = nothing paid (due)
   const due = Math.max(0, total - paid);
   const over = Math.max(0, paid - total);
   if (totalEl) totalEl.textContent = fmt(total);
@@ -3828,7 +3850,7 @@ function updatePaidNowHint() {
   if (dueCard) dueCard.style.opacity = due > 0.001 ? '1' : '.55';
   if (!hint) return;
   if (over > 0.001) { hint.textContent = `⚠ ${t('Exceeds total by', 'يتجاوز الإجمالي بـ')} ${fmt(over)} — ${t('reduce', 'قلّل المبلغ')}`; hint.style.color = 'var(--red)'; }
-  else if (!anyEntered) { hint.textContent = `✓ ${fmt(total)} — ${t('paying in full (Cash)', 'دفع كامل (نقداً)')}`; hint.style.color = 'var(--green)'; }
+  else if (!anyEntered && total > 0) { hint.textContent = `⏳ ${fmt(total)} ${t('will be marked DUE — type the amount received to record a payment', 'سيُسجَّل مستحقاً — اكتب المبلغ المستلم لتسجيل الدفع')}`; hint.style.color = 'var(--accent-2)'; }
   else if (due > 0.001) { hint.textContent = `${fmt(paid)} ${t('collected', 'محصّل')} · ${fmt(due)} ${t('will be marked as due', 'سيُسجَّل كمستحق')}`; hint.style.color = 'var(--accent-2)'; }
   else { hint.textContent = `✓ ${t('Paid in full', 'مدفوع بالكامل')}: ${fmt(total)}`; hint.style.color = 'var(--green)'; }
 }
@@ -4075,7 +4097,7 @@ function showMemberForm(m) {
         <div style="font-size:11px;color:var(--green);text-transform:uppercase;letter-spacing:.6px;font-weight:700;margin-bottom:10px">💳 ${t('First payment (auto-creates invoice)', 'الدفعة الأولى (تنشئ فاتورة تلقائياً)')}</div>
         <label style="display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;margin-bottom:8px;cursor:pointer"><input type="checkbox" id="f-leavedue" onchange="document.querySelectorAll('.f-pay-m').forEach(function(i){i.disabled=this.checked;if(this.checked)i.value=''}.bind(this));updatePaidNowHint()" /> ⏳ ${t('Leave the whole amount DUE — nothing paid now', 'اترك كامل المبلغ مستحقاً — لا شيء مدفوع الآن')}</label>
         <div>
-          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:6px">💵 ${t('Paid now — amount per method', 'المدفوع الآن — المبلغ لكل طريقة')} <span class="text-mute" style="font-weight:400;font-size:10px">${t('(split allowed · leave ALL blank = paid in full, cash)', '(يمكن التقسيم · اترك الكل فارغاً = مدفوع بالكامل نقداً)')}</span></label>
+          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:6px">💵 ${t('Paid now — amount per method', 'المدفوع الآن — المبلغ لكل طريقة')} <span class="text-mute" style="font-weight:400;font-size:10px">${t('(split allowed · type what was received · leave ALL blank = nothing paid, the amount stays DUE)', '(يمكن التقسيم · اكتب المبلغ المستلم · اترك الكل فارغاً = لم يُدفع شيء ويبقى مستحقاً)')}</span></label>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             ${[['cash', '💵', t('Cash', 'نقدي'), '#16a34a'], ['card', '💳', t('Card', 'بطاقة'), '#3b82f6'], ['fawran', '📲', t('Fawran', 'فوران'), '#8b5cf6'], ['transfer', '🏦', t('Transfer', 'تحويل'), '#f59e0b']].map(([mk, ic, lbl, col]) => `
               <div style="flex:1;min-width:108px;background:color-mix(in srgb, ${col} 9%, var(--surface));border:1px solid color-mix(in srgb, ${col} 35%, transparent);border-radius:10px;padding:6px 9px">
@@ -4392,7 +4414,7 @@ function showMemberForm(m) {
               if (mi.value !== '' && mi.value != null) { anyEntered = true; const a = Math.max(0, parseFloat(mi.value) || 0); if (a > 0) { payByMethod[mi.dataset.method] = Math.round(((payByMethod[mi.dataset.method] || 0) + a) * 100) / 100; entered += a; } }
             });
             let paymentRows;
-            if (!anyEntered) { paymentRows = [{ date: activityDate, month: monthKey, amount: totalPay, method: 'cash' }]; }
+            if (!anyEntered) { paymentRows = []; }   // v6.917 — nothing typed = nothing paid: the whole amount stays DUE (it used to be booked as paid in full, cash)
             else { paymentRows = Object.entries(payByMethod).filter(([, a]) => a > 0).map(([mk, a]) => ({ date: activityDate, month: monthKey, amount: a, method: mk })); }
             const paidNow = paymentRows.reduce((s, p) => s + p.amount, 0);
             if (paidNow > totalPay + 0.001) { toast(t('Paid amount exceeds the total — reduce it', 'المبلغ المدفوع يتجاوز الإجمالي — قلّله'), 'error'); return; }
@@ -17399,7 +17421,7 @@ window.deleteInvoice = function(id) {
   if (_role !== 'admin' && _role !== 'receptionist') { toast('You do not have permission to delete invoices', 'error'); return; }
   const inv = state.invoices.find(i => i.id === id);
   if (!inv) { toast('Invoice not found', 'error'); return; }
-  if (_role !== 'admin' && invoicePaid(inv) > 0.004) { toast(t('Only an admin can delete an invoice that has payments on it.', 'المسؤول فقط يستطيع حذف فاتورة عليها مدفوعات.'), 'error'); return; }   // v6.868
+  // v6.917 — reception may delete (archive) any invoice, paid or not; Restore / Delete forever / bulk delete stay admin-only
   if (guardBooksLocked(inv.month || inv.date)) return;
   const cust = customerInfo(inv);
   const paid = invoicePaid(inv);
@@ -18767,6 +18789,63 @@ window.printInvoicePDF = function(id, opts) {   // opts.returnHtml → give the 
 // at the customer's phone number. Admin reviews the message before sending.
 // Note: WhatsApp's URL scheme doesn't allow file attachments from web apps —
 // this sends a TEXT message that includes everything the customer needs.
+// v6.917 — WhatsApp after a renewal (details + payment) and a "thank you, your renewal is due" note for a member who came without renewing. AR + EN in one message.
+function _waMember(memberId) { return (state.members || []).find(x => x && x.id === memberId) || null; }
+function _waOpenFor(m, text) {
+  const url = (m && typeof waLink === 'function') ? waLink((typeof welcomeContactPhone === 'function') ? welcomeContactPhone(m) : m.phone, text) : null;
+  if (!url) { toast(t('This member has no valid phone number.', 'لا يوجد رقم هاتف صالح لهذا العضو.'), 'error'); return false; }
+  window.open(url, '_blank', 'noopener');
+  return true;
+}
+function renewalWaText(m, inv) {
+  const nameAr = m.nameArabic || m.name || '', nameEn = m.name || '';
+  const fD = d => (d ? fmtDate(d) : '');
+  const items = (Array.isArray(inv.lineItems) && inv.lineItems.length) ? inv.lineItems : [{ sport: inv.sport || '', coach: inv.coach || '', classes: null, price: invoiceTotal(inv) }];
+  const subFor = li => (m.subscriptions || []).filter(s => s && (s.activity || '') === li.sport && String(s.status || '').toLowerCase() !== 'withdrawn')
+    .sort((a, b) => (String(b.invoiceNumber || '') === String(inv.ref || '') ? 1 : 0) - (String(a.invoiceNumber || '') === String(inv.ref || '') ? 1 : 0) || String(b.start || '').localeCompare(String(a.start || '')))[0] || null;
+  const coachOf = li => { const c = li.coach ? String(li.coach).replace(/^Coach\s+/i, '') : ''; return c && c !== '—' ? c : ''; };
+  const arL = [], enL = [];
+  for (const li of items) {
+    const s = subFor(li), cls = li.classes || (s && s.totalClasses) || '';
+    arL.push('• ' + li.sport + (coachOf(li) ? ' — مع الكابتن ' + coachOf(li) : '') + (s && s.start ? '\n   🗓️ يبدأ: ' + fD(s.start) : '') + (s && s.end ? '\n   ⏳ ساري حتى: ' + fD(s.end) : '') + (cls ? '\n   🎟️ عدد الحصص: ' + cls : '') + '\n   💰 ' + fmt(li.price) + ' ريال');
+    enL.push('• ' + li.sport + (coachOf(li) ? ' — with Coach ' + coachOf(li) : '') + (s && s.start ? '\n   🗓️ Starts: ' + fD(s.start) : '') + (s && s.end ? '\n   ⏳ Valid until: ' + fD(s.end) : '') + (cls ? '\n   🎟️ Sessions: ' + cls : '') + '\n   💰 ' + fmt(li.price) + ' QAR');
+  }
+  const total = invoiceTotal(inv), paid = invoicePaid(inv), bal = invoiceBalance(inv);
+  const payAr = 'رقم الفاتورة: ' + (inv.ref || inv.id) + '\nالإجمالي: ' + fmt(total) + ' ريال\nالمدفوع: ' + fmt(paid) + ' ريال' + (bal > 0.5 ? '\n*المتبقي: ' + fmt(bal) + ' ريال*' : '');
+  const payEn = 'Invoice: ' + (inv.ref || inv.id) + '\nTotal: ' + fmt(total) + ' QAR\nPaid: ' + fmt(paid) + ' QAR' + (bal > 0.5 ? '\n*Balance due: ' + fmt(bal) + ' QAR*' : '');
+  const ar = 'مرحباً ' + nameAr + ' 🖤⭐\n\nشكراً لتجديد اشتراكك في نادي بلاك ستارز الرياضي، سعداء باستمرارك معنا 💚\n\nتفاصيل التجديد:\n' + arL.join('\n\n') + '\n\n' + payAr + '\n\nنتمنى لك تجربة رياضية رائعة 🙏';
+  const en = 'Hello ' + nameEn + ' 🖤⭐\n\nThank you for renewing at Black Stars Sports Club — we are happy to have you continue with us! 💚\n\nRenewal details:\n' + enL.join('\n\n') + '\n\n' + payEn + '\n\nWishing you a great sporting season 🙏';
+  return ar + '\n\n———\n\n' + en;
+}
+window.sendRenewalWhatsApp = function (memberId, invoiceId) {
+  if (!['admin', 'receptionist'].includes(currentRole())) { toast(t('Admins or receptionists only', 'للمسؤولين أو موظفي الاستقبال فقط'), 'error'); return; }
+  const m = _waMember(memberId), inv = (state.invoices || []).find(x => x && x.id === invoiceId);
+  if (!m || !inv) { toast(t('Renewal not found', 'التجديد غير موجود'), 'error'); return; }
+  _waOpenFor(m, renewalWaText(m, inv));
+};
+// the member attended but has NOT renewed: thank him, say the renewal is due now (+ any balance he already owes)
+function renewDueWaText(m, sport, lastEnd) {
+  const nameAr = m.nameArabic || m.name || '', nameEn = m.name || '';
+  const en0 = (m.enrollments || []).find(e => e && e.sport === sport), price = en0 && Number(en0.price) > 0 ? Number(en0.price) : 0;
+  const owed = (typeof memberOutstanding === 'function') ? memberOutstanding(m.id) : 0;
+  const ar = 'مرحباً ' + nameAr + ' 🖤\n\nشكراً لحضورك اليوم في نادي بلاك ستارز الرياضي 🙏\nنود تذكيرك بأن باقتك في ' + sportNameAR(sport) + (lastEnd ? ' انتهت بتاريخ ' + fmtDate(lastEnd) : ' انتهت') + '، وأصبح تجديد الاشتراك مستحقاً الآن' + (price ? ' (' + fmt(price) + ' ريال)' : '') + '.' + (owed > 0.5 ? '\nيوجد أيضاً مبلغ مستحق عليك: ' + fmt(owed) + ' ريال.' : '') + '\n\nيسعدنا تجديدك عند الاستقبال لتواصل معنا بدون انقطاع 💚';
+  const en = 'Hello ' + nameEn + ' 🖤\n\nThank you for attending ' + sport + ' today at Black Stars Sports Club 🙏\nA friendly reminder: your package' + (lastEnd ? ' ended on ' + fmtDate(lastEnd) : ' has ended') + ', so your renewal is due now' + (price ? ' (' + fmt(price) + ' QAR)' : '') + '.' + (owed > 0.5 ? '\nYou also have a balance due of ' + fmt(owed) + ' QAR.' : '') + '\n\nWe would love to see you renew at the reception so you can continue without a break 💚';
+  return ar + '\n\n———\n\n' + en;
+}
+window.sendRenewDueWhatsApp = function (memberId, sport, lastEnd) {
+  if (!['admin', 'receptionist'].includes(currentRole())) { toast(t('Admins or receptionists only', 'للمسؤولين أو موظفي الاستقبال فقط'), 'error'); return; }
+  const m = _waMember(memberId); if (!m) return;
+  _waOpenFor(m, renewDueWaText(m, sport, lastEnd || ''));
+};
+// the big buttons of the "Saved in the cloud" popup after a renewal: Download Invoice + WhatsApp the renewal details
+function renewalBigActions(memberId, invoiceId) {
+  const list = [];
+  if (invoiceId == null || !['admin', 'receptionist'].includes(currentRole())) return list;
+  list.push({ label: '⬇ ' + t('Download Invoice', 'تحميل الفاتورة'), bg: 'linear-gradient(135deg,#3b82f6,#4338ca)', onclick: () => printInvoicePDF(invoiceId) });
+  const m = _waMember(memberId);
+  if (m && typeof isRealPhone === 'function' && isRealPhone((typeof welcomeContactPhone === 'function') ? welcomeContactPhone(m) : m.phone)) list.push({ label: '💬 ' + t('WhatsApp the renewal to the member', 'إرسال تفاصيل التجديد للعضو واتساب'), bg: 'linear-gradient(135deg,#25D366,#128C7E)', onclick: () => sendRenewalWhatsApp(memberId, invoiceId) });
+  return list;
+}
 window.sendInvoiceWhatsApp = function(id) {
   const inv = state.invoices.find(x => x.id === id);
   if (!inv) { toast('Invoice not found', 'error'); return; }
@@ -20368,8 +20447,8 @@ PAGES.expenses = (main) => {
 
     // v6.832 — PENDING rows (rent + Citadel share of the current month): shown, NOT counted in any total, with a Pay button
     const _cmStart = String(TODAY || '').slice(0, 7) + '-01', _cmEnd = _monthEndIso(String(TODAY || '').slice(0, 7));
-    const _pend = (currentRole() === 'admin' && ((filter.from || filter.to) ? ((!filter.from || filter.from <= _cmEnd) && (!filter.to || filter.to >= _cmStart)) : (!filter.months.length || filter.months.includes(String(TODAY || '').slice(0, 7)))) && !filter.search && !(filter.methods || []).length)
-      ? expPendingList().filter(x => !filter.categories.length || filter.categories.includes(x.category)) : [];
+    const _pend = (currentRole() === 'admin' && (true) && !filter.search && !(filter.methods || []).length)
+      ? expPendingList().filter(x => (!filter.categories.length || filter.categories.includes(x.category)) && (filter.from || filter.to ? ((!filter.from || filter.from <= _monthEndIso(x.month)) && (!filter.to || filter.to >= x.month + '-01')) : (!filter.months.length || filter.months.includes(x.month)))) : [];
     const _pendHtml = _pend.map(x => `
       <tr style="background:rgba(242,163,60,.07)">
         <td class="text-mute" style="text-align:center;font-size:14px">⏳</td>
@@ -20378,7 +20457,7 @@ PAGES.expenses = (main) => {
         <td><span class="badge">${escapeHtml(x.category)}</span></td>
         <td class="text-mute">—</td>
         <td class="text-right num" style="color:var(--accent-2);font-weight:700">${fmt(x.amount)}<div style="font-size:10px;font-weight:400">${t('pending', 'معلّق')}</div></td>
-        <td class="text-right" style="white-space:nowrap"><button class="btn primary sm" onclick="expPay('${x.kind}')">💵 ${t('Pay', 'سداد')}</button>${x.kind === 'rent' ? ` <button class="btn ghost sm" onclick="dashEditUnpaidRent()" title="${t('Change the monthly rent', 'تغيير الإيجار الشهري')}">✏️</button>` : ''}</td>
+        <td class="text-right" style="white-space:nowrap"><button class="btn primary sm" onclick="expPay('${x.kind}')">💵 ${t('Pay', 'سداد')}</button>${x.baseKind === 'rent' ? ` <button class="btn ghost sm" onclick="dashEditUnpaidRent()" title="${t('Change the monthly rent', 'تغيير الإيجار الشهري')}">✏️</button>` : ''}</td>
       </tr>`).join('');
     $('#exp-tbody').innerHTML = _pendHtml + (rows.length ? rows.map((e, i) => `
       <tr ${e.autoBankCommission ? 'style="background:rgba(91,141,239,.05)"' : ''}>
@@ -25741,6 +25820,19 @@ PAGES.attendance = (main) => {
     const leftNote = sess && sess.left === 0
       ? `<div style="font-size:12px;font-weight:700;color:var(--red);margin-top:4px">${escapeHtml(t('No sessions left — needs renewal', 'لا توجد حصص متبقية — يحتاج تجديداً'))}</div>` : '';
 
+    // v6.917 — admin / reception: the class is on a day no package covers (not renewed yet) → one tap WhatsApps a thank-you that says the renewal is due now
+    let _dueBtn = '';
+    try {
+      const _m3 = state.members.find(x => x && x.id === cell.id), _b3 = String(cell.sport || '').replace(/ \d+$/, '');
+      if (want === 'Y' && _m3 && ['admin', 'receptionist'].includes(currentRole()) && typeof isRealPhone === 'function' && isRealPhone((typeof welcomeContactPhone === 'function') ? welcomeContactPhone(_m3) : _m3.phone)) {
+        const _subs3 = (_m3.subscriptions || []).filter(s => s && (s.activity || '') === _b3 && String(s.status || '').toLowerCase() !== 'withdrawn');
+        const _covered = _subs3.some(s => (!s.start || String(s.start).slice(0, 10) <= cell.iso) && (!subCoverEnd(s) || cell.iso <= subCoverEnd(s)));
+        if (_subs3.length && !_covered) {
+          const _le = _subs3.map(s => subCoverEnd(s)).filter(Boolean).sort().pop() || '';
+          _dueBtn = '<button type="button" onclick="sendRenewDueWhatsApp(' + _m3.id + ',' + JSON.stringify(_b3).replace(/"/g, '&quot;') + ',' + JSON.stringify(_le).replace(/"/g, '&quot;') + ')" style="width:100%;margin-top:14px;padding:13px 16px;font-size:15px;font-weight:800;border:none;border-radius:12px;color:#fff;cursor:pointer;background:linear-gradient(135deg,#25D366,#128C7E)">💬 ' + escapeHtml(t('WhatsApp: thank you — renewal is due now', 'واتساب: شكراً لحضورك — التجديد مستحق الآن')) + '</button>';
+        }
+      }
+    } catch (_) {}
     const cellStyle = 'padding:12px;border:1px solid var(--border);border-radius:10px;text-align:center';
     const labelStyle = 'font-size:11px;color:var(--text-mute);letter-spacing:.4px;text-transform:uppercase';
 
@@ -25777,6 +25869,7 @@ PAGES.attendance = (main) => {
             </div>
           </div>
 
+          ${_dueBtn}
           <div style="font-size:11px;color:var(--text-mute);margin-top:14px">☁ ${escapeHtml(want === null
             ? t('Read back from the server — the mark is gone from the cloud.', 'تمت القراءة من الخادم — لم تعد العلامة موجودة في السحابة.')
             : t('Read back from the server — this record is stored in the cloud.', 'تمت القراءة من الخادم — هذا السجل محفوظ في السحابة.'))}</div>
@@ -28986,7 +29079,7 @@ ${t('Add another identical period anyway?', 'إضافة فترة مطابقة أ
         const msg = `${t('Renewed', 'تم تجديد')} ${res.created.length} ${res.created.length === 1 ? t('sport', 'رياضة') : t('sports', 'رياضات')} · ${parts.join(', ')} · ${t('invoice', 'فاتورة')} ${ref}${invAmount > 0 ? ' · ' + fmt(invAmount) + ' QAR' : ''}`;
         const verify = [{ collection: 'members', id: m.id }]; if (_invId != null) verify.push({ collection: 'invoices', id: _invId });
         if (_invId != null && typeof pushInvoiceNotif === 'function') pushInvoiceNotif(_invId, m.id, m.name, 'renewal');   // bell → download later (v6.469)
-        if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify, okMsg: msg }); else { save(); toast(msg); }
+        if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify, okMsg: msg, bigActions: renewalBigActions(m.id, _invId) }); else { save(); toast(msg); }   // v6.917
       } },
     ],
   });
@@ -29133,7 +29226,7 @@ window.addRenewal = function(memberId, opts) {   // opts.start / opts.sport (v6.
         <div id="rn-priv-hint" class="text-mute" style="font-size:11px"></div>
       </div>
       <div id="rn-pay-panel" style="margin-top:6px;padding:12px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.30);border-radius:10px">
-        <label style="font-size:11px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px">💳 ${t('Paid now — amount per method', 'المدفوع الآن — المبلغ لكل طريقة')} <span class="text-mute" style="font-weight:400;font-size:10px;text-transform:none">${t('(split allowed · leave ALL blank = paid in full, cash)', '(يمكن التقسيم · اترك الكل فارغاً = مدفوع بالكامل نقداً)')}</span></label>
+        <label style="font-size:11px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px">💳 ${t('Paid now — amount per method', 'المدفوع الآن — المبلغ لكل طريقة')} <span class="text-mute" style="font-weight:400;font-size:10px;text-transform:none">${t('(split allowed · type what was received · leave ALL blank = nothing paid, the fee stays DUE)', '(يمكن التقسيم · اكتب المبلغ المستلم · اترك الكل فارغاً = لم يُدفع شيء ويبقى مستحقاً)')}</span></label>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           ${[['cash', '💵', t('Cash', 'نقدي'), '#16a34a'], ['card', '💳', t('Card', 'بطاقة'), '#3b82f6'], ['fawran', '📲', t('Fawran', 'فوران'), '#8b5cf6'], ['transfer', '🏦', t('Transfer', 'تحويل'), '#f59e0b']].map(([mk, ic, lbl, col]) => `
             <div style="flex:1;min-width:104px;background:color-mix(in srgb, ${col} 9%, var(--surface));border:1px solid color-mix(in srgb, ${col} 35%, transparent);border-radius:10px;padding:6px 9px">
@@ -29291,7 +29384,7 @@ window.addRenewal = function(memberId, opts) {   // opts.start / opts.sport (v6.
           });
           const _payRows = _anyPay
             ? Object.entries(_payByMethod).filter(([, a]) => a > 0).map(([mk, a]) => ({ date: _payDate, month: _payMonth, amount: a, method: mk }))
-            : [{ date: _payDate, month: _payMonth, amount, method: 'cash' }];
+            : [];   // v6.917 — nothing typed = nothing paid: the whole fee stays DUE (it used to be booked as paid in full, cash)
           const _paidNow = _payRows.reduce((s, p) => s + p.amount, 0);
           if (_paidNow > amount + 0.001) { toast(t('Paid now exceeds the fee — reduce it', 'المدفوع الآن يتجاوز الرسوم — قلّله'), 'error'); return; }
           const _payMethod = _payRows[0] ? _payRows[0].method : 'cash';
@@ -29352,7 +29445,7 @@ window.addRenewal = function(memberId, opts) {   // opts.start / opts.sport (v6.
         const _rnMsg = `Renewal recorded — ${renewedSport} (#${m.renewalsBySport[renewedSport]} for this sport) · invoice ${ref}${amount > 0 ? ' · ' + fmt(amount) + ' QAR' : ''}${deductedCount > 0 ? ' · −' + deductedCount + ' post-expiry class' + (deductedCount === 1 ? '' : 'es') : ''}${carried > 0 ? ' · +' + carried + ' carried class' + (carried === 1 ? '' : 'es') : ''}`;
         const _rnVerify = [{ collection: 'members', id: m.id }]; if (_rnInvId != null) _rnVerify.push({ collection: 'invoices', id: _rnInvId });
         if (_rnInvId != null && typeof pushInvoiceNotif === 'function') pushInvoiceNotif(_rnInvId, m.id, m.name, 'renewal');   // bell → download later (v6.469)
-        if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: _rnVerify, okMsg: _rnMsg });
+        if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: _rnVerify, okMsg: _rnMsg, bigActions: renewalBigActions(m.id, _rnInvId) });   // v6.917
         else { save(); toast(_rnMsg); }
       }},
     ],
@@ -29465,11 +29558,11 @@ window.addRenewal = function(memberId, opts) {   // opts.start / opts.sport (v6.
     if (!boxes.length) return;
     let entered = 0, any = false;
     boxes.forEach(mi => { if (mi.value !== '' && mi.value != null) { any = true; entered += Math.max(0, parseFloat(mi.value) || 0); } });
-    const paid = any ? entered : fee;
+    const paid = entered;   // v6.917 — blank = nothing paid
     const due = Math.max(0, fee - paid), over = Math.max(0, paid - fee);
     const h = document.getElementById('rn-pay-hint'); if (!h) return;
     if (over > 0.001) { h.textContent = `⚠ ${t('Exceeds fee by', 'يتجاوز الرسوم بـ')} ${fmt(over)}`; h.style.color = 'var(--red)'; }
-    else if (!any) { h.textContent = `✓ ${fmt(fee)} — ${t('paying in full (Cash)', 'دفع كامل (نقداً)')}`; h.style.color = 'var(--green)'; }
+    else if (!any && fee > 0) { h.textContent = `⏳ ${fmt(fee)} ${t('will be marked DUE — type the amount received to record a payment', 'سيُسجَّل مستحقاً — اكتب المبلغ المستلم لتسجيل الدفع')}`; h.style.color = 'var(--accent-2)'; }
     else if (due > 0.001) { h.textContent = `${fmt(paid)} ${t('collected', 'محصّل')} · ${fmt(due)} ${t('due', 'مستحق')}`; h.style.color = 'var(--accent-2)'; }
     else { h.textContent = `✓ ${t('Paid in full', 'مدفوع بالكامل')}: ${fmt(fee)}`; h.style.color = 'var(--green)'; }
   };
