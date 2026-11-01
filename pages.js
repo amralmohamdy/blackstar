@@ -25880,7 +25880,6 @@ PAGES.attendance = (main) => {
 
     _attendanceModal({
       okay: true,
-      onClose: _showRenewOffer,   // v6.915
       title: _icon + ' ' + _title,
       body: `<div style="text-align:center">
           <div style="font-size:46px;line-height:1">${_icon}</div>
@@ -28992,7 +28991,7 @@ window.addRenewalMulti = function(m, picks, opts) {
     pv: privateDefaultFor(m, e.sport, e.coachId),   // v6.660
     prev: prevPackageInfo(m, e.sport, e.coachId),   // v6.818
     carry: (typeof carryForwardCredit === 'function') ? (carryForwardCredit(m, e.sport) || 0) : 0,
-    deduct: (() => { const le = getLastSportExpiry(e.sport); return le ? countAttendedAfter(e.sport, le) : 0; })(),
+    deduct: (() => { if (typeof postExpiryAbsorbed === 'function' && postExpiryAbsorbed()) return 0; const le = getLastSportExpiry(e.sport); return le ? countAttendedAfter(e.sport, le) : 0; })(),   // v6.919 — already counted in the new package's window
   });
   const rows = picks.map(mkRow);
   let _recalc = () => {};
@@ -29651,6 +29650,14 @@ window.addRenewal = function(memberId, opts) {   // opts.start / opts.sport (v6.
     if (!lastEnd || count === 0) {
       banner.style.display = 'none';
       banner.innerHTML = '';
+      return;
+    }
+    // v6.919 — since v6.307 the new package's attendance window starts the day AFTER the old package ended, so these classes are ALREADY counted as attended in the new package.
+    // Deducting them from its size as well counted every one of them twice (Maryam: 14 + 2 carried − 1 = 15, shown 1/15 instead of 1/16).
+    if (typeof postExpiryAbsorbed === 'function' && postExpiryAbsorbed()) {
+      window._rnPendingDeduction = 0;
+      banner.style.display = 'block';
+      banner.innerHTML = '<div style="margin:4px 0 10px;padding:10px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.3);border-radius:8px;font-size:12px;line-height:1.5"><b>' + t('Post-expiry attendance', 'حضور بعد الانتهاء') + '</b><br>' + t('The member attended ' + count + ' class' + (count === 1 ? '' : 'es') + ' of ' + sport + ' after the last expiry (' + fmtDate(lastEnd) + '). ' + (count === 1 ? 'It is' : 'They are') + ' counted in the NEW package automatically — nothing is deducted.', 'حضر العضو ' + count + ' حصة في ' + sport + ' بعد آخر انتهاء (' + fmtDate(lastEnd) + '). تُحتسب تلقائياً من الباقة الجديدة — لا يُخصم شيء.') + '</div>';
       return;
     }
     window._rnPendingDeduction = count;
