@@ -709,13 +709,24 @@
           }
         }
       }
+      // MEMBER LOGIN (v6.909): the rules let a member write nothing but its own login-log row. Any other change a member session makes
+      // in memory (settings, a record) was queued, refused (permission-denied) and then retried for ever — the red bar and a stuck
+      // "Set a new password". Only the audit / login-log rows are sent; the rest is not persisted.
+      if (_memberQ) {
+        for (let oi = ops.length - 1; oi >= 0; oi--) {
+          const o = ops[oi];
+          if (o._audit) continue;
+          console.warn('[Storage] member login — not persisted: ' + o.kind + ' ' + o.name + '/' + o.id);
+          ops.splice(oi, 1);
+        }
+      }
       // Compare meta WITHOUT the always-changing _updatedAt so the shared parent doc
       // (clubs/blackstars) is written ONLY when a real settings/version/meta field
       // changes — not on every attendance mark or payment. Writing that one shared doc
       // on every save would, with many simultaneous users, exceed Firestore's ~1
       // write/sec/document soft limit → contention, latency and failed writes.
       const meta = pickMeta(state);
-      const metaStr = _stable(meta); const metaChanged = !_coachScope && metaStr !== _baseMeta;
+      const metaStr = _stable(meta); const metaChanged = !_coachScope && !_memberQ && metaStr !== _baseMeta;
       // Write only the CHANGED meta leaves, and FieldValue.delete() for any REMOVED key, so a
       // deleted settings entry (e.g. a user-role mapping) actually disappears from Firestore
       // instead of being re-merged back. (v6.330)

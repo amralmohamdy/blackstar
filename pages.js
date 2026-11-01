@@ -370,7 +370,14 @@ function moneyStripHtml(o) {
 PAGES.targets = (main) => {
   const role = currentRole();
   const isCoach = role === 'coach';
-  const months = (typeof availableMonths === 'function' ? availableMonths() : []).slice().sort().reverse();
+  // v6.911 — every month from the club's data start (2026-06) to this month is a choice, with or without invoices in it (the list was built from data only, so a month could be missing)
+  const months = (() => {
+    const set = new Set(typeof availableMonths === 'function' ? availableMonths() : []);
+    const cur = currentMonth();
+    let y = 2026, m = 6;
+    while (`${y}-${String(m).padStart(2, '0')}` <= cur) { set.add(`${y}-${String(m).padStart(2, '0')}`); if (++m > 12) { m = 1; y++; } }
+    return [...set].filter(k => k <= cur).sort().reverse();
+  })();
   if (window._targetMonth == null || (months.length && !months.includes(window._targetMonth) && window._targetMonth !== currentMonth())) window._targetMonth = currentMonth();
   const ym = window._targetMonth;
   const monthLabel = (typeof fmtMonth === 'function') ? fmtMonth(ym) : ym;
@@ -7849,7 +7856,7 @@ window.editMemberPricing = function(memberId) {
 // pure sum of the rows. This is the only place to correct a payment's date, and
 // it cannot reintroduce the old re-derivation corruption.
 window.editInvoicePayments = function(invoiceId) {
-  if (currentRole() !== 'admin') { toast(t('Only an admin can edit payment rows.', 'المسؤول فقط يستطيع تعديل صفوف المدفوعات.'), 'error'); return; }   // v6.868 — reception collects with the 💵 Pay button; it no longer edits or removes payment rows
+  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast(t('Only an admin can edit payment rows.', 'المسؤول فقط يستطيع تعديل صفوف المدفوعات.'), 'error'); return; }   // v6.868 — reception collects with the 💵 Pay button; it no longer edits or removes payment rows
   const inv = (state.invoices || []).find(i => i.id === invoiceId && !i.deleted);
   if (!inv) { toast('Invoice not found', 'error'); return; }
   if (typeof dedupeInvoicePayments === 'function') dedupeInvoicePayments(inv);   // v6.534: clean merge-duplicate rows before editing (no doubling)
@@ -13615,13 +13622,13 @@ PAGES.invoices = (main) => {
             : `<span class="text-mute" style="font-size:11px">${t('admin can restore', 'يمكن للمشرف الاسترجاع')}</span>`}
           ` : `
           ${(selMonths.length ? (rowAmtOf(i) - rowPaidOf(i)) > 0.5 : invoiceStatus(i) !== 'Paid') ? `<button class="btn ghost sm" onclick="recordPaymentUI(${i.id})" title="Record a payment toward the balance" style="color:var(--green)">💵 Pay</button>` : ''}
-          ${i.customerId && !isViewerRole() ? `<button class="btn ghost sm" onclick="showInvoiceHistory(${i.customerId})" title="See all invoices for this customer">📜</button>` : ''}
-          ${isViewerRole() ? '' : `<button class="btn ghost sm" onclick="printInvoicePDF(${i.id})" title="Export invoice as PDF (filename = customer name)">⬇ Export</button>`}
+          ${i.customerId ? `<button class="btn ghost sm" onclick="showInvoiceHistory(${i.customerId})" title="See all invoices for this customer">📜</button>` : ''}
+          <button class="btn ghost sm" onclick="printInvoicePDF(${i.id})" title="Export invoice as PDF (filename = customer name)">⬇ Export</button>
           <button class="btn ghost sm" onclick="sendInvoiceWhatsApp(${i.id})" title="Send invoice as WhatsApp message" style="color:#25D366">💬</button>
           ${(i.category === 'Product' && (state.sales || []).some(x => x.invoiceId === i.id && !x.historical)) ? `<button class="btn ghost sm" onclick="addProductToInvoice(${i.id})" title="${t('Add another product to this invoice', 'إضافة منتج آخر لنفس الفاتورة')}" style="color:var(--green)">➕</button><button class="btn ghost sm" onclick="returnSale(${(state.sales.find(x => x.invoiceId === i.id) || {}).id})" title="${t('Return / refund', 'مرتجع / استرداد')}">↩</button>` : ''}
-          <button class="btn ghost sm" onclick="editInvoiceQuick(${i.id})" title="${isViewerRole() ? t('Edit customer / description', 'تعديل العميل / الوصف') : 'Edit coach/sport'}">✏️</button>
-          ${currentRole() === 'admin' && (i.category || 'Membership') === 'Membership' && i.customerId ? `<button class="btn ghost sm" onclick="regenerateInvoice(${i.id})" title="Regenerate from current enrollment (e.g. if duration changed)" style="color:var(--blue)">🔄</button>` : ''}
-          ${isViewerRole() ? '' : `<button class="btn ghost sm" onclick="editInvoicePayments(${i.id})" title="View / edit payments (date, method)">💳</button>`}
+          <button class="btn ghost sm" onclick="editInvoiceQuick(${i.id})" title="Edit coach/sport">✏️</button>
+          ${(currentRole() === 'admin' || currentRole() === 'receptionist') && (i.category || 'Membership') === 'Membership' && i.customerId ? `<button class="btn ghost sm" onclick="regenerateInvoice(${i.id})" title="Regenerate from current enrollment (e.g. if duration changed)" style="color:var(--blue)">🔄</button>` : ''}
+          <button class="btn ghost sm" onclick="editInvoicePayments(${i.id})" title="View / edit payments (date, method)">💳</button>
           <button class="btn ghost sm" onclick="deleteInvoice(${i.id})" title="${t('Delete (archive — recoverable by an admin)', 'حذف (أرشفة — يمكن للمشرف الاسترجاع)')}">🗑</button>`}
         </td>
       </tr>`;
@@ -13694,8 +13701,8 @@ PAGES.invoices = (main) => {
         <button class="btn ghost" id="quick-rental-inv" title="Log a court/room rental with auto-invoice">🏟 + Add Rental</button>
         <button class="btn ghost" id="generate-latest-inv" title="Pick a member: re-prints their invoice for this month if one exists, otherwise creates it from their latest enrollment">⚡ Generate latest invoice</button>
         <button class="btn ghost" id="member-statement-btn" title="Generate a printable statement of all a member's invoices">📄 Member Statement</button>
-        ${isViewerRole() ? '' : '<button class="btn ghost" id="export-inv">📥 Export</button>'}
-        ${isViewerRole() ? '' : `<button class="btn ghost" id="export-inv-detailed" title="${t('Export the filtered invoices WITH full payment history — one row per payment (date, amount, method, who entered it)', 'تصدير الفواتير مع سجل الدفعات الكامل — صف لكل دفعة (التاريخ، المبلغ، الطريقة، من أدخلها)')}">📄 ${t('Export Detailed', 'تصدير تفصيلي')}</button>`}
+        <button class="btn ghost" id="export-inv">📥 Export</button>
+        <button class="btn ghost" id="export-inv-detailed" title="${t('Export the filtered invoices WITH full payment history — one row per payment (date, amount, method, who entered it)', 'تصدير الفواتير مع سجل الدفعات الكامل — صف لكل دفعة (التاريخ، المبلغ، الطريقة، من أدخلها)')}">📄 ${t('Export Detailed', 'تصدير تفصيلي')}</button>
         <button class="btn ghost" onclick="navigate('dupinvoices')" title="Review duplicate invoices side by side before deleting">🔍 Find duplicates</button>
         <button class="btn ${filter.archived ? 'primary' : 'ghost'}" id="inv-archived-toggle" title="${t('Show deleted (archived) invoices — an admin can restore or permanently delete them', 'عرض الفواتير المحذوفة — يمكن للمشرف الاسترجاع أو الحذف النهائي')}">🗑 ${filter.archived ? t('Back to active', 'العودة للنشطة') : t('Archived', 'المؤرشفة')}${filter.archived ? '' : (() => { const n = (state.invoices || []).filter(x => x.deleted).length; return n ? ` (${n})` : ''; })()}</button>
         <button class="btn primary" id="add-inv">+ New Invoice</button>
@@ -14267,7 +14274,7 @@ window.showInvoiceHistory = function(customerId) {
                 <td class="text-right" style="white-space:nowrap">
                   <button class="btn ghost sm" onclick="closeModal();printInvoicePDF(${i.id})" title="Export PDF">⬇</button>
                   ${(currentRole() === 'admin' || currentRole() === 'receptionist') ? `<button class="btn ghost sm" onclick="closeModal();editInvoicePayments(${i.id})" title="View / edit payments (date, method)">💳</button>` : ''}
-                  ${currentRole() === 'admin' && (i.category || 'Membership') === 'Membership' ? `<button class="btn ghost sm" onclick="closeModal();regenerateInvoice(${i.id})" title="Regenerate from current enrollment" style="color:var(--blue)">🔄</button>` : ''}
+                  ${(currentRole() === 'admin' || currentRole() === 'receptionist') && (i.category || 'Membership') === 'Membership' ? `<button class="btn ghost sm" onclick="closeModal();regenerateInvoice(${i.id})" title="Regenerate from current enrollment" style="color:var(--blue)">🔄</button>` : ''}
                   ${currentRole() === 'admin' ? `<button class="btn ghost sm" onclick="closeModal();deleteInvoice(${i.id})" title="Permanently delete this invoice" style="color:var(--red)">🗑</button>` : ''}
                 </td>
               </tr>`).join('')}
@@ -17167,7 +17174,7 @@ window.editInvoiceQuick = function(id) {
           ${currentRole() === 'admin' ? `<button type="button" class="btn ghost sm" style="color:var(--red);padding:2px 8px" title="${t('Delete this payment entry', 'حذف قيد الدفع هذا')}" onclick="_efDeletePayment(${inv.id}, ${i}, ${Number(p.amount) || 0}, '${String(p.date || '').slice(0, 10)}')">🗑</button>` : ''}</div>`).join('')}
       </div>`
     : `<div class="text-mute" style="font-size:11.5px;margin:2px 0 8px">${t('No payment recorded yet — nothing to date.', 'لا توجد دفعة مسجلة بعد.')}</div>`;
-  const _recepEdit = isViewerRole();   // v6.865 — reception edits the customer / description only; every money field is hidden and left untouched
+  const _recepEdit = false;   // v6.912 — reception edits an invoice exactly like the admin (v6.865 hid the money fields)
   setTimeout(() => { if (!_recepEdit) return; try {
     ['ef-category', 'ef-sport', 'ef-coach', 'ef-method', 'ef-amt', 'ef-paid', 'ef-date', 'ef-balance'].forEach(x => { const el = document.getElementById(x); const f = el && (el.closest('.field') || el.parentElement); if (f) f.style.display = 'none'; });
     ['ef-split', 'ef-split-rows'].forEach(x => { const el = document.getElementById(x); const f = el && (x === 'ef-split' ? el.closest('label') : el); if (f) f.style.display = 'none'; });
@@ -17491,7 +17498,7 @@ window.hardDeleteInvoice = function(id) {
 // preserved (so the new due = new amount − paid). Admin-only, with a clear
 // before/after preview before committing.
 window.regenerateInvoice = function(id) {
-  if (currentRole() !== 'admin') { toast('Only admins can regenerate an invoice', 'error'); return; }
+  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast('Only admins can regenerate an invoice', 'error'); return; }
   const inv = state.invoices.find(i => i.id === id);
   if (!inv) { toast('Invoice not found', 'error'); return; }
   if ((inv.category || 'Membership') !== 'Membership') {
@@ -22359,8 +22366,8 @@ window.showRevenueDetail = function(coachId, monthKey) {
       </div>
       ${pendingLines.length ? `
         <div style="margin-top:14px">
-          <div style="font-weight:700;font-size:13px;margin-bottom:6px">⏳ Pending — paid but not yet attended</div>
-          <div class="text-mute" style="font-size:11px;margin-bottom:8px">These classes are already paid for. ${escapeHtml(c.name)} earns them as the member attends, or as a true-up when the membership ends — they'll show up in a future month's pay, on top of that month's commission.</div>
+          <div style="font-weight:700;font-size:13px;margin-bottom:6px">⏳ Pending — not yet attended</div>
+          <div class="text-mute" style="font-size:11px;margin-bottom:8px">NOT part of this month's pay. These packages have classes left (payment status does not matter). ${escapeHtml(c.name)} earns them as the member attends, or as a true-up when the membership ends — they'll show up in a future month's pay, on top of that month's commission.</div>
           <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
             <table style="width:100%;font-size:13px">
               <thead style="background:var(--surface-2)"><tr>
@@ -22637,8 +22644,8 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
       ` : '<div style="padding:14px;background:#f5f5f7;border-radius:6px;color:#666;text-align:center">No commission-generating revenue this month.</div>'}
 
       ${pendingLines.length ? `
-      <h2>⏳ Pending — paid but not yet attended</h2>
-      <div style="font-size:11px;color:#666;margin-bottom:6px">Already paid for. ${escapeHtml(c.name)} earns these as the member attends, or as a true-up when the membership ends — they appear in a future month's pay on top of that month's commission.</div>
+      <h2>⏳ Pending — not yet attended</h2>
+      <div style="font-size:11px;color:#666;margin-bottom:6px"><b>Not part of this month's pay.</b> These packages have classes left (payment status does not matter). ${escapeHtml(c.name)} earns these as the member attends, or as a true-up when the membership ends — they appear in a future month's pay on top of that month's commission.</div>
       <table>
         <thead><tr><th>#</th><th>Member</th><th>Sport</th><th>Start</th><th>End</th><th>Classes left</th><th style="text-align:right">Pending (QAR)</th></tr></thead>
         <tbody>
