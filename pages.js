@@ -204,7 +204,7 @@ function computeStats(arg) {
     currSalaries: cur.salaries, prevSalaries: prev.salaries,
     currSales: cur.sales, prevSales: prev.sales,
     currProfit: cur.profit, prevProfit: prev.profit,
-    unpaidRent: _unpaid.rent, unpaidCitadel: _unpaid.citadel, unpaidTotal: _unpaid.total,
+    unpaidRent: _unpaid.rent, unpaidCitadel: _unpaid.citadel, unpaidAdvertising: _unpaid.advertising || 0, unpaidTotal: _unpaid.total,
     activeMembers: _mc.active, expiredMembers: _mc.expired, completedMembers: _mc.completed, frozenMembers: _mc.frozen, withdrawnMembers: _mc.withdrawn,
     totalMembers: activeMembersList.length,
     archivedMembers: state.members.length - activeMembersList.length,
@@ -885,7 +885,7 @@ PAGES.dashboard = (main) => {
         <div class="kpi-label" title="${t('Accrual view — operating expenses PLUS all coach pay EARNED this month (fixed salaries + commission), whether paid yet or not. This differs from the Expenses screen, which shows cash actually PAID OUT; coach commission earned but not yet paid is the main gap.', 'عرض الاستحقاق — مصروفات التشغيل + كامل أجور المدربين المستحقة هذا الشهر (رواتب ثابتة + عمولة)، سواء دُفعت أم لا. يختلف عن شاشة المصروفات التي تعرض النقد المدفوع فعلياً؛ الفرق الأساسي هو عمولة المدربين المستحقة غير المدفوعة.')}">${t('Total Expenses','إجمالي المصروفات')} (${s.periodShort})</div>
         <div class="kpi-value num">${fmt(s.currExpenses + s.currSalaries + s.unpaidTotal)} <span style="font-size:13px;color:var(--text-dim);font-weight:500">QAR · ${t('accrual', 'استحقاق')}</span></div>
         <div class="kpi-delta flat" title="${t('Cash paid out = what the Expenses screen shows (all recorded expenses this month, incl. salary payments entered). Payroll earned = all coach pay earned this month whether paid yet or not — the accrual headline above = Ops + payroll earned.', 'النقد المدفوع = ما تعرضه شاشة المصروفات (كل المصروفات المسجّلة هذا الشهر شاملة رواتب مدفوعة). الرواتب المستحقة = كامل أجور المدربين هذا الشهر سواء دُفعت أم لا — رقم الاستحقاق بالأعلى = التشغيل + الرواتب المستحقة.')}">💵 ${fmt(s.currCashExpenses)} ${t('cash paid', 'مدفوع نقداً')} · 🧮 ${fmt(s.currSalaries)} ${t('payroll earned', 'رواتب مستحقة')}</div>
-        ${s.unpaidTotal > 0 ? `<div class="kpi-delta flat" style="margin-top:4px" title="${t('Owed but not paid yet, added to this card and to Net Profit on the Dashboard only (nothing is recorded as an expense): the monthly rent plus the Citadel share still unpaid.', 'مستحق ولم يُدفع بعد، يُضاف لهذا الكارت وصافي الربح في لوحة المعلومات فقط (لا يُسجَّل كمصروف): إيجار الشهر + حصة سيتادل غير المدفوعة.')}">⏳ ${fmt(s.unpaidRent)} ${t('rent', 'إيجار')} + ${fmt(s.unpaidCitadel)} Citadel ${t('not paid yet', 'لم تُدفع بعد')}${currentRole() === 'admin' ? ` <a href="#" onclick="event.stopPropagation();window.dashEditUnpaidRent();return false" title="${t('Change the monthly rent amount', 'تغيير مبلغ الإيجار الشهري')}">✎</a>` : ''}</div>` : ''}
+        ${s.unpaidTotal > 0 ? `<div class="kpi-delta flat" style="margin-top:4px" title="${t('Owed but not paid yet, added to this card and to Net Profit on the Dashboard only (nothing is recorded as an expense): the monthly rent, the Citadel share and the marketing share (25% of the income above 52,000) still unpaid.', 'مستحق ولم يُدفع بعد، يُضاف لهذا الكارت وصافي الربح في لوحة المعلومات فقط (لا يُسجَّل كمصروف): إيجار الشهر + حصة سيتادل + حصة التسويق (25% من الدخل فوق 52,000) غير المدفوعة.')}">⏳ ${fmt(s.unpaidRent)} ${t('rent', 'إيجار')} + ${fmt(s.unpaidCitadel)} Citadel${s.unpaidAdvertising > 0.004 ? ` + ${fmt(s.unpaidAdvertising)} ${t('Marketing 25%', 'تسويق 25%')}` : ''} ${t('not paid yet', 'لم تُدفع بعد')}${currentRole() === 'admin' ? ` <a href="#" onclick="event.stopPropagation();window.dashEditUnpaidRent();return false" title="${t('Change the monthly rent amount', 'تغيير مبلغ الإيجار الشهري')}">✎</a>` : ''}</div>` : ''}
       </div>
       <div class="kpi ${(s.currProfit - s.unpaidTotal) >= 0 ? 'green' : 'red'}" style="cursor:pointer" onclick="navigate('reports')" title="${t('Click to open the Reports', 'اضغط لفتح التقارير')}${s.unpaidTotal > 0 ? ' · ' + t('after the unpaid rent + Citadel shown on the expenses card', 'بعد الإيجار وسيتادل غير المدفوعين الظاهرين في كارت المصروفات') : ''}">
         <div class="kpi-icon">${(s.currProfit - s.unpaidTotal) >= 0 ? '📈' : '📉'}</div>
@@ -20258,17 +20258,27 @@ function syncBankCommission() {
     }
   }
   let changed = false;
+  // v6.925 — ONE automatic row per month. Two sessions open at the start of a month (admin tabs, a second device) each created their OWN row with a random id, and the merge kept both
+  // (Nov 2026: two rows of 27). Duplicates already in the data are removed here: the one the admin edited, else the oldest, stays.
+  { const byMonth = new Map();
+    for (const e of state.expenses) if (e && e.autoBankCommission && !e.deleted && e.month) { const a = byMonth.get(e.month) || []; a.push(e); byMonth.set(e.month, a); }
+    const drop = new Set();
+    for (const rows of byMonth.values()) if (rows.length > 1) { rows.sort((x, y) => (y.edited ? 1 : 0) - (x.edited ? 1 : 0) || (Number(x.id) || 0) - (Number(y.id) || 0)); rows.slice(1).forEach(r => drop.add(r)); }
+    if (drop.size) { state.expenses = state.expenses.filter(e => !drop.has(e)); changed = true; } }
+  // v6.925 — a month that already has an automatic row is checked too: when its card payments are gone (the invoice was deleted, the payment removed) the row used to stay at its old amount
+  // (Nov 2026: 27 QAR of commission with no income at all). An untouched row with nothing left to base it on is removed; an edited row is never touched.
+  for (const e of state.expenses) if (e && e.autoBankCommission && !e.deleted && e.month) months.add(e.month);
   for (const ym of months) {
     if (!ym || ym.length !== 7) continue;
     const cardPaid = cardPaidForMonth(ym);
     const rate = bankRateFor(ym);
     const auto = Math.round(cardPaid * rate) / 100;   // ×rate/100, 2dp
-    let row = state.expenses.find(e => e.autoBankCommission && e.month === ym);
+    let row = state.expenses.find(e => e.autoBankCommission && !e.deleted && e.month === ym);
     if (auto <= 0 && !row) continue;            // nothing to add
     if (!row) {
       // Create a fresh auto row dated the 1st of that month.
       row = {
-        id: nextId(state.expenses),
+        id: Number(ym.replace('-', '')) * 1000000 + 1,   // v6.925 — the SAME id on every device, so two sessions creating it at once write ONE document (nextId is random on purpose; here that made two rows)
         autoBankCommission: true,
         edited: false,
         date: ym + '-01',
@@ -20281,6 +20291,9 @@ function syncBankCommission() {
         rate,
       };
       state.expenses.push(row);
+      changed = true;
+    } else if (!row.edited && auto <= 0) {
+      state.expenses = state.expenses.filter(e => e !== row);   // nothing left to charge commission on
       changed = true;
     } else if (!row.edited) {
       // Refresh the computed amount unless the admin has overridden it.
