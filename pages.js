@@ -32868,7 +32868,7 @@ window.sendMemberInvite = async function(memberId) {
   if (!m.portalAccount.createdAt) m.portalAccount.createdAt = new Date().toISOString();
   if (!state.settings) state.settings = {};
   if (!state.settings.userRoles) state.settings.userRoles = {};
-  if (!state.settings.userRoles[email]) {
+  if (!state.settings.userRoles[email] && currentRole() === 'admin') {   // v6.927 — admin only (see ensureMemberPortalAccount)
     const entry = { role: 'student', memberId: m.id };   // Member role — no additional permissions
     stampUpdate(entry);
     state.settings.userRoles[email] = entry;
@@ -33102,6 +33102,7 @@ async function ensureMemberPortalAccount(m) {
   // switches between the children). No family yet → one is made from the members sharing the number (same as "Add Sibling"). A member whose own
   // mobile is unique keeps a login that sees only himself, even if he belongs to a family.
   const sharing = (state.members || []).filter(x => x && !x.deleted && canonicalMobile(x.phone) === digits);
+  const _canMapRoles = currentRole() === 'admin';   // v6.927 — the role map (settings.userRoles) is admin-only on the server; a receptionist who wrote it got "permission-denied" and a red bar that never cleared. A mobile login needs no entry: roleForEmail finds the member (and the family) from the phone.
   let entry = state.settings.userRoles[email];
   if (sharing.length > 1) {
     let famId = m.familyId != null ? m.familyId : ((sharing.find(x => x.familyId != null) || {}).familyId);
@@ -33111,9 +33112,9 @@ async function ensureMemberPortalAccount(m) {
       state.families.push(fam); famId = fam.id;
     }
     sharing.forEach(x => { if (x.familyId == null) { x.familyId = famId; stampUpdate(x); } });
-    if (!entry) { entry = { role: 'student', memberId: m.id, familyId: famId }; stampUpdate(entry); state.settings.userRoles[email] = entry; }
-    else if (entry.familyId == null && entry.role === 'student') { entry.familyId = famId; stampUpdate(entry); }
-  } else if (!entry) { entry = { role: 'student', memberId: m.id }; stampUpdate(entry); state.settings.userRoles[email] = entry; }
+    if (!entry) { if (_canMapRoles) { entry = { role: 'student', memberId: m.id, familyId: famId }; stampUpdate(entry); state.settings.userRoles[email] = entry; } }
+    else if (entry.familyId == null && entry.role === 'student' && _canMapRoles) { entry.familyId = famId; stampUpdate(entry); }
+  } else if (!entry && _canMapRoles) { entry = { role: 'student', memberId: m.id }; stampUpdate(entry); state.settings.userRoles[email] = entry; }
   stampUpdate(m);
   if (typeof audit === 'function') audit('member.account', 'member:' + m.id, (res === 'created' ? 'Portal login created for ' : 'Portal login already existed for ') + (m.name || m.nameArabic) + ' (' + email + ')', { memberId: m.id, account: email, created: res === 'created' });
   save();

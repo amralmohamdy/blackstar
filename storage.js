@@ -746,6 +746,7 @@
         const _FV = (typeof window !== 'undefined' && window.firebase && window.firebase.firestore) ? window.firebase.firestore.FieldValue : null;
         let _baseMetaObj = {}; try { _baseMetaObj = JSON.parse(_baseMeta || '{}'); } catch (_) { _baseMetaObj = {}; }
         metaWrite = _deepMetaDelta(_baseMetaObj, meta, _FV);
+        if (_recepScope && metaWrite.settings && typeof metaWrite.settings === 'object' && 'userRoles' in metaWrite.settings) { delete metaWrite.settings.userRoles; console.warn('[Storage] reception login — a change to the role map is not persisted (admin only)'); }   // v6.927 — it made the server refuse every settings write
         metaWrite._updatedAt = Date.now();   // stamp only on a real change
       }
 
