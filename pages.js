@@ -2360,6 +2360,67 @@ window.viewMemberAttendance = function(id) {
 // Export ONE member's attendance as a PNG image (English or Arabic). Lists every
 // marked day grouped by sport, with per-sport and overall totals. Uses the same
 // offline SVG-foreignObject → canvas technique as the grid image export.
+// v6.929 — print the attendance of ONE package (one row of the Subscription History): its dates, its coach, and only the classes the card counts for it (same window as the card).
+window.printSubAttendance = function (memberId, sid) {
+  const m = state.members.find(x => x.id === memberId);
+  if (!m) { toast('Member not found', 'error'); return; }
+  const sub = (m.subscriptions || []).find(s => (s._sid || s._rid || '') === sid);
+  if (!sub) { toast('Subscription not found', 'error'); return; }
+  const sport = sub.activity || '';
+  const w = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, sub) : { from: sub.start || null, to: sub.end || null };
+  const inWin = iso => (!w.from || iso >= w.from) && (!w.to || iso <= w.to);
+  // the classes: the package's own attendance cell (coach-qualified when the sport has a second coach), inside the card's window
+  const days = [];
+  if (sport === MIXED && m.mixedAttendance) {
+    for (const mo of Object.keys(m.mixedAttendance)) for (const d of Object.keys(m.mixedAttendance[mo] || {})) {
+      const r = m.mixedAttendance[mo][d]; if (!r || r.mark === 'N') continue;
+      const iso = mo + '-' + String(parseInt(d, 10)).padStart(2, '0'); if (inWin(iso)) days.push({ iso, note: [r.sport, r.coachId != null ? coachName(r.coachId) : ''].filter(Boolean).join(' · ') });
+    }
+  } else {
+    for (const mo of Object.keys(m.dailyAttendance || {})) {
+      const day = (typeof attendanceFor === 'function' ? attendanceFor(m, mo, sport, sub.coachId) : ((m.dailyAttendance[mo] || {})[sport])) || {};
+      for (const d of Object.keys(day)) { if (day[d] !== 'Y') continue; const iso = mo + '-' + String(parseInt(d, 10)).padStart(2, '0'); if (inWin(iso)) days.push({ iso, note: '' }); }
+    }
+  }
+  days.sort((a, b) => a.iso.localeCompare(b.iso));
+  const total = (typeof subClassLimit === 'function') ? (parseInt(subClassLimit(sub)) || 0) : (parseInt(sub.totalClasses) || 0);
+  const counted = (typeof subLiveAttendance === 'function' && sport !== MIXED) ? subLiveAttendance(m, sub, w).y : days.length;   // what the card shows
+  const attended = Math.max(counted, 0), left = total ? Math.max(0, total - attended) : null, pct = total ? Math.min(100, Math.round(attended / total * 100)) : null;
+  const dayEn = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'], dayAr = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+  const wd = iso => new Date(iso + 'T00:00:00Z').getUTCDay();
+  const end = (typeof subscriptionValidEnd === 'function' ? subscriptionValidEnd(sub) : sub.end) || sub.end || null;
+  const rows = days.map((d, i) => '<tr><td class="c">' + (i + 1) + '</td><td>' + fmtDate(d.iso) + '</td><td>' + dayEn[wd(d.iso)] + ' · ' + dayAr[wd(d.iso)] + '</td><td>' + escapeHtml(d.note) + '</td><td class="c ok">✓ ' + 'Present · حاضر' + '</td></tr>').join('');
+  const nameAr = m.nameArabic ? '<div class="ar">' + escapeHtml(m.nameArabic) + '</div>' : '';
+  const win = window.open('', '_blank');
+  if (!win) { toast('Allow pop-ups to print', 'error'); return; }
+  win.document.write('<!doctype html><html><head><meta charset="utf-8"><title>' + escapeHtml((m.name || 'Member') + ' — ' + sport + ' attendance') + '</title><style>' +
+    'body{font-family:-apple-system,"Segoe UI",Tahoma,Arial,sans-serif;color:#1a1a1a;margin:28px;max-width:760px}' +
+    '.head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #f26060;padding-bottom:10px;margin-bottom:14px}' +
+    '.brand{font-size:20px;font-weight:800}.brand span{color:#f26060}.sub{color:#777;font-size:11px;margin-top:2px}' +
+    'h1{font-size:18px;margin:0 0 2px}.ar{font-size:15px;color:#555;direction:rtl;margin-bottom:6px}' +
+    '.box{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0 14px}.k{flex:1;min-width:120px;border:1px solid #e5e5ea;border-radius:8px;padding:8px 12px}' +
+    '.k .l{font-size:10px;text-transform:uppercase;color:#999;letter-spacing:.4px}.k .v{font-size:17px;font-weight:700;margin-top:2px}' +
+    '.bar{height:7px;background:#eee;border-radius:4px;overflow:hidden;margin:2px 0 14px}.bar i{display:block;height:100%;background:#059669}' +
+    'table{width:100%;border-collapse:collapse}th{font-size:10px;color:#777;background:#fafafa;text-transform:uppercase;letter-spacing:.4px;text-align:left}' +
+    'th,td{border:1px solid #e5e5ea;padding:6px 10px;font-size:12px}td.c,th.c{text-align:center}td.ok{background:#d1fae5;color:#065f46;font-weight:700;text-align:center}' +
+    '.foot{margin-top:18px;font-size:10px;color:#aaa;text-align:center;border-top:1px solid #eee;padding-top:8px}@media print{body{margin:12mm}}' +
+    '</style></head><body>' +
+    '<div class="head"><div><div class="brand">Black <span>Stars</span> Sports Club</div><div class="sub">Waab, Doha · Package attendance · حضور الباقة</div></div><div style="text-align:right;font-size:11px;color:#777">Generated · تاريخ الإصدار<br><b>' + fmtDate(TODAY) + '</b></div></div>' +
+    '<h1>' + escapeHtml(m.name || '') + '</h1>' + nameAr +
+    '<div style="font-size:13px"><b>' + escapeHtml(sport) + '</b>' + ((isCampSport(sport) || sport === MIXED) ? '' : ' · Coach · المدرب <b>' + escapeHtml(coachName(sub.coachId) || '—') + '</b>') + '</div>' +
+    '<div style="font-size:12px;color:#555;margin-top:2px">Package · الباقة: <b>' + (sub.start ? fmtDate(sub.start) : '…') + ' → ' + (end ? fmtDate(end) : '…') + '</b></div>' +
+    '<div class="box"><div class="k"><div class="l">Attended · حضر</div><div class="v" style="color:#059669">' + attended + '</div></div>' +
+    '<div class="k"><div class="l">Package classes · حصص الباقة</div><div class="v">' + (total || '—') + '</div></div>' +
+    '<div class="k"><div class="l">Remaining · المتبقي</div><div class="v">' + (left == null ? '—' : left) + '</div></div>' +
+    '<div class="k"><div class="l">Rate · النسبة</div><div class="v">' + (pct == null ? '—' : pct + '%') + '</div></div></div>' +
+    (pct == null ? '' : '<div class="bar"><i style="width:' + pct + '%"></i></div>') +
+    '<table><thead><tr><th class="c">#</th><th>Date · التاريخ</th><th>Day · اليوم</th><th>' + (sport === MIXED ? 'Sport · Coach' : '') + '</th><th class="c">Attendance · الحضور</th></tr></thead><tbody>' +
+    (rows || '<tr><td colspan="5" class="c" style="color:#999;padding:14px">No classes attended in this package yet · لا توجد حصص مسجّلة</td></tr>') + '</tbody></table>' +
+    (counted !== days.length ? '<div style="margin-top:8px;font-size:11px;color:#b45309">Note · ملاحظة: the member card counts ' + counted + ' for this package; ' + days.length + ' dated class(es) are listed.</div>' : '') +
+    '<div class="foot">Black Stars CRM · only the classes of this package are listed</div>' +
+    '<script>window.onload=function(){window.print();}<\/script></body></html>');
+  win.document.close();
+};
 window.exportMemberAttendanceImage = function(id, lang) {
   const m = state.members.find(x => x.id === id);
   if (!m) { toast('Member not found', 'error'); return; }
@@ -2737,8 +2798,12 @@ function viewMember(id) {
           const invBtn = (!isViewerRole() && sid)
             ? ` <button onclick="event.stopPropagation();printMemberSubInvoicePDF(${m.id}, '${sid}')" title="${t('Export an invoice for this sport only', 'تصدير فاتورة لهذه الرياضة فقط')}" style="background:transparent;border:0;color:var(--green);opacity:.85;cursor:pointer;padding:0 3px;font-size:12px">📄</button>`
             : '';
-          _statParts.set(s, { label, badge, acts: `${invBtn}${editBtn}${delBtn}` });
-          return `${badge}${invBtn}${editBtn}${delBtn}`;
+          // v6.929 — print the attendance of JUST this package (its dates, its classes)
+          const attBtn = (sid && !s._synthFromEnrollment)
+            ? ` <button onclick="event.stopPropagation();printSubAttendance(${m.id}, '${sid}')" title="${t('Print the attendance of this package only', 'طباعة حضور هذه الباقة فقط')}" style="background:transparent;border:0;color:var(--accent-2);opacity:.9;cursor:pointer;padding:0 3px;font-size:12px">🗓</button>`
+            : '';
+          _statParts.set(s, { label, badge, acts: `${invBtn}${attBtn}${editBtn}${delBtn}` });
+          return `${badge}${invBtn}${attBtn}${editBtn}${delBtn}`;
         })()}</td>
       </tr>
     `;
@@ -17902,6 +17967,7 @@ window.printMemberSubInvoicePDF = function(memberId, sid, opts) {
   const _paidOf = (iv) => (typeof invoicePaid === 'function') ? invoicePaid(iv) : (iv.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
 
   const lineItems = [];
+  const usedRefs = [];   // v6.928 — the real invoice number(s) this printout is made from (it used to print a made-up INV-<member>-<SPORT>)
   let amount = 0, paid = 0, issueDate = sub.start || m.startDate || TODAY;
 
   // Prefer THIS period's own invoice (sub.invoiceNumber). Otherwise fall back to any membership
@@ -17924,6 +17990,7 @@ window.printMemberSubInvoicePDF = function(memberId, sid, opts) {
       : [{ sport: iv.sport, coach: iv.coach, coachId: iv.coachId, classes: iv.classes, price: iv.amount || 0 }];
     const mine = items.filter(li => (li.sport || '') === sport && sameCoach(li.coachId));
     if (!mine.length) continue;
+    if (iv.ref && !usedRefs.includes(iv.ref)) usedRefs.push(iv.ref);
     const lineSum = mine.reduce((s, li) => s + (Number(li.price) || 0), 0);
     for (const li of mine) {
       let _period = null;
@@ -17963,7 +18030,7 @@ window.printMemberSubInvoicePDF = function(memberId, sid, opts) {
   const startD = (first && first._period && first._period.start) || sub.start || issueDate;
   const temp = {
     id: tempId,
-    ref: 'INV-' + String(m.id).padStart(4, '0') + '-' + (sport.replace(/[^A-Za-z0-9]/g, '').slice(0, 5).toUpperCase() || 'SPORT'),
+    ref: (usedRefs.length ? (usedRefs.length > 3 ? usedRefs.slice(0, 3).join(' + ') + ' +' + (usedRefs.length - 3) : usedRefs.join(' + ')) : (sub.invoiceNumber || '')) || ('INV-' + String(m.id).padStart(4, '0') + '-' + (sport.replace(/[^A-Za-z0-9]/g, '').slice(0, 5).toUpperCase() || 'SPORT')),   // v6.928 — the package's REAL invoice number first
     date: startD, month: String(startD).slice(0, 7),
     category: 'Membership', activityType: 'subscription',
     customerId: memberId, customerName: m.name, customerPhone: m.phone,
