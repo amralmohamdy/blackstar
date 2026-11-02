@@ -16487,7 +16487,7 @@ window._fixFileCheck = function (fx) {
     if (!doc) return bad((op.label || '#' + op.id) + ': ' + t('record not found', 'السجل غير موجود'));
     for (const k of Object.keys(op.expectFields || {})) if (JSON.stringify(doc[k] === undefined ? null : doc[k]) !== JSON.stringify(op.expectFields[k])) return bad((op.label || '#' + op.id) + ': ' + t('"' + k + '" is not what the file expects — already fixed or changed since', '"' + k + '" ليس كما يتوقع الملف — تم إصلاحه أو تغيّر')); 
     for (const arr of Object.keys(op.removeFrom || {})) for (const key of Object.keys(op.removeFrom[arr])) for (const id of op.removeFrom[arr][key]) if (!(doc[arr] || []).some(r => r && String(r[key]) === String(id))) return bad((op.label || '#' + op.id) + ': ' + arr + ' ' + id + ' ' + t('not found — already fixed?', 'غير موجود — تم إصلاحه؟'));
-    for (const arr of Object.keys(op.updateIn || {})) for (const u of op.updateIn[arr]) { const k = Object.keys(u.match || {})[0]; if (!k || !(doc[arr] || []).some(r => r && String(r[k]) === String(u.match[k]))) return bad((op.label || '#' + op.id) + ': ' + arr + ' ' + t('row not found', 'السطر غير موجود')); }
+    for (const arr of Object.keys(op.updateIn || {})) for (const u of op.updateIn[arr]) { const ks = Object.keys(u.match || {}); if (!ks.length || !(doc[arr] || []).some(r => r && ks.every(k => String(r[k]) === String(u.match[k])))) return bad((op.label || '#' + op.id) + ': ' + arr + ' ' + t('row not found', 'السطر غير موجود')); }
     plan.push({ op, doc, label: op.label || ('#' + op.id) });
   }
   return { ok: true, plan };
@@ -16504,7 +16504,7 @@ window._fixFileApply = function (fx) {
       continue;
     }
     for (const arr of Object.keys(op.removeFrom || {})) doc[arr] = (doc[arr] || []).filter(r => !Object.keys(op.removeFrom[arr]).some(key => op.removeFrom[arr][key].some(id => r && String(r[key]) === String(id))));
-    for (const arr of Object.keys(op.updateIn || {})) for (const u of op.updateIn[arr]) { const k = Object.keys(u.match)[0]; (doc[arr] || []).filter(r => r && String(r[k]) === String(u.match[k])).forEach(r => Object.assign(r, JSON.parse(JSON.stringify(u.set)))); }
+    for (const arr of Object.keys(op.updateIn || {})) for (const u of op.updateIn[arr]) { const ks = Object.keys(u.match); (doc[arr] || []).filter(r => r && ks.every(k => String(r[k]) === String(u.match[k]))).forEach(r => Object.assign(r, JSON.parse(JSON.stringify(u.set)))); }
     if (op.set) Object.assign(doc, JSON.parse(JSON.stringify(op.set)));
     if (typeof stampUpdate === 'function') stampUpdate(doc);
   }

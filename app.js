@@ -14,7 +14,8 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.933.0';   // 6.933.0 a fix file can now CREATE an invoice (+ re-point a package to it), to split a package off a mixed-month invoice;
+const APP_VERSION = '6.934.0';   // 6.934.0 a package's revenue month follows its START month whenever the start moves (renewal moved to first class / Edit Member); a fix file can match a line on several keys;
+// prev:   // 6.933.0 a fix file can now CREATE an invoice (+ re-point a package to it), to split a package off a mixed-month invoice;
 // prev:   // 6.932.0 deleted invoices/expenses no longer add a month to the month lists (no phantom "Feb 27");
 // prev:   // 6.931.0 "+n" now sits right next to the attended count on the package row (13 / 12 +1);
 // prev:   // 6.930.0 the member profile shows "+n classes" attended outside the package period;
@@ -452,6 +453,21 @@ function renewalStartPlan(m, sub) {
   if (next && (first >= next || (newEnd && newEnd >= next))) return { blocked: 'overlaps the next package', first, newEnd };
   return { first, newEnd, oldStart: sub.start, oldEnd: sub.end || null };
 }
+// v6.934 — a package's REVENUE month is its START month (not the payment month): whenever a package's start moves, its invoice line follows.
+// Skipped when another package of the same sport + coach shares the invoice (the line is shared — it would move the other one too).
+function alignRevenueToStart(m, sub) {
+  if (!m || !sub || !sub.start || !sub.invoiceNumber) return false;
+  const inv = (state.invoices || []).find(i => i && !i.deleted && i.ref === sub.invoiceNumber);
+  if (!inv || !Array.isArray(inv.lineItems)) return false;
+  const act = sub.activity || '';
+  if ((m.subscriptions || []).some(o => o && o !== sub && o.invoiceNumber === sub.invoiceNumber && (o.activity || '') === act && String(o.coachId) === String(sub.coachId))) return false;
+  const li = inv.lineItems.find(l => l.sport === act && String(l.coachId) === String(sub.coachId)) || inv.lineItems.find(l => l.sport === act);
+  if (!li) return false;
+  const sm = String(sub.start).slice(0, 7), im = String(invoiceBillMonth(inv) || '').slice(0, 7);
+  if (!sm || (li.billMonth || im) === sm) return false;   // already in the start month
+  li.billMonth = sm;
+  return true;
+}
 function applyRenewalStart(m, sub, plan) {
   if (!m || !sub || !plan || plan.blocked) return false;
   const act = sub.activity || '', oldStart = plan.oldStart, oldEnd = plan.oldEnd;
@@ -460,7 +476,7 @@ function applyRenewalStart(m, sub, plan) {
   // keep the money exactly where it was: the invoice line's revenue month is read BEFORE the start moves
   const inv = sub.invoiceNumber ? (state.invoices || []).find(i => i && !i.deleted && i.ref === sub.invoiceNumber) : null;
   const li = inv && Array.isArray(inv.lineItems) ? (inv.lineItems.find(l => l.sport === act && String(l.coachId) === String(sub.coachId)) || inv.lineItems.find(l => l.sport === act)) : null;
-  const pinMonth = (li && !li.billMonth) ? lineRevenueMonth(li, inv) : null;
+  const pinMonth = null;   // v6.934 — revenue FOLLOWS the new start month (alignRevenueToStart below), no longer pinned to the old one
   const rn = sub._rid ? (m.renewals || []).find(r => r._rid === sub._rid) : null;
   const en = (m.enrollments || []).find(e => e.sport === act && String(e.coachId) === String(sub.coachId));
   const undo = { sMonth: sub.month, rn: rn ? [rn.start, rn.end] : null, en: en ? en.start : null, sd: m.startDate, ed: m.expiryDate };
@@ -478,7 +494,7 @@ function applyRenewalStart(m, sub, plan) {
     m.startDate = undo.sd; m.expiryDate = undo.ed;
     return false;
   }
-  if (li && pinMonth) li.billMonth = pinMonth;
+  alignRevenueToStart(m, sub);
   if (typeof audit === 'function') audit('subscription.restart', `member:${m.id}`, `Renewal start moved to first attended class: ${m.name} · ${act} · ${oldStart} → ${plan.first}`,
     { memberId: m.id, name: m.name, sport: act, oldStart, newStart: plan.first, oldEnd, newEnd: plan.newEnd });
   if (typeof stampUpdate === 'function') stampUpdate(m);
@@ -5959,6 +5975,7 @@ function syncSubToEnrollment(sub, e, member, invoices, opts) {   // opts.keepCoa
   // Camp end = BUSINESS days (Sun–Thu) via campEndDate; every other sport = calendar validity. (v6.357)
   if (eStart) {
     sub.start = eStart; sub.validity = eValidity;
+    alignRevenueToStart(member, sub);   // v6.934 — the line's revenue month follows the start
     // Custom camp expires on the Nth camp-day (its day count); presets keep editable validity. (v6.458)
     sub.end = rowEndDate(e.sport, eStart, eValidity, e.classes, e.durationLabel, e._campCustom);
   }
