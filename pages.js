@@ -605,8 +605,8 @@ window.showDayCollections = function () {
 function _dashPeriodPicker() {
   const per = normalizeDashPeriod();
   const set = new Set([currentMonth()]);
-  for (const i of state.invoices) if (i.month) set.add(i.month);
-  for (const e of (state.expenses || [])) { const mo = expenseMonth(e); if (mo) set.add(mo); }
+  for (const i of state.invoices) if (i.month && !i.deleted) set.add(i.month);   // v6.932 — a deleted invoice adds no month
+  for (const e of (state.expenses || [])) { if (e.deleted) continue; const mo = expenseMonth(e); if (mo) set.add(mo); }
   const months = [...set].filter(plausibleMonthKey).sort().reverse();   // drop corrupt years (v6.621)
   const years = [...new Set(months.map(m => m.slice(0, 4)))].sort().reverse();
   const picked = new Set((per.type === 'month' || per.type === 'months') ? dashPeriodMonths(per) : []);
@@ -16462,6 +16462,7 @@ window._applyFixDuplicateSubs = function () {
 // A small JSON that repairs single records (members / invoices) without restoring a whole backup, so anything typed since (attendance, payments) is kept:
 // { format:'bs-fix/1', title, summary:[…], ops:[{ collection, id, expectFields:{…}, removeFrom:{ array:{key:[ids]} }, updateIn:{ array:[{match:{key:id}, set:{…}}] }, set:{…} }] }
 // Refused when a row it removes / updates is missing or a field it expects differs (already fixed, or changed). All or nothing.
+// v6.933 — an op may also CREATE an invoice: { collection:'invoices', id:<new id>, create:{ …the invoice… }, linkSub:{ memberId, _sid, expectInvoice } } — its ref is the next free one, and the package row is re-pointed to it. Refused if that id already exists.
 window._fixFileCheck = function (fx) {
   const OK = { members: 1, invoices: 1 };
   const bad = m => ({ ok: false, error: m });
@@ -16469,6 +16470,19 @@ window._fixFileCheck = function (fx) {
   const plan = [];
   for (const op of fx.ops) {
     if (!op || !OK[op.collection] || op.id == null) return bad(t('The file has a bad operation', 'الملف يحتوي عملية غير صالحة'));
+    if (op.create) {   // v6.933 — create an invoice and re-point one package row to it
+      if (op.collection !== 'invoices' || typeof op.create !== 'object') return bad(t('The file has a bad operation', 'الملف يحتوي عملية غير صالحة'));
+      if ((state.invoices || []).some(x => x && String(x.id) === String(op.id))) return bad((op.label || '#' + op.id) + ': ' + t('already created', 'تم إنشاؤه مسبقاً'));
+      let _sub = null;
+      if (op.linkSub) {
+        const _m = (state.members || []).find(x => x && String(x.id) === String(op.linkSub.memberId));
+        _sub = _m && (_m.subscriptions || []).find(s => s && s._sid === op.linkSub._sid);
+        if (!_sub) return bad((op.label || '#' + op.id) + ': ' + t('package not found', 'الباقة غير موجودة'));
+        if (op.linkSub.expectInvoice != null && _sub.invoiceNumber !== op.linkSub.expectInvoice) return bad((op.label || '#' + op.id) + ': ' + t('the package is no longer on invoice ', 'الباقة لم تعد على الفاتورة ') + op.linkSub.expectInvoice);
+      }
+      plan.push({ op, doc: null, sub: _sub, label: op.label || ('#' + op.id) });
+      continue;
+    }
     const doc = (state[op.collection] || []).find(x => x && String(x.id) === String(op.id));
     if (!doc) return bad((op.label || '#' + op.id) + ': ' + t('record not found', 'السجل غير موجود'));
     for (const k of Object.keys(op.expectFields || {})) if (JSON.stringify(doc[k] === undefined ? null : doc[k]) !== JSON.stringify(op.expectFields[k])) return bad((op.label || '#' + op.id) + ': ' + t('"' + k + '" is not what the file expects — already fixed or changed since', '"' + k + '" ليس كما يتوقع الملف — تم إصلاحه أو تغيّر')); 
@@ -16481,7 +16495,14 @@ window._fixFileCheck = function (fx) {
 window._fixFileApply = function (fx) {
   const chk = window._fixFileCheck(fx);
   if (!chk.ok) return chk;
-  for (const { op, doc } of chk.plan) {
+  for (const { op, doc, sub } of chk.plan) {
+    if (op.create) {   // v6.933
+      const nd = JSON.parse(JSON.stringify(op.create)); nd.id = op.id; nd.ref = nextInvoiceRef();
+      if (typeof stampUpdate === 'function') stampUpdate(nd);
+      state.invoices.push(nd);
+      if (sub) { sub.invoiceNumber = nd.ref; const _o = (state.members || []).find(x => x && (x.subscriptions || []).includes(sub)); if (_o && typeof stampUpdate === 'function') stampUpdate(_o); }
+      continue;
+    }
     for (const arr of Object.keys(op.removeFrom || {})) doc[arr] = (doc[arr] || []).filter(r => !Object.keys(op.removeFrom[arr]).some(key => op.removeFrom[arr][key].some(id => r && String(r[key]) === String(id))));
     for (const arr of Object.keys(op.updateIn || {})) for (const u of op.updateIn[arr]) { const k = Object.keys(u.match)[0]; (doc[arr] || []).filter(r => r && String(r[k]) === String(u.match[k])).forEach(r => Object.assign(r, JSON.parse(JSON.stringify(u.set)))); }
     if (op.set) Object.assign(doc, JSON.parse(JSON.stringify(op.set)));
