@@ -2360,6 +2360,52 @@ window.viewMemberAttendance = function(id) {
 // Export ONE member's attendance as a PNG image (English or Arabic). Lists every
 // marked day grouped by sport, with per-sport and overall totals. Uses the same
 // offline SVG-foreignObject → canvas technique as the grid image export.
+// v6.930 — "+n classes": classes a member attended OUTSIDE every package window of a sport (after the package's paid classes / dates ended), per sport.
+function memberExtraClasses(m) {
+  const out = [], da = m.dailyAttendance || {}, sports = {};
+  for (const s of (m.subscriptions || [])) {
+    if (!s || !s.activity || s.switchedAwayTo || String(s.status || '').toLowerCase() === 'withdrawn') continue;
+    if ((typeof isCampSport === 'function' && isCampSport(s.activity)) || s.activity === MIXED) continue;
+    (sports[s.activity] = sports[s.activity] || []).push(s);
+  }
+  for (const sp of Object.keys(sports)) {
+    const subs = sports[sp], first = subs.map(s => String(s.start || '')).filter(Boolean).sort()[0] || '';
+    const wins = subs.map(s => (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, s) : { from: s.start || null, to: s.end || null });
+    const days = [];
+    for (const mo of Object.keys(da)) {
+      for (const cell of Object.keys(da[mo] || {})) {
+        if (cell !== sp && cell.indexOf(sp + ' ') !== 0) continue;
+        for (const d of Object.keys(da[mo][cell] || {})) {
+          if (da[mo][cell][d] !== 'Y') continue;
+          const iso = mo + '-' + String(parseInt(d, 10)).padStart(2, '0');
+          if (first && iso < first) continue;
+          if (!wins.some(w => (!w.from || iso >= w.from) && (!w.to || iso <= w.to))) days.push(iso);
+        }
+      }
+    }
+    if (days.length) out.push({ sport: sp, days: days.sort() });
+  }
+  return out;
+}
+window.memberExtraClasses = memberExtraClasses;
+// v6.930 — Map(sub → [extra days]): each extra class is shown on the package it follows (the same sport's package whose window ended last before that day)
+function memberExtraBySub(m) {
+  const map = new Map(), subs = m.subscriptions || [];
+  let ex = []; try { ex = memberExtraClasses(m); } catch (e) { return map; }
+  for (const x of ex) {
+    const mine = subs.filter(s => s && (s.activity || '') === x.sport && !s.switchedAwayTo && String(s.status || '').toLowerCase() !== 'withdrawn')
+      .map(s => ({ s, w: (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, s) : { from: s.start || null, to: s.end || null } }));
+    for (const d of x.days) {
+      const before = mine.filter(o => !o.w.to || o.w.to < d).sort((a, b) => String(b.w.to || '9999').localeCompare(String(a.w.to || '9999')));
+      const o = before[0] || mine.sort((a, b) => String(b.w.to || '').localeCompare(String(a.w.to || '')))[0];
+      if (!o) continue;
+      if (!map.has(o.s)) map.set(o.s, []);
+      map.get(o.s).push(d);
+    }
+  }
+  return map;
+}
+window.memberExtraBySub = memberExtraBySub;
 // v6.929 — print the attendance of ONE package (one row of the Subscription History): its dates, its coach, and only the classes the card counts for it (same window as the card).
 window.printSubAttendance = function (memberId, sid) {
   const m = state.members.find(x => x.id === memberId);
@@ -2654,6 +2700,7 @@ function viewMember(id) {
     .filter(r => !r._rid || !subRids.has(r._rid))
     .filter(r => !_supersededBySwitch(r))
     .map(r => ({ ...r, manual: true, month: ymToShort((r.start || '').slice(0,7)) || (r.start || '').slice(0,7) }));
+  const _extraBySub = (typeof memberExtraBySub === 'function') ? memberExtraBySub(m) : new Map();   // v6.930 — "+n" next to a package's attended count
   const allSubs = [
     ...(m.subscriptions || []),
     ...standaloneRenewals,
@@ -2719,7 +2766,7 @@ function viewMember(id) {
     const attCell = _swInfo ? `<div style="min-width:140px;font-size:11px"><span class="font-bold">${_swInfo.used} / ${_swInfo.orig}</span> ${t('used', 'مستخدمة')}<div class="text-mute" style="margin-top:2px">${_swInfo.moved} ${t('classes moved →', 'حصة نُقلت ←')} ${escapeHtml(s.switchedAwayTo)}</div></div>` : total ? `
       <div style="min-width:140px">
         <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px">
-          <span class="font-bold">${attended ?? 0} / ${total}${isLive ? ' <span style="color:var(--green);font-weight:400" title="From attendance grid">●</span>' : ''}</span>
+          <span class="font-bold">${attended ?? 0} / ${total}${isLive ? ' <span style="color:var(--green);font-weight:400" title="From attendance grid">●</span>' : ''}${(_extraBySub.get(s) || []).length ? ` <span style="color:#b45309;background:#fef3c7;border-radius:4px;padding:0 4px" title="${t('Attended outside the package period', 'حضر خارج فترة الباقة')}: ${(_extraBySub.get(s) || []).map(d => fmtDate(d)).join(' · ')}">+${(_extraBySub.get(s) || []).length}</span>` : ''}</span>
           ${pct != null ? `<span class="text-dim">${pct}%</span>` : ''}
         </div>
         <div style="height:4px;background:var(--surface-2);border-radius:2px;overflow:hidden">
@@ -2915,6 +2962,15 @@ function viewMember(id) {
       ${out.map(x => `<div>⚠ <b>${escapeHtml(x.sport)}</b>${coachName(x.coachId) ? ' · ' + escapeHtml(coachName(x.coachId)) : ''} ${t('is billed on', 'مفوترة على')} <b>${x.refs.length}</b> ${t('invoice lines', 'بنود فواتير')} (${x.refs.map(escapeHtml).join(' · ')}) — ${t('the total / due above can be inflated.', 'والإجمالي / المتبقي بالأعلى قد يكون مبالغاً فيه.')}${admin ? ` <button type="button" class="btn ghost sm" onclick="closeModal();openDupLineResolver(${escapeHtml(JSON.stringify('m' + m.id))},${escapeHtml(JSON.stringify(x.sport))},${escapeHtml(JSON.stringify(x.coachId))})">🧹 ${t('Review & fix', 'مراجعة وإصلاح')}</button>` : ''}</div>`).join('')}</div>`;
   })();
 
+  // v6.930 — "+n classes": attended outside the package period (paid classes used up / dates ended) — not counted in any package
+  const _extraBanner = (() => {
+    let ex = []; try { ex = memberExtraClasses(m); } catch (e) { console.error('extra classes failed', e); }
+    if (!ex.length) return '';
+    return `<div style="margin:0 0 12px;padding:10px 12px;border:1px solid rgba(217,119,6,.45);background:rgba(245,158,11,.10);border-radius:10px;font-size:12.5px;line-height:1.7">
+      ${ex.map(x => `<div>➕ <b>${escapeHtml(x.sport)}</b> <span class="badge" style="background:#fef3c7;color:#92400e;font-weight:700">+${x.days.length}</span> ${t('class(es) attended outside the package period — not counted in any package', 'حصص حضرها خارج فترة الباقة — لا تُحسب على أي باقة')}: ${x.days.map(d => fmtDate(d)).join(' · ')}</div>`).join('')}
+    </div>`;
+  })();
+
   showModal({
     title: `Member: ${escapeHtml(m.name)}`,
     body: `
@@ -2990,6 +3046,7 @@ function viewMember(id) {
         </div>
       </div>
       ${_dupBanner}
+      ${_extraBanner}
       <h3 style="font-size:13px;font-weight:600;margin-bottom:8px">Subscription History (${_shownRows})</h3>
       <div class="table-wrap">
         <table>
