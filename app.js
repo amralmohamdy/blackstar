@@ -14,7 +14,8 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.934.0';   // 6.934.0 a package's revenue month follows its START month whenever the start moves (renewal moved to first class / Edit Member); a fix file can match a line on several keys;
+const APP_VERSION = '6.935.0';   // 6.935.0 salary payments no longer come out of the Cash in Hand drawer;
+// prev:   // 6.934.0 a package's revenue month follows its START month whenever the start moves (renewal moved to first class / Edit Member); a fix file can match a line on several keys;
 // prev:   // 6.933.0 a fix file can now CREATE an invoice (+ re-point a package to it), to split a package off a mixed-month invoice;
 // prev:   // 6.932.0 deleted invoices/expenses no longer add a month to the month lists (no phantom "Feb 27");
 // prev:   // 6.931.0 "+n" now sits right next to the attended count on the package row (13 / 12 +1);

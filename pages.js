@@ -19265,6 +19265,7 @@ function cashDrawerFrom(c, upper) {
   // v6.843 — expenses paid in CASH (incl. cash salary payments) leave the drawer too. Only rows that SAY cash count; a row can be taken out with noDrawer.
   for (const e of _drawerExpenses()) {
     if (!e || e.deleted || e.noDrawer || e.autoBankCommission || (e.category || '') === CASH_COLLECTION_CATEGORY) continue;
+    if (isSalaryCategory(e.category)) continue;   // v6.935 — a salary payment does not come out of the cash drawer (the owner pays salaries from outside it)
     if (!e.method || normalizeMethod(e.method) !== 'cash') continue;
     const amt = Number(e.amount) || 0;
     if (amt > 0 && after(e.date || (e.month ? e.month + '-01' : ''), e.createdAt || e.at)) moves.push({ when: e.createdAt || e.at || e.date, amount: -amt, label: t('Cash expense: ', 'مصروف نقدي: ') + (e.description || e.category || ''), ref: e.category || '', kind: 'expense', exp: e.id });
