@@ -14,7 +14,9 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.944.0';   // 6.944.0 reception can delete a package that has NO attended class (or a duplicate twin) from the member card; deleting one with attendance stays admin-only;
+const APP_VERSION = '6.946.0';   // 6.946.0 old salary months stay LIVE (the old way) until the owner closes them (Salaries ▸ 🔒 Close old months); from November a paid month freezes by itself; what still differs after closing goes to the next month for approval;
+// prev:   // 6.945.0 admin-only shortcuts: Alt+Shift+S salaries · Alt+Shift+A attendance · Alt+Shift+I invoices;
+// prev:   // 6.944.0 reception can delete a package that has NO attended class (or a duplicate twin) from the member card; deleting one with attendance stays admin-only;
 // prev:   // 6.943.0 New/Edit Product: Category and SKU are drop-downs of the values already used, with "+ New…" to type a new one;
 // prev:   // 6.942.0 reception: the New Expense form no longer offers the categories the server hides from her (her expense vanished), and Cash in Hand no longer shows a delete button that only refuses;
 // prev:   // 6.941.0 My Salary is open to a coach again (his own pay page; Targets stay closed);
@@ -10014,10 +10016,14 @@ function computeMonthlyPay(coachId, monthKey, uptoDate) {
   // is NOT added to that month: the difference is shown in the NEXT month as a "late adjustment" (member by member) and only joins that month's pay when the owner accepts it.
   const _lateRecs = (state.salaries || []).filter(s => s && s.kind === 'lateadj' && s.coachId === coachId);
   const lateIn = _lateRecs.filter(s => s.status === 'accepted' && (uptoDate ? s.month <= monthKey : s.month === monthKey)).reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0);
-  const frozenNet = (paidRecord && !uptoDate && String(monthKey) < currentMonth()) ? salaryFrozenRef(paidRecord) : null;
-  const frozen = frozenNet != null;
+  // v6.946 — freezing is OFF for the old months until the owner CLOSES them (settings.salaryClosedThrough): until then a month behaves the old way (live — a late class raises what is due).
+  // From November (settings.freezeAutoFrom) a paid past month freezes by itself. A frozen month stands at max(agreed amount, what was actually paid); whatever the live calculation then says
+  // beyond that (a coach paid more / less than it) is the late amount — handed to the NEXT month for approval from October (settings.lateAdjFrom) on.
+  const _S = state.settings || {}, _closedThru = _S.salaryClosedThrough || '', _autoFrom = _S.freezeAutoFrom || '2026-11', _lateFrom = _S.lateAdjFrom || '2026-10';
+  const _fRef = (paidRecord && !uptoDate && String(monthKey) < currentMonth() && (String(monthKey) >= _autoFrom || (_closedThru && String(monthKey) <= _closedThru))) ? salaryFrozenRef(paidRecord) : null;
+  const frozen = _fRef != null;
+  const frozenNet = frozen ? Math.max(_fRef, salaryPaidTotal(paidRecord)) : null;
   const _movedOn = _lateRecs.filter(s => s.fromMonth === monthKey).reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0);
-  const _lateFrom = (state.settings && state.settings.lateAdjFrom) || '2026-11';   // v6.937 — November starts clean: months before this are closed for good (frozen, never handing anything on)
   const _lateRaw = (frozen && String(monthKey) >= _lateFrom) ? (liveNet - frozenNet - _movedOn) : 0;
   const lateDelta = Math.abs(_lateRaw) >= 1 ? Math.round(_lateRaw * 100) / 100 : 0;
   const net = (frozen ? frozenNet : liveNet) + lateIn;
@@ -11523,6 +11529,11 @@ function _setScroll(y) {
   const m = document.querySelector('.main') || document.querySelector('main');
   if (m && m.scrollHeight > m.clientHeight + 4) { m.scrollTop = y; }
   window.scrollTo(0, y);
+}
+// v6.945.0 — which screen an Alt+Shift+<letter> opens; admin only (null = not a shortcut / not allowed). e.code, so it works on the Arabic keyboard layout too.
+function adminShortcutRoute(e, role) {
+  if (role !== 'admin' || !e || !e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey) return null;
+  return ({ KeyS: 'salaries', KeyA: 'attendance', KeyI: 'invoices' })[e.code] || null;
 }
 function navigate(route, opts) {
   // Sales page was merged into Invoices in v89 — silently redirect old bookmarks.
@@ -14454,6 +14465,8 @@ async function init() {
       }
       // else (login screen / offline) → let the browser reload normally
     }
+    // v6.945.0 — admin-only screen shortcuts (Alt+Shift+S salaries · A attendance · I invoices). Never while typing in a field or with a popup open, never on the login screen.
+    { const _sc = adminShortcutRoute(e, currentRole()); if (_sc) { const _tg = (e.target && e.target.tagName || '').toUpperCase(); const _typing = _tg === 'INPUT' || _tg === 'TEXTAREA' || _tg === 'SELECT' || (e.target && e.target.isContentEditable); if (!_typing && !document.getElementById('modal-backdrop') && !document.getElementById('login-btn') && !document.getElementById('login-pass')) { e.preventDefault(); navigate(_sc); return; } } }
     // Cmd+K / Ctrl+K → global command palette (jump anywhere)
     if (e.key === 'k' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();

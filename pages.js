@@ -21435,6 +21435,7 @@ PAGES.salaries = (main) => {
         <button class="btn ghost" onclick="navigate('coaches')" title="Set fixed salaries + commission rates per person">⚙️ Configure on Team page</button>
         <button class="btn ghost" onclick="window._salRecalc && window._salRecalc()" title="${t('Re-run each coach commission from the latest attendance, invoices and payments', 'أعد حساب عمولة كل مدرب من أحدث الحضور والفواتير والمدفوعات')}">🔄 ${t('Recalculate', 'إعادة الحساب')}</button>
         ${currentRole() === 'admin' ? `<button class="btn ghost" onclick="coachAttributionCheck()" title="${t('Find invoice lines credited to a coach who is no longer the current coach for that sport, and re-credit them', 'ابحث عن بنود منسوبة لمدرب لم يعد مدرب العضو لتلك الرياضة، وأعد إسنادها')}">🧭 ${t('Coach check', 'فحص المدرب')}</button>` : ''}
+        ${currentRole() === 'admin' ? `<button class="btn ghost" onclick="showCloseOldMonths()" title="${t('Close the old salary months: what was paid stands, nothing is added to them again; what still differs from October goes to the next month for your approval', 'إغلاق أشهر المرتبات القديمة: ما دُفع يبقى ولا يُضاف عليها شيء؛ وما تبقى من فرق من أكتوبر يذهب للشهر التالي بموافقتك')}">🔒 ${(state.settings && state.settings.salaryClosedThrough) ? t('Closed through', 'مغلق حتى') + ' ' + escapeHtml(fmtMonth(state.settings.salaryClosedThrough)) : t('Close old months', 'إغلاق الأشهر القديمة')}</button>` : ''}
         ${currentRole() === 'admin' && (typeof _switchedUnreconciled === 'function' && _switchedUnreconciled().length) ? `<button class="btn ghost" style="border-color:var(--accent-2);color:var(--accent-2)" onclick="switchReconcileCheck()" title="${t('A sport was switched before the fix — complete the old sport, split the payment, remove the phantom pending', 'رياضة بُدّلت قبل الإصلاح — أكمل القديمة وقسّم الدفعة وأزل المعلّق الوهمي')}">🔀 ${t('Switch check', 'فحص التبديل')} · ${_switchedUnreconciled().length}</button>` : ''}
         ${(() => { const n = privateUnmarkedPackages(filter.month).length; return `<button class="btn ghost" onclick="openPrivateCheck(window._salMonth || '${filter.month}')" title="${t('Packages under a private coach that are not marked Private yet', 'باقات لدى مدرب خاص لم تُعلَّم كخاصة بعد')}">🔒 ${t('Private check', 'فحص الخاص')}${n ? ` <span class="badge" style="background:rgba(245,158,11,.2);color:var(--accent-2);font-size:10px">${n}</span>` : ''}</button>`; })()}
         <button class="btn primary" onclick="downloadPayrollCSV('${filter.month}', window._salCoachSet || 'active')">📥 Export payroll</button>
@@ -21872,6 +21873,26 @@ function _salLateBadges(p) {
   return h;
 }
 // the member-by-member detail of what a frozen month's live calculation now says differently, with Accept / Dismiss
+// v6.946 — CLOSE the old months. Until a month is closed it behaves the old way (live: a late class raises what is due, so it can be paid). Closing freezes every paid month up to the chosen one: what was
+// paid stands, and from October whatever still differs (a coach paid more or less than the live figure) goes to the NEXT month as a late adjustment the owner accepts or dismisses.
+window.showCloseOldMonths = function () {
+  const S = state.settings || (state.settings = {}), cur = S.salaryClosedThrough || '';
+  const from = String(commissionStartDate()).slice(0, 7), last = _salPrevMonth(currentMonth());
+  let opts = '<option value="">' + t('— none (every old month stays live)', '— لا شيء (كل الأشهر القديمة تبقى حيّة)') + '</option>';
+  for (let m = from; m <= last; m = _salNextMonth(m)) opts += '<option value="' + m + '"' + (m === cur ? ' selected' : '') + '>' + escapeHtml(fmtMonth(m)) + '</option>';
+  const body = '<div style="font-size:13px;line-height:1.7"><div>' + t('Close every paid month up to and including:', 'إغلاق كل شهر مدفوع حتى (وبه):') + ' <select id="com-sel" style="margin-inline-start:6px">' + opts + '</select></div>' +
+    '<div class="text-mute" style="margin-top:8px;font-size:12px">' + t('A closed month stays at what was paid — nothing is added to it again. From October, whatever still differs (a coach paid more or less than the calculation) moves to the NEXT month as a late adjustment that you accept or dismiss. Earlier months simply stay as paid. Choose "none" to re-open.', 'الشهر المغلق يبقى على ما دُفع — لا يُضاف عليه شيء بعد ذلك. من أكتوبر، أي فرق متبقٍّ (مدرب دُفع له أكثر أو أقل من الحساب) ينتقل إلى الشهر التالي كتعديل متأخر تعتمده أو تتجاهله. الأشهر الأقدم تبقى كما دُفعت. اختر "لا شيء" لإعادة الفتح.') + '</div></div>';
+  showModal({ title: '🔒 ' + t('Close old months', 'إغلاق الأشهر القديمة'), body, actions: [
+    { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
+    { label: '🔒 ' + t('Apply', 'تطبيق'), class: 'btn primary', onclick: () => {
+      const v = (document.getElementById('com-sel') || {}).value || '';
+      S.salaryClosedThrough = v;
+      audit('salary.close_months', 'salaries', v ? 'Closed the salary months through ' + v : 'Re-opened all old salary months', { through: v });
+      closeModal(); save(); render();
+      toast(v ? t('Salary months through ' + fmtMonth(v) + ' are closed', 'أُغلقت أشهر المرتبات حتى ' + fmtMonth(v)) : t('Old salary months re-opened', 'أُعيد فتح أشهر المرتبات القديمة'));
+    } },
+  ] });
+};
 window.showSalaryLate = function (coachId, fromMonth) {
   const c = state.coaches.find(x => x.id === coachId), late = salaryLateFor(coachId, _salNextMonth(fromMonth));
   if (!late) { toast(t('Nothing to review', 'لا شيء للمراجعة'), 'info'); return; }
