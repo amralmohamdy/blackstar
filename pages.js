@@ -2821,8 +2821,8 @@ function viewMember(id) {
           else { return '—'; }
           const isAdmin = currentRole() === 'admin';
           const sid = s._sid || s._rid || '';
-          // QUICK delete (existing): admin AND (0 attendance) OR a DUPLICATE twin.
-          const canQuick = isAdmin && sid && (((attended == null || attended <= 0) && (liveForSport.y || 0) <= 0) || hasTwin);
+          // QUICK delete (existing): admin OR reception (v6.944), AND (0 attendance) OR a DUPLICATE twin. The FULL delete below (removes attendance) stays admin-only.
+          const canQuick = (isAdmin || currentRole() === 'receptionist') && sid && (((attended == null || attended <= 0) && (liveForSport.y || 0) <= 0) || hasTwin);
           let delBtn = '';
           if (canQuick) {
             delBtn = ` <button onclick="event.stopPropagation();deleteSubscription(${m.id}, '${sid}')" title="${hasTwin ? 'Delete this DUPLICATE period (attendance stays on the identical one)' : 'Delete this subscription period (0 attended) — fixes a duplicate or a not-started entry'}" style="background:transparent;border:0;color:var(--red);opacity:.85;cursor:pointer;padding:0 3px;font-size:13px">🗑</button>`;
@@ -23416,17 +23416,34 @@ PAGES.products = (main) => {
 };
 
 // ─── Product modals ────────────────────────────────────────────────────
+// v6.943 — Category and SKU are a drop-down of the values already used (pick one) with "+ New…" to type a new one; the text box (#p-cat / #p-sku) stays the single source saveProduct reads
+function _prodComboHtml(id, values, current, placeholder) {
+  const cur = String(current || '');
+  if (!values.length) return '<input id="' + id + '" type="text" value="' + escapeHtml(cur) + '" placeholder="' + escapeHtml(placeholder) + '" />';
+  const known = values.indexOf(cur) !== -1, selNew = !!cur && !known;
+  return '<select id="' + id + '-sel" onchange="_prodCombo(\'' + id + '\')" style="width:100%">' +
+    '<option value=""' + (!cur ? ' selected' : '') + '>' + t('— choose —', '— اختر —') + '</option>' +
+    values.map(v => '<option value="' + escapeHtml(v) + '"' + (v === cur ? ' selected' : '') + '>' + escapeHtml(v) + '</option>').join('') +
+    '<option value="__new__"' + (selNew ? ' selected' : '') + '>➕ ' + t('New…', 'جديد…') + '</option></select>' +
+    '<input id="' + id + '" type="text" value="' + escapeHtml(cur) + '" placeholder="' + escapeHtml(placeholder) + '" style="margin-top:6px;' + (selNew ? '' : 'display:none') + '" />';
+}
+window._prodCombo = function (id) {
+  const s = document.getElementById(id + '-sel'), i = document.getElementById(id);
+  if (!s || !i) return;
+  if (s.value === '__new__') { i.value = ''; i.style.display = ''; i.focus(); }
+  else { i.value = s.value; i.style.display = 'none'; }
+};
 function productFormHtml(p) {
-  const cats = [...new Set((state.products || []).map(x => x.category).filter(Boolean))].sort();
+  const cats = [...new Set((state.products || []).map(x => String(x.category || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const skus = [...new Set((state.products || []).map(x => String(x.sku || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
   return `
     <div class="form-row">
       <div class="field" style="flex:2"><label>Name *</label><input id="p-name" type="text" value="${escapeHtml(p.name || '')}" placeholder="e.g. Boxing Gloves" /></div>
-      <div class="field"><label>SKU (optional)</label><input id="p-sku" type="text" value="${escapeHtml(p.sku || '')}" /></div>
+      <div class="field"><label>SKU (optional)</label>${_prodComboHtml('p-sku', skus, p.sku, t('size / code', 'المقاس / الكود'))}</div>
     </div>
     <div class="form-row">
       <div class="field"><label>Category</label>
-        <input id="p-cat" type="text" value="${escapeHtml(p.category || '')}" list="prod-cat-list" placeholder="Apparel / Equipment / Swimming Gear / ..." />
-        <datalist id="prod-cat-list">${cats.map(c => `<option value="${escapeHtml(c)}">`).join('')}</datalist>
+        ${_prodComboHtml('p-cat', cats, p.category, 'Apparel / Equipment / Swimming Gear / ...')}
       </div>
     </div>
     <div class="form-row">
@@ -30409,7 +30426,7 @@ window.editSubscription = function(memberId, sid) {
   }
 };
 window.deleteSubscription = function(memberId, sid) {
-  if (currentRole() !== 'admin') { toast('Only admins can delete a subscription', 'error'); return; }
+  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast('Only admins can delete a subscription', 'error'); return; }   // v6.944 — reception too, but only a package with NO attended class (or a duplicate twin): the guard below refuses any other
   const m = state.members.find(x => x.id === memberId);
   if (!m || !Array.isArray(m.subscriptions)) return;
   const sub = m.subscriptions.find(s => (s._sid || s._rid) === sid);

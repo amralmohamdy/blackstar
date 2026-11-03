@@ -14,7 +14,9 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.942.0';   // 6.942.0 reception: the New Expense form no longer offers the categories the server hides from her (her expense vanished), and Cash in Hand no longer shows a delete button that only refuses;
+const APP_VERSION = '6.944.0';   // 6.944.0 reception can delete a package that has NO attended class (or a duplicate twin) from the member card; deleting one with attendance stays admin-only;
+// prev:   // 6.943.0 New/Edit Product: Category and SKU are drop-downs of the values already used, with "+ New…" to type a new one;
+// prev:   // 6.942.0 reception: the New Expense form no longer offers the categories the server hides from her (her expense vanished), and Cash in Hand no longer shows a delete button that only refuses;
 // prev:   // 6.941.0 My Salary is open to a coach again (his own pay page; Targets stay closed);
 // prev:   // 6.940.0 the validity period list has a 6-weeks option (42 days);
 // prev:   // 6.939.0 export ONE member's profile (member + invoices) and import it back — from that file or from a full backup (pick the member) — without restoring the whole database;
