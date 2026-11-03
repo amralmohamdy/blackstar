@@ -14,7 +14,14 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.935.0';   // 6.935.0 salary payments no longer come out of the Cash in Hand drawer;
+const APP_VERSION = '6.942.0';   // 6.942.0 reception: the New Expense form no longer offers the categories the server hides from her (her expense vanished), and Cash in Hand no longer shows a delete button that only refuses;
+// prev:   // 6.941.0 My Salary is open to a coach again (his own pay page; Targets stay closed);
+// prev:   // 6.940.0 the validity period list has a 6-weeks option (42 days);
+// prev:   // 6.939.0 export ONE member's profile (member + invoices) and import it back — from that file or from a full backup (pick the member) — without restoring the whole database;
+// prev:   // 6.938.0 the commission start date is FIXED at 1 June 2026 (May was paid in full; the system started in June) — the Salaries date box is read-only;
+// prev:   // 6.937.0 months before November are closed for good: frozen at what was paid, no late adjustment handed on (November starts clean; later months do hand on);
+// prev:   // 6.936.0 a PAID past month is frozen at its agreed amount; what changed afterwards shows in the NEXT month as a late adjustment (member by member) that the owner accepts or dismisses;
+// prev:   // 6.935.0 salary payments no longer come out of the Cash in Hand drawer;
 // prev:   // 6.934.0 a package's revenue month follows its START month whenever the start moves (renewal moved to first class / Edit Member); a fix file can match a line on several keys;
 // prev:   // 6.933.0 a fix file can now CREATE an invoice (+ re-point a package to it), to split a package off a mixed-month invoice;
 // prev:   // 6.932.0 deleted invoices/expenses no longer add a month to the month lists (no phantom "Feb 27");
@@ -1101,12 +1108,12 @@ Object.defineProperty(globalThis, 'EXP_CATS', {
 const INVOICE_CATS = ['Membership','Court Rental','Boxing Room','Product','Other'];
 // Validity periods in days for membership/enrollment transactions. The stored value is the DAY
 // COUNT (what expiry math uses); the dropdown shows a friendly label (1 day … 6 months).
-const VALIDITY_OPTIONS = [1, 7, 14, 30, 35, 60, 90, 180];
+const VALIDITY_OPTIONS = [1, 7, 14, 30, 35, 42, 60, 90, 180];   // v6.940 — 6 weeks (42 days) added
 const DEFAULT_VALIDITY = 30;
 // Friendly EN/AR label per preset day-count. Anything not listed falls back to "<n> days".
 const VALIDITY_PRESET_LABELS = {
   1: ['1 day', 'يوم'], 7: ['1 week', 'أسبوع'], 14: ['2 weeks', 'أسبوعان'],
-  30: ['1 month', 'شهر'], 35: ['5 weeks', '5 أسابيع'], 60: ['2 months', 'شهران'], 90: ['3 months', '3 أشهر'], 180: ['6 months', '6 أشهر'],
+  30: ['1 month', 'شهر'], 35: ['5 weeks', '5 أسابيع'], 42: ['6 weeks', '6 أسابيع'], 60: ['2 months', 'شهران'], 90: ['3 months', '3 أشهر'], 180: ['6 months', '6 أشهر'],
 };
 function validityLabel(days) {
   const d = parseInt(days) || 0;
@@ -8757,7 +8764,7 @@ function computeMemberCommissions(ym) {
   const rows = [];
   // v6.634 — mirror payroll: honour the commission start-date cutoff (#4) so pre-cutoff memberships that
   // payroll skips don't inflate this report.
-  const commStart = (state.settings && state.settings.commissionStartDate) || '';
+  const commStart = commissionStartDate();
   for (const inv of invs) {
     const mem = inv.customerId ? state.members.find(x => x.id === inv.customerId) : null;
     if (mem && mem.deleted) continue;
@@ -9068,7 +9075,7 @@ function computeAttendanceCommission(coachId, monthKey, uptoDate) {
   const lines = [];        // earned this month (attended classes + expiry true-up)
   const pendingLines = []; // not-yet-earned remainder on still-active memberships
   // Commission start-date cutoff: ignore invoices/subscriptions dated before this.
-  const commStart = (state.settings && state.settings.commissionStartDate) || '';
+  const commStart = commissionStartDate();
   // v6.535 — optional "pay attended only": when ON (per-coach flag OR the club-wide setting), an
   // EXPIRED membership does NOT true-up the unattended remainder — the coach is paid the NET ATTENDED
   // amount only. Carried-forward/unused classes earn nothing at expiry. Off by default (keeps true-up).
@@ -9641,7 +9648,7 @@ if (typeof window !== 'undefined') window.duplicateCommissionLines = duplicateCo
 // a coach's full salary (incl. pending) in one month. Returns how many were settled.
 function settleCoachPendingCommission(coachId, monthKey, collect) {
   let count = 0; const closed = [];
-  const commStart = (state.settings && state.settings.commissionStartDate) || '';
+  const commStart = commissionStartDate();
   for (const inv of (state.invoices || [])) {
     if (!inv || inv.deleted || (inv.category || 'Membership') !== 'Membership') continue;
     const mem = inv.customerId ? state.members.find(x => x.id === inv.customerId) : null;
@@ -9704,7 +9711,7 @@ function salaryLinesSnapshot(coachId, monthKey) {
   const L = (p.attendanceLines && p.attendanceLines.lines) || [];
   return {
     lines: L.map(l => ({ k: [l.mid, l.sport, l.kind, l.start || '', l.priv || ''].join('|'), n: l.memberName || '', sp: l.sport || '', kind: l.kind || '', cls: Number(l.classes) || 0, base: Math.round((Number(l.amountBase) || 0) * 100) / 100 })),
-    tot: { rate: Number(p.commissionRate) || 0, base: Math.round((Number(p.commissionBase) || 0) * 100) / 100, bonus: Math.round(((Number(p.privateBonus) || 0) + (Number(p.targetBonus) || 0) + (Number(p.approachBonus) || 0) + (Number(p.receptionBonus) || 0)) * 100) / 100, fixed: Number(p.fixed) || 0, gross: Math.round((Number(p.gross) || 0) * 100) / 100, advance: Math.round((Number(p.advance) || 0) * 100) / 100, net: Math.round((Number(p.net) || 0) * 100) / 100 },
+    tot: { rate: Number(p.commissionRate) || 0, base: Math.round((Number(p.commissionBase) || 0) * 100) / 100, bonus: Math.round(((Number(p.privateBonus) || 0) + (Number(p.targetBonus) || 0) + (Number(p.approachBonus) || 0) + (Number(p.receptionBonus) || 0)) * 100) / 100, fixed: Number(p.fixed) || 0, gross: Math.round((Number(p.gross) || 0) * 100) / 100, advance: Math.round((Number(p.advance) || 0) * 100) / 100, net: Math.round((Number(p.liveNet != null ? p.liveNet : p.net) || 0) * 100) / 100 },
   };
 }
 function salaryGrowthReason(coachId, monthKey) {
@@ -9742,6 +9749,26 @@ function salaryBaselineBackfill() {
   return n;
 }
 if (typeof window !== 'undefined') Object.assign(window, { salaryLinesSnapshot, salaryGrowthReason, salaryBaselineBackfill });
+// v6.938 — the system started on 1 June 2026 and May was paid in full: commission ALWAYS counts only packages starting on/after this date (fixed, the old Salaries date box is read-only)
+const COMMISSION_START_FIXED = '2026-06-01';
+function commissionStartDate() { return COMMISSION_START_FIXED; }
+// v6.936 — the amount a paid month is frozen at: the explicit agreed target, else a real (positive) snapshot; null = nothing to freeze on (legacy / over-advanced records stay live)
+function salaryFrozenRef(rec) {
+  if (!rec) return null;
+  if (rec.target != null && rec.target !== '' && isFinite(Number(rec.target))) return Number(rec.target);
+  if (rec.snapshotNet != null && Number(rec.snapshotNet) > 0.005) return Number(rec.snapshotNet);
+  return null;
+}
+function _salPrevMonth(ym) { const [y, m] = String(ym).split('-').map(Number); const d = new Date(y, m - 2, 1); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
+function _salNextMonth(ym) { const [y, m] = String(ym).split('-').map(Number); const d = new Date(y, m, 1); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
+// the late adjustment that the PREVIOUS (frozen) month is waiting to hand over to this month, or null
+function salaryLateFor(coachId, monthKey) {
+  const from = _salPrevMonth(monthKey);
+  let p = null; try { p = computeMonthlyPay(coachId, from); } catch (_) {}
+  if (!p || !p.frozen || !p.lateDelta) return null;
+  return { from, to: monthKey, delta: p.lateDelta, frozenNet: p.frozenNet, liveNet: p.liveNet };
+}
+if (typeof window !== 'undefined') Object.assign(window, { salaryFrozenRef, salaryLateFor });
 function salaryTarget(rec, netFallback) {
   if (rec && rec.target != null && rec.target !== '') return Number(rec.target);
   if (rec && rec.snapshotNet != null && Number(rec.snapshotNet) > 0.005) return Number(rec.snapshotNet);
@@ -9782,7 +9809,7 @@ function receptionPrivateShare(monthKey, uptoDate) {
   const out = { base: 0, pendingBase: 0 };
   const ymNext = ym => { const y = parseInt(ym.slice(0, 4), 10), m = parseInt(ym.slice(5, 7), 10); return m === 12 ? (y + 1) + '-01' : y + '-' + String(m + 1).padStart(2, '0'); };
   const lastDay = ym => ym + '-' + String(new Date(parseInt(ym.slice(0, 4), 10), parseInt(ym.slice(5, 7), 10), 0).getDate()).padStart(2, '0');
-  const commStart = (state.settings && state.settings.commissionStartDate) || '';
+  const commStart = commissionStartDate();
   const seen = new Set();
   for (const inv of (state.invoices || [])) {
     if (!inv || inv.deleted || (inv.category || 'Membership') !== 'Membership' || inv.switchCredit || inv.activityType === 'switch-credit') continue;
@@ -9855,7 +9882,7 @@ function computeMonthlyPay(coachId, monthKey, uptoDate) {
     // the whole CHARGED fee in the billing month, whether or not it had been collected — which over-paid
     // when a member hadn't fully paid yet. Owner rule for private coaches: pay on what came in.)
     // In settlement mode (uptoDate) sum payments dated on/before the date.
-    const commStartP = (state.settings && state.settings.commissionStartDate) || '';
+    const commStartP = commissionStartDate();
     paymentLines = [];
     for (const inv of state.invoices) {
       // A DELETED / voided invoice earns the coach NOTHING (v6.449).
@@ -9980,7 +10007,18 @@ function computeMonthlyPay(coachId, monthKey, uptoDate) {
   const paidRecord = (state.salaries || [])
     .find(s => s.coachId === coachId && s.month === monthKey && s.kind === 'paid');
 
-  const net = gross - advance + carriedOut - carriedIn;
+  const liveNet = gross - advance + carriedOut - carriedIn;
+  // v6.936 — a PAST month that has been paid is FROZEN at the amount agreed when it was paid. Whatever the live calculation says now (late attendance, invoices rebuilt / deleted, packages moved)
+  // is NOT added to that month: the difference is shown in the NEXT month as a "late adjustment" (member by member) and only joins that month's pay when the owner accepts it.
+  const _lateRecs = (state.salaries || []).filter(s => s && s.kind === 'lateadj' && s.coachId === coachId);
+  const lateIn = _lateRecs.filter(s => s.status === 'accepted' && (uptoDate ? s.month <= monthKey : s.month === monthKey)).reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0);
+  const frozenNet = (paidRecord && !uptoDate && String(monthKey) < currentMonth()) ? salaryFrozenRef(paidRecord) : null;
+  const frozen = frozenNet != null;
+  const _movedOn = _lateRecs.filter(s => s.fromMonth === monthKey).reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0);
+  const _lateFrom = (state.settings && state.settings.lateAdjFrom) || '2026-11';   // v6.937 — November starts clean: months before this are closed for good (frozen, never handing anything on)
+  const _lateRaw = (frozen && String(monthKey) >= _lateFrom) ? (liveNet - frozenNet - _movedOn) : 0;
+  const lateDelta = Math.abs(_lateRaw) >= 1 ? Math.round(_lateRaw * 100) / 100 : 0;
+  const net = (frozen ? frozenNet : liveNet) + lateIn;
   // Multi-payment settlement: sum the payments made toward the agreed target.
   const payments = salaryPayments(paidRecord);
   const paidTotal = salaryPaidTotal(paidRecord);
@@ -10043,6 +10081,7 @@ function computeMonthlyPay(coachId, monthKey, uptoDate) {
     carriedOut,
     carriedIn,
     net,
+    liveNet, frozen, frozenNet, lateDelta, lateIn,
     salaryRecord: paidRecord || null,
     payments,
     paidTotal,
@@ -10970,7 +11009,7 @@ const ROLE_ALLOWED = {
   // Coaches: their classes, attendance roll-call, trials. NOT salaries — their OWN pay
   // page ('coachsalary') is disabled per owner (v6.420), so it's removed here too (route
   // fully blocked, not just hidden from the menu) — and NOT the full members list / club financials.
-  coach: ['coachhome', 'schedule', 'attendance', 'advice', 'posts'],   // v6.895 — no money for a coach: My Salary + Targets (bonus QAR) are closed; v6.896 — Attendance Report and the three camp schedules are hidden too
+  coach: ['coachhome', 'coachsalary', 'schedule', 'attendance', 'advice', 'posts'],   // v6.941 — My Salary is back for a coach (owner request); v6.895 — Targets (bonus QAR) stay closed; v6.896 — Attendance Report and the three camp schedules are hidden too
   // Students/members: their own membership + the class timetable. No other members.
   student: ['mymembership', 'schedule', 'advice', 'posts'],   // v6.903 — a member no longer sees the camp schedules
   // Receptionist: pure front-desk. Can manage members, families, trials,

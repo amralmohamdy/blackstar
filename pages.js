@@ -3209,6 +3209,7 @@ function viewMember(id) {
       { label: '🖼 ' + t('Attendance (EN)', 'الحضور (EN)'), class: 'btn ghost', onclick: () => { exportMemberAttendanceImage(id, 'en'); } },
       { label: '🖼 ' + t('Attendance (AR)', 'الحضور (AR)'), class: 'btn ghost', onclick: () => { exportMemberAttendanceImage(id, 'ar'); } },
       { label: '📊 ' + t('Attendance CSV', 'حضور CSV'), class: 'btn ghost', onclick: () => { exportMemberAttendance(id); } },
+      ...(currentRole() === 'admin' ? [{ label: '📤 ' + t('Export profile', 'تصدير الملف'), class: 'btn ghost', onclick: () => { exportMemberProfile(id); } }] : []),
       { label: '👨‍👩‍👧 Family', class: 'btn ghost', onclick: () => { closeModal(); assignFamily(id); } },
       { label: 'Edit', class: 'btn ghost', onclick: () => { closeModal(); editMember(id); } },
       ...(['admin', 'receptionist'].includes(currentRole()) ? [{ label: '👋 ' + t('Send Welcome Message', 'إرسال رسالة الترحيب'), class: 'btn primary', onclick: () => { sendWelcomeMessage(id); } }] : []),
@@ -16511,6 +16512,104 @@ window._fixFileApply = function (fx) {
   if (typeof audit === 'function') audit('fixfile.apply', 'fixfile', 'Applied fix file: ' + (fx.title || '') + ' (' + chk.plan.map(x => x.op.collection + ':' + x.label).join(', ') + ')', { ops: chk.plan.length });
   return { ok: true, n: chk.plan.length, verify: chk.plan.map(x => ({ collection: x.op.collection, id: x.op.id })) };
 };
+// ── MEMBER PROFILE EXPORT / IMPORT (v6.938) ──────────────────────────────────────────────────────────────────────────────────────────────────
+// One member's whole profile (the member record with its packages / attendance / renewals, + every invoice of theirs with its payments) as a small JSON,
+// and the way back in: from such a file OR from a full backup (pick the member) — only that member and their invoices are touched, the rest of the database is not.
+// { format:'bs-member/1', appVersion, exported, member, invoices:[…], family?:{…} }
+function _profileBundle(src, memberId) {
+  const m = (src.members || []).find(x => x && String(x.id) === String(memberId));
+  if (!m) return null;
+  const invoices = (src.invoices || []).filter(i => i && String(i.customerId) === String(m.id));
+  const family = m.familyId != null ? ((src.families || []).find(f => f && String(f.id) === String(m.familyId)) || null) : null;
+  const b = { format: 'bs-member/1', appVersion: (typeof APP_VERSION !== 'undefined' ? APP_VERSION : ''), exported: new Date().toISOString(), member: JSON.parse(JSON.stringify(m)), invoices: JSON.parse(JSON.stringify(invoices)) };
+  if (family) b.family = JSON.parse(JSON.stringify(family));
+  return b;
+}
+window.exportMemberProfile = function (id) {
+  if (currentRole() !== 'admin') { toast(t('Admin only', 'للأدمن فقط'), 'error'); return; }
+  const b = _profileBundle(state, id);
+  if (!b) { toast(t('Member not found', 'العضو غير موجود'), 'error'); return; }
+  const safe = String(b.member.name || 'member').replace(/[^A-Za-z0-9\u0600-\u06FF]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'member';
+  downloadFile('member-' + safe + '-' + TODAY + '.json', JSON.stringify(b, null, 2), 'application/json');
+  toast(t('Profile exported', 'تم تصدير الملف') + ' · ' + b.invoices.length + ' ' + t('invoice(s)', 'فاتورة'));
+};
+// what an import would do, without doing it
+function _profileImportPlan(b) {
+  const m = b.member, have = (state.members || []).find(x => x && String(x.id) === String(m.id));
+  const mine = (state.invoices || []).filter(i => i && String(i.customerId) === String(m.id));
+  const inFile = new Set((b.invoices || []).map(i => String(i.id)));
+  const replace = [], add = [], clash = [];
+  for (const i of (b.invoices || [])) {
+    const cur = (state.invoices || []).find(x => x && String(x.id) === String(i.id));
+    if (!cur) add.push(i); else if (String(cur.customerId) !== String(m.id)) clash.push(i); else replace.push(i);
+  }
+  const others = mine.filter(i => !inFile.has(String(i.id)) && !i.deleted);
+  return { have, replace, add, clash, others };
+}
+window._profileImport = function (b, opts) {
+  opts = opts || {};
+  if (currentRole() !== 'admin') return { ok: false, error: t('Admin only', 'للأدمن فقط') };
+  if (!b || b.format !== 'bs-member/1' || !b.member || b.member.id == null) return { ok: false, error: t('This is not a member profile file', 'هذا ليس ملف ملف عضو') };
+  const P = _profileImportPlan(b), verify = [];
+  const mem = JSON.parse(JSON.stringify(b.member)); stampUpdate(mem); delete mem.deleted;
+  if (P.have) state.members[state.members.indexOf(P.have)] = mem; else state.members.push(mem);
+  verify.push({ collection: 'members', id: mem.id });
+  for (const i of P.replace) { const nd = JSON.parse(JSON.stringify(i)); stampUpdate(nd); const k = state.invoices.findIndex(x => x && String(x.id) === String(i.id)); state.invoices[k] = nd; verify.push({ collection: 'invoices', id: nd.id }); }
+  for (const i of P.add) { const nd = JSON.parse(JSON.stringify(i)); stampUpdate(nd); state.invoices.push(nd); verify.push({ collection: 'invoices', id: nd.id }); }
+  if (opts.removeOthers) for (const i of P.others) { i.deleted = true; stampUpdate(i); verify.push({ collection: 'invoices', id: i.id }); }
+  if (b.family && b.family.id != null && !(state.families || []).some(f => f && String(f.id) === String(b.family.id))) { if (!Array.isArray(state.families)) state.families = []; const nf = JSON.parse(JSON.stringify(b.family)); stampUpdate(nf); state.families.push(nf); verify.push({ collection: 'families', id: nf.id }); }
+  if (typeof audit === 'function') audit('member.profile_import', 'member:' + mem.id, 'Imported profile of ' + (mem.name || '') + ' · ' + (P.have ? 'replaced' : 'added') + ' · invoices: ' + P.replace.length + ' replaced, ' + P.add.length + ' added' + (opts.removeOthers ? ', ' + P.others.length + ' others removed' : '') + (P.clash.length ? ', ' + P.clash.length + ' skipped (id used by another customer)' : ''), { memberId: mem.id, replaced: P.replace.length, added: P.add.length, skipped: P.clash.length });
+  return { ok: true, plan: { replaced: P.replace.length, added: P.add.length, skipped: P.clash.length, removed: opts.removeOthers ? P.others.length : 0, existed: !!P.have }, verify };
+};
+window._profileImportRun = function (b) {
+  const rm = !!(document.getElementById('pi-remove-others') && document.getElementById('pi-remove-others').checked);
+  try { if (typeof window.downloadBackup === 'function') window.downloadBackup(); } catch (_) {}   // safety copy first
+  const r = window._profileImport(b, { removeOthers: rm });
+  closeModal();
+  if (!r.ok) { toast(r.error, 'error'); return; }
+  const okMsg = t('Profile imported · saved', 'تم استيراد الملف · حُفظ');
+  if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: r.verify, okMsg, afterOk: () => render() });
+  else { save(); render(); toast(okMsg); }
+};
+// preview + confirm
+window.showProfileImportPreview = function (b) {
+  if (!b || b.format !== 'bs-member/1' || !b.member) { toast(t('This is not a member profile file', 'هذا ليس ملف ملف عضو'), 'error'); return; }
+  const P = _profileImportPlan(b), m = b.member, paid = (b.invoices || []).reduce((s, i) => s + ((i.payments || []).reduce((a, p) => a + (Number(p.amount) || 0), 0)), 0);
+  window.__pendingProfile = b;
+  showModal({
+    title: '📥 ' + t('Import a member profile', 'استيراد ملف عضو'),
+    body: '<div style="font-size:13px;line-height:1.8"><div style="font-weight:700;font-size:15px">' + escapeHtml(m.name || '') + '</div><div class="text-mute">' + escapeHtml(m.phone || '') + ' · #' + escapeHtml(String(m.id)) + (b.exported ? ' · ' + t('exported', 'صُدّر') + ' ' + fmtDate(String(b.exported).slice(0, 10)) : '') + '</div>' +
+      '<div style="margin:8px 0">' + (P.have ? '⚠ ' + t('This member EXISTS in the app — the record will be replaced by the one in the file.', 'هذا العضو موجود في البرنامج — سيُستبدل سجله بما في الملف.') : '➕ ' + t('This member is not in the app — it will be added.', 'هذا العضو غير موجود — سيُضاف.')) + '</div>' +
+      '<div>' + t('Packages', 'الباقات') + ': <b>' + (m.subscriptions || []).length + '</b> · ' + t('Invoices in the file', 'فواتير في الملف') + ': <b>' + (b.invoices || []).length + '</b> · ' + t('Paid in the file', 'المدفوع في الملف') + ': <b>' + fmt(paid) + ' QAR</b></div>' +
+      '<div class="text-mute" style="font-size:12px">' + t('Invoices replaced', 'فواتير تُستبدل') + ': ' + P.replace.length + ' · ' + t('added', 'تُضاف') + ': ' + P.add.length + (P.clash.length ? ' · <span style="color:var(--red)">' + t('skipped (id used by another customer)', 'تُتخطى (رقمها لعميل آخر)') + ': ' + P.clash.length + '</span>' : '') + (P.others.length ? ' · ' + t('this member has', 'لدى العضو') + ' ' + P.others.length + ' ' + t('other invoice(s) in the app that are not in the file', 'فاتورة أخرى في البرنامج ليست في الملف') : '') + '</div>' +
+      (P.others.length ? '<label style="display:flex;gap:8px;align-items:flex-start;margin-top:8px;cursor:pointer"><input type="checkbox" id="pi-remove-others" style="margin-top:3px"> <span>' + t('Also remove (soft-delete) those ' + P.others.length + ' invoice(s) so the member matches the file exactly', 'احذف أيضاً (حذف ناعم) هذه الفواتير الـ ' + P.others.length + ' ليطابق العضو الملف تماماً') + '</span></label>' : '') +
+      '<div style="margin-top:10px;color:var(--accent-2)">⚠ ' + t('A full backup downloads first. Nothing else in the database is touched.', 'تُنزَّل نسخة احتياطية كاملة أولاً. لا يُمس أي شيء آخر في قاعدة البيانات.') + '</div></div>',
+    actions: [
+      { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: () => closeModal() },
+      { label: '📥 ' + t('Import this member', 'استيراد هذا العضو'), class: 'btn primary', onclick: () => window._profileImportRun(window.__pendingProfile) },
+    ],
+  });
+};
+// a FULL backup was chosen: pick the member out of it
+window.showProfilePicker = function (raw) {
+  const list = (raw.members || []).filter(x => x && !x.deleted);
+  if (!list.length) { toast(t('No members in this file', 'لا يوجد أعضاء في هذا الملف'), 'error'); return; }
+  window.__profileRaw = raw;
+  const rows = q => { q = String(q || '').toLowerCase().trim(); const out = list.filter(x => !q || String(x.name || '').toLowerCase().includes(q) || String(x.nameArabic || '').includes(q) || String(x.phone || '').replace(/\D/g, '').includes(q.replace(/\D/g, '') || '§')).slice(0, 60); return out.map(x => '<tr style="cursor:pointer" onclick="_profilePick(' + JSON.stringify(String(x.id)).replace(/"/g, '&quot;') + ')"><td>' + escapeHtml(x.name || '') + '</td><td class="text-mute">' + escapeHtml(x.phone || '') + '</td><td class="text-mute">' + (x.subscriptions || []).length + ' ' + t('pkg', 'باقة') + '</td></tr>').join('') || '<tr><td colspan="3" class="text-mute" style="padding:10px">' + t('No match', 'لا نتائج') + '</td></tr>'; };
+  window._profileSearch = v => { const tb = document.getElementById('pi-rows'); if (tb) tb.innerHTML = rows(v); };
+  showModal({
+    title: '📥 ' + t('Pick the member to import from this backup', 'اختر العضو للاستيراد من هذه النسخة') + (raw.exported ? ' · ' + fmtDate(String(raw.exported).slice(0, 10)) : ''),
+    body: '<input type="search" id="pi-q" placeholder="' + t('Search name or phone…', 'ابحث بالاسم أو الهاتف…') + '" oninput="_profileSearch(this.value)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text);margin-bottom:8px"><div style="max-height:340px;overflow:auto"><table style="width:100%;font-size:12.5px"><tbody id="pi-rows">' + rows('') + '</tbody></table></div><div class="text-mute" style="font-size:11px;margin-top:6px">' + list.length + ' ' + t('members in the file', 'عضو في الملف') + '</div>',
+    actions: [{ label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: () => closeModal() }],
+  });
+};
+window._profilePick = function (id) {
+  const b = _profileBundle(window.__profileRaw || {}, id);
+  closeModal();
+  if (!b) { toast(t('Member not found', 'العضو غير موجود'), 'error'); return; }
+  b.exported = (window.__profileRaw && window.__profileRaw.exported) || b.exported;
+  window.showProfileImportPreview(b);
+};
 window.showApplyFixFileUI = function (fx) {
   const chk = window._fixFileCheck(fx);
   if (!chk.ok) { toast(chk.error, 'error'); return; }
@@ -19399,7 +19498,7 @@ PAGES.cashinhand = (main) => {
           <td class="text-right num" style="${c.diff == null ? 'color:var(--text-mute)' : Math.abs(c.diff) < 0.5 ? 'color:var(--green)' : 'color:var(--red);font-weight:700'}">${c.diff == null ? '—' : (Math.abs(c.diff) < 0.5 ? '✓' : (c.diff < 0 ? '−' : '+') + fmtMoney(Math.abs(c.diff)))}</td>`}
           <td class="text-mute">${c.by ? escapeHtml(c.by) : '—'}</td>
           <td class="text-mute">${c.note ? escapeHtml(c.note) : '—'}</td>
-          <td class="text-right" style="white-space:nowrap">${currentRole() === 'admin' ? `<button class="btn ghost sm" onclick="window.openCashCountDialog('${c.id}')" title="${t('Edit this entry', 'تعديل هذا السجل')}">✏️</button> ` : ''}<button class="btn ghost sm" onclick="window.deleteCashCount('${c.id}')" title="${t('Delete this entry', 'حذف هذا السجل')}">🗑</button></td>
+          <td class="text-right" style="white-space:nowrap">${currentRole() === 'admin' ? `<button class="btn ghost sm" onclick="window.openCashCountDialog('${c.id}')" title="${t('Edit this entry', 'تعديل هذا السجل')}">✏️</button> <button class="btn ghost sm" onclick="window.deleteCashCount('${c.id}')" title="${t('Delete this entry', 'حذف هذا السجل')}">🗑</button>` : ''}</td>
         </tr>`;
       }).join('')}
       </tbody></table></div>` : `<div class="text-mute" style="font-size:13px;padding:8px">${t('No entries yet.', 'لا توجد سجلات بعد.')}</div>`}
@@ -20570,7 +20669,7 @@ PAGES.expensereport = (main) => {
 // v6.782 — what reception must NOT see on the Expenses screen: rent, salary payments, and the two AUTO rows whose base is the club's card takings / Football+Swimming revenue.
 function expenseCategoryHiddenFromViewer(cat) {
   const c = String(cat || '').trim();
-  return /^rent$/i.test(c) || isSalaryCategory(c) || c === BANK_COMMISSION_CATEGORY || c === CITADEL_SHARE_CATEGORY || /^advertising$/i.test(c);   // v6.877 — + advertising (its amount reveals the month's income)
+  return /^rent$/i.test(c) || isSalaryCategory(c) || c === BANK_COMMISSION_CATEGORY || c === CITADEL_SHARE_CATEGORY || /^advertising$/i.test(c) || /^owner net profit$/i.test(c);   // v6.942 — + the owner's net-profit row (the server hides it too)   // v6.877 — + advertising (its amount reveals the month's income)
 }
 function expenseHiddenFromViewer(e) { return !!e && (expenseCategoryHiddenFromViewer(e.category) || !!e.autoBankCommission || !!e.autoCitadelShare); }
 PAGES.expenses = (main) => {
@@ -20910,7 +21009,8 @@ function showExpenseForm(id) {
   // Default to first available category if creating fresh; preserve existing on edit
   const cur = e || { description:'', amount:'', category: '', method:'', date: TODAY };
   // Cash collections are recorded on the Cash Collection screen, not here.
-  const cats = EXP_CATS.filter(c => c !== CASH_COLLECTION_CATEGORY);
+  // v6.942 — a receptionist is not offered the categories the server hides from her (Rent, Salary, Advertising, Bank / Citadel, Owner Net Profit): the expense she saved under one vanished from her own list
+  const cats = EXP_CATS.filter(c => c !== CASH_COLLECTION_CATEGORY && !(isViewerRole() && expenseCategoryHiddenFromViewer(c)));
   showModal({
     title: isNew ? 'New Expense' : 'Edit Expense',
     body: `
@@ -21213,6 +21313,7 @@ PAGES.salaries = (main) => {
           <td class="text-right num font-bold" style="color:${netColor}">${fmt(p.net)}</td>
           <td>
             ${p.paidExtra > 0 ? `<div style="margin-bottom:3px"><span class="badge" style="background:rgba(124,58,237,.14);color:#7c3aed;font-weight:700;cursor:help" title="${t('Paid more than this month\'s net (what is owed now). This is only a flag — it is NOT carried to or deducted from next month.', 'مدفوع أكثر من صافي هذا الشهر (المستحق الآن). مجرد علامة — لا تُرحَّل ولا تُخصم من الشهر القادم.')}">⬆ ${t('Extra paid', 'دفع زائد')} +${fmt(p.paidExtra)}</span></div>` : ''}
+            ${_salLateBadges(p)}
             ${p.paidStatus === 'paid'
               ? `<span class="badge active" title="${t('Actually paid', 'المدفوع فعلاً')} ${fmt(p.paidTotal)} QAR${p.paidDate ? (t(' on ', ' بتاريخ ') + fmtDate(p.paidDate)) : ''}${(p.net - p.paidTotal) > 0.5 ? ' — ' + t('net is now', 'الصافي الآن') + ' ' + fmt(p.net) + ' (' + t('more attendance added after payment', 'أُضيف حضور بعد الدفع') + ')' : ''}">${t('Paid', 'مدفوع')} ${fmt(p.paidTotal)}${p.paidDate ? ' · ' + fmtDate(p.paidDate) : ''}</span>${(p.net - p.paidTotal) > 0.5 ? `<div style="color:var(--accent-2);font-size:10px;margin-top:2px;font-weight:600" title="${t('More attendance was added after this coach was paid — net rose from', 'أُضيف حضور بعد دفع هذا المدرب — ارتفع الصافي من')} ${fmt(p.paidTotal)} ${t('to', 'إلى')} ${fmt(p.net)}">▲ ${fmt(p.net - p.paidTotal)} ${t('more owed since paid', 'مستحق إضافي بعد الدفع')}</div>` : ''}`
               : p.paidStatus === 'partial'
@@ -21372,7 +21473,7 @@ PAGES.salaries = (main) => {
         </select>
         <span style="opacity:.35">|</span>
         <span style="font-size:12px;color:var(--text-mute)" title="Commission only counts memberships dated on or after this date. Fixed salary is not affected.">Commission from:</span>
-        <input type="date" id="sal-comm-start" value="${(state.settings && state.settings.commissionStartDate) || ''}" class="btn ghost" style="font-size:12px" title="Only memberships starting on or after this date earn commission. Leave empty for no cutoff. Fixed salary is unaffected." />
+        <input type="date" id="sal-comm-start" value="${commissionStartDate()}" disabled class="btn ghost" style="font-size:12px;opacity:.85" title="${t('Fixed: the system started on 1 June 2026 and May was paid in full, so only packages starting on or after this date earn commission.', 'ثابت: النظام بدأ يوم 1 يونيو 2026 ومايو اتصرف بالكامل، فالعمولة على الباقات التي تبدأ من هذا التاريخ فقط.')}" />
         ${currentRole() === 'admin' ? `<span style="opacity:.35">|</span>
         <span style="font-size:12px;color:var(--text-mute)" title="${t('Private packages: the extra every coach earns on top of his commission (a coach can have his own % on the Team page), and reception\'s own share when reception brought the customer. Default 10 and 10.', 'الباقات الخاصة: الإضافة التي يكسبها كل مدرب فوق عمولته (ولكل مدرب نسبته الخاصة من صفحة الفريق)، وحصة الاستقبال عندما يجلب العميل. الافتراضي 10 و10.')}">🔒 ${t('Private', 'الخاص')}:</span>
         <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text-mute)">${t('coach +', 'المدرب +')}<input type="number" id="sal-priv-coach" min="0" max="100" step="0.5" value="${privateCoachPctDefault()}" class="btn ghost" style="width:64px;font-size:12px" />%</label>
@@ -21439,12 +21540,8 @@ PAGES.salaries = (main) => {
   });
   const salCommStart = $('#sal-comm-start');
   if (salCommStart) salCommStart.addEventListener('change', e => {
-    if (currentRole() !== 'admin') { toast('Only an admin can change the commission start date', 'error'); e.target.value = (state.settings && state.settings.commissionStartDate) || ''; return; }
-    if (!state.settings) state.settings = {};
-    state.settings.commissionStartDate = e.target.value || '';
-    save();
-    refresh();
-    toast(e.target.value ? `Commission counts from ${fmtDate(e.target.value)}` : 'Commission cutoff cleared (all dates count)');
+    e.target.value = commissionStartDate();   // v6.938 — fixed at 1 Jun 2026, not editable
+    toast(t('The commission start date is fixed at 1 Jun 2026', 'تاريخ بداية العمولة ثابت: 1 يونيو 2026'), 'info');
   });
   // v6.810 — the club-wide private % (admin): coach extra and reception share, both default 10
   window.setPrivatePcts = function (coachRaw, recRaw) {
@@ -21762,6 +21859,54 @@ window._salExtraHint = function () {
   else amt = parseFloat((document.getElementById('sp-add-amt') || {}).value) || 0;
   const x = Math.round((amt - rem) * 100) / 100;
   h.textContent = x > 0.5 ? '⬆ ' + fmt(x) + ' ' + t('above what is owed now — saved as "extra paid" (a flag only, never carried to next month)', 'فوق المستحق الآن — يُحفظ كـ«دفع زائد» (علامة فقط، لا تُرحَّل للشهر القادم)') : '';
+};
+// v6.936 — the badges of a FROZEN month / of the month that receives its late adjustment
+function _salLateBadges(p) {
+  if (!p) return '';
+  const sg = x => (x >= 0 ? '+' : '−') + fmt(Math.abs(x));
+  let h = '';
+  if (p.frozen && p.lateDelta) h += '<div style="margin-bottom:3px"><span class="badge" style="background:rgba(107,114,128,.14);color:#4b5563;font-weight:700;cursor:help" title="' + t('This month was paid, so it is frozen at the agreed amount. The live calculation now differs; the difference is shown in the next month as a late adjustment.', 'هذا الشهر مدفوع فلذلك هو مجمّد على المبلغ المتفق عليه. الحساب الحالي مختلف؛ والفرق يظهر في الشهر التالي كتعديل متأخر.') + '">🔒 ' + t('Frozen', 'مجمّد') + ' · ' + t('live', 'الحالي') + ' ' + sg(p.lateDelta) + ' → ' + escapeHtml(fmtMonth(_salNextMonth(p.month))) + '</span></div>';
+  let late = null; try { late = salaryLateFor(p.coachId, p.month); } catch (_) {}
+  if (late) h += '<div style="margin-bottom:3px"><button class="btn ghost sm" style="padding:1px 7px;color:#b45309;border-color:rgba(245,158,11,.5)" onclick="showSalaryLate(' + p.coachId + ', \'' + late.from + '\')">↩ ' + t('Late adjustment', 'تعديل متأخر') + ' ' + sg(late.delta) + ' ' + t('from', 'من') + ' ' + escapeHtml(fmtMonth(late.from)) + ' · ' + t('Review', 'مراجعة') + '</button></div>';
+  if (p.lateIn) h += '<div style="margin-bottom:3px"><span class="badge" style="background:rgba(16,185,129,.14);color:#047857;font-weight:700" title="' + t('Late adjustments accepted into this month', 'تعديلات متأخرة اعتُمدت في هذا الشهر') + '">↩ ' + sg(p.lateIn) + ' ' + t('late adj. included', 'تعديل متأخر مُضاف') + '</span></div>';
+  return h;
+}
+// the member-by-member detail of what a frozen month's live calculation now says differently, with Accept / Dismiss
+window.showSalaryLate = function (coachId, fromMonth) {
+  const c = state.coaches.find(x => x.id === coachId), late = salaryLateFor(coachId, _salNextMonth(fromMonth));
+  if (!late) { toast(t('Nothing to review', 'لا شيء للمراجعة'), 'info'); return; }
+  const R = salaryGrowthReason(coachId, fromMonth);
+  const kindAr = { attended: t('attended', 'حضور'), trueup: t('expiry true-up', 'تسوية انتهاء') };
+  const typ = { new: t('new', 'جديد'), changed: t('changed', 'تغيّر'), removed: t('removed', 'أُزيل') };
+  const sg = x => (x >= 0 ? '+' : '−') + fmt(Math.abs(x));
+  const items = (R.baseline ? R.items : []);
+  const explained = items.reduce((s, i) => s + (i.dPay || 0), 0) + (R.other || []).reduce((s, o) => s + (o.d || 0), 0);
+  const rest = Math.round((late.delta - explained) * 100) / 100;
+  const rows = items.map(i => '<tr><td>' + escapeHtml(i.n) + '</td><td><span class="badge" style="font-size:10px">' + typ[i.type] + '</span> ' + escapeHtml(i.sp) + ' · ' + (kindAr[i.kind] || escapeHtml(i.kind)) + (i.type === 'changed' ? ' · ' + i.oldCls + ' → ' + i.cls : (i.cls ? ' · ' + i.cls : '')) + '</td><td class="text-right num" style="font-weight:700;color:' + (i.dPay >= 0 ? 'var(--green)' : 'var(--red)') + '">' + sg(i.dPay) + '</td></tr>').join('') +
+    (R.other || []).map(o => '<tr><td colspan="2">' + escapeHtml({ bonus: t('Bonuses', 'المكافآت'), fixed: t('Fixed salary', 'الراتب الثابت'), advance: t('Advances', 'السلف') }[o.label] || o.label) + '</td><td class="text-right num" style="font-weight:700">' + sg(o.d) + '</td></tr>').join('') +
+    (Math.abs(rest) >= 1 ? '<tr><td colspan="2" class="text-mute">' + t('Other changes before the system kept the payment lines (no member detail available)', 'تغييرات أخرى قبل أن يحتفظ النظام بأسطر الدفع (لا تفاصيل بالأعضاء)') + '</td><td class="text-right num" style="font-weight:700">' + sg(rest) + '</td></tr>' : '');
+  const body = '<div style="font-size:13px;line-height:1.7"><div>' + t('Paid and frozen', 'المدفوع والمجمّد') + ' <b>' + escapeHtml(fmtMonth(fromMonth)) + '</b>: <b>' + fmt(late.frozenNet) + '</b> · ' + t('live calculation now', 'الحساب الحالي') + ': <b>' + fmt(late.liveNet) + '</b></div>' +
+    '<div style="margin:8px 0;font-weight:700">' + t('Difference', 'الفرق') + ': <span style="color:' + (late.delta >= 0 ? 'var(--green)' : 'var(--red)') + '">' + sg(late.delta) + ' QAR</span> → ' + t('shown in', 'يظهر في') + ' ' + escapeHtml(fmtMonth(late.to)) + '</div>' +
+    (rows ? '<table class="data-table" style="width:100%;font-size:12px"><thead><tr><th>' + t('Member', 'العضو') + '</th><th>' + t('What changed', 'ما الذي تغيّر') + '</th><th class="text-right">' + t('Pay', 'الأثر') + '</th></tr></thead><tbody>' + rows + '</tbody></table>' : '<div class="text-mute">' + t('No member detail is available for this month.', 'لا تفاصيل بالأعضاء لهذا الشهر.') + '</div>') +
+    '<div class="text-mute" style="margin-top:8px;font-size:11px">' + t('Accept = add it to ' + fmtMonth(late.to) + '’s pay. Dismiss = leave it out (nothing changes in the pay).', 'اعتماد = يُضاف لمرتب ' + fmtMonth(late.to) + '. تجاهل = لا يُضاف (لا تغيير في المرتب).') + '</div></div>';
+  showModal({ title: '↩ ' + t('Late adjustment', 'تعديل متأخر') + ' — ' + escapeHtml(c ? c.name : '') + ' · ' + escapeHtml(fmtMonth(fromMonth)), body, actions: [
+    { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
+    { label: t('Dismiss', 'تجاهل'), class: 'btn ghost', onclick: () => window._salLateDecide(coachId, fromMonth, false) },
+    { label: '✓ ' + t('Accept into ' + fmtMonth(late.to), 'اعتماد في ' + fmtMonth(late.to)), class: 'btn primary', onclick: () => window._salLateDecide(coachId, fromMonth, true) },
+  ] });
+};
+window._salLateDecide = function (coachId, fromMonth, accept) {
+  const p = computeMonthlyPay(coachId, fromMonth);
+  if (!p || !p.frozen || !p.lateDelta) { closeModal(); return; }
+  if (!Array.isArray(state.salaries)) state.salaries = [];
+  const rec = { id: nextId(state.salaries), kind: 'lateadj', coachId, fromMonth, month: _salNextMonth(fromMonth), amount: p.lateDelta, status: accept ? 'accepted' : 'dismissed', at: new Date().toISOString() };
+  state.salaries.push(rec);
+  const c = state.coaches.find(x => x.id === coachId);
+  audit('salary.late_adjustment', 'coach:' + coachId, (accept ? 'Accepted' : 'Dismissed') + ' late adjustment ' + fmt(p.lateDelta) + ' QAR of ' + fmtMonth(fromMonth) + ' for ' + (c ? c.name : '') + (accept ? ' into ' + fmtMonth(rec.month) : ''), { coachId, fromMonth, month: rec.month, amount: p.lateDelta, status: rec.status });
+  closeModal();
+  const okMsg = accept ? t('Late adjustment added to ' + fmtMonth(rec.month), 'أُضيف التعديل المتأخر إلى ' + fmtMonth(rec.month)) : t('Late adjustment dismissed', 'تم تجاهل التعديل المتأخر');
+  if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'salaries', id: rec.id }], okMsg, afterOk: () => render() });
+  else { save(); render(); toast(okMsg); }
 };
 // v6.924 — "why did this month grow after it was paid": the lines that are new / bigger / smaller since the last payment
 window.showSalaryGrowthReason = function (coachId, monthKey) {
@@ -22997,6 +23142,8 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
         </div>
       ` : ''}
 
+      ${pay.lateIn ? `<div class="row"><span>Late adjustments accepted from earlier months</span><span style="font-family:monospace">${pay.lateIn >= 0 ? '+' : '−'}${fmt(Math.abs(pay.lateIn))} QAR</span></div>` : ''}
+      ${(pay.frozen && Math.abs((pay.liveNet || 0) - (pay.frozenNet || 0)) >= 1) ? `<div class="row" style="color:#4b5563"><span>🔒 Frozen at the amount agreed when this month was paid (the lines above now add up to ${fmt(pay.liveNet)}; the difference is handled in the next month)</span><span style="font-family:monospace">${fmt(pay.frozenNet)} QAR</span></div>` : ''}
       <div class="net ${pay.net < 0 ? 'neg' : ''}">
         <div class="label">NET PAY</div>
         <div class="amount">${fmt(pay.net)} QAR</div>
@@ -24908,6 +25055,8 @@ PAGES.settings = (main, section) => {
         <button class="btn ghost" id="cloudstorage-btn" title="See how much data is stored in the cloud, broken down by collection (members, invoices, attendance, audit log…)">☁ ${t('Cloud Storage Usage', 'استخدام التخزين السحابي')}</button>
         <button class="btn ghost" id="fixdupsubs-btn" title="Find & remove duplicate subscription rows on member cards (attendance is kept safe)">🧹 ${t('Fix duplicate subscriptions', 'إصلاح الاشتراكات المكررة')}</button>
         <button class="btn ghost" id="applyfix-btn" title="${t('Apply a small fix file (JSON) to single records — nothing else is touched', 'تطبيق ملف إصلاح صغير (JSON) على سجلات محددة فقط')}">🩹 ${t('Apply a fix file', 'تطبيق ملف إصلاح')}</button>
+        <button class="btn ghost" id="importprofile-btn" title="${t('Import ONE member (and their invoices) from a profile file or from a full backup — the rest of the database is not touched', 'استيراد عضو واحد (وفواتيره) من ملف عضو أو من نسخة كاملة — بدون المساس ببقية قاعدة البيانات')}">📥 ${t('Import a member profile', 'استيراد ملف عضو')}</button>
+        <input type="file" id="importprofile-file" accept=".json" style="display:none" />
         <input type="file" id="applyfix-file" accept=".json" style="display:none" />
         <input type="file" id="restore-file" accept=".json" style="display:none" />
       </div>
@@ -25160,6 +25309,16 @@ PAGES.settings = (main, section) => {
   $('#datahealth-btn')?.addEventListener('click', () => window.showDataHealthUI());
   $('#cloudstorage-btn')?.addEventListener('click', () => window.showCloudStorageUI());
   $('#fixdupsubs-btn')?.addEventListener('click', () => window.showFixDuplicateSubsUI());
+  $('#importprofile-btn')?.addEventListener('click', () => $('#importprofile-file').click());
+  $('#importprofile-file')?.addEventListener('change', async e => {
+    const f = e.target.files && e.target.files[0]; e.target.value = '';
+    if (!f) return;
+    let raw = null; try { raw = JSON.parse(await f.text()); } catch (_) {}
+    if (!raw) { toast(t('Could not read this file', 'تعذّرت قراءة الملف'), 'error'); return; }
+    if (raw.format === 'bs-member/1') window.showProfileImportPreview(raw);
+    else if (Array.isArray(raw.members)) window.showProfilePicker(raw);
+    else toast(t('This is neither a member profile nor a full backup', 'هذا ليس ملف عضو ولا نسخة كاملة'), 'error');
+  });
   $('#applyfix-btn')?.addEventListener('click', () => $('#applyfix-file').click());
   $('#applyfix-file')?.addEventListener('change', async e => {
     const f = e.target.files && e.target.files[0]; e.target.value = '';
