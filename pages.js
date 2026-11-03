@@ -13898,7 +13898,7 @@ PAGES.invoices = (main) => {
     <div class="card">
       <div class="filter-bar">
         <div class="search"><input id="inv-search" type="text" value="${escapeHtml(filter.search || '')}" placeholder="${t('Search name (EN/AR), mobile, QID, coach, sport...', 'ابحث بالاسم أو الجوال أو الهوية أو المدرب أو الرياضة...')}" /></div>
-        ${monthMultiHTML('inv-month', [...new Set([(TODAY || '').slice(0, 7), ...state.invoices.map(i => i.month).filter(Boolean)])].filter(Boolean).sort().reverse(), filter.months)}
+        ${monthMultiHTML('inv-month', [...new Set([(TODAY || '').slice(0, 7), ...state.invoices.filter(i => i && !i.deleted).map(i => i.month).filter(Boolean)])].filter(Boolean).sort().reverse(), filter.months)}
         <select id="inv-dateby" class="btn ghost" style="padding:6px 8px" title="${t('The month / day / range filters answer on this date', 'فلاتر الشهر واليوم والفترة تعمل على هذا التاريخ')}">
           <option value="start" ${filter.dateBy === 'start' ? 'selected' : ''}>${t('Start date', 'تاريخ البداية')}</option>
           <option value="paid" ${filter.dateBy === 'paid' ? 'selected' : ''}>${t('Paid on', 'تاريخ الدفع')}</option>
@@ -20835,7 +20835,7 @@ PAGES.expenses = (main) => {
     <div class="card">
       <div class="filter-bar">
         <div class="search"><input id="exp-search" type="text" value="${escapeHtml(filter.search || '')}" placeholder="${t('Search description...', 'ابحث في الوصف...')}" /></div>
-        ${monthMultiHTML('exp-month', [...new Set([(TODAY || '').slice(0, 7), ...state.expenses.map(e => e.month).filter(Boolean)])].filter(Boolean).sort().reverse(), filter.from || filter.to ? [] : filter.months)}
+        ${monthMultiHTML('exp-month', [...new Set([(TODAY || '').slice(0, 7), ...state.expenses.filter(e => e && !e.deleted).map(e => e.month).filter(Boolean)])].filter(Boolean).sort().reverse(), filter.from || filter.to ? [] : filter.months)}
         <div style="display:flex;align-items:center;gap:4px" title="${t('Filter by a date range (the expense date) — spans months', 'تصفية بنطاق تاريخ المصروف — عبر الأشهر')}">
           <span class="text-mute" style="font-size:11px">${t('From', 'من')}</span>
           <input id="exp-from" type="date" class="btn ghost" style="padding:6px 8px" value="${filter.from || ''}" />

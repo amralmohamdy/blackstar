@@ -14,7 +14,8 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.953.0';   // 6.953.0 Attendance "Attended" filter no longer drops a student whose class (with the filtered coach) was his 2nd class of the day — the ATTENDED total and the list now agree;
+const APP_VERSION = '6.954.0';   // 6.954.0 the Invoices / Expenses month picker no longer lists the month (or year, e.g. 2027) of an archived record;
+// prev:   // 6.953.0 Attendance "Attended" filter no longer drops a student whose class (with the filtered coach) was his 2nd class of the day — the ATTENDED total and the list now agree;
 // prev:   // 6.952.0 Schedule → rentals no longer gives a slot to the first customer of the list (you must choose the customer; a slot with none is skipped); a fix file can delete / create court bookings;
 // prev:   // 6.951.0 a package with no invoice can no longer take another package's paid amount in the member card (the same money was shown twice);
 // prev:   // 6.950.0 the "+n classes" banner no longer lists classes that were counted on a package switched away to another coach;
