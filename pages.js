@@ -16472,15 +16472,15 @@ window._applyFixDuplicateSubs = function () {
 // Refused when a row it removes / updates is missing or a field it expects differs (already fixed, or changed). All or nothing.
 // v6.933 — an op may also CREATE an invoice: { collection:'invoices', id:<new id>, create:{ …the invoice… }, linkSub:{ memberId, _sid, expectInvoice } } — its ref is the next free one, and the package row is re-pointed to it. Refused if that id already exists.
 window._fixFileCheck = function (fx) {
-  const OK = { members: 1, invoices: 1, coaches: 1 };   // v6.947.0 — coaches too (fixed-salary history)
+  const OK = { members: 1, invoices: 1, coaches: 1, salaries: 1, expenses: 1 };   // v6.948.0 — salary records + expense rows too (a file that pays coaches)
   const bad = m => ({ ok: false, error: m });
   if (!fx || fx.format !== 'bs-fix/1' || !Array.isArray(fx.ops) || !fx.ops.length) return bad(t('This is not a fix file', 'هذا ليس ملف إصلاح'));
   const plan = [];
   for (const op of fx.ops) {
     if (!op || !OK[op.collection] || op.id == null) return bad(t('The file has a bad operation', 'الملف يحتوي عملية غير صالحة'));
     if (op.create) {   // v6.933 — create an invoice and re-point one package row to it
-      if (op.collection !== 'invoices' || typeof op.create !== 'object') return bad(t('The file has a bad operation', 'الملف يحتوي عملية غير صالحة'));
-      if ((state.invoices || []).some(x => x && String(x.id) === String(op.id))) return bad((op.label || '#' + op.id) + ': ' + t('already created', 'تم إنشاؤه مسبقاً'));
+      if (!{ invoices: 1, salaries: 1, expenses: 1 }[op.collection] || typeof op.create !== 'object') return bad(t('The file has a bad operation', 'الملف يحتوي عملية غير صالحة'));
+      if ((state[op.collection] || []).some(x => x && String(x.id) === String(op.id))) return bad((op.label || '#' + op.id) + ': ' + t('already created', 'تم إنشاؤه مسبقاً'));
       let _sub = null;
       if (op.linkSub) {
         const _m = (state.members || []).find(x => x && String(x.id) === String(op.linkSub.memberId));
@@ -16505,13 +16505,15 @@ window._fixFileApply = function (fx) {
   if (!chk.ok) return chk;
   for (const { op, doc, sub } of chk.plan) {
     if (op.create) {   // v6.933
-      const nd = JSON.parse(JSON.stringify(op.create)); nd.id = op.id; nd.ref = nextInvoiceRef();
+      const nd = JSON.parse(JSON.stringify(op.create)); nd.id = op.id; if (op.collection === 'invoices') nd.ref = nextInvoiceRef();
       if (typeof stampUpdate === 'function') stampUpdate(nd);
-      state.invoices.push(nd);
+      if (!Array.isArray(state[op.collection])) state[op.collection] = [];
+      state[op.collection].push(nd);
       if (sub) { sub.invoiceNumber = nd.ref; const _o = (state.members || []).find(x => x && (x.subscriptions || []).includes(sub)); if (_o && typeof stampUpdate === 'function') stampUpdate(_o); }
       continue;
     }
     for (const arr of Object.keys(op.removeFrom || {})) doc[arr] = (doc[arr] || []).filter(r => !Object.keys(op.removeFrom[arr]).some(key => op.removeFrom[arr][key].some(id => r && String(r[key]) === String(id))));
+    for (const arr of Object.keys(op.pushTo || {})) doc[arr] = (Array.isArray(doc[arr]) ? doc[arr] : []).concat(JSON.parse(JSON.stringify(op.pushTo[arr])));   // v6.948.0 — add rows to an array (e.g. a salary payment)
     for (const arr of Object.keys(op.updateIn || {})) for (const u of op.updateIn[arr]) { const ks = Object.keys(u.match); (doc[arr] || []).filter(r => r && ks.every(k => String(r[k]) === String(u.match[k]))).forEach(r => Object.assign(r, JSON.parse(JSON.stringify(u.set)))); }
     if (op.set) Object.assign(doc, JSON.parse(JSON.stringify(op.set)));
     if (typeof stampUpdate === 'function') stampUpdate(doc);
@@ -22895,6 +22897,18 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
   const pay = computeMonthlyPay(coachId, monthKey);
   if (!c || !pay) return;
 
+  // v6.949.0 — a coach who LEFT: the classes his students attended that earn him nothing (after his leave date / outside their package), with the average class price of their last package — at the bottom, NOT in the pay
+  const _unpaidSection = (() => {
+    let U = []; try { U = salaryUnpaidClasses(coachId, monthKey); } catch (e) { console.error('unpaid classes failed', e); }
+    if (!U.length) return '';
+    const why = u => u.reason === 'leave' ? ('After the coach left on ' + fmtDate(u.leave) + ' — the leave rule pays only up to that date') : (u.reason === 'both' ? ('After the coach left on ' + fmtDate(u.leave) + ' and outside the package period') : ('Attended outside the package period (' + (u.lastStart ? fmtDate(u.lastStart) : '…') + ' → ' + (u.lastEnd ? fmtDate(u.lastEnd) : '…') + ') — the package had ended / was used up'));
+    const totV = U.reduce((s, u) => s + u.value, 0), totC = U.reduce((s, u) => s + u.commission, 0), totN = U.reduce((s, u) => s + u.n, 0);
+    return '<h2 style="margin-top:22px">Classes attended but NOT paid to ' + escapeHtml(c.name) + '</h2>' +
+      '<div style="font-size:11px;color:#6b7280;margin-bottom:6px">For information only — these classes are <b>not</b> included in the pay above. Average class price = the price of the student\'s LAST package ÷ its classes.</div>' +
+      '<table style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr style="background:#f3f4f6;text-align:left"><th style="padding:4px 6px">Member</th><th style="padding:4px 6px">Sport</th><th style="padding:4px 6px">Dates</th><th style="padding:4px 6px;text-align:right">Classes</th><th style="padding:4px 6px;text-align:right">Avg class price</th><th style="padding:4px 6px;text-align:right">Value</th><th style="padding:4px 6px;text-align:right">At ' + (U[0].rate || 0) + '%</th><th style="padding:4px 6px">Reason</th></tr></thead><tbody>' +
+      U.map(u => '<tr style="border-top:1px solid #e5e7eb"><td style="padding:4px 6px">' + escapeHtml(u.member) + '</td><td style="padding:4px 6px">' + escapeHtml(u.sport) + '</td><td style="padding:4px 6px">' + u.days.map(d => fmtDate(d)).join(', ') + '</td><td style="padding:4px 6px;text-align:right">' + u.n + '</td><td style="padding:4px 6px;text-align:right">' + fmt(u.avg) + '</td><td style="padding:4px 6px;text-align:right">' + fmt(u.value) + '</td><td style="padding:4px 6px;text-align:right">' + fmt(u.commission) + '</td><td style="padding:4px 6px;color:#92400e">' + escapeHtml(why(u)) + '</td></tr>').join('') +
+      '<tr style="border-top:2px solid #111;font-weight:700"><td style="padding:4px 6px" colspan="3">Total</td><td style="padding:4px 6px;text-align:right">' + totN + '</td><td></td><td style="padding:4px 6px;text-align:right">' + fmt(totV) + '</td><td style="padding:4px 6px;text-align:right">' + fmt(totC) + '</td><td></td></tr></tbody></table>';
+  })();
   // Re-gather lines (same logic as showRevenueDetail)
   let lines = [];
   for (const inv of state.invoices) {
@@ -23177,6 +23191,8 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
         <div class="amount">${fmt(pay.net)} QAR</div>
       </div>
       ${pay.net < 0 ? '<div style="margin-top:8px;font-size:11px;color:#dc2626"><b>Note:</b> Net pay is negative this month due to retroactive adjustments. To be reconciled in the next pay period.</div>' : ''}
+
+      ${_unpaidSection}
 
       <div class="footer">
         Black Stars Sports Club · Generated ${fmtDate(TODAY)} · Computer-generated · ${pay.paidStatus === 'paid' ? 'Paid on ' + fmtDate(pay.paidDate) + '.' : 'For your records.'}

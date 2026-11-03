@@ -14,7 +14,9 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.947.0';   // 6.947.0 a raise of a fixed salary applies from the month you choose — the old months keep the old salary (Rawan Salaah); a fix file can set a coach's salary history;
+const APP_VERSION = '6.949.0';   // 6.949.0 the salary file of a coach who LEFT lists, at the bottom, the classes his students attended that earn him nothing (after his leave date / outside their package) with the average class price of their last package and the reason;
+// prev:   // 6.948.0 a fix file can pay coaches (adds salary payments + their expense rows) and can create salary / expense records;
+// prev:   // 6.947.0 a raise of a fixed salary applies from the month you choose — the old months keep the old salary (Rawan Salaah); a fix file can set a coach's salary history;
 // prev:   // 6.946.0 old salary months stay LIVE (the old way) until the owner closes them (Salaries ▸ 🔒 Close old months); from November a paid month freezes by itself; what still differs after closing goes to the next month for approval;
 // prev:   // 6.945.0 admin-only shortcuts: Alt+Shift+S salaries · Alt+Shift+A attendance · Alt+Shift+I invoices;
 // prev:   // 6.944.0 reception can delete a package that has NO attended class (or a duplicate twin) from the member card; deleting one with attendance stays admin-only;
@@ -9765,6 +9767,54 @@ function coachFixedFor(c, monthKey) {
   return cur;
 }
 if (typeof window !== 'undefined') window.coachFixedFor = coachFixedFor;
+// v6.949.0 — classes a LEFT coach's students attended in a month that earn him / her nothing, with the average class price of the student's LAST package (shown at the bottom of the salary file, NOT added to the pay).
+// Two reasons: (a) the class is AFTER the coach's leave date (the leave rule pays only up to it); (b) the class was attended OUTSIDE every package window of the sport (the package had ended / was used up) while the last package was this coach's.
+function _subClassValue(m, sub) {
+  if (!sub) return 0;
+  const inv = sub.invoiceNumber ? (state.invoices || []).find(i => i && !i.deleted && i.ref === sub.invoiceNumber) : null;
+  const li = inv && Array.isArray(inv.lineItems) ? (inv.lineItems.find(l => l.sport === sub.activity && String(l.coachId) === String(sub.coachId)) || inv.lineItems.find(l => l.sport === sub.activity)) : null;
+  const price = li ? (Number(li.price) || 0) : (Number(sub.priceCompleted) || Number(sub.amountPaid) || 0);
+  const n = (typeof subClassLimit === 'function' ? parseInt(subClassLimit(sub)) : 0) || parseInt(sub.totalClasses) || 0;
+  return n > 0 ? price / n : 0;
+}
+function salaryUnpaidClasses(coachId, monthKey) {
+  const c = (state.coaches || []).find(x => x && String(x.id) === String(coachId));
+  if (!c || (typeof isCoachActive === 'function' && isCoachActive(c))) return [];   // only for a coach who has left
+  const mk = String(monthKey || '').slice(0, 7), leave = c.leftOn ? String(c.leftOn).slice(0, 10) : '', rate = Number(c.rate) || 0, out = [];
+  for (const m of (state.members || [])) {
+    if (!m || m.deleted) continue;
+    const mine = (m.subscriptions || []).filter(s => s && s.activity && String(s.coachId) === String(coachId) && String(s.status || '').toLowerCase() !== 'withdrawn'
+      && !((typeof isCampSport === 'function' && isCampSport(s.activity)) || s.activity === MIXED));
+    if (!mine.length) continue;
+    const bySport = {}; mine.forEach(s => { (bySport[s.activity] = bySport[s.activity] || []).push(s); });
+    let extraBySub = null;
+    for (const sport of Object.keys(bySport)) {
+      const subs = bySport[sport], last = subs.slice().sort((a, b) => String(b.start || '').localeCompare(String(a.start || '')))[0];
+      const days = new Map();   // iso -> reason
+      if (leave) {
+        const cell = attendanceFor(m, mk, sport, coachId) || {};
+        for (const d of Object.keys(cell)) {
+          if (cell[d] !== 'Y') continue;
+          const iso = mk + '-' + String(parseInt(d, 10)).padStart(2, '0');
+          if (iso <= leave) continue;
+          const inWin = subs.some(s => { const w = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, s) : { from: s.start || null, to: s.end || null }; return (!w.from || iso >= w.from) && (!w.to || iso <= w.to); });
+          // a class that another coach's package of the same sport covers belongs to THAT coach, not here
+          const _other = (m.subscriptions || []).some(o => o && o.activity === sport && String(o.coachId) !== String(coachId) && String(o.status || '').toLowerCase() !== 'withdrawn' && (() => { const w = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, o) : { from: o.start || null, to: o.end || null }; return (!w.from || iso >= w.from) && (!w.to || iso <= w.to) && (o.start ? iso >= String(o.start).slice(0, 10) : true); })());
+          if (inWin && !_other) days.set(iso, 'leave');
+        }
+      }
+      if (!extraBySub && typeof memberExtraBySub === 'function') extraBySub = memberExtraBySub(m);
+      if (extraBySub) for (const s of subs) for (const iso of (extraBySub.get(s) || [])) if (String(iso).slice(0, 7) === mk && !days.has(iso)) days.set(iso, 'outside');
+      if (!days.size) continue;
+      const avg = _subClassValue(m, last), list = Array.from(days.keys()).sort();
+      const reasons = new Set(days.values());
+      out.push({ member: m.name, sport, days: list, n: list.length, avg: Math.round(avg * 100) / 100, value: Math.round(avg * list.length * 100) / 100, commission: Math.round(avg * list.length * rate) / 100, rate,
+        reason: reasons.has('leave') && reasons.has('outside') ? 'both' : (reasons.has('leave') ? 'leave' : 'outside'), leave, lastStart: last.start || '', lastEnd: last.end || '' });
+    }
+  }
+  return out.sort((a, b) => a.member.localeCompare(b.member));
+}
+if (typeof window !== 'undefined') window.salaryUnpaidClasses = salaryUnpaidClasses;
 // v6.936 — the amount a paid month is frozen at: the explicit agreed target, else a real (positive) snapshot; null = nothing to freeze on (legacy / over-advanced records stay live)
 function salaryFrozenRef(rec) {
   if (!rec) return null;
