@@ -14,7 +14,8 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.950.0';   // 6.950.0 the "+n classes" banner no longer lists classes that were counted on a package switched away to another coach;
+const APP_VERSION = '6.951.0';   // 6.951.0 a package with no invoice can no longer take another package's paid amount in the member card (the same money was shown twice);
+// prev:   // 6.950.0 the "+n classes" banner no longer lists classes that were counted on a package switched away to another coach;
 // prev:   // 6.949.0 the salary file of a coach who LEFT lists, at the bottom, the classes his students attended that earn him nothing (after his leave date / outside their package) with the average class price of their last package and the reason;
 // prev:   // 6.948.0 a fix file can pay coaches (adds salary payments + their expense rows) and can create salary / expense records;
 // prev:   // 6.947.0 a raise of a fixed salary applies from the month you choose — the old months keep the old salary (Rawan Salaah); a fix file can set a coach's salary history;
@@ -5565,14 +5566,19 @@ function memberSubPaidMap(m, allSubs, priceOut) {
   const _c = v => String(v == null ? '' : v);
   let _lastPrice = null;
   const take = pred => { const e = pool.find(p => !p.used && pred(p)); if (e) { e.used = true; _lastPrice = e.price; return e.paid; } return null; };
+  // v6.951.0 — two passes: every package that NAMES its invoice claims its own line first, so a package with no invoice can never take another package's line (Ali Salem: Aziz's unpaid package took Iyad's 292, shown twice)
+  const _set = (s, v) => { if (v != null) { map.set(s, v); if (priceOut) priceOut.set(s, _lastPrice); } };
   for (const s of (allSubs || [])) {
-    if (!s || !s.activity) continue;
-    const ref = s.invoiceNumber; let v = null;
-    if (ref) v = take(p => p.ref === ref && p.sport === s.activity && _c(p.coachId) === _c(s.coachId));
-    if (v == null && ref) v = take(p => p.ref === ref && p.sport === s.activity);
-    if (v == null) v = take(p => p.sport === s.activity && (_c(p.coachId) === _c(s.coachId) || (s.coach && _c(p.coach) === _c(s.coach))));
+    if (!s || !s.activity || !s.invoiceNumber) continue;
+    const ref = s.invoiceNumber; let v = take(p => p.ref === ref && p.sport === s.activity && _c(p.coachId) === _c(s.coachId));
+    if (v == null) v = take(p => p.ref === ref && p.sport === s.activity);
+    _set(s, v);
+  }
+  for (const s of (allSubs || [])) {
+    if (!s || !s.activity || map.has(s)) continue;
+    let v = take(p => p.sport === s.activity && (_c(p.coachId) === _c(s.coachId) || (s.coach && _c(p.coach) === _c(s.coach))));
     if (v == null) v = take(p => p.sport === s.activity);
-    if (v != null) { map.set(s, v); if (priceOut) priceOut.set(s, _lastPrice); }
+    _set(s, v);
   }
   return map;
 }
