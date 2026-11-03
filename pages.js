@@ -5701,7 +5701,8 @@ window.editCoach = function(id, defaultRole) {
 
       <div style="margin:14px 0 6px;font-size:11px;color:var(--blue);text-transform:uppercase;letter-spacing:.6px;font-weight:600">💰 Pay configuration</div>
       <div class="form-row">
-        <div class="field"><label>Fixed monthly salary (QAR)</label><input id="c-fixed" type="number" min="0" step="0.01" value="${c.fixedSalary || 0}" /></div>
+        <div class="field"><label>Fixed monthly salary (QAR)</label><input id="c-fixed" type="number" min="0" step="0.01" value="${c.fixedSalary || 0}" />
+          ${isNew ? '' : `<div style="display:flex;align-items:center;gap:6px;margin-top:4px;font-size:11px"><span class="text-mute">${t('If you change it, it applies from', 'لو غيّرته، يسري من')}</span><input id="c-fixed-from" type="month" value="${currentMonth()}" style="font-size:11px;padding:2px 4px"/></div>${(Array.isArray(c.fixedHistory) && c.fixedHistory.length) ? `<div class="text-mute" style="font-size:11px;margin-top:3px">${t('Earlier salary', 'المرتب السابق')}: ${c.fixedHistory.slice().sort((a, b) => String(a.upTo).localeCompare(String(b.upTo))).map(e => fmt(e.amount) + ' ' + t('up to', 'حتى') + ' ' + escapeHtml(fmtMonth(e.upTo))).join(' · ')}</div>` : ''}`}</div>
         <div class="field"><label>Commission rate (%)</label><input id="c-rate" type="number" min="0" max="100" step="1" value="${c.rate || 0}" /></div>
       </div>
       <div class="form-row">
@@ -5816,6 +5817,12 @@ window.editCoach = function(id, defaultRole) {
           state.coaches.push(_nc);
           _savedCoachId = _nc.id;
         } else {
+          // v6.947.0 — a changed fixed salary applies FROM the chosen month; the amount before it is kept for the months up to it
+          { const _was = parseFloat(c.fixedSalary) || 0;
+            if (Math.abs(_was - fixedSalary) > 0.004) {
+              const _from = ((document.getElementById('c-fixed-from') || {}).value || currentMonth()).slice(0, 7), _upTo = _salPrevMonth(_from);
+              c.fixedHistory = (Array.isArray(c.fixedHistory) ? c.fixedHistory : []).filter(e => e && String(e.upTo) < _upTo).concat([{ upTo: _upTo, amount: _was }]);
+            } }
           Object.assign(c, {
             name, rate, fixedSalary, commissionBasis, payAttendedOnly, role: roleVal, sports, active: activeVal,
             phone, email: email || null, qid, birthdate: birthdate || null, gender, joinedDate,
@@ -16465,7 +16472,7 @@ window._applyFixDuplicateSubs = function () {
 // Refused when a row it removes / updates is missing or a field it expects differs (already fixed, or changed). All or nothing.
 // v6.933 — an op may also CREATE an invoice: { collection:'invoices', id:<new id>, create:{ …the invoice… }, linkSub:{ memberId, _sid, expectInvoice } } — its ref is the next free one, and the package row is re-pointed to it. Refused if that id already exists.
 window._fixFileCheck = function (fx) {
-  const OK = { members: 1, invoices: 1 };
+  const OK = { members: 1, invoices: 1, coaches: 1 };   // v6.947.0 — coaches too (fixed-salary history)
   const bad = m => ({ ok: false, error: m });
   if (!fx || fx.format !== 'bs-fix/1' || !Array.isArray(fx.ops) || !fx.ops.length) return bad(t('This is not a fix file', 'هذا ليس ملف إصلاح'));
   const plan = [];

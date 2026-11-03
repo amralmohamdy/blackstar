@@ -14,7 +14,8 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.946.0';   // 6.946.0 old salary months stay LIVE (the old way) until the owner closes them (Salaries ▸ 🔒 Close old months); from November a paid month freezes by itself; what still differs after closing goes to the next month for approval;
+const APP_VERSION = '6.947.0';   // 6.947.0 a raise of a fixed salary applies from the month you choose — the old months keep the old salary (Rawan Salaah); a fix file can set a coach's salary history;
+// prev:   // 6.946.0 old salary months stay LIVE (the old way) until the owner closes them (Salaries ▸ 🔒 Close old months); from November a paid month freezes by itself; what still differs after closing goes to the next month for approval;
 // prev:   // 6.945.0 admin-only shortcuts: Alt+Shift+S salaries · Alt+Shift+A attendance · Alt+Shift+I invoices;
 // prev:   // 6.944.0 reception can delete a package that has NO attended class (or a duplicate twin) from the member card; deleting one with attendance stays admin-only;
 // prev:   // 6.943.0 New/Edit Product: Category and SKU are drop-downs of the values already used, with "+ New…" to type a new one;
@@ -9756,6 +9757,14 @@ if (typeof window !== 'undefined') Object.assign(window, { salaryLinesSnapshot, 
 // v6.938 — the system started on 1 June 2026 and May was paid in full: commission ALWAYS counts only packages starting on/after this date (fixed, the old Salaries date box is read-only)
 const COMMISSION_START_FIXED = '2026-06-01';
 function commissionStartDate() { return COMMISSION_START_FIXED; }
+// v6.947.0 — fixed-salary HISTORY. coach.fixedSalary is the CURRENT amount; coach.fixedHistory = [{ upTo:'YYYY-MM', amount }] keeps what it was before: a month uses the entry with the earliest upTo that is on/after it, else the current amount.
+function coachFixedFor(c, monthKey) {
+  const cur = parseFloat(c && c.fixedSalary) || 0, mk = String(monthKey || '').slice(0, 7);
+  const h = (c && Array.isArray(c.fixedHistory) ? c.fixedHistory : []).filter(e => e && e.upTo && isFinite(parseFloat(e.amount))).sort((a, b) => String(a.upTo).localeCompare(String(b.upTo)));
+  if (mk) for (const e of h) if (mk <= String(e.upTo).slice(0, 7)) return parseFloat(e.amount) || 0;
+  return cur;
+}
+if (typeof window !== 'undefined') window.coachFixedFor = coachFixedFor;
 // v6.936 — the amount a paid month is frozen at: the explicit agreed target, else a real (positive) snapshot; null = nothing to freeze on (legacy / over-advanced records stay live)
 function salaryFrozenRef(rec) {
   if (!rec) return null;
@@ -9858,7 +9867,7 @@ function computeMonthlyPay(coachId, monthKey, uptoDate) {
   if (uptoDate) monthKey = String(uptoDate).slice(0, 7);
   const _lcM = coachLeaveCut(coachId, monthKey);   // v6.707 — resigned coach: pay only up to the leave date
   const _leaveCut = _lcM && !_lcM.after ? _lcM.upto : null;
-  const fixedFull = parseFloat(c.fixedSalary) || 0;
+  const fixedFull = coachFixedFor(c, monthKey);   // v6.947.0 — the fixed salary that was in force in THAT month (a raise never rewrites the old months)
   const commissionRate = parseFloat(c.rate) || 0;
   // v6.526: a coach can be pinned to their OWN commission basis (e.g. a private coach = 'payment')
   // which overrides the club-wide toggle for them only. Blank/absent → fall back to the club setting.
