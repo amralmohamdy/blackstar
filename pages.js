@@ -26025,7 +26025,8 @@ PAGES.attendance = (main) => {
     const days = (filter.days && filter.days.length)
       ? filter.days.filter(d => d >= 1 && d <= total)
       : Array.from({ length: total }, (_, i) => i + 1);
-    return days.some(d => data[String(d)] === 'Y' && inWin(window, mo, d));
+    // v6.953.0 — a day can hold several classes ('3', '3_2' …): the 2nd class of the day was never looked at, so a student whose class with the filtered coach was his second class that day was dropped by the Attended filter (the ATTENDED total counted it)
+    return days.some(d => Object.keys(data).some(k => parseInt(k, 10) === d && data[k] === 'Y') && inWin(window, mo, d));
   }
 
   // v6.505: is a given day inside a split row's coach WINDOW? (window null = whole sport, no split)
@@ -26080,7 +26081,7 @@ PAGES.attendance = (main) => {
     // narrowed column view even though the row + totals counted them.
     const cellOf = (r) => (r.attKey === MIXED && typeof mixedDayMarks === 'function') ? mixedDayMarks(r.m, mo) : (r.m.dailyAttendance?.[mo]?.[r.attKey || r.sport] || {});
     if (only === 'attended')
-      return baseDays.filter(d => rows.some(r => cellOf(r)[String(d)] === 'Y'));
+      return baseDays.filter(d => rows.some(r => { const c = cellOf(r); return Object.keys(c).some(k => parseInt(k, 10) === d && c[k] === 'Y'); }));
     return baseDays.filter(d => rows.some(r => cellOf(r)[String(d)] === 'N'));
   }
 
