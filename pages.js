@@ -16474,14 +16474,14 @@ window._applyFixDuplicateSubs = function () {
 // Refused when a row it removes / updates is missing or a field it expects differs (already fixed, or changed). All or nothing.
 // v6.933 — an op may also CREATE an invoice: { collection:'invoices', id:<new id>, create:{ …the invoice… }, linkSub:{ memberId, _sid, expectInvoice } } — its ref is the next free one, and the package row is re-pointed to it. Refused if that id already exists.
 window._fixFileCheck = function (fx) {
-  const OK = { members: 1, invoices: 1, coaches: 1, salaries: 1, expenses: 1 };   // v6.948.0 — salary records + expense rows too (a file that pays coaches)
+  const OK = { members: 1, invoices: 1, coaches: 1, salaries: 1, expenses: 1, rentals: 1, rentalCustomers: 1 };   // v6.948.0 — salary records + expense rows too (a file that pays coaches); v6.952.0 — court bookings + their customers too
   const bad = m => ({ ok: false, error: m });
   if (!fx || fx.format !== 'bs-fix/1' || !Array.isArray(fx.ops) || !fx.ops.length) return bad(t('This is not a fix file', 'هذا ليس ملف إصلاح'));
   const plan = [];
   for (const op of fx.ops) {
     if (!op || !OK[op.collection] || op.id == null) return bad(t('The file has a bad operation', 'الملف يحتوي عملية غير صالحة'));
     if (op.create) {   // v6.933 — create an invoice and re-point one package row to it
-      if (!{ invoices: 1, salaries: 1, expenses: 1 }[op.collection] || typeof op.create !== 'object') return bad(t('The file has a bad operation', 'الملف يحتوي عملية غير صالحة'));
+      if (!{ invoices: 1, salaries: 1, expenses: 1, rentals: 1, rentalCustomers: 1 }[op.collection] || typeof op.create !== 'object') return bad(t('The file has a bad operation', 'الملف يحتوي عملية غير صالحة'));
       if ((state[op.collection] || []).some(x => x && String(x.id) === String(op.id))) return bad((op.label || '#' + op.id) + ': ' + t('already created', 'تم إنشاؤه مسبقاً'));
       let _sub = null;
       if (op.linkSub) {
@@ -16505,6 +16505,7 @@ window._fixFileCheck = function (fx) {
 window._fixFileApply = function (fx) {
   const chk = window._fixFileCheck(fx);
   if (!chk.ok) return chk;
+  const removedDocs = [];
   for (const { op, doc, sub } of chk.plan) {
     if (op.create) {   // v6.933
       const nd = JSON.parse(JSON.stringify(op.create)); nd.id = op.id; if (op.collection === 'invoices') nd.ref = nextInvoiceRef();
@@ -16514,6 +16515,11 @@ window._fixFileApply = function (fx) {
       if (sub) { sub.invoiceNumber = nd.ref; const _o = (state.members || []).find(x => x && (x.subscriptions || []).includes(sub)); if (_o && typeof stampUpdate === 'function') stampUpdate(_o); }
       continue;
     }
+    if (op.delete) {   // v6.952.0 — delete a record: an invoice is ARCHIVED (restorable, like Delete rental), a rental / rental customer is removed
+      if (op.collection === 'invoices') { doc.deleted = true; doc.deletedAt = new Date().toISOString(); doc.deletedBy = 'fix file'; if (typeof stampUpdate === 'function') stampUpdate(doc); }
+      else if (Array.isArray(state[op.collection])) { removedDocs.push({ collection: op.collection, id: op.id, snapshot: JSON.parse(JSON.stringify(doc)) }); state[op.collection] = state[op.collection].filter(x => x !== doc); }
+      continue;
+    }
     for (const arr of Object.keys(op.removeFrom || {})) doc[arr] = (doc[arr] || []).filter(r => !Object.keys(op.removeFrom[arr]).some(key => op.removeFrom[arr][key].some(id => r && String(r[key]) === String(id))));
     for (const arr of Object.keys(op.pushTo || {})) doc[arr] = (Array.isArray(doc[arr]) ? doc[arr] : []).concat(JSON.parse(JSON.stringify(op.pushTo[arr])));   // v6.948.0 — add rows to an array (e.g. a salary payment)
     for (const arr of Object.keys(op.updateIn || {})) for (const u of op.updateIn[arr]) { const ks = Object.keys(u.match); (doc[arr] || []).filter(r => r && ks.every(k => String(r[k]) === String(u.match[k]))).forEach(r => Object.assign(r, JSON.parse(JSON.stringify(u.set)))); }
@@ -16521,7 +16527,7 @@ window._fixFileApply = function (fx) {
     if (typeof stampUpdate === 'function') stampUpdate(doc);
   }
   if (typeof audit === 'function') audit('fixfile.apply', 'fixfile', 'Applied fix file: ' + (fx.title || '') + ' (' + chk.plan.map(x => x.op.collection + ':' + x.label).join(', ') + ')', { ops: chk.plan.length });
-  return { ok: true, n: chk.plan.length, verify: chk.plan.map(x => ({ collection: x.op.collection, id: x.op.id })) };
+  return { ok: true, n: chk.plan.length, verify: chk.plan.map(x => { const rm = removedDocs.find(d => d.collection === x.op.collection && d.id === x.op.id); return rm ? { collection: rm.collection, id: rm.id, absent: true, snapshot: rm.snapshot } : { collection: x.op.collection, id: x.op.id }; }) };
 };
 // ── MEMBER PROFILE EXPORT / IMPORT (v6.938) ──────────────────────────────────────────────────────────────────────────────────────────────────
 // One member's whole profile (the member record with its packages / attendance / renewals, + every invoice of theirs with its payments) as a small JSON,
@@ -37255,7 +37261,7 @@ window.scheduleRentalsDialog = function () {
   const lastRate = cid => { const r = (state.rentals || []).filter(x => x && x.customerRentalId === cid && x.hourlyRate > 0 && x.facility === COURT).sort((a, b) => String(b.date).localeCompare(String(a.date)))[0]; return r ? r.hourlyRate : 100; };
   const g0 = guess(labels[0]);
   const rows = labels.map((lb, i) => '<div class="card" style="padding:10px 12px;margin-bottom:10px"><div style="font-weight:700;margin-bottom:6px">📅 ' + escapeHtml(lb) + '</div><div class="form-row">'
-    + '<div class="field"><label>' + t('Customer', 'العميل') + '</label><select id="sr-c' + i + '">' + custs.map(c => '<option value="' + c.id + '"' + ((guess(lb) || {}).id === c.id ? ' selected' : '') + '>' + escapeHtml(c.name) + ' · ' + escapeHtml(c.phone || '') + '</option>').join('') + '</select></div>'
+    + '<div class="field"><label>' + t('Customer', 'العميل') + '</label><select id="sr-c' + i + '"><option value="">' + t('— choose the customer —', '— اختر العميل —') + '</option>' + custs.map(c => '<option value="' + c.id + '"' + ((guess(lb) || {}).id === c.id ? ' selected' : '') + '>' + escapeHtml(c.name) + ' · ' + escapeHtml(c.phone || '') + '</option>').join('') + '</select></div>'
     + '<div class="field" style="max-width:130px"><label>' + t('Rate / hour', 'السعر / ساعة') + '</label><input id="sr-r' + i + '" type="number" min="0" step="1" value="' + lastRate((guess(lb) || {}).id) + '" /></div></div></div>').join('');
   showModal({
     title: '📅 ' + t('Create rentals from the schedule (left due)', 'إنشاء حجوزات من الجدول (آجلة)'),
@@ -37267,10 +37273,10 @@ window.scheduleRentalsDialog = function () {
         const until = ($('#sr-until') || {}).value || monthEnd;
         if (until < TODAY) { toast(t('The end date must be today or later — nothing is created for past days', 'تاريخ النهاية اليوم أو بعده — لا يُنشأ شيء للأيام الماضية'), 'error'); return; }
         if (sanityDateToast(until, 'End', 'النهاية', { future: 120, past: 0 })) return;
-        const made = [];
+        const made = [], skippedLabels = [];
         labels.forEach((lb, i) => {
           const cust = custs.find(c => String(c.id) === String((($('#sr-c' + i) || {}).value))); const rate = parseFloat((($('#sr-r' + i) || {}).value)) || 0;
-          if (!cust || !(rate > 0)) return;
+          if (!cust || !(rate > 0)) { skippedLabels.push(lb); return; }   // v6.952.0 — a slot with no customer chosen is skipped, never given to the first customer in the list
           const matched = (state.members || []).find(m => m && !m.deleted && m.phone && m.phone === cust.phone) || null;
           for (const p of scheduleRentalPlan(lb, until, rate).filter(x => !x.skip)) {
             const rentalId = nextId(state.rentals || []), ref = nextInvoiceRef(), desc = '🏟 Football Court rental — ' + p.hours + 'h @ ' + p.startTime + ' — ' + cust.name;
@@ -37283,7 +37289,8 @@ window.scheduleRentalsDialog = function () {
           }
         });
         closeModal();
-        if (!made.length) { toast(t('Nothing to create (no slots left, or they already have a booking)', 'لا شيء للإنشاء (لا حصص متبقية أو لديها حجز بالفعل)'), 'info'); return; }
+        if (skippedLabels.length) toast(t('No customer chosen for: ', 'لم يُختر عميل لـ: ') + skippedLabels.join(', ') + t(' — skipped', ' — تم تخطيها'), 'info');
+        if (!made.length) { if (!skippedLabels.length) toast(t('Nothing to create (no slots left, or they already have a booking)', 'لا شيء للإنشاء (لا حصص متبقية أو لديها حجز بالفعل)'), 'info'); return; }
         const total = Math.round(made.reduce((s, i) => s + i.amount, 0) * 100) / 100;
         if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: made.slice(0, 20).map(i => ({ collection: 'invoices', id: i.id })), okMsg: t(made.length + ' rental(s) created · ' + fmt(total) + ' QAR left DUE', 'تم إنشاء ' + made.length + ' حجز · ' + fmt(total) + ' ريال آجل'), afterOk: () => render() });
         else { save(); render(); }

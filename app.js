@@ -14,7 +14,8 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.951.0';   // 6.951.0 a package with no invoice can no longer take another package's paid amount in the member card (the same money was shown twice);
+const APP_VERSION = '6.952.0';   // 6.952.0 Schedule → rentals no longer gives a slot to the first customer of the list (you must choose the customer; a slot with none is skipped); a fix file can delete / create court bookings;
+// prev:   // 6.951.0 a package with no invoice can no longer take another package's paid amount in the member card (the same money was shown twice);
 // prev:   // 6.950.0 the "+n classes" banner no longer lists classes that were counted on a package switched away to another coach;
 // prev:   // 6.949.0 the salary file of a coach who LEFT lists, at the bottom, the classes his students attended that earn him nothing (after his leave date / outside their package) with the average class price of their last package and the reason;
 // prev:   // 6.948.0 a fix file can pay coaches (adds salary payments + their expense rows) and can create salary / expense records;
