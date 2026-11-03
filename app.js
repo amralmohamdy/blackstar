@@ -14,7 +14,8 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.949.0';   // 6.949.0 the salary file of a coach who LEFT lists, at the bottom, the classes his students attended that earn him nothing (after his leave date / outside their package) with the average class price of their last package and the reason;
+const APP_VERSION = '6.950.0';   // 6.950.0 the "+n classes" banner no longer lists classes that were counted on a package switched away to another coach;
+// prev:   // 6.949.0 the salary file of a coach who LEFT lists, at the bottom, the classes his students attended that earn him nothing (after his leave date / outside their package) with the average class price of their last package and the reason;
 // prev:   // 6.948.0 a fix file can pay coaches (adds salary payments + their expense rows) and can create salary / expense records;
 // prev:   // 6.947.0 a raise of a fixed salary applies from the month you choose — the old months keep the old salary (Rawan Salaah); a fix file can set a coach's salary history;
 // prev:   // 6.946.0 old salary months stay LIVE (the old way) until the owner closes them (Salaries ▸ 🔒 Close old months); from November a paid month freezes by itself; what still differs after closing goes to the next month for approval;

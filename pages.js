@@ -2370,7 +2370,9 @@ function memberExtraClasses(m) {
   }
   for (const sp of Object.keys(sports)) {
     const subs = sports[sp], first = subs.map(s => String(s.start || '')).filter(Boolean).sort()[0] || '';
-    const wins = subs.map(s => (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, s) : { from: s.start || null, to: s.end || null });
+    // v6.950.0 — a package that was switched away to another coach still owns the classes inside its window (they were counted on it), so they are not "extra"
+    const _own = subs.concat((m.subscriptions || []).filter(s => s && s.switchedAwayTo && (s.activity || '') === sp && String(s.status || '').toLowerCase() !== 'withdrawn'));
+    const wins = _own.map(s => (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, s) : { from: s.start || null, to: s.end || null });
     const days = [];
     for (const mo of Object.keys(da)) {
       for (const cell of Object.keys(da[mo] || {})) {
