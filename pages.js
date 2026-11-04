@@ -24964,7 +24964,7 @@ PAGES.settings = (main, section) => {
       <div class="form-row">
         <div class="field">
           <label>🔒 ${t('Auto sign-out after inactivity (minutes)', 'تسجيل خروج تلقائي بعد الخمول (دقائق)')}</label>
-          <input id="pref-idlemin" type="number" min="0" max="240" step="1" value="${cur.idleLogoutMin ?? 10}" />
+          <input id="pref-idlemin" type="number" min="0" max="240" step="1" value="${cur.idleLogoutMin ?? 20}" />
           <div class="text-mute" style="font-size:11px;margin-top:4px">${t('When the app sits idle this long, a dialog asks to Continue the session or Log out (auto sign-out if ignored). Active use — clicks, typing, mouse movement — never triggers it. Set 0 to disable auto sign-out.', 'عند خمول التطبيق لهذه المدة يظهر مربع لمتابعة الجلسة أو تسجيل الخروج (خروج تلقائي إذا تُرك). الاستخدام النشط لا يفعّله. اضبط 0 للتعطيل.')}</div>
         </div>
       </div>
@@ -25773,7 +25773,7 @@ PAGES.attendance = (main) => {
     const sub = subs.slice(-1)[0] || null;
     if (sub && sub.private && (sub.approach === 'coach' || sub.approach === 'reception')) return { approach: sub.approach };
     if (sub && sub.privateNo) return null;
-    if (coachId != null && typeof isPrivateCoachId === 'function' && isPrivateCoachId(coachId)) return { approach: '' };
+    // v6.957.0 — a "(Private)" coach is NOT labelled again: his name already says it (Aziz (Private) + a 🔒 Private tag was the same word twice); only a package the owner flagged private shows the tag
     return null;
   }
   const attPrivTag = (pv, plain) => !pv ? '' : plain

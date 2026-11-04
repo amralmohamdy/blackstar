@@ -14,7 +14,9 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.955.0';   // 6.955.0 Invoices: the Activities filter now lists Football Court (and any other facility billed as Court Rental / Boxing Room);
+const APP_VERSION = '6.957.0';   // 6.957.0 Attendance: no extra 🔒 Private tag next to a coach whose name already says (Private) — the tag stays for packages you flagged private;
+// prev:   // 6.956.0 the idle auto sign-out default is 20 minutes (was 10) — a different value set in Preferences still wins;
+// prev:   // 6.955.0 Invoices: the Activities filter now lists Football Court (and any other facility billed as Court Rental / Boxing Room);
 // prev:   // 6.954.0 the Invoices / Expenses month picker no longer lists the month (or year, e.g. 2027) of an archived record;
 // prev:   // 6.953.0 Attendance "Attended" filter no longer drops a student whose class (with the filtered coach) was his 2nd class of the day — the ATTENDED total and the list now agree;
 // prev:   // 6.952.0 Schedule → rentals no longer gives a slot to the first customer of the list (you must choose the customer; a slot with none is skipped); a fix file can delete / create court bookings;
@@ -10918,7 +10920,7 @@ if (typeof window !== 'undefined') window.recordLogin = recordLogin;
 // resets the clock, so the dialog only appears when the device is genuinely idle.
 // If the dialog is ignored, a grace countdown signs the user out (so a walked-away
 // device still locks). Pending cloud writes are flushed before sign-out.
-const IDLE_DEFAULT_MIN = 10;             // default idle minutes when nothing is configured
+const IDLE_DEFAULT_MIN = 20;             // default idle minutes when nothing is configured (v6.956.0: 10 → 20 — people were signed out too fast)
 const IDLE_GRACE_MS = 60 * 1000;         // once the dialog shows, auto sign-out after this if ignored
 let _idleTimer = null, _idleGraceIv = null, _idleWarning = false;
 function _idleMin() {
