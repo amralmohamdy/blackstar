@@ -14,7 +14,8 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.957.0';   // 6.957.0 Attendance: no extra 🔒 Private tag next to a coach whose name already says (Private) — the tag stays for packages you flagged private;
+const APP_VERSION = '6.958.0';   // 6.958.0 a fix file can set club settings (used to close the salary months through a month);
+// prev:   // 6.957.0 Attendance: no extra 🔒 Private tag next to a coach whose name already says (Private) — the tag stays for packages you flagged private;
 // prev:   // 6.956.0 the idle auto sign-out default is 20 minutes (was 10) — a different value set in Preferences still wins;
 // prev:   // 6.955.0 Invoices: the Activities filter now lists Football Court (and any other facility billed as Court Rental / Boxing Room);
 // prev:   // 6.954.0 the Invoices / Expenses month picker no longer lists the month (or year, e.g. 2027) of an archived record;

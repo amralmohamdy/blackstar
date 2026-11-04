@@ -16480,6 +16480,7 @@ window._fixFileCheck = function (fx) {
   if (!fx || fx.format !== 'bs-fix/1' || !Array.isArray(fx.ops) || !fx.ops.length) return bad(t('This is not a fix file', 'هذا ليس ملف إصلاح'));
   const plan = [];
   for (const op of fx.ops) {
+    if (op && op.settings && typeof op.settings === 'object' && !op.collection) { plan.push({ op, doc: null, label: op.label || 'Settings' }); continue; }   // v6.958.0 — an op may set club settings (e.g. close the salary months)
     if (!op || !OK[op.collection] || op.id == null) return bad(t('The file has a bad operation', 'الملف يحتوي عملية غير صالحة'));
     if (op.create) {   // v6.933 — create an invoice and re-point one package row to it
       if (!{ invoices: 1, salaries: 1, expenses: 1, rentals: 1, rentalCustomers: 1 }[op.collection] || typeof op.create !== 'object') return bad(t('The file has a bad operation', 'الملف يحتوي عملية غير صالحة'));
@@ -16508,6 +16509,7 @@ window._fixFileApply = function (fx) {
   if (!chk.ok) return chk;
   const removedDocs = [];
   for (const { op, doc, sub } of chk.plan) {
+    if (op.settings && !op.collection) { if (!state.settings || typeof state.settings !== 'object') state.settings = {}; Object.assign(state.settings, JSON.parse(JSON.stringify(op.settings))); continue; }   // v6.958.0
     if (op.create) {   // v6.933
       const nd = JSON.parse(JSON.stringify(op.create)); nd.id = op.id; if (op.collection === 'invoices') nd.ref = nextInvoiceRef();
       if (typeof stampUpdate === 'function') stampUpdate(nd);
@@ -16527,8 +16529,8 @@ window._fixFileApply = function (fx) {
     if (op.set) Object.assign(doc, JSON.parse(JSON.stringify(op.set)));
     if (typeof stampUpdate === 'function') stampUpdate(doc);
   }
-  if (typeof audit === 'function') audit('fixfile.apply', 'fixfile', 'Applied fix file: ' + (fx.title || '') + ' (' + chk.plan.map(x => x.op.collection + ':' + x.label).join(', ') + ')', { ops: chk.plan.length });
-  return { ok: true, n: chk.plan.length, verify: chk.plan.map(x => { const rm = removedDocs.find(d => d.collection === x.op.collection && d.id === x.op.id); return rm ? { collection: rm.collection, id: rm.id, absent: true, snapshot: rm.snapshot } : { collection: x.op.collection, id: x.op.id }; }) };
+  if (typeof audit === 'function') audit('fixfile.apply', 'fixfile', 'Applied fix file: ' + (fx.title || '') + ' (' + chk.plan.map(x => (x.op.collection || 'settings') + ':' + x.label).join(', ') + ')', { ops: chk.plan.length });
+  return { ok: true, n: chk.plan.length, verify: chk.plan.filter(x => x.op.collection).map(x => { const rm = removedDocs.find(d => d.collection === x.op.collection && d.id === x.op.id); return rm ? { collection: rm.collection, id: rm.id, absent: true, snapshot: rm.snapshot } : { collection: x.op.collection, id: x.op.id }; }) };
 };
 // ── MEMBER PROFILE EXPORT / IMPORT (v6.938) ──────────────────────────────────────────────────────────────────────────────────────────────────
 // One member's whole profile (the member record with its packages / attendance / renewals, + every invoice of theirs with its payments) as a small JSON,
