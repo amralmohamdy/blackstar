@@ -14,7 +14,15 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.959.0';   // 6.959.0 the salary file itemises the money carried in from an earlier month (which classes, commission, bonus, and what was already paid);
+const APP_VERSION = '6.967.0';   // 6.967.0 Cash in Hand is FLAT — exactly the last count you enter; no invoice, cash payment, expense or owner collection moves it; it starts at 0 on 1 Nov 2026 (settings.cashFlat=false brings the old live figure back);
+// prev:   // 6.966.0 the member's My Membership page is compact: one strip (status · expiry · balance · next class), one slim row per sport (classes attended / total / left), the long lists fold open on tap; no "Need to pause" card;
+// prev:   // 6.965.0 the member (student) sidebar shows only Change password + Sign out — no "More" header, no name / role / version / cloud pill, no Refresh from cloud;
+// prev:   // 6.964.0 the expired / expiring WhatsApp reminders state the classes attended and left per sport, and (expired) whether the rest carries over on renewal;
+// prev:   // 6.963.0 the purple "⬆ Extra paid +X" flag is back on closed salary months (paid more than the month calculates to now; an accepted carry-over is netted off);
+// prev:   // 6.962.0 the carried-money table is laid out like the regular classes table (member + Arabic name, sport + Private tag, start / end, classes, course total, amount, commission with the 60% (30% + 20% + 10%) note);
+// prev:   // 6.961.0 the carried-money detail lists the real CLASS DATES of the closed month (not the package start) and the 🔒 Private tag of a private package;
+// prev:   // 6.960.0 the carried-money detail shows a month that was paid more (or less) than it calculated to as its own line (Jennifer: paid 3,900 against 3,129) instead of calling it a rounding;
+// prev:   // 6.959.0 the salary file itemises the money carried in from an earlier month (which classes, commission, bonus, and what was already paid);
 // prev:   // 6.958.0 a fix file can set club settings (used to close the salary months through a month);
 // prev:   // 6.957.0 Attendance: no extra 🔒 Private tag next to a coach whose name already says (Private) — the tag stays for packages you flagged private;
 // prev:   // 6.956.0 the idle auto sign-out default is 20 minutes (was 10) — a different value set in Preferences still wins;
@@ -4294,6 +4302,28 @@ function buildReminderMessage(m, kind, daysFromToday) {
   // shows on the "completed" congratulation (a finisher has 0 left) or a date-based membership.
   const insBeforeSig = (msg, line) => { const i = msg.lastIndexOf('⭐'); return i >= 0 ? msg.slice(0, i) + line + '\n\n' + msg.slice(i) : msg.replace(/\s*$/, '') + '\n\n' + line; };
 
+  // v6.964.0 — the reminder says HOW MANY classes were attended and how many are left, per sport (the member's latest package of that sport), and for an expired / expiring member whether the rest carries over on renewal
+  let _left = 0;
+  if (kind !== 'completed') {
+    const stats = [];
+    try {
+      for (const sp of memberRenewalSports(m)) {
+        const subs = (m.subscriptions || []).filter(s => s && (s.activity || '') === sp && String(s.status || '').toLowerCase() !== 'withdrawn').sort((a, b) => String(b.start || '').localeCompare(String(a.start || '')));
+        const sub = subs[0]; if (!sub) continue;
+        const total = (typeof subClassLimit === 'function' ? parseInt(subClassLimit(sub)) : parseInt(sub.totalClasses)) || 0; if (total <= 0) continue;
+        const w = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, sub) : { from: sub.start || null, to: sub.end || null };
+        const att = (typeof subLiveAttendance === 'function') ? (subLiveAttendance(m, sub, w).y || 0) : (parseInt(sub.attendedClasses) || 0);
+        stats.push({ sp, att: Math.min(att, total), total, left: Math.max(0, total - att) });
+      }
+    } catch (_) {}
+    if (stats.length) {
+      _left = stats.reduce((s, x) => s + x.left, 0);
+      const enStat = stats.map(x => '📊 ' + x.sp + ': you attended ' + x.att + ' of ' + x.total + ' classes' + (x.left > 0 ? ' — ' + x.left + ' left' : ' — all used')).join('\n');
+      const arStat = stats.map(x => '📊 ' + x.sp + ': حضرت ' + x.att + ' من ' + x.total + ' حصص' + (x.left > 0 ? ' — متبقي ' + x.left : ' — استخدمت كل الحصص')).join('\n');
+      en = insBeforeSig(en, enStat);
+      ar = insBeforeSig(ar, arStat);
+    }
+  }
   let _carry = 0;
   if (kind !== 'completed') {
     try { _carry = memberRenewalSports(m).reduce((s, sp) => s + (typeof carryForwardCredit === 'function' ? (carryForwardCredit(m, sp) || 0) : 0), 0); } catch (_) {}
@@ -4301,8 +4331,15 @@ function buildReminderMessage(m, kind, daysFromToday) {
   if (_carry > 0) {
     const enLine = `🎁 Good news: you still have ${_carry} ${_carry === 1 ? 'class' : 'classes'} left — renew and we'll carry ${_carry === 1 ? 'it' : 'them'} over to your new package, so nothing is lost 💪`;
     const arLine = `🎁 خبر سعيد: لديك ${_carry === 1 ? 'حصة واحدة متبقية' : _carry === 2 ? 'حصتان متبقيتان' : _carry + ' حصص متبقية'} — جدّد اشتراكك وسنرحّلها إلى باقتك الجديدة، فلن تفقد شيئاً 💪`;
-    en = insBeforeSig(en, enLine);
-    ar = insBeforeSig(ar, arLine);
+    const _capEn = _left > _carry ? ' (up to ' + CARRY_FORWARD_MAX + ' classes carry over per package)' : '', _capAr = _left > _carry ? ' (يُرحَّل حتى ' + CARRY_FORWARD_MAX + ' حصص كحد أقصى لكل باقة)' : '';
+    en = insBeforeSig(en, enLine + _capEn);
+    ar = insBeforeSig(ar, arLine + _capAr);
+  } else if (kind === 'expiring' && _left > 0 && /📊/.test(en)) {
+    en = insBeforeSig(en, '🎁 Renew and up to ' + CARRY_FORWARD_MAX + ' of your remaining classes carry over to your new package, so nothing is lost 💪');
+    ar = insBeforeSig(ar, '🎁 جدّد اشتراكك وسنرحّل حتى ' + CARRY_FORWARD_MAX + ' من حصصك المتبقية إلى باقتك الجديدة، فلن تفقد شيئاً 💪');
+  } else if (kind === 'expired' && _left === 0 && typeof _left === 'number' && /📊/.test(en)) {
+    en = insBeforeSig(en, '✅ You used all your classes — nothing to carry over; your new package starts fresh when you renew.');
+    ar = insBeforeSig(ar, '✅ استخدمت كل حصصك — لا توجد حصص لترحيلها، وباقتك الجديدة تبدأ من جديد عند التجديد.');
   }
 
   // v6.591 — a "completed" congratulation names only the FINISHED sport(s). When the member is STILL
@@ -9836,27 +9873,41 @@ function salaryLateDetail(coachId, monthKey) {
   const out = [];
   const recs = (state.salaries || []).filter(s => s && s.kind === 'lateadj' && s.coachId === coachId && s.month === monthKey && s.status === 'accepted');
   for (const rec of recs) {
-    const item = { from: rec.fromMonth, amount: parseFloat(rec.amount) || 0, rows: [], bonus: 0, rest: 0, note: '' };
+    const item = { from: rec.fromMonth, amount: parseFloat(rec.amount) || 0, rows: [], bonus: 0, rest: 0, note: '', paidAbove: 0, paidTotal: 0, calcThen: 0 };
     try {
       const p = computeMonthlyPay(coachId, rec.fromMonth), snap = p && p.salaryRecord && Array.isArray(p.salaryRecord.snapshotLines) ? p.salaryRecord.snapshotLines : null;
       const rate = (p && Number(p.commissionRate)) || 0;
       if (p && snap) {
         const A0 = new Map(), B0 = new Map();
         for (const l of snap) { const pk = String(l.k || '').split('|'); const k = pk.slice(0, 4).join('|'); const e = A0.get(k) || { base: 0, cls: 0, n: l.n, sp: l.sp, kind: l.kind, start: pk[3] || '' }; e.base += Number(l.base) || 0; e.cls += Number(l.cls) || 0; A0.set(k, e); }
-        for (const l of ((p.attendanceLines && p.attendanceLines.lines) || [])) { const k = [l.mid, l.sport, l.kind || 'attended', l.start || ''].join('|'); const e = B0.get(k) || { base: 0, cls: 0, n: l.memberName, sp: l.sport, kind: l.kind || 'attended', start: l.start || '' }; e.base += Number(l.amountBase) || 0; e.cls += Number(l.classes) || 0; B0.set(k, e); }
+        for (const l of ((p.attendanceLines && p.attendanceLines.lines) || [])) { const k = [l.mid, l.sport, l.kind || 'attended', l.start || ''].join('|'); const e = B0.get(k) || { base: 0, cls: 0, n: l.memberName, sp: l.sport, kind: l.kind || 'attended', start: l.start || '', mid: l.mid, priv: l.priv || '', raw: l }; e.base += Number(l.amountBase) || 0; e.cls += Number(l.classes) || 0; B0.set(k, e); }
         for (const k of new Set([...A0.keys(), ...B0.keys()])) {
           const a = A0.get(k) || { base: 0, cls: 0 }, b = B0.get(k) || { base: 0, cls: 0 }, db = Math.round((b.base - a.base) * 100) / 100;
           if (Math.abs(db) < 0.05) continue;   // a cent of rounding is not a line
           const ref = b.n ? b : a;
-          item.rows.push({ member: ref.n, sport: ref.sp, kind: ref.kind, start: ref.start, classes: Math.round((b.cls - a.cls) * 100) / 100, base: db, commission: Math.round(db * rate) / 100, rate });
+          // v6.961.0 — the class DATES of the closed month on this package (not the package's start date): the member's marks of that month inside the package window
+          let days = [];
+          try {
+            const mem = (state.members || []).find(x => x && 'm' + x.id === String(ref.mid || b.mid || ''));
+            const sub = mem && (mem.subscriptions || []).find(s => s && (s.activity || '') === ref.sp && String(s.start) === String(ref.start));
+            if (sub && ref.sp !== MIXED) {
+              const w = subAttendanceWindow(mem, sub), cell = attendanceFor(mem, rec.fromMonth, ref.sp, sub.coachId) || {};
+              days = Object.keys(cell).filter(d => cell[d] === 'Y').map(d => rec.fromMonth + '-' + String(parseInt(d, 10)).padStart(2, '0')).filter(iso => (!w.from || iso >= w.from) && (!w.to || iso <= w.to)).sort();
+            }
+          } catch (e) {}
+          item.rows.push({ raw: b.raw || null, mid: ref.mid || b.mid || '', member: ref.n, sport: ref.sp, kind: ref.kind, start: ref.start, days, priv: b.priv || '', classes: Math.round((b.cls - a.cls) * 100) / 100, base: db, commission: Math.round(db * rate) / 100, rate });
         }
+        item.pay = { rate, pct: p.privateBonusPct, allPriv: p.privateExtraAll };   // v6.962.0 — the old month's rates, so the page prices the lines exactly like its salary table
         const st = p.salaryRecord.snapshotTot || {};
         const bonusNow = (Number(p.gross) || 0) - (Number(p.commissionAmount) || 0) - (Number(p.fixed) || 0);
         const bonusThen = (Number(st.gross) || 0) - (Number(st.base) || 0) * rate / 100 - (Number(st.fixed) || 0);
         item.bonus = Math.round((bonusNow - bonusThen) * 100) / 100;
+        // v6.960.0 — a month that was paid MORE (or less) than it calculated to at that time: that gap is its own line, not a "rounding"
+        const _snapNet = Number(p.salaryRecord.snapshotNet), _paid = Number(p.paidTotal) || 0;
+        if (isFinite(_snapNet) && Math.abs(_paid - _snapNet) > 1) { item.paidAbove = Math.round((_paid - _snapNet) * 100) / 100; item.paidTotal = Math.round(_paid * 100) / 100; item.calcThen = Math.round(_snapNet * 100) / 100; }
       }
     } catch (e) { console.error('salaryLateDetail failed', e); }
-    const listed = item.rows.reduce((s, r) => s + r.commission, 0) + item.bonus;
+    const listed = item.rows.reduce((s, r) => s + r.commission, 0) + item.bonus - item.paidAbove;
     item.rest = Math.round((item.amount - listed) * 100) / 100;
     if (!item.rows.length && Math.abs(item.bonus) < 0.01) item.note = 'unpaid rest of that month';
     out.push(item);
@@ -10167,7 +10218,10 @@ function computeMonthlyPay(coachId, monthKey, uptoDate) {
   // recorded later — Ibrahim: paid 142, net now 86) would hide the extra. A FLAG ONLY: shown on the row and in the Pay dialog, NEVER carried into
   // (or deducted from) another month — each month's target / net stays its own.
   const _settledPend = paidRecord ? (Number(paidRecord.settledPending) || 0) : 0;
-  const _extraRaw = paidTotal - (Math.max(net, 0) + _settledPend);
+  // v6.963.0 — a CLOSED (frozen) month has net = max(agreed, paid), so its extra was always 0 and the purple flag vanished once the months were closed: measure a closed month against what it calculates to NOW (liveNet),
+  // less what an ACCEPTED late-adjustment has already taken back (a dismissed one has not)
+  const _acceptedOn = _lateRecs.filter(s => s.fromMonth === monthKey && s.status === 'accepted').reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0);
+  const _extraRaw = frozen ? (paidTotal - (Math.max(liveNet, 0) + _settledPend) + _acceptedOn) : (paidTotal - (Math.max(net, 0) + _settledPend));
   const EXTRA_PAID_MIN = 5;   // QAR — payouts are rounded to whole QAR, so a few QAR above the fractional net is rounding, not extra
   const paidExtra = (paidRecord && _extraRaw >= EXTRA_PAID_MIN) ? Math.round(_extraRaw * 100) / 100 : 0;
 
@@ -12334,19 +12388,20 @@ function renderSidebar() {
   const _isCloud = !!(window.Storage && window.Storage.isCloud && window.Storage.isCloud());
   const _isAdmin = accountRole() === 'admin';
   const _isCoachAcct = accountRole() === 'coach';   // v6.896 — a coach sees no name / version pill and no User Guide
-  const _footMoreCollapsed = (() => { try { return localStorage.getItem('bs-foot-collapsed') !== '0'; } catch (_) { return true; } })();
+  const _isStudentAcct = accountRole() === 'student';   // v6.965.0 — a member sees no "More" header, no name / version / cloud pill and no Refresh button (just Change password + Sign out)
+  const _footMoreCollapsed = _isStudentAcct ? false : (() => { try { return localStorage.getItem('bs-foot-collapsed') !== '0'; } catch (_) { return true; } })();
   footer.innerHTML = `
     <div class="nav-foot-sep" style="height:1px;background:var(--border);margin:0 12px 12px;opacity:.7"></div>
-    <button class="nav-section nav-section-toggle${_footMoreCollapsed ? ' collapsed' : ''}" id="foot-more-toggle"><span>${t('More', 'المزيد')}</span><span class="nav-section-chev">▾</span></button>
+    ${_isStudentAcct ? '' : `<button class="nav-section nav-section-toggle${_footMoreCollapsed ? ' collapsed' : ''}" id="foot-more-toggle"><span>${t('More', 'المزيد')}</span><span class="nav-section-chev">▾</span></button>`}
     <div class="nav-group${_footMoreCollapsed ? ' nav-group-collapsed' : ''}" id="foot-more-group">
-      ${_isCoachAcct ? '' : `<div class="user-pill" style="margin-bottom:6px">
+      ${(_isCoachAcct || _isStudentAcct) ? '' : `<div class="user-pill" style="margin-bottom:6px">
         ${_avatarHtml}
         <div style="flex:1;min-width:0">
           <div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(_nm)}</div>
           <div style="font-size:10px;color:var(--text-mute)">${escapeHtml(_roleLabel)} · v${APP_VERSION} · ${_isCloud ? '☁️ cloud' : '💾 offline'}</div>
         </div>
       </div>`}
-      ${(_isCloud && !_isCoachAcct) ? `<button class="btn ghost sm full" id="sidebar-refresh" style="margin-bottom:6px;display:flex;align-items:center;justify-content:flex-start;gap:8px;text-align:left" title="${t('Pull the latest data from the cloud — no page reload','جلب أحدث البيانات من السحابة — بدون إعادة تحميل')}"><span class="sidebar-refresh-ic" style="width:18px;text-align:center;flex-shrink:0">🔄</span><span style="flex:1;min-width:0">${t('Refresh from cloud','تحديث من السحابة')}</span></button>` : ''}
+      ${(_isCloud && !_isCoachAcct && !_isStudentAcct) ? `<button class="btn ghost sm full" id="sidebar-refresh" style="margin-bottom:6px;display:flex;align-items:center;justify-content:flex-start;gap:8px;text-align:left" title="${t('Pull the latest data from the cloud — no page reload','جلب أحدث البيانات من السحابة — بدون إعادة تحميل')}"><span class="sidebar-refresh-ic" style="width:18px;text-align:center;flex-shrink:0">🔄</span><span style="flex:1;min-width:0">${t('Refresh from cloud','تحديث من السحابة')}</span></button>` : ''}
       ${_isAdmin ? `<button class="btn ghost sm full" id="sidebar-cmdk" style="margin-bottom:6px;display:flex;align-items:center;justify-content:flex-start;gap:8px;text-align:left" title="Quick search (Ctrl+K / ⌘K)"><span style="width:18px;text-align:center;flex-shrink:0">🔎</span><span style="flex:1;min-width:0">${t('Quick search','بحث سريع')}</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;padding:1px 4px;background:var(--surface);border:1px solid var(--border);border-radius:4px;flex-shrink:0">⌘K</span></button>` : ''}
       ${_isAdmin ? `<button class="btn ghost sm full" id="sidebar-backup" style="margin-bottom:6px;display:flex;align-items:center;justify-content:flex-start;gap:8px;text-align:left" title="Download a full JSON backup of your data"><span style="width:18px;text-align:center;flex-shrink:0">💾</span><span style="flex:1;min-width:0">${t('Quick backup','نسخة احتياطية سريعة')}</span></button>` : ''}
       ${_isCloud ? `<button class="btn ghost sm full" id="sidebar-changepw" style="margin-bottom:6px;display:flex;align-items:center;justify-content:flex-start;gap:8px;text-align:left" title="Change your sign-in password"><span style="width:18px;text-align:center;flex-shrink:0">🔐</span><span style="flex:1;min-width:0">${t('Change password','تغيير كلمة المرور')}</span></button>` : ''}

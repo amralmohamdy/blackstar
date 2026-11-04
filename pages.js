@@ -19332,7 +19332,16 @@ window.deleteCashCollection = function(id) {
 // v6.796 — "newest count" = the newest count DATE, then the latest typed. It used to go by when the row was typed, so a back-dated count (yesterday's count entered today) replaced today's as the drawer base.
 const cashCountDay = c => String((c && c.date) || String((c && c.createdAt) || '').slice(0, 10)).slice(0, 10);
 function cashCountNewer(a, b) { return cashCountDay(b).localeCompare(cashCountDay(a)) || String((b && b.createdAt) || '').localeCompare(String((a && a.createdAt) || '')); }
+// v6.967.0 — Cash in Hand is a FLAT figure: exactly the last count you typed. NOTHING moves it by itself — no invoice cash payment, no refund, no cash expense, no owner collection / deposit. It starts at 0 on CASH_FLAT_FROM (counts dated before are ignored).
+// state.settings.cashFlat = false brings the old "count + cash movements" figure back.
+const CASH_FLAT_FROM = '2026-11-01';
+function cashFlatOn() { try { if (typeof window !== 'undefined' && window.__cashFlatOff === true) return false; } catch (_) {} return !(state && state.settings && state.settings.cashFlat === false); }
+function _cashFlatCounts() { return (state.cashCounts || []).filter(x => x && x.kind !== 'deposit' && cashCountDay(x) >= CASH_FLAT_FROM); }
 function cashDrawerNow() {
+  if (cashFlatOn()) {
+    const c = _cashFlatCounts().slice().sort(cashCountNewer)[0] || null, a = c ? (Number(c.amount) || 0) : 0;
+    return { count: c || { amount: 0, date: CASH_FLAT_FROM, createdAt: '' }, base: a, moves: [], hidden: [], receipts: 0, collections: 0, expected: a, flat: true };
+  }
   const c = (state.cashCounts || []).filter(x => x && x.kind !== 'deposit').slice().sort(cashCountNewer)[0];
   return c ? cashDrawerFrom(c, null) : null;
 }
@@ -19345,6 +19354,7 @@ function _drawerExpenses() {
 }
 // What the drawer holds after count `c`, up to now — or, with `upper`, only up to that later count (what it SHOULD have held when it was counted).
 function cashDrawerFrom(c, upper) {
+  if (cashFlatOn()) { const a = Number(c && c.amount) || 0; return { count: c, base: a, moves: [], hidden: [], receipts: 0, collections: 0, expected: a, flat: true }; }   // v6.967.0 — flat
   const cDate = cashCountDay(c), cAt = c.createdAt ? String(c.createdAt) : '';
   const afterOf = (cd, ca) => (date, ts) => { const d = String(date || '').slice(0, 10); if (!d) return false; if (d !== cd) return d > cd; return !!(ts && ca && String(ts) > ca); };
   const uDate = upper ? cashCountDay(upper) : '', uAt = upper && upper.createdAt ? String(upper.createdAt) : '';
@@ -19427,6 +19437,7 @@ window.cashDrawerHide = function (invId, pi, on) {
 };
 // v6.796 — what the drawer should have held when count `cnt` was taken: the count before it (by date) + the cash movements between the two. null with no earlier count.
 function cashExpectedFor(cnt) {
+  if (cashFlatOn()) return null;   // v6.967.0 — flat: a count is not compared with anything
   const prev = (state.cashCounts || []).filter(x => x && x.kind !== 'deposit' && x !== cnt && x.id !== cnt.id).slice().sort(cashCountNewer).find(x => cashCountNewer(cnt, x) < 0);
   if (!prev) return null;
   const D = cashDrawerFrom(prev, cnt);
@@ -19434,6 +19445,7 @@ function cashExpectedFor(cnt) {
 }
 // How a typed count compares with what the drawer should hold right now → { expected, diff } (null with no earlier count).
 function cashCountVariance(amount, dateStr) {
+  if (cashFlatOn()) return null;   // v6.967.0 — flat: no expected / short / over
   if (String(dateStr || TODAY).slice(0, 10) !== TODAY) return null;   // a back-dated count can't be compared with "now"
   const D = cashDrawerNow();
   if (!D) return null;
@@ -19452,7 +19464,7 @@ PAGES.cashinhand = (main) => {
     return;
   }
   const allRecs = (state.cashCounts || []).slice().sort(cashCountNewer);
-  const counts = allRecs.filter(c => c.kind !== 'deposit');   // v6.757 — owner deposits are listed in the history but are never "the last count"
+  const counts = allRecs.filter(c => c.kind !== 'deposit' && (!cashFlatOn() || cashCountDay(c) >= CASH_FLAT_FROM));   // v6.757 — owner deposits are listed in the history but are never "the last count"; v6.967.0 — flat: counts before CASH_FLAT_FROM are history only
   const latest = counts[0] || null;
   const prev = counts[1] || null;
   const delta = latest && prev ? (Number(latest.amount) || 0) - (Number(prev.amount) || 0) : null;
@@ -19464,7 +19476,7 @@ PAGES.cashinhand = (main) => {
   const LD = cashDrawerNow();   // v6.700 — last count + the cash movements since
   const _isAdm = currentRole() === 'admin';
   const _recView = false;   // v6.923 — the receptionist sees exactly the admin's view (live figure, movements, expected / short columns); only edit / delete of a count and the "removed" list stay admin
-  const _showMoves = ['admin', 'receptionist'].includes(currentRole());
+  const _showMoves = !cashFlatOn() && ['admin', 'receptionist'].includes(currentRole());   // v6.967.0 — flat: no list of cash movements
   const _mvRow = (m, hid) => `<tr${hid ? ' style="opacity:.6"' : ''}><td class="text-mute" style="white-space:nowrap">${escapeHtml(String(m.when || '').replace('T', ' ').slice(0, 16))}</td><td>${escapeHtml(m.label)}${m.kind === 'collection' && String(m.ref || '').replace(/^Cash collected by owner\s*[—-]\s*/i, '') ? ' <span class="text-mute">· ' + escapeHtml(String(m.ref).replace(/^Cash collected by owner\s*[—-]\s*/i, '')) + '</span>' : ''}</td><td class="font-mono" style="font-size:12px">${m.kind === 'collection' ? '' : escapeHtml(m.ref || '')}</td><td class="text-right num text-mute">${m.before != null ? fmtMoney(m.before) : '—'}</td><td class="text-right num font-bold" style="color:var(--green)">${m.amount > 0 ? '+' + fmtMoney(m.amount) : ''}</td><td class="text-right num font-bold" style="color:var(--red)">${m.amount < 0 ? '−' + fmtMoney(Math.abs(m.amount)) : ''}</td><td class="text-right num" style="font-weight:800;${m.balance != null && m.balance < 0 ? 'color:var(--red)' : ''}">${m.balance != null ? fmtMoney(m.balance) : '—'}</td><td class="text-right" style="white-space:nowrap">${_isAdm ? (m.kind === 'collection' ? `<button class="btn ghost sm" onclick="deleteCashCollection(${m.exp})" title="${t('Delete this cash collection', 'حذف هذا الاستلام النقدي')}">🗑</button>` : (hid ? `<button class="btn ghost sm" onclick="cashDrawerHide(${m.inv}, ${m.pi}, false)" title="${t('Put it back in Cash in Hand', 'إرجاعها إلى النقد في الصندوق')}">↩ ${t('Restore', 'استرجاع')}</button>` : `<button class="btn ghost sm" onclick="cashDrawerHide(${m.inv}, ${m.pi}, true)" title="${t('Remove from Cash in Hand (the payment itself is not changed)', 'إزالة من النقد في الصندوق (الدفعة نفسها لا تتغير)')}">🗑</button>`)) : ''}</td></tr>`;
   const _openRow = (LD && _showMoves) ? `<tr style="background:rgba(16,185,129,.06)"><td class="text-mute" style="white-space:nowrap">${escapeHtml(String(LD.count.date || '').slice(0, 10))}</td><td><b>${t('Last physical count', 'آخر جرد فعلي')}</b>${LD.count.by ? ' <span class="text-mute">· ' + escapeHtml(LD.count.by) + '</span>' : ''}</td><td></td><td></td><td></td><td></td><td class="text-right num" style="font-weight:800">${fmtMoney(LD.base)}</td><td></td></tr>` : '';
   const _mvRows = (LD && _showMoves) ? LD.moves.slice(0, 200).map(m => _mvRow(m, false)).join('') : '';
@@ -19484,16 +19496,16 @@ PAGES.cashinhand = (main) => {
     <div class="card" style="margin-bottom:16px;text-align:center;padding:28px 18px;background:linear-gradient(135deg,rgba(16,185,129,.10),transparent 70%)">
       <div class="text-mute" style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;font-weight:700">${t('Current cash in hand', 'النقد الحالي في الصندوق')}</div>
       <div style="font-size:46px;font-weight:800;color:${(!_recView && LD && LD.expected < 0) ? 'var(--red)' : 'var(--green)'};line-height:1.1;margin:6px 0">${_recView ? (latest ? fmtMoney(latest.amount) : '—') : (LD ? fmtMoney(LD.expected) : '—')}</div>
-      ${(LD && !_recView) ? `<div style="font-size:12px;margin-bottom:2px"><span class="badge active" style="font-size:9px">● ${t('live', 'مباشر')}</span> <span class="text-mute">${t('last count', 'آخر جرد')} <b>${fmtMoney(LD.base)}</b> · <span style="color:var(--green)">+${fmtMoney(LD.receipts)} ${t('cash in', 'نقد وارد')}</span> · <span style="color:var(--red)">−${fmtMoney(LD.collections)} ${t('collected by owner', 'استلمه المالك')}</span></span></div>` : ''}
+      ${(LD && !_recView && !cashFlatOn()) ? `<div style="font-size:12px;margin-bottom:2px"><span class="badge active" style="font-size:9px">● ${t('live', 'مباشر')}</span> <span class="text-mute">${t('last count', 'آخر جرد')} <b>${fmtMoney(LD.base)}</b> · <span style="color:var(--green)">+${fmtMoney(LD.receipts)} ${t('cash in', 'نقد وارد')}</span> · <span style="color:var(--red)">−${fmtMoney(LD.collections)} ${t('collected by owner', 'استلمه المالك')}</span></span></div>` : ''}
       ${latest ? `<div class="text-mute" style="font-size:12px">${t('Last counted', 'آخر جرد')}: <b>${fmtDate(latest.date)}</b>${latest.by ? ' · ' + escapeHtml(latest.by) : ''}${latest.note ? ' · ' + escapeHtml(latest.note) : ''}</div>` : `<div class="text-mute" style="font-size:13px">${t('No cash count recorded yet. Click “Record cash count” to enter your first one.', 'لا يوجد جرد مسجّل بعد. اضغط «تسجيل جرد النقد» لإدخال أول جرد.')}</div>`}
       ${delta != null ? `<div style="font-size:12px;margin-top:6px;color:${delta >= 0 ? 'var(--green)' : 'var(--red)'}">${delta >= 0 ? '▲' : '▼'} ${fmtMoney(Math.abs(delta))} ${t('vs previous count', 'مقارنة بالجرد السابق')}</div>` : ''}
       <div style="display:flex;gap:8px;justify-content:center;align-items:center;margin-top:16px;flex-wrap:wrap">
         <input id="cih-quick" type="number" inputmode="decimal" min="0" step="0.01" placeholder="${t('Enter today\u2019s count…', 'أدخل جرد اليوم…')}" style="max-width:180px;text-align:center;padding:9px 12px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:15px" />
         <button class="btn primary" id="cih-quick-save">✓ ${t('Update', 'تحديث')}</button>
-        <button class="btn ghost" id="cih-deposit" title="${t('Cash the owner put INTO the drawer — so it is expected, not an over', 'نقد وضعه المالك في الصندوق — فيُحسب متوقعاً وليس زيادة')}">➕ ${t('Cash added by owner', 'نقد أضافه المالك')}</button>
+        ${cashFlatOn() ? '' : `<button class="btn ghost" id="cih-deposit" title="${t('Cash the owner put INTO the drawer — so it is expected, not an over', 'نقد وضعه المالك في الصندوق — فيُحسب متوقعاً وليس زيادة')}">➕ ${t('Cash added by owner', 'نقد أضافه المالك')}</button>`}
       </div>
       ${_recView ? `<div class="text-mute" style="font-size:11px;margin-top:6px">${t('Count the drawer and enter the amount. The figure above is your last count.', 'عُدّ الصندوق وأدخل المبلغ. الرقم أعلاه هو آخر جرد.')}</div>` : ''}
-      ${_recView ? '' : `<div class="text-mute" style="font-size:11px;margin-top:6px">${t('The figure above goes up with every cash payment a member makes and down with every cash collection by the owner. Expenses, salaries and refunds are NOT deducted — count the drawer and enter it here: the screen tells you if it is short or over.', 'الرقم أعلاه يزيد مع كل دفعة نقدية من عضو وينقص مع كل استلام نقدي للمالك. المصروفات والرواتب والمبالغ المستردة لا تُخصم — عُدّ الصندوق وأدخله هنا: ستظهر لك الشاشة إن كان هناك عجز أو زيادة.')}</div>`}
+      ${cashFlatOn() ? `<div class="text-mute" style="font-size:11px;margin-top:6px">${t('This figure is exactly the last count you entered — nothing changes it automatically (not invoices, not cash payments, not expenses).', 'هذا الرقم هو آخر جرد أدخلته بالضبط — لا يتغير تلقائياً (لا بالفواتير ولا بالدفعات النقدية ولا بالمصروفات).')}</div>` : (_recView ? '' : `<div class="text-mute" style="font-size:11px;margin-top:6px">${t('The figure above goes up with every cash payment a member makes and down with every cash collection by the owner. Expenses, salaries and refunds are NOT deducted — count the drawer and enter it here: the screen tells you if it is short or over.', 'الرقم أعلاه يزيد مع كل دفعة نقدية من عضو وينقص مع كل استلام نقدي للمالك. المصروفات والرواتب والمبالغ المستردة لا تُخصم — عُدّ الصندوق وأدخله هنا: ستظهر لك الشاشة إن كان هناك عجز أو زيادة.')}</div>`)}
     </div>
 
     ${(LD && _showMoves) ? `<div class="card" style="margin-bottom:16px"><details${LD.moves.length && LD.moves.length <= 12 ? ' open' : ''}><summary style="cursor:pointer;font-weight:700">💵 ${t('Cash payments & collections since the last count', 'المدفوعات النقدية والاستلامات منذ آخر جرد')} <span class="text-mute" style="font-weight:500">(${LD.moves.length})</span></summary>${LD.moves.length ? `<div style="overflow:auto;margin-top:8px"><table class="data-table" style="width:100%"><thead><tr><th>${t('When', 'الوقت')}</th><th>${t('Member (English · Arabic · mobile)', 'العضو (إنجليزي · عربي · موبايل)')}</th><th>${t('Invoice', 'الفاتورة')}</th><th class="text-right">${t('Current amount (before)', 'المبلغ الحالي (قبل)')}</th><th class="text-right" style="color:var(--green)">${t('Collected cash (+)', 'النقد المحصّل (+)')}</th><th class="text-right" style="color:var(--red)">${t('Decreased (−)', 'النقص (−)')}</th><th class="text-right">${t('Amount after', 'المبلغ بعد')}</th><th></th></tr></thead><tbody>${_mvRows}${_openRow}</tbody></table></div>` : `<div class="text-mute" style="font-size:13px;padding:8px 0">${t('No cash payment or collection since the last count.', 'لا مدفوعات نقدية ولا استلامات منذ آخر جرد.')}</div>`}</details></div>` : ''}
@@ -19503,7 +19515,7 @@ PAGES.cashinhand = (main) => {
     <div class="card">
       <div class="card-header"><div><div class="card-title">🧾 ${t('Count history', 'سجل الجرد')}</div><div class="card-subtitle">${t('Every cash count you have recorded, newest first', 'كل عمليات جرد النقد المسجّلة، الأحدث أولاً')}</div></div></div>
       ${allRecs.length ? `<div style="overflow:auto"><table class="data-table" style="width:100%"><thead><tr>
-        <th>${t('Date', 'التاريخ')}</th><th class="text-right">${t('Amount', 'المبلغ')}</th><th class="text-right">${t('Change', 'التغير')}</th>${_recView ? '' : `<th class="text-right">${t('Expected', 'المتوقع')}</th><th class="text-right">${t('Short / over', 'عجز / زيادة')}</th>`}<th>${t('Counted by', 'الجرد بواسطة')}</th><th>${t('Note', 'ملاحظة')}</th><th></th>
+        <th>${t('Date', 'التاريخ')}</th><th class="text-right">${t('Amount', 'المبلغ')}</th><th class="text-right">${t('Change', 'التغير')}</th>${(_recView || cashFlatOn()) ? '' : `<th class="text-right">${t('Expected', 'المتوقع')}</th><th class="text-right">${t('Short / over', 'عجز / زيادة')}</th>`}<th>${t('Counted by', 'الجرد بواسطة')}</th><th>${t('Note', 'ملاحظة')}</th><th></th>
       </tr></thead><tbody>
       ${allRecs.map((c, i) => {
         if (c.kind === 'deposit') return `<tr style="background:rgba(59,130,246,.06)"><td>${fmtDate(c.date)}</td><td class="text-right num font-bold" style="color:var(--blue)">+${fmtMoney(c.amount)}</td><td class="text-mute" colspan="3">💵 ${t('Cash added to the drawer by the owner', 'نقد أضافه المالك للصندوق')}</td><td class="text-mute">${c.by ? escapeHtml(c.by) : '—'}</td><td class="text-mute">${c.note ? escapeHtml(c.note) : '—'}</td><td class="text-right">${currentRole() === 'admin' ? `<button class="btn ghost sm" onclick="window.deleteCashCount('${c.id}')" title="${t('Delete this entry', 'حذف هذا السجل')}">🗑</button>` : ''}</td></tr>`;
@@ -19514,7 +19526,7 @@ PAGES.cashinhand = (main) => {
           <td>${fmtDate(c.date)}${_cur ? ` <span class="badge active" style="font-size:9px">${t('current', 'الحالي')}</span>` : ''}</td>
           <td class="text-right num font-bold">${fmtMoney(c.amount)}</td>
           <td class="text-right num" style="${d == null ? 'color:var(--text-mute)' : d >= 0 ? 'color:var(--green)' : 'color:var(--red)'}">${d == null ? '—' : (d >= 0 ? '+' : '−') + fmtMoney(Math.abs(d))}</td>
-          ${_recView ? '' : `<td class="text-right num text-mute">${c.expected != null ? fmtMoney(c.expected) : '—'}</td>
+          ${(_recView || cashFlatOn()) ? '' : `<td class="text-right num text-mute">${c.expected != null ? fmtMoney(c.expected) : '—'}</td>
           <td class="text-right num" style="${c.diff == null ? 'color:var(--text-mute)' : Math.abs(c.diff) < 0.5 ? 'color:var(--green)' : 'color:var(--red);font-weight:700'}">${c.diff == null ? '—' : (Math.abs(c.diff) < 0.5 ? '✓' : (c.diff < 0 ? '−' : '+') + fmtMoney(Math.abs(c.diff)))}</td>`}
           <td class="text-mute">${c.by ? escapeHtml(c.by) : '—'}</td>
           <td class="text-mute">${c.note ? escapeHtml(c.note) : '—'}</td>
@@ -20041,7 +20053,7 @@ PAGES.reconciliation = (main) => {
         ${bucket('− ' + t('Cash expenses', 'مصروفات نقدية'), R.cashExpenses, 'var(--text)')}
         ${bucket('− ' + t('Cash taken by owner', 'نقد سحبه المالك'), R.ownerCashTaken, 'var(--text)')}
         ${bucket('= ' + t('Net cash movement this month', 'صافي حركة النقد هذا الشهر'), R.cashInHand, R.cashInHand >= 0 ? 'var(--green)' : 'var(--red)', t('this month only — cash taken can exceed what was collected if it came from earlier months', 'هذا الشهر فقط — قد يزيد المسحوب عن المحصّل لو من شهور سابقة'))}
-        ${(() => { const _d = (typeof cashDrawerNow === 'function') ? cashDrawerNow() : null; return _d ? bucket('💰 ' + t('Expected cash in the drawer now', 'النقد المتوقع في الدرج الآن'), _d.expected, _d.expected >= 0 ? 'var(--green)' : 'var(--red)', t('last count + cash movements since (same as Cash in Hand)', 'آخر جرد + حركة النقد بعده (نفس النقد بالصندوق)')) : ''; })()}
+        ${(() => { const _d = (typeof cashDrawerNow === 'function') ? cashDrawerNow() : null; return _d ? bucket('💰 ' + t('Expected cash in the drawer now', 'النقد المتوقع في الدرج الآن'), _d.expected, _d.expected >= 0 ? 'var(--green)' : 'var(--red)', (cashFlatOn() ? t('the last cash count you entered (same as Cash in Hand)', 'آخر جرد أدخلته (نفس النقد بالصندوق)') : t('last count + cash movements since (same as Cash in Hand)', 'آخر جرد + حركة النقد بعده (نفس النقد بالصندوق)'))) : ''; })()}
         <div style="height:10px"></div>
         ${bucket('🏦 ' + t('Bank credit (non-cash)', 'الرصيد البنكي'), R.nonCash, 'var(--accent)')}
         ${bucket('📋 ' + t('Still due (outstanding)', 'المتبقي المستحق'), R.due, 'var(--accent-2)', t('not yet collected', 'لم يُحصّل بعد'))}
@@ -22909,17 +22921,29 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
   if (!c || !pay) return;
 
   // v6.949.0 — a coach who LEFT: the classes his students attended that earn him nothing (after his leave date / outside their package), with the average class price of their last package — at the bottom, NOT in the pay
-  // v6.959.0 — the carried-in money (Late adjustments accepted from earlier months), itemised like the salary lines: classes, commission at the coach rate, bonus, and what was already paid
+  // v6.962.0 — the carried-in money (Late adjustments accepted from earlier months) in the SAME layout as the regular classes table: member + Arabic name, sport + Private tag, start / end, classes, course total, amount, commission (+ the private % note)
   const _lateSection = (() => {
     let L = []; try { L = salaryLateDetail(coachId, monthKey); } catch (e) { console.error('late detail failed', e); }
     if (!L.length) return '';
-    const th = 'padding:4px 6px', td = 'padding:4px 6px';
     return '<h2 style="margin-top:22px">Carried from earlier months — detail</h2><div style="font-size:11px;color:#6b7280;margin-bottom:6px">What was earned (or left unpaid) in the closed month and is paid now, with this month.</div>' + L.map(it => {
-      const rows = it.rows.map(r => '<tr style="border-top:1px solid #e5e7eb"><td style="' + td + '">' + escapeHtml(r.member || '') + '</td><td style="' + td + '">' + escapeHtml(r.sport || '') + (r.kind === 'trueup' ? ' · expiry true-up' : '') + '</td><td style="' + td + '">' + (r.start ? fmtDate(r.start) : '') + '</td><td style="' + td + ';text-align:right">' + r.classes + '</td><td style="' + td + ';text-align:right">' + fmt(r.base) + '</td><td style="' + td + ';text-align:right">' + fmt(r.commission) + ' <span style="color:#6b7280">(' + r.rate + '%)</span></td></tr>').join('');
-      const extra = (Math.abs(it.bonus) >= 0.01 ? '<tr style="border-top:1px solid #e5e7eb"><td style="' + td + '" colspan="5">Private package bonus on these classes</td><td style="' + td + ';text-align:right">' + fmt(it.bonus) + '</td></tr>' : '')
-        + (Math.abs(it.rest) >= 0.01 ? '<tr style="border-top:1px solid #e5e7eb"><td style="' + td + ';color:#6b7280" colspan="5">' + (it.note ? 'The ' + it.note : 'Already paid in ' + escapeHtml(fmtMonth(it.from)) + ' (rounding)') + '</td><td style="' + td + ';text-align:right;color:#6b7280">' + (it.rest > 0 ? '+' : '−') + fmt(Math.abs(it.rest)) + '</td></tr>' : '');
-      return '<div style="margin:8px 0 2px;font-weight:700">From ' + escapeHtml(fmtMonth(it.from)) + '</div><table style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr style="background:#f3f4f6;text-align:left"><th style="' + th + '">Member</th><th style="' + th + '">Sport</th><th style="' + th + '">Class from</th><th style="' + th + ';text-align:right">Classes</th><th style="' + th + ';text-align:right">Amount</th><th style="' + th + ';text-align:right">Commission</th></tr></thead><tbody>' + rows + extra
-        + '<tr style="border-top:2px solid #111;font-weight:700"><td style="' + td + '" colspan="5">Total carried from ' + escapeHtml(fmtMonth(it.from)) + '</td><td style="' + td + ';text-align:right">+' + fmt(it.amount) + '</td></tr></tbody></table>';
+      const rate = it.pay ? it.pay.rate : pay.commissionRate, pct = it.pay ? it.pay.pct : pay.privateBonusPct, allPriv = it.pay ? it.pay.allPriv : pay.privateExtraAll;
+      const mapped = it.rows.map(r => {
+        const w = r.raw || {};
+        return { memberName: r.member, memberId: /^m/.test(String(r.mid || '')) ? String(r.mid).slice(1) : null, mid: r.mid, sport: r.sport, price: r.base, priv: r.priv || '', _kind: r.kind, start: w.start || r.start || null, end: w.end || null, attended: w.attended, total: w.total, status: w.status || '',
+          fee: (w.perClass != null && w.total) ? Math.round(w.perClass * w.total * 100) / 100 : null, _dc: r.classes, _days: r.days || [] };
+      });
+      const commSum = mapped.reduce((s, l) => s + _lineComm(l, rate, pct, allPriv), 0);
+      const rest = Math.round((it.amount - (commSum - (it.paidAbove || 0))) * 100) / 100;
+      const body = mapped.map((l, i) => '<tr><td style="color:#999">' + (i + 1) + '</td><td>' + escapeHtml(l.memberName || '') + _arNameOf(l, true)
+        + (l._days.length ? '<div style="color:#999;font-size:10px">Classes: ' + l._days.map(d => fmtDate(d)).join(', ') + '</div>' : (l._kind === 'trueup' ? '<div style="color:#999;font-size:10px">expiry true-up</div>' : ''))
+        + '</td><td>' + escapeHtml(l.sport || '—') + _privTagHtml(l.priv, true) + '</td><td style="font-size:11px">' + (l.start ? fmtDate(l.start) : '—') + '</td><td style="font-size:11px">' + (l.end ? fmtDate(l.end) : '—') + '</td>'
+        + '<td style="font-size:11px">' + (l._dc > 0 ? '+' : '') + l._dc + (l.total ? ' / ' + l.total : '') + '</td><td style="font-size:11px">' + escapeHtml(l.status || '—') + '</td>'
+        + '<td class="num">' + (l.fee != null ? fmt(l.fee) : '—') + '</td><td class="num ' + (l.price < 0 ? 'neg' : '') + '">' + fmt(l.price) + '</td>'
+        + '<td class="num ' + (l.price < 0 ? 'neg' : '') + '" style="font-weight:700">' + fmt(_lineComm(l, rate, pct, allPriv)) + _privBonusNote(l, true, pct, allPriv, rate) + '</td></tr>').join('');
+      const foot = (Math.abs(it.paidAbove || 0) >= 1 ? '<tr style="background:#fef3c7"><td colspan="9">Paid in ' + escapeHtml(fmtMonth(it.from)) + ' ' + (it.paidAbove > 0 ? 'MORE' : 'LESS') + ' than the month calculated to when it was paid (paid ' + fmt(it.paidTotal) + ' · calculated ' + fmt(it.calcThen) + ')</td><td class="num">' + (it.paidAbove > 0 ? '−' : '+') + fmt(Math.abs(it.paidAbove)) + '</td></tr>' : '')
+        + (Math.abs(rest) >= 0.01 ? '<tr style="background:#f5f5f7;color:#6b7280"><td colspan="9">' + (it.note ? 'The ' + it.note : (Math.abs(rest) < 1 ? 'Already paid in ' + escapeHtml(fmtMonth(it.from)) + ' (rounding)' : 'Other difference in how ' + escapeHtml(fmtMonth(it.from)) + ' was calculated (private bonus share / adjustments)')) + '</td><td class="num">' + (rest > 0 ? '+' : '−') + Math.abs(rest).toFixed(2) + '</td></tr>' : '');
+      return '<div style="margin:8px 0 2px;font-weight:700">From ' + escapeHtml(fmtMonth(it.from)) + '</div><table><thead><tr><th>#</th><th>Member</th><th>Sport</th><th>Start</th><th>End</th><th>Classes</th><th>Status</th><th style="text-align:right">Course total (QAR)</th><th style="text-align:right">Amount (QAR)</th><th style="text-align:right">Commission (' + rate + '%)</th></tr></thead><tbody>' + body + foot
+        + '<tr style="background:#e8eaed;font-weight:800"><td colspan="9">TOTAL carried from ' + escapeHtml(fmtMonth(it.from)) + '</td><td class="num">' + (it.amount >= 0 ? '+' : '−') + Math.abs(it.amount).toFixed(2) + '</td></tr></tbody></table>';
     }).join('');
   })();
   const _unpaidSection = (() => {
@@ -32063,40 +32087,39 @@ PAGES.mymembership = (main) => {
   const sportsHtml = enrolled.length ? enrolled.map(e => {
     const dd = m.dailyAttendance?.[mo]?.[e.sport] || {};
     let y = 0; for (const k in dd) if (dd[k] === 'Y') y++;
+    // v6.966.0 — a Mixed package keeps its marks in mixedAttendance (one per class): count those for "this month"
+    if (e.sport === MIXED) { const _mx = m.mixedAttendance?.[mo] || {}; y = 0; for (const k in _mx) if (_mx[k] && _mx[k].mark !== 'N') y++; }
     const planned = e.classes || 0;
     const pct = planned ? Math.min(100, Math.round(y / planned * 100)) : 0;
     const meta = sportMeta(e.sport);
     // Classes remaining across the whole subscription (lifetime), so the student
     // sees how many sessions they still have left — not just this month.
-    const sub = (m.subscriptions || []).find(s => (s.activity || '') === e.sport && s.status !== 'Withdrawn');
+    // v6.966.0 — the member's CURRENT package of this sport (the latest, preferring the enrolled coach), not the first / oldest one
+    const sub = (m.subscriptions || []).filter(s => (s.activity || '') === e.sport && s.status !== 'Withdrawn').sort((a, b) => ((String(b.coachId) === String(e.coachId)) - (String(a.coachId) === String(e.coachId))) || String(b.start || '').localeCompare(String(a.start || '')))[0];
     // Count over the CORRECTED window from LIVE marks. The stored sub.attendedClasses lags
     // behind the register, so the member's "Left" used to disagree with the attendance log
     // printed further down this very page (and with the staff's renewal screens).
-    let remaining = null;
+    let remaining = null, pkgTotal = 0, pkgAtt = 0;
     if (sub) {
       const w = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, sub) : { from: sub.start || null, to: sub.end || null };
       const lv = liveAttendanceCount(m, sub.activity || e.sport, w.from, w.to);
       const att = lv.total > 0 ? lv.y : (parseInt(sub.attendedClasses) || 0);
-      remaining = Math.max(0, (parseInt(sub.totalClasses) || 0) - att);
+      pkgTotal = parseInt(sub.totalClasses) || 0; pkgAtt = Math.min(att, pkgTotal || att);
+      remaining = Math.max(0, pkgTotal - att);
     }
     const remLow = remaining != null && remaining > 0 && remaining <= 2;
-    return `<div style="border:1px solid var(--border);border-radius:16px;padding:18px;background:linear-gradient(135deg,${meta.c}14,transparent 70%)">
-      <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
-        <div style="width:60px;height:60px;border-radius:16px;background:${meta.c}26;display:flex;align-items:center;justify-content:center;font-size:32px;flex-shrink:0">${meta.e}</div>
-        <div style="flex:1;min-width:140px">
-          <div style="font-size:22px;font-weight:800;line-height:1.1">${escapeHtml(e.sport)}${meta.priv ? ` <span class="badge" style="background:#6b728022;color:#6b7280;font-size:10px;vertical-align:middle">🔒 ${t('Private', 'خاص')}</span>` : ''}</div>
-          <div style="font-size:14px;color:var(--text-mute);margin-top:3px">👤 ${isCampSport(e.sport) ? t('No coach (camp)', 'بدون مدرب (معسكر)') : t('Coach', 'المدرب') + ': ' + escapeHtml(coachName(e.coachId))}</div>
-        </div>
-        <div style="display:flex;gap:22px;text-align:center">
-          <div><div style="font-size:30px;font-weight:800;color:var(--blue);line-height:1">${planned}</div><div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;margin-top:2px">${t('Planned', 'المخطط')}</div></div>
-          <div><div style="font-size:30px;font-weight:800;color:var(--green);line-height:1">${y}</div><div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;margin-top:2px">${t('Attended', 'الحضور')}</div></div>
-          ${remaining != null ? `<div><div style="font-size:30px;font-weight:800;color:${remLow ? 'var(--red)' : 'var(--accent-2)'};line-height:1">${remaining}</div><div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;margin-top:2px">${t('Left', 'المتبقي')}</div></div>` : ''}
-        </div>
+    // v6.966.0 — compact row: sport + coach | classes attended of the package + left + a slim bar | this month
+    const _tot = pkgTotal || planned, _att = pkgTotal ? pkgAtt : y, _pct = _tot ? Math.min(100, Math.round(_att / _tot * 100)) : 0;
+    return `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;border:1px solid var(--border);border-radius:12px;padding:9px 12px;background:linear-gradient(135deg,${meta.c}14,transparent 70%)">
+      <div style="width:36px;height:36px;border-radius:10px;background:${meta.c}26;display:flex;align-items:center;justify-content:center;font-size:19px;flex-shrink:0">${meta.e}</div>
+      <div style="flex:1 1 130px;min-width:120px">
+        <div style="font-size:15px;font-weight:800;line-height:1.15">${escapeHtml(e.sport)}${meta.priv ? ` <span class="badge" style="background:#6b728022;color:#6b7280;font-size:9px;vertical-align:middle">🔒 ${t('Private', 'خاص')}</span>` : ''}</div>
+        <div style="font-size:12px;color:var(--text-mute)">👤 ${isCampSport(e.sport) ? t('Camp', 'معسكر') : escapeHtml(coachName(e.coachId) || '—')}</div>
       </div>
-      ${remLow ? `<div style="margin-top:10px;font-size:12px;color:var(--red);font-weight:600">⚠ ${t('Only', 'فقط')} ${remaining} ${t('classes left — please renew soon to keep your spot.', 'حصص متبقية — جدّد قريباً للحفاظ على مكانك.')}</div>` : ''}
-      <div style="margin-top:14px">
-        <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-mute);margin-bottom:5px"><span>${t('This month', 'هذا الشهر')}</span><span><b style="color:var(--text)">${y}</b> ${t('of', 'من')} ${planned} ${t('classes', 'حصة')} · ${pct}%</span></div>
-        <div style="height:10px;background:var(--surface);border-radius:99px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${meta.c};border-radius:99px;transition:width .4s"></div></div>
+      <div style="flex:2 1 200px;min-width:180px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;font-size:12px;margin-bottom:4px"><span><b style="font-size:15px">${_att}</b> / ${_tot} ${t('classes attended', 'حصة حضرتها')}</span>${remaining != null ? `<span style="font-weight:700;color:${remLow ? 'var(--red)' : 'var(--accent-2)'}"><b style="font-size:15px">${remaining}</b> ${t('left', 'متبقي')}</span>` : ''}</div>
+        <div style="height:6px;background:var(--surface);border-radius:99px;overflow:hidden"><div style="height:100%;width:${_pct}%;background:${meta.c};border-radius:99px"></div></div>
+        <div style="font-size:10px;color:var(--text-mute);margin-top:3px">${t('This month', 'هذا الشهر')}: ${y}${remLow ? ` · <span style="color:var(--red);font-weight:700">⚠ ${t('renew soon', 'جدّد قريباً')}</span>` : ''}</div>
       </div>
     </div>`;
   }).join('') : `<div class="text-mute" style="font-size:14px;padding:14px;text-align:center">${t('No active sports on record.', 'لا توجد رياضات مسجّلة.')}</div>`;
@@ -32201,6 +32224,9 @@ PAGES.mymembership = (main) => {
     </div>`;
   })() : `<div class="text-mute" style="font-size:13px">${t('No upcoming class found in the schedule for your sports.', 'لا توجد حصة قادمة في الجدول لرياضاتك.')}</div>`;
 
+  // v6.966.0 — next class as a short tile value
+  const nextShort = nextClass ? (() => { const c = nextClass.c, w = nextClass.daysAhead === 0 ? t('Today', 'اليوم') : nextClass.daysAhead === 1 ? t('Tomorrow', 'غداً') : t(DAY_LABEL_EN[c.day], DAY_LABEL_AR[c.day]); return { sport: c.sport, when: w + ' · ' + (SLOT_LABEL[nextClass.hour] || (nextClass.hour + ':00')), coach: isCampSport(c.sport) ? '' : (coachName(c.coachId) || '') }; })() : null;
+
   // Payment history — this member's own invoices, newest first.
   const myInvoices = (state.invoices || []).filter(inv => inv.customerId === m.id && !inv.deleted)
     .sort((a, b) => (b.date || b.month || '').localeCompare(a.date || a.month || ''));
@@ -32229,15 +32255,8 @@ PAGES.mymembership = (main) => {
           <div class="text-mute" style="font-size:12px">${t('Resumes on', 'يُستأنف في')} <b>${fmtDate(m.currentFreezeUntil)}</b> · ${t('your expiry was extended', 'تم تمديد تاريخ انتهائك')}</div></div>
       </div></div>`;
   } else if (memberStatus(m) === 'Active') {
-    // Members can no longer freeze themselves — freezes are handled by reception
-    // (Admin/Reception only). Show an informational card instead of a button.
-    freezeCardHtml = `<div class="card" style="margin-bottom:16px">
-      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-        <div style="font-size:28px">❄️</div>
-        <div><div class="card-title">${t('Need to pause your membership?', 'تحتاج إلى إيقاف عضويتك مؤقتاً؟')}</div>
-          <div class="card-subtitle">${t('Please contact reception to freeze your membership. Your allowance is', 'يرجى التواصل مع الاستقبال لتجميد عضويتك. رصيدك هو')} <b>${fz.remainingDays}</b> ${t('of', 'من')} ${fz.allowanceDays} ${t('days this cycle', 'يوم هذه الدورة')}.</div>
-        </div>
-      </div></div>`;
+    // v6.966.0 — no "Need to pause your membership?" card for the member (freezes are done by reception; nothing for the member to act on)
+    freezeCardHtml = '';
   }
 
   main.innerHTML = `
@@ -32293,30 +32312,37 @@ PAGES.mymembership = (main) => {
         </div>
       </div>
     </div>` : ''}
-    <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
-      <div class="kpi"><div class="kpi-label">${t('Status', 'الحالة')}</div><div class="kpi-value" style="color:${statusColor}">${t(status, { Active: 'نشط', Expired: 'منتهٍ', Frozen: 'مجمّد', Withdrawn: 'منسحب', Completed: 'مكتمل' }[status] || status)}</div><div class="kpi-sub">${m.level || ''}</div></div>
-      <div class="kpi"><div class="kpi-label">${t('Membership expiry', 'انتهاء العضوية')}</div><div class="kpi-value" style="font-size:20px">${m.expiryDate ? fmtDate(m.expiryDate) : '—'}</div><div class="kpi-sub">${dLeft == null ? '' : dLeft < 0 ? t(`expired ${-dLeft}d ago`, `انتهت قبل ${-dLeft} يوم`) : t(`${dLeft} day${dLeft === 1 ? '' : 's'} left`, `باقٍ ${dLeft} يوم`)}</div></div>
-      <div class="kpi ${outstanding > 0 ? 'red' : 'green'}"><div class="kpi-label">${t('Balance due', 'الرصيد المستحق')}</div><div class="kpi-value">${fmt(outstanding)}</div><div class="kpi-sub">${outstanding > 0 ? t('please settle at reception', 'يرجى السداد في الاستقبال') : t('all paid', 'مدفوع بالكامل')}</div></div>
-    </div>
-    <div class="card" style="margin-bottom:16px;border:1px solid rgba(91,141,239,.35);background:linear-gradient(135deg,rgba(91,141,239,.10),rgba(91,141,239,.02))">
-      <div class="card-header"><div><div class="card-title">⏱ ${t('Next class', 'حصتك القادمة')}</div></div></div>
-      ${nextClassHtml}
+    <style>
+      .stu-tile{border:1px solid var(--border);border-radius:12px;padding:9px 12px;background:var(--surface)}
+      .stu-tile .l{font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--text-mute)}
+      .stu-tile .v{font-size:18px;font-weight:800;line-height:1.2;margin-top:2px}
+      .stu-tile .s{font-size:11px;color:var(--text-mute);margin-top:1px}
+      .student-fold > .card-header{cursor:pointer;margin-bottom:0}
+      .student-fold.sf-closed > :not(.card-header){display:none}
+      .student-fold .sf-chev{margin-inline-start:auto;transition:transform .15s;opacity:.7}
+      .student-fold.sf-closed .sf-chev{transform:rotate(-90deg)}
+    </style>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px">
+      <div class="stu-tile"><div class="l">${t('Status', 'الحالة')}</div><div class="v" style="color:${statusColor}">${t(status, { Active: 'نشط', Expired: 'منتهٍ', Frozen: 'مجمّد', Withdrawn: 'منسحب', Completed: 'مكتمل' }[status] || status)}</div><div class="s">${m.level || '&nbsp;'}</div></div>
+      <div class="stu-tile"><div class="l">${t('Membership expiry', 'انتهاء العضوية')}</div><div class="v">${m.expiryDate ? fmtDate(m.expiryDate) : '—'}</div><div class="s">${dLeft == null ? '&nbsp;' : dLeft < 0 ? t(`expired ${-dLeft}d ago`, `انتهت قبل ${-dLeft} يوم`) : t(`${dLeft} days left`, `باقٍ ${dLeft} يوم`)}</div></div>
+      <div class="stu-tile" style="border-color:${outstanding > 0 ? 'rgba(239,68,68,.5)' : 'var(--border)'}"><div class="l">${t('Balance due', 'الرصيد المستحق')}</div><div class="v" style="color:${outstanding > 0 ? 'var(--red)' : 'var(--green)'}">${fmt(outstanding)}</div><div class="s">${outstanding > 0 ? t('please settle at reception', 'يرجى السداد في الاستقبال') : t('all paid', 'مدفوع بالكامل')}</div></div>
+      <div class="stu-tile" style="border-color:rgba(91,141,239,.4)"><div class="l">⏱ ${t('Next class', 'حصتك القادمة')}</div>${nextShort ? `<div class="v" style="font-size:15px">${escapeHtml(nextShort.sport)}</div><div class="s"><b style="color:var(--blue)">${nextShort.when}</b>${nextShort.coach ? ' · ' + escapeHtml(nextShort.coach) : ''}</div>` : `<div class="v" style="font-size:14px;color:var(--text-mute)">—</div><div class="s">${t('none in the schedule', 'لا توجد في الجدول')}</div>`}</div>
     </div>
     ${freezeCardHtml}
     <div class="card">
-      <div class="card-header"><div><div class="card-title" style="font-size:18px">🥋 ${t('My sports', 'رياضاتي')}</div><div class="card-subtitle">${t('Your enrolled activities and attendance this month', 'أنشطتك المسجّلة وحضورك هذا الشهر')}</div></div></div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px">${sportsHtml}</div>
+      <div class="card-header" style="margin-bottom:8px"><div><div class="card-title" style="font-size:16px">🥋 ${t('My sports', 'رياضاتي')}</div></div></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:8px">${sportsHtml}</div>
       <div class="text-mute mt-3" style="font-size:12px;margin-top:14px">${t('See the <b>Schedule</b> tab for class times. For changes to your plan, please contact the club.', 'راجع تبويب <b>الجدول</b> لمواعيد الحصص. لأي تعديل على اشتراكك، يرجى التواصل مع النادي.')}</div>
     </div>
 
-    <div class="card" style="margin-top:14px">
+    <div class="card student-fold" ${myAdvice.length ? 'data-open="1"' : ''} style="margin-top:10px">
       <div class="card-header"><div><div class="card-title">💬 ${t('Advice from your coach', 'نصائح من مدربك')}</div><div class="card-subtitle">${t('Personal notes and tips from your coach', 'ملاحظات ونصائح شخصية من مدربك')}${adviceReplies ? ' · ' + adviceReplies + ' ' + t('replies', 'رد') : ''}</div></div>
         ${myAdvice.length ? `<button class="btn ghost sm" onclick="navigate('advice')">💬 ${t('Reply', 'رد')}</button>` : ''}
       </div>
       ${adviceHtml}
     </div>
 
-    <div class="card" style="margin-top:14px">
+    <div class="card student-fold" style="margin-top:10px">
       <div class="card-header"><div><div class="card-title">${t('Attendance log', 'سجل الحضور')}</div><div class="card-subtitle">${t(`${attendedTotal} class${attendedTotal === 1 ? '' : 'es'} attended · most recent first`, `${attendedTotal} حصة بالحضور · الأحدث أولاً`)}</div></div></div>
       <div style="max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:8px">
         <table style="width:100%;border-collapse:collapse;font-size:13px">
@@ -32326,7 +32352,7 @@ PAGES.mymembership = (main) => {
       </div>
     </div>
 
-    <div class="card" style="margin-top:14px">
+    <div class="card student-fold" style="margin-top:10px">
       <div class="card-header"><div><div class="card-title">${t('Membership history', 'سجل العضوية')}</div><div class="card-subtitle">${t('Your subscriptions and renewals', 'اشتراكاتك وتجديداتك')}</div></div></div>
       <div style="max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:8px">
         <table style="width:100%;border-collapse:collapse;font-size:13px">
@@ -32336,7 +32362,7 @@ PAGES.mymembership = (main) => {
       </div>
     </div>
 
-    <div class="card" style="margin-top:14px">
+    <div class="card student-fold" style="margin-top:10px">
       <div class="card-header"><div><div class="card-title">${t('Payment history', 'سجل المدفوعات')}</div><div class="card-subtitle">${t('Your invoices and payments', 'فواتيرك ومدفوعاتك')}</div></div></div>
       <div style="max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:8px">
         <table style="width:100%;border-collapse:collapse;font-size:13px">
@@ -32345,6 +32371,13 @@ PAGES.mymembership = (main) => {
         </table>
       </div>
     </div>`;
+  // v6.966.0 — fold the long lists (open the header to read them); advice stays open when there is some
+  main.querySelectorAll('.student-fold').forEach(c => {
+    const h = c.querySelector('.card-header'); if (!h) return;
+    h.insertAdjacentHTML('beforeend', '<span class="sf-chev">▾</span>');
+    if (c.dataset.open !== '1') c.classList.add('sf-closed');
+    h.addEventListener('click', e => { if (e.target.closest('button')) return; c.classList.toggle('sf-closed'); });
+  });
 };
 
 // ─── Coach Advice (coach writes → student reads) ───────────────
