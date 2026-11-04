@@ -14,7 +14,8 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.958.0';   // 6.958.0 a fix file can set club settings (used to close the salary months through a month);
+const APP_VERSION = '6.959.0';   // 6.959.0 the salary file itemises the money carried in from an earlier month (which classes, commission, bonus, and what was already paid);
+// prev:   // 6.958.0 a fix file can set club settings (used to close the salary months through a month);
 // prev:   // 6.957.0 Attendance: no extra 🔒 Private tag next to a coach whose name already says (Private) — the tag stays for packages you flagged private;
 // prev:   // 6.956.0 the idle auto sign-out default is 20 minutes (was 10) — a different value set in Preferences still wins;
 // prev:   // 6.955.0 Invoices: the Activities filter now lists Football Court (and any other facility billed as Court Rental / Boxing Room);
@@ -9829,6 +9830,40 @@ function salaryUnpaidClasses(coachId, monthKey) {
   return out.sort((a, b) => a.member.localeCompare(b.member));
 }
 if (typeof window !== 'undefined') window.salaryUnpaidClasses = salaryUnpaidClasses;
+// v6.959.0 — what a month's "Late adjustments accepted from earlier months" is MADE OF. For each accepted hand-over into monthKey: the classes (member lines) of the old month that are new / changed since that
+// month was paid (their base x the coach rate), the bonus difference, and what is left to reconcile to the amount that was handed on (e.g. a rounding that was already paid). Read-only.
+function salaryLateDetail(coachId, monthKey) {
+  const out = [];
+  const recs = (state.salaries || []).filter(s => s && s.kind === 'lateadj' && s.coachId === coachId && s.month === monthKey && s.status === 'accepted');
+  for (const rec of recs) {
+    const item = { from: rec.fromMonth, amount: parseFloat(rec.amount) || 0, rows: [], bonus: 0, rest: 0, note: '' };
+    try {
+      const p = computeMonthlyPay(coachId, rec.fromMonth), snap = p && p.salaryRecord && Array.isArray(p.salaryRecord.snapshotLines) ? p.salaryRecord.snapshotLines : null;
+      const rate = (p && Number(p.commissionRate)) || 0;
+      if (p && snap) {
+        const A0 = new Map(), B0 = new Map();
+        for (const l of snap) { const pk = String(l.k || '').split('|'); const k = pk.slice(0, 4).join('|'); const e = A0.get(k) || { base: 0, cls: 0, n: l.n, sp: l.sp, kind: l.kind, start: pk[3] || '' }; e.base += Number(l.base) || 0; e.cls += Number(l.cls) || 0; A0.set(k, e); }
+        for (const l of ((p.attendanceLines && p.attendanceLines.lines) || [])) { const k = [l.mid, l.sport, l.kind || 'attended', l.start || ''].join('|'); const e = B0.get(k) || { base: 0, cls: 0, n: l.memberName, sp: l.sport, kind: l.kind || 'attended', start: l.start || '' }; e.base += Number(l.amountBase) || 0; e.cls += Number(l.classes) || 0; B0.set(k, e); }
+        for (const k of new Set([...A0.keys(), ...B0.keys()])) {
+          const a = A0.get(k) || { base: 0, cls: 0 }, b = B0.get(k) || { base: 0, cls: 0 }, db = Math.round((b.base - a.base) * 100) / 100;
+          if (Math.abs(db) < 0.05) continue;   // a cent of rounding is not a line
+          const ref = b.n ? b : a;
+          item.rows.push({ member: ref.n, sport: ref.sp, kind: ref.kind, start: ref.start, classes: Math.round((b.cls - a.cls) * 100) / 100, base: db, commission: Math.round(db * rate) / 100, rate });
+        }
+        const st = p.salaryRecord.snapshotTot || {};
+        const bonusNow = (Number(p.gross) || 0) - (Number(p.commissionAmount) || 0) - (Number(p.fixed) || 0);
+        const bonusThen = (Number(st.gross) || 0) - (Number(st.base) || 0) * rate / 100 - (Number(st.fixed) || 0);
+        item.bonus = Math.round((bonusNow - bonusThen) * 100) / 100;
+      }
+    } catch (e) { console.error('salaryLateDetail failed', e); }
+    const listed = item.rows.reduce((s, r) => s + r.commission, 0) + item.bonus;
+    item.rest = Math.round((item.amount - listed) * 100) / 100;
+    if (!item.rows.length && Math.abs(item.bonus) < 0.01) item.note = 'unpaid rest of that month';
+    out.push(item);
+  }
+  return out;
+}
+if (typeof window !== 'undefined') window.salaryLateDetail = salaryLateDetail;
 // v6.936 — the amount a paid month is frozen at: the explicit agreed target, else a real (positive) snapshot; null = nothing to freeze on (legacy / over-advanced records stay live)
 function salaryFrozenRef(rec) {
   if (!rec) return null;

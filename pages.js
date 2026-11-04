@@ -22909,6 +22909,19 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
   if (!c || !pay) return;
 
   // v6.949.0 — a coach who LEFT: the classes his students attended that earn him nothing (after his leave date / outside their package), with the average class price of their last package — at the bottom, NOT in the pay
+  // v6.959.0 — the carried-in money (Late adjustments accepted from earlier months), itemised like the salary lines: classes, commission at the coach rate, bonus, and what was already paid
+  const _lateSection = (() => {
+    let L = []; try { L = salaryLateDetail(coachId, monthKey); } catch (e) { console.error('late detail failed', e); }
+    if (!L.length) return '';
+    const th = 'padding:4px 6px', td = 'padding:4px 6px';
+    return '<h2 style="margin-top:22px">Carried from earlier months — detail</h2><div style="font-size:11px;color:#6b7280;margin-bottom:6px">What was earned (or left unpaid) in the closed month and is paid now, with this month.</div>' + L.map(it => {
+      const rows = it.rows.map(r => '<tr style="border-top:1px solid #e5e7eb"><td style="' + td + '">' + escapeHtml(r.member || '') + '</td><td style="' + td + '">' + escapeHtml(r.sport || '') + (r.kind === 'trueup' ? ' · expiry true-up' : '') + '</td><td style="' + td + '">' + (r.start ? fmtDate(r.start) : '') + '</td><td style="' + td + ';text-align:right">' + r.classes + '</td><td style="' + td + ';text-align:right">' + fmt(r.base) + '</td><td style="' + td + ';text-align:right">' + fmt(r.commission) + ' <span style="color:#6b7280">(' + r.rate + '%)</span></td></tr>').join('');
+      const extra = (Math.abs(it.bonus) >= 0.01 ? '<tr style="border-top:1px solid #e5e7eb"><td style="' + td + '" colspan="5">Private package bonus on these classes</td><td style="' + td + ';text-align:right">' + fmt(it.bonus) + '</td></tr>' : '')
+        + (Math.abs(it.rest) >= 0.01 ? '<tr style="border-top:1px solid #e5e7eb"><td style="' + td + ';color:#6b7280" colspan="5">' + (it.note ? 'The ' + it.note : 'Already paid in ' + escapeHtml(fmtMonth(it.from)) + ' (rounding)') + '</td><td style="' + td + ';text-align:right;color:#6b7280">' + (it.rest > 0 ? '+' : '−') + fmt(Math.abs(it.rest)) + '</td></tr>' : '');
+      return '<div style="margin:8px 0 2px;font-weight:700">From ' + escapeHtml(fmtMonth(it.from)) + '</div><table style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr style="background:#f3f4f6;text-align:left"><th style="' + th + '">Member</th><th style="' + th + '">Sport</th><th style="' + th + '">Class from</th><th style="' + th + ';text-align:right">Classes</th><th style="' + th + ';text-align:right">Amount</th><th style="' + th + ';text-align:right">Commission</th></tr></thead><tbody>' + rows + extra
+        + '<tr style="border-top:2px solid #111;font-weight:700"><td style="' + td + '" colspan="5">Total carried from ' + escapeHtml(fmtMonth(it.from)) + '</td><td style="' + td + ';text-align:right">+' + fmt(it.amount) + '</td></tr></tbody></table>';
+    }).join('');
+  })();
   const _unpaidSection = (() => {
     let U = []; try { U = salaryUnpaidClasses(coachId, monthKey); } catch (e) { console.error('unpaid classes failed', e); }
     if (!U.length) return '';
@@ -23202,6 +23215,8 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
         <div class="amount">${fmt(pay.net)} QAR</div>
       </div>
       ${pay.net < 0 ? '<div style="margin-top:8px;font-size:11px;color:#dc2626"><b>Note:</b> Net pay is negative this month due to retroactive adjustments. To be reconciled in the next pay period.</div>' : ''}
+
+      ${_lateSection}
 
       ${_unpaidSection}
 
