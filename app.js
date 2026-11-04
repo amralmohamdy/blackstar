@@ -14,7 +14,8 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.967.0';   // 6.967.0 Cash in Hand is FLAT — exactly the last count you enter; no invoice, cash payment, expense or owner collection moves it; it starts at 0 on 1 Nov 2026 (settings.cashFlat=false brings the old live figure back);
+const APP_VERSION = '6.968.0';   // 6.968.0 Month Reconciliation: the Due box holds ALL months' unpaid invoices (this month + older), with the by-month list (settings.monthRecDueAll=false brings back the "billed this month" figure);
+// prev:   // 6.967.0 Cash in Hand is FLAT — exactly the last count you enter; no invoice, cash payment, expense or owner collection moves it; it starts at 0 on 1 Nov 2026 (settings.cashFlat=false brings the old live figure back);
 // prev:   // 6.966.0 the member's My Membership page is compact: one strip (status · expiry · balance · next class), one slim row per sport (classes attended / total / left), the long lists fold open on tap; no "Need to pause" card;
 // prev:   // 6.965.0 the member (student) sidebar shows only Change password + Sign out — no "More" header, no name / role / version / cloud pill, no Refresh from cloud;
 // prev:   // 6.964.0 the expired / expiring WhatsApp reminders state the classes attended and left per sport, and (expired) whether the rest carries over on renewal;

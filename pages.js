@@ -19753,6 +19753,8 @@ function monthRecExpenses(ym) {
   const r2 = x => Math.round(x * 100) / 100;
   return { total: r2(total), citadel: r2(citadel), bankComm: r2(bankComm) };
 }
+// v6.968.0 — the Due box of the month reconciliation holds ALL months' unpaid invoices (not only the ones billed this month); settings.monthRecDueAll = false brings back the "billed this month" figure
+function monthRecDueAllOn() { try { if (typeof window !== 'undefined' && window.__monthRecDueMonthOnly === true) return false; } catch (_) {} return !(state && state.settings && state.settings.monthRecDueAll === false); }
 function monthRecCompute(ym, bankOverride) {
   const F = financeAgg([ym]), D = (typeof cashDrawerNow === 'function') ? cashDrawerNow() : null, r2 = x => Math.round(x * 100) / 100;
   const stored = state.settings && state.settings.monthRecBank && state.settings.monthRecBank[ym];
@@ -19768,20 +19770,34 @@ function monthRecCompute(ym, bankOverride) {
     const isMem = i.customerId != null && (state.members || []).some(m => m && m.id === i.customerId && !m.deleted);
     if (isMem) dueMem += d; else { dueOth += d; othRows.push({ ref: i.ref || ('#' + i.id), cat: i.category || 'Membership', who: i.customerName || (typeof customerInfo === 'function' ? (customerInfo(i) || {}).name : '') || '—', due: r2(d), date: String(i.date || '').slice(0, 10) }); }
   }
+  // v6.968.0 — EVERY month: each unpaid invoice (billed − paid, never below 0), split members / others and by the month it was billed
+  let allMem = 0, allOth = 0; const allRows = [], byMonth = {};
+  for (const i of (state.invoices || [])) {
+    if (!i || i.deleted || i.switchCredit || i.activityType === 'switch-credit') continue;
+    const bal = (typeof invoiceBalance === 'function') ? invoiceBalance(i) : (invoiceTotal(i) - invoicePaid(i));
+    if (!(bal >= 0.5)) continue;   // a cent of rounding is not a due
+    const mk = String(i.month || (typeof invoiceBillMonth === 'function' ? invoiceBillMonth(i) : '') || String(i.date || '').slice(0, 7)).slice(0, 7) || '—';
+    const isMem = i.customerId != null && (state.members || []).some(m => m && m.id === i.customerId && !m.deleted);
+    byMonth[mk] = r2((byMonth[mk] || 0) + bal);
+    if (isMem) allMem += bal; else { allOth += bal; allRows.push({ ref: i.ref || ('#' + i.id), cat: i.category || 'Membership', who: i.customerName || (typeof customerInfo === 'function' ? (customerInfo(i) || {}).name : '') || '—', due: r2(bal), date: String(i.date || '').slice(0, 10) }); }
+  }
+  const dueAll = r2(allMem + allOth), dueUsed = monthRecDueAllOn() ? dueAll : due;
   const have = cash != null && bank != null && isFinite(bank);
-  const total = r2((cash || 0) + due + expenses + (have ? bank : 0)), diff = r2(revenue - total);
-  const bankExpected = cash != null ? r2(revenue - cash - due - expenses) : null;   // v6.893 — what the bank SHOULD hold for the four boxes to equal revenue
-  return { ym, revenue, bankExpected, cash, due, dueMem: r2(dueMem), dueOth: r2(dueOth), dueOthRows: othRows.sort((a, b) => b.due - a.due), expenses, citadel: X.citadel, bankComm: X.bankComm, bank, have, total, diff, match: have && Math.abs(diff) < 1 };
+  const total = r2((cash || 0) + dueUsed + expenses + (have ? bank : 0)), diff = r2(revenue - total);
+  const bankExpected = cash != null ? r2(revenue - cash - dueUsed - expenses) : null;   // v6.893 — what the bank SHOULD hold for the four boxes to equal revenue
+  return { ym, revenue, bankExpected, cash, due: dueUsed, dueAllMode: monthRecDueAllOn(), dueMonth: due, dueAll, dueByMonth: byMonth, dueMem: r2(monthRecDueAllOn() ? allMem : dueMem), dueOth: r2(monthRecDueAllOn() ? allOth : dueOth), dueOthRows: (monthRecDueAllOn() ? allRows : othRows).sort((a, b) => b.due - a.due), expenses, citadel: X.citadel, bankComm: X.bankComm, bank, have, total, diff, match: have && Math.abs(diff) < 1 };
 }
 window._mrDueDetail = function () {
-  const ym = TODAY.slice(0, 7), R = monthRecCompute(ym), money = n => fmt(Math.round(n * 100) / 100);
-  const oth = R.dueOthRows.length ? '<table style="width:100%;font-size:12.5px;margin-top:6px"><thead><tr><th style="text-align:left">' + t('Customer', 'العميل') + '</th><th style="text-align:left">' + t('Invoice', 'الفاتورة') + '</th><th style="text-align:left">' + t('Category', 'الفئة') + '</th><th class="text-right">' + t('Due', 'المتبقي') + '</th></tr></thead><tbody>' +
-    R.dueOthRows.map(r => '<tr><td>' + escapeHtml(r.who) + '</td><td class="font-mono" style="font-size:11px">' + escapeHtml(r.ref) + '</td><td>' + escapeHtml(r.cat) + '</td><td class="text-right num" style="color:var(--red);font-weight:700">' + money(r.due) + '</td></tr>').join('') + '</tbody></table>' : '<div class="text-mute" style="font-size:12px;margin-top:6px">—</div>';
+  const ym = TODAY.slice(0, 7), R = monthRecCompute(ym), money = n => fmt(Math.round(n * 100) / 100), all = R.dueAllMode;
+  const oth = R.dueOthRows.length ? '<table style="width:100%;font-size:12.5px;margin-top:6px"><thead><tr><th style="text-align:left">' + t('Customer', 'العميل') + '</th><th style="text-align:left">' + t('Invoice', 'الفاتورة') + '</th><th style="text-align:left">' + t('Category', 'الفئة') + '</th><th class="text-right">' + t('Due', 'المستحق') + '</th></tr></thead><tbody>' +
+    R.dueOthRows.map(r => '<tr><td>' + escapeHtml(r.who) + '</td><td class="font-mono" style="font-size:11px">' + escapeHtml(r.ref) + '</td><td>' + escapeHtml(r.cat) + '</td><td class="text-right num" style="color:var(--red);font-weight:700">' + money(r.due) + '</td></tr>').join('') + '</tbody></table>' : '<div class="text-mute" style="margin-top:6px">' + t('None.', 'لا يوجد.') + '</div>';
+  const months = Object.keys(R.dueByMonth || {}).sort().reverse();
+  const byM = (all && months.length) ? '<div style="margin-top:8px"><b>' + t('By month billed', 'حسب شهر الفاتورة') + ':</b><table style="width:100%;font-size:12.5px;margin-top:4px"><tbody>' + months.map(mk => '<tr><td>' + (/^\d{4}-\d\d$/.test(mk) ? escapeHtml(fmtMonth(mk)) : escapeHtml(mk)) + (mk === ym ? ' <span class="text-mute">(' + t('this month', 'هذا الشهر') + ')</span>' : '') + '</td><td class="text-right num" style="color:var(--red);font-weight:700">' + money(R.dueByMonth[mk]) + '</td></tr>').join('') + '</tbody></table></div>' : '';
   showModal({
-    title: '📋 ' + t('Due this month', 'المستحق هذا الشهر') + ' · ' + fmtMonth(ym) + ' · ' + money(R.due) + ' QAR',
+    title: '📋 ' + (all ? t('Due · all months', 'المستحق · كل الأشهر') : t('Due this month', 'المستحق هذا الشهر')) + (all ? '' : ' · ' + fmtMonth(ym)) + ' · ' + money(R.due) + ' QAR',
     size: 'lg',
-    body: '<div style="font-size:12.5px;line-height:1.7"><div>' + t('Only invoices billed in', 'فقط الفواتير المفوترة في') + ' <b>' + fmtMonth(ym) + '</b> ' + t('(older months are NOT in this figure).', '(الأشهر الأقدم ليست ضمن هذا الرقم).') + '</div>' +
-      '<div style="margin-top:8px"><b>' + t('Members', 'الأعضاء') + ':</b> ' + money(R.dueMem) + ' QAR — <a href="#duepayment" onclick="closeModal()">' + t('open Due Payment', 'افتح المستحقات') + '</a> <span class="text-mute">(' + t('that screen also lists older months', 'وتلك الشاشة تعرض الأشهر الأقدم أيضاً') + ')</span></div>' +
+    body: '<div style="font-size:12.5px;line-height:1.7"><div>' + (all ? t('Every invoice not paid in full, whatever month it was billed in. This month:', 'كل فاتورة غير مدفوعة بالكامل بغض النظر عن شهرها. هذا الشهر:') + ' <b>' + money(R.dueMonth) + '</b> ' + t('· older months:', '· الأشهر الأقدم:') + ' <b>' + money(Math.max(0, R.dueAll - R.dueMonth)) + '</b>' : t('Only invoices billed in', 'فقط الفواتير المفوترة في') + ' <b>' + fmtMonth(ym) + '</b> ' + t('(older months are NOT in this figure).', '(الأشهر الأقدم ليست ضمن هذا الرقم).')) + '</div>' + byM +
+      '<div style="margin-top:8px"><b>' + t('Members', 'الأعضاء') + ':</b> ' + money(R.dueMem) + ' QAR — <a href="#duepayment" onclick="closeModal()">' + t('open Due Payment', 'افتح المستحقات') + '</a></div>' +
       '<div style="margin-top:8px"><b>' + t('Rentals / hall / products (not members):', 'إيجارات / قاعة / منتجات (غير أعضاء):') + '</b> ' + money(R.dueOth) + ' QAR — ' + t('not on the Due Payment screen', 'غير ظاهرة في شاشة المستحقات') + '</div>' + oth + '</div>',
     actions: [{ label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal }],
   });
@@ -19896,7 +19912,7 @@ PAGES.monthrec = (main) => {
       '<div class="topbar-actions"><button class="btn ghost" onclick="_mrReconcile(true)" title="' + t('Save these figures as a dated checkpoint', 'احفظ هذه الأرقام كنقطة تحقق مؤرخة') + '">💾 ' + t('Save checkpoint', 'حفظ نقطة تحقق') + '</button><button class="btn primary" onclick="_mrReconcile()">⚖️ ' + t('Reconcile', 'تسوية') + '</button></div></div>' +
     '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:16px">' +
       box('linear-gradient(135deg,#10b981,#047857)', '🧮', t('Cash in hand', 'النقد في الصندوق'), R.cash == null ? '—' : money(R.cash) + ' <span style="font-size:13px;font-weight:600">QAR</span>', R.cash == null ? t('no cash count yet — tap to record one', 'لا يوجد جرد بعد — اضغط لتسجيله') : t('live drawer: last count + cash since · tap to open', 'الصندوق الحالي: آخر جرد + النقد منذ ذلك · اضغط للفتح'), 'cashinhand') +
-      box('linear-gradient(135deg,#f59e0b,#c2410c)', '📋', t('Due this month', 'المستحق هذا الشهر'), money(R.due) + ' <span style="font-size:13px;font-weight:600">QAR</span>', t('billed THIS month, not yet collected', 'مفوتر هذا الشهر ولم يُحصّل بعد') + ' · ' + t('members', 'أعضاء') + ' ' + money(R.dueMem) + (R.dueOth > 0.5 ? ' + ' + t('rentals / others', 'إيجارات / أخرى') + ' ' + money(R.dueOth) : '') + ' · ' + t('tap for the list', 'اضغط للقائمة'), 'js:_mrDueDetail()') +
+      box('linear-gradient(135deg,#f59e0b,#c2410c)', '📋', R.dueAllMode ? t('Due · all months', 'المستحق · كل الأشهر') : t('Due this month', 'المستحق هذا الشهر'), money(R.due) + ' <span style="font-size:13px;font-weight:600">QAR</span>', (R.dueAllMode ? t('every unpaid invoice, all months', 'كل الفواتير غير المدفوعة، كل الأشهر') + ' · ' + t('this month', 'هذا الشهر') + ' ' + money(R.dueMonth) + ' + ' + t('older', 'الأقدم') + ' ' + money(Math.max(0, R.dueAll - R.dueMonth)) : t('billed THIS month, not yet collected', 'مفوتر هذا الشهر ولم يُحصّل بعد')) + ' · ' + t('members', 'أعضاء') + ' ' + money(R.dueMem) + (R.dueOth > 0.5 ? ' + ' + t('rentals / others', 'إيجارات / أخرى') + ' ' + money(R.dueOth) : '') + ' · ' + t('tap for the list', 'اضغط للقائمة'), 'js:_mrDueDetail()') +
       box('linear-gradient(135deg,#ef4444,#9f1239)', '💸', t('Expenses', 'المصروفات'), money(R.expenses) + ' <span style="font-size:13px;font-weight:600">QAR</span>', t('all expenses + bank commission + salary payments', 'كل المصروفات + عمولة البنك + دفعات الرواتب') + (R.citadel ? ' · ' + t('Citadel share', 'حصة سيتاديل') + ' ' + money(R.citadel) + ' ' + t('not counted', 'غير محتسبة') : '') + ' · ' + t('tap to open', 'اضغط للفتح'), 'expenses') +
       box('linear-gradient(135deg,#3b82f6,#4338ca)', '🏦', t('Cash in bank', 'الرصيد البنكي'), '<input id="mr-bank" type="number" step="0.01" min="0" inputmode="decimal" value="' + (R.bank != null ? R.bank : '') + '" oninput="_mrShow()" onclick="event.stopPropagation()" placeholder="0.00" style="width:100%;font-size:26px;font-weight:800;padding:6px 10px;border:2px solid rgba(255,255,255,.55);border-radius:10px;background:rgba(255,255,255,.16);color:#fff;outline:none" />', t('type the bank balance by hand', 'اكتب رصيد البنك يدوياً') + (R.bankExpected != null ? '<div style="margin-top:6px;font-weight:700;font-size:12px;cursor:pointer" onclick="event.stopPropagation();var e=document.getElementById(\'mr-bank\');e.value=' + R.bankExpected + ';_mrShow()" title="' + t('Tap to use this number', 'اضغط لاستخدام هذا الرقم') + '">🎯 ' + t('Expected in bank', 'المتوقع في البنك') + ': ' + money(R.bankExpected) + ' QAR</div>' : '')) +
     '</div>' +
