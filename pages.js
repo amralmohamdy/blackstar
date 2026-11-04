@@ -13874,7 +13874,8 @@ PAGES.invoices = (main) => {
   // combined "Swimming, Gymnastic" strings that multi-sport members produce, nor per-duration
   // camp variants. Selecting one matches any invoice that INVOLVES that sport (see the filter
   // predicate above), so a member enrolled in a combo still appears. (v6.325)
-  const sportsInInvoices = (typeof SPORTS !== 'undefined' && SPORTS.length ? SPORTS.slice() : DEFAULT_SPORTS.slice());
+  // v6.955.0 — the facilities billed on invoices (Football Court …) are activities too: they were missing from the list, so Court Rental invoices could not be picked by activity
+  const sportsInInvoices = (() => { const base = (typeof SPORTS !== 'undefined' && SPORTS.length ? SPORTS.slice() : DEFAULT_SPORTS.slice()); const extra = [...new Set((state.invoices || []).filter(i => i && !i.deleted && (i.category === 'Court Rental' || i.category === 'Boxing Room') && i.sport).map(i => String(i.sport).trim()))].filter(s => s && !base.includes(s)).sort(); return base.concat(extra); })();
   const coachesInInvoices = [...new Set(state.invoices.map(i => i.coach).filter(Boolean))].sort();
 
   main.innerHTML = `
