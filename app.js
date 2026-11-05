@@ -14,7 +14,9 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.972.0';   // 6.972.0 Invoices + Transactions summary: Cash / Card / Fawran shown separately (was Card + Fawran together);
+const APP_VERSION = '6.974.0';   // 6.974.0 Transactions: top box 'Earlier months revenue' (payments received this period for earlier months' invoices, split by method);
+// prev:   // 6.973.0 Summary strip always shows Cash / Card / Fawran / Transfer separately (Transfer chip even when 0);
+// prev:   // 6.972.0 Invoices + Transactions summary: Cash / Card / Fawran shown separately (was Card + Fawran together);
 // prev:   // 6.971.0 Product SKUs popup: total row (SKU count, total stock, stock value);
 // prev:   // 6.970.0 Edit Invoice: Change button on a linked product line (wrong product / size / qty / price) - stock and invoice total follow;
 // prev:   // 6.969.0 Invoices list + Transactions show split payment methods (cash + card); method filters match any paid method;

@@ -379,7 +379,7 @@ function _privPendingNote(pl, plain, coachPct, allPriv, rate) {
 function moneyStripHtml(o) {
   const num = v => fmt(Math.round((Number(v) || 0) * 100) / 100);
   const chip = (icon, label, v, tone) => `<span style="display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap;background:${tone};color:var(--text)">${icon} <span style="color:var(--text-dim);font-weight:500">${label}</span> <b class="num" style="font-variant-numeric:tabular-nums">${num(v)}</b></span>`;
-  const chips = (m, tone) => (m ? [chip('💵', t('Cash', 'نقد'), m.cash, tone), chip('💳', t('Card', 'بطاقة'), m.card || 0, tone), chip('📲', t('Fawran', 'فوران'), m.fawran || 0, tone)]   /* v6.972.0 — Card and Fawran are separate */.concat((m.transfer || 0) > 0.5 ? [chip('🏦', t('Transfer', 'تحويل'), m.transfer, tone)] : []).join('') : '');
+  const chips = (m, tone) => (m ? [chip('💵', t('Cash', 'نقد'), m.cash, tone), chip('💳', t('Card', 'بطاقة'), m.card || 0, tone), chip('📲', t('Fawran', 'فوران'), m.fawran || 0, tone)]   /* v6.972.0 — Card and Fawran are separate */.concat([chip('🏦', t('Transfer', 'تحويل'), m.transfer || 0, tone)]).join('') : '');
   const card = (icon, label, value, sub, tint, edge) => `<div style="flex:1 1 205px;min-width:190px;padding:13px 15px;border-radius:14px;border:1px solid ${edge};background:linear-gradient(145deg,${tint},transparent 75%),var(--surface);display:flex;flex-direction:column;gap:7px">
       <div style="display:flex;align-items:center;gap:7px;font-size:10.5px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--text-mute)"><span style="font-size:15px;letter-spacing:0">${icon}</span>${label}</div>
       <div style="display:flex;align-items:baseline;gap:6px"><span class="num" style="font-size:25px;font-weight:800;line-height:1.1;font-variant-numeric:tabular-nums">${value}</span></div>
@@ -391,6 +391,8 @@ function moneyStripHtml(o) {
     const owing = (Number(o.due) || 0) > 0.5;
     parts.push(card(owing ? '⏳' : '🎉', t('Due', 'المتبقي'), owing ? `${num(o.due)} <span style="font-size:12px;color:var(--text-dim);font-weight:500">QAR</span>` : `<span style="font-size:17px;color:var(--green)">${t('All settled', 'لا متبقي')}</span>`,
       owing ? chips(o.dm, 'rgba(245,158,11,.20)') + (o.dueNote ? `<span style="font-size:10px;color:var(--text-mute);align-self:center">${o.dueNote}</span>` : '') : '', owing ? 'rgba(245,158,11,.16)' : 'rgba(16,185,129,.08)', owing ? 'rgba(245,158,11,.40)' : 'rgba(16,185,129,.22)'));
+    // v6.974.0 — money received in this period for invoices of EARLIER months (on its own: it is NOT inside Collected)
+    if (o.earlier && o.earlier.count > 0) parts.push(card('💰', t('Earlier months revenue', 'إيراد الشهور السابقة'), `${num(o.earlier.total)} <span style="font-size:12px;color:var(--text-dim);font-weight:500">QAR</span>`, chips(o.earlier.m, 'rgba(99,102,241,.16)') + `<span style="font-size:10px;color:var(--text-mute);align-self:center">${o.earlier.count} ${t('payments', 'دفعات')}</span>`, 'rgba(99,102,241,.15)', 'rgba(99,102,241,.34)'));
   }
   return parts.join('');
 }
@@ -39812,7 +39814,8 @@ PAGES.transactions = (main) => {
       const _mode = st.dueMode === 'net' ? 'netDue' : 'due';
       _kp.innerHTML = moneyStripHtml({ icon: '🧾', countLabel: t('Transactions', 'العمليات'), count: txns.length, charged: grand, collected: grandPaid,
         cm: collectedByMethod(txns, tx => tx.paid, _invOf), due: dueShown, dm: dueByMethod(txns, tx => tx[_mode], _invOf),
-        dueNote: (st.dueMode === 'net' && Math.abs(grandDue - grandNetDue) > 0.5) ? t('net · gross ' + fmt(grandDue), 'صافي · إجمالي ' + fmt(grandDue)) : '', money: !isViewerRole() }); } }
+        dueNote: (st.dueMode === 'net' && Math.abs(grandDue - grandNetDue) > 0.5) ? t('net · gross ' + fmt(grandDue), 'صافي · إجمالي ' + fmt(grandDue)) : '', money: !isViewerRole(),
+        earlier: (latePays && latePays.length) ? { count: latePays.length, total: latePays.reduce((s, x) => s + x.amount, 0), m: latePays.reduce((a, x) => { a[x.method] = (a[x.method] || 0) + x.amount; return a; }, { cash: 0, card: 0, fawran: 0, transfer: 0 }) } : null }); } }
     { const lb = $('#txn-linkbanner'); if (lb) {
       const mk = (st.preset === 'monthyear' && st.monthKeys && st.monthKeys.length) ? st.monthKeys : [];
       lb.innerHTML = st.sportKey ? `<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:8px 12px;margin:0 2px 10px;border:1px solid rgba(139,92,246,.35);background:rgba(139,92,246,.07);border-radius:8px;font-size:12px">
