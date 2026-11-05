@@ -14,7 +14,12 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.981.0';   // 6.981.0 Citadel: Contributing invoices can be filtered — Rent / Membership and Football / Swimming (with a filtered total);
+const APP_VERSION = '6.986.0';   // 6.986.0 Printed attendance sheets: the same Mixed sport under two coaches gets the coach's initial in its code (KB-A / KB-M);
+// prev:   // 6.985.0 Transfer membership: the screen shows the REAL figures (remaining classes + moved value); the moved payment keeps its original date / method; B's package carries the moved value and is linked to its invoice; the new invoice gets a normal INV number;
+// prev:   // 6.984.0 Printed attendance sheets: a Mixed student's classes show WHICH sport (and coach) each one was (sheet cells, all-months sheet, detailed sheet);
+// prev:   // 6.983.0 Transactions: second table 'Money received in EARLIER months for this period's packages' (a package paid in October that starts in November), the mirror of the earlier-invoices table; Month Reconciliation takes off money received in earlier months for this month's packages (and adds money received now for later months) so the bank figure matches the month;
+// prev:   // 6.982.0 Transactions: Paid on pick lists an invoice with no payment under its own date (so what is still due shows); the screen opens on Start date as before;
+// prev:   // 6.981.0 Citadel: Contributing invoices can be filtered — Rent / Membership and Football / Swimming (with a filtered total);
 // prev:   // 6.980.0 Coach login: only the member fields the rules allow are written (a stale tablet copy no longer triggers permission-denied / the red bar);
 // prev:   // 6.979.0 Late adjustment: accept / reject LINE BY LINE per coach (✓ / ✗ on each member line, bonus and rest; open lines stay for later; bulk buttons);
 // prev:   // 6.978.0 Reception income targets: 50k→500 · 60k→1,000 · 70k→1,500 · 80k→2,000 · 100k→3,000;
