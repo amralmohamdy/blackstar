@@ -23394,10 +23394,10 @@ PAGES.products = (main) => {
         <div class="table-wrap"><table><thead><tr><th>SKU</th>${money ? '<th class="text-right">' + t('Cost', 'التكلفة') + '</th>' : ''}<th class="text-right">${t('Sell price', 'سعر البيع')}</th><th class="text-right">${t('Stock', 'المخزون')}</th><th>${t('Status', 'الحالة')}</th><th></th></tr></thead><tbody>${items.map(p => {
           const s = productCurrentStock(p.id), st = _stat(p), col = st === 'out' ? 'var(--red)' : st === 'low' ? 'var(--accent-2)' : 'var(--green)';
           return `<tr><td class="font-bold">${escapeHtml(p.sku || '—')}</td>${money ? '<td class="text-right num">' + (p.cost ? fmt(p.cost) : '—') + '</td>' : ''}<td class="text-right num font-bold">${fmt(p.price || 0)}</td><td class="text-right" style="color:${col};font-weight:700">${s}</td><td><span style="color:${col};font-size:11px;font-weight:700">${st === 'out' ? t('Out of stock', 'نفد المخزون') : st === 'low' ? t('Low', 'منخفض') : t('In stock', 'متوفر')}</span></td>
-            <td class="text-right" style="white-space:nowrap"><button class="btn ghost sm" onclick="closeModal();restockProduct(${p.id})">➕ ${t('Restock', 'إعادة تخزين')}</button>${money ? '<button class="btn ghost sm" onclick="closeModal();editProduct(' + p.id + ')">✏️</button><button class="btn ghost sm" onclick="closeModal();deleteProduct(' + p.id + ')">🗑</button>' : ''}</td></tr>`; }).join('')}</tbody></table></div>`,
+            <td class="text-right" style="white-space:nowrap"><button class="btn ghost sm" onclick="closeModal();restockProduct(${p.id})">➕ ${t('Restock', 'إعادة تخزين')}</button>${money ? '<button class="btn ghost sm" onclick="closeModal();editProduct(' + p.id + ')">✏️</button><button class="btn ghost sm" onclick="closeModal();deleteProduct(' + p.id + ')">🗑</button>' : ''}</td></tr>`; }).join('')}</tbody><tfoot><tr style="font-weight:800;border-top:2px solid var(--border)"><td colspan="${money ? 2 : 1}">${t('Total', 'الإجمالي')} · ${items.length} SKUs</td><td></td><td class="text-right">${items.reduce((s, p) => s + productCurrentStock(p.id), 0)}</td><td colspan="2" class="text-mute" style="font-weight:600">${money ? t('Stock value', 'قيمة المخزون') + ' ' + fmt(items.reduce((s, p) => s + productCurrentStock(p.id) * (Number(p.cost) || 0), 0)) : ''}</td></tr></tfoot></table></div>`,
       actions: [{ label: t('Close', 'إغلاق'), class: 'btn primary', onclick: closeModal }],
     });
-  };
+  };   // v6.971.0 — total row under the SKUs
 
   function refresh() {
     const all = applyFilter();
