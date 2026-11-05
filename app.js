@@ -14,7 +14,8 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.971.0';   // 6.971.0 Product SKUs popup: total row (SKU count, total stock, stock value);
+const APP_VERSION = '6.972.0';   // 6.972.0 Invoices + Transactions summary: Cash / Card / Fawran shown separately (was Card + Fawran together);
+// prev:   // 6.971.0 Product SKUs popup: total row (SKU count, total stock, stock value);
 // prev:   // 6.970.0 Edit Invoice: Change button on a linked product line (wrong product / size / qty / price) - stock and invoice total follow;
 // prev:   // 6.969.0 Invoices list + Transactions show split payment methods (cash + card); method filters match any paid method;
 // prev:   // 6.968.0 Month Reconciliation: the Due box holds ALL months' unpaid invoices (this month + older), with the by-month list (settings.monthRecDueAll=false brings back the "billed this month" figure);
