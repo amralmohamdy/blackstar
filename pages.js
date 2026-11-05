@@ -8906,7 +8906,11 @@ PAGES.citadel = (main) => {
     <td class="text-right num" style="color:var(--red);font-weight:700">${fmt(c.amount * RATE / 100)}</td>
   </tr>`).join('');
 
-  const detailRows = details.length ? details.map((d, i) => `<tr>
+  // v6.981.0 — the Contributing invoices list can be narrowed: Rent / Membership and Football / Swimming (the totals above stay as they are)
+  const _fType = window._citType || 'all', _fAct = window._citAct || 'all';
+  const fDetails = details.filter(d => (_fType === 'all' || d.type === _fType) && (_fAct === 'all' || d.group.key === _fAct));
+  const fTotal = fDetails.reduce((s, d) => s + (Number(d.amount) || 0), 0);
+  const detailRows = fDetails.length ? fDetails.map((d, i) => `<tr>
     <td class="text-mute" style="text-align:center;font-size:12px">${i + 1}</td>
     <td class="text-mute" style="font-size:12px;white-space:nowrap">${fmtMonth(d.month)}</td>
     <td style="font-size:12px;white-space:nowrap">${d.date ? fmtDate(d.date) : '—'}</td>
@@ -8918,7 +8922,7 @@ PAGES.citadel = (main) => {
       : `<span class="badge" style="background:rgba(16,185,129,.14);color:var(--green);font-size:10px">🎟 ${t('Membership', 'اشتراك')}</span>`}
       <span class="text-mute" style="font-size:10px">${escapeHtml(d.sport)}</span></td>
     <td class="text-right num">${fmt(d.amount)}</td>
-  </tr>`).join('') : `<tr><td colspan="8" class="text-mute" style="text-align:center;padding:16px">${t('No Football / Swimming revenue in the selected month(s).', 'لا يوجد إيراد كرة قدم / سباحة في الأشهر المحددة.')}</td></tr>`;
+  </tr>`).join('') + `<tr style="font-weight:800;border-top:2px solid var(--border)"><td colspan="7">${t('Total', 'الإجمالي')} · ${fDetails.length} ${t('lines', 'بند')}</td><td class="text-right num">${fmt(fTotal)}</td></tr>` : `<tr><td colspan="8" class="text-mute" style="text-align:center;padding:16px">${details.length ? t('No lines match the filter.', 'لا توجد بنود مطابقة للفلتر.') : t('No Football / Swimming revenue in the selected month(s).', 'لا يوجد إيراد كرة قدم / سباحة في الأشهر المحددة.')}</td></tr>`;
 
   main.innerHTML = `
     <div class="topbar">
@@ -9007,7 +9011,19 @@ PAGES.citadel = (main) => {
     <div class="card" style="margin-top:16px">
       <div class="card-header"><div>
         <div class="card-title">${t('Contributing invoices', 'الفواتير المساهمة')}</div>
-        <div class="card-subtitle">${details.length} ${t('lines make up the totals above', 'بند يشكّل الإجماليات أعلاه')}</div>
+        <div class="card-subtitle">${(_fType !== 'all' || _fAct !== 'all') ? fDetails.length + ' ' + t('of', 'من') + ' ' : ''}${details.length} ${t('lines make up the totals above', 'بند يشكّل الإجماليات أعلاه')}</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <select id="cit-ftype" class="btn ghost" style="padding:6px 8px">
+          <option value="all" ${_fType === 'all' ? 'selected' : ''}>${t('Rent + Membership', 'إيجار + اشتراك')}</option>
+          <option value="rent" ${_fType === 'rent' ? 'selected' : ''}>${t('Rent only', 'إيجار فقط')}</option>
+          <option value="membership" ${_fType === 'membership' ? 'selected' : ''}>${t('Membership only', 'اشتراك فقط')}</option>
+        </select>
+        <select id="cit-fact" class="btn ghost" style="padding:6px 8px">
+          <option value="all" ${_fAct === 'all' ? 'selected' : ''}>${t('Football + Swimming', 'كرة القدم + السباحة')}</option>
+          <option value="football" ${_fAct === 'football' ? 'selected' : ''}>⚽ ${t('Football only', 'كرة القدم فقط')}</option>
+          <option value="swimming" ${_fAct === 'swimming' ? 'selected' : ''}>🏊 ${t('Swimming only', 'السباحة فقط')}</option>
+        </select>
       </div></div>
       <div class="table-wrap"><table>
         <thead><tr>
@@ -9025,6 +9041,8 @@ PAGES.citadel = (main) => {
     </div>`;
 
   bindMonthMulti('cit-month', (mSel) => { window._citMonths = mSel; PAGES.citadel(main); });
+  $('#cit-ftype')?.addEventListener('change', e => { window._citType = e.target.value; PAGES.citadel(main); });
+  $('#cit-fact')?.addEventListener('change', e => { window._citAct = e.target.value; PAGES.citadel(main); });
   $('#cit-rate')?.addEventListener('change', e => {
     const v = parseFloat(e.target.value);
     if (!isNaN(v) && v >= 0 && v <= 100) { state.settings.citadelRate = v; save(); PAGES.citadel(main); }
