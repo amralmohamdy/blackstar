@@ -14,7 +14,9 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.968.0';   // 6.968.0 Month Reconciliation: the Due box holds ALL months' unpaid invoices (this month + older), with the by-month list (settings.monthRecDueAll=false brings back the "billed this month" figure);
+const APP_VERSION = '6.970.0';   // 6.970.0 Edit Invoice: Change button on a linked product line (wrong product / size / qty / price) - stock and invoice total follow;
+// prev:   // 6.969.0 Invoices list + Transactions show split payment methods (cash + card); method filters match any paid method;
+// prev:   // 6.968.0 Month Reconciliation: the Due box holds ALL months' unpaid invoices (this month + older), with the by-month list (settings.monthRecDueAll=false brings back the "billed this month" figure);
 // prev:   // 6.967.0 Cash in Hand is FLAT — exactly the last count you enter; no invoice, cash payment, expense or owner collection moves it; it starts at 0 on 1 Nov 2026 (settings.cashFlat=false brings the old live figure back);
 // prev:   // 6.966.0 the member's My Membership page is compact: one strip (status · expiry · balance · next class), one slim row per sport (classes attended / total / left), the long lists fold open on tap; no "Need to pause" card;
 // prev:   // 6.965.0 the member (student) sidebar shows only Change password + Sign out — no "More" header, no name / role / version / cloud pill, no Refresh from cloud;
@@ -4589,6 +4591,17 @@ if (typeof window !== 'undefined') Object.assign(window, { invoiceMethodSplit, c
 // Applied on WRITE (recordPayment) so a by-method breakdown can NEVER split into
 // separate "cash" vs "Cash" buckets (the accuracy bug where 19 camp payments were
 // stored as capital-C "Cash"). The financial screens also normalise on read.
+// v6.969.0 — every distinct method actually paid on an invoice (cash + card …), falling back to the header method
+function invoiceMethods(inv) {
+  const out = [];
+  for (const p of ((inv && Array.isArray(inv.payments)) ? inv.payments : [])) {
+    if (!p || !(Number(p.amount) > 0) || p._recon) continue;
+    const m = String(p.method || inv.method || '').trim(); if (m && !out.includes(m)) out.push(m);
+  }
+  if (!out.length && inv && inv.method) out.push(inv.method);
+  return out;
+}
+function invoiceMethodLabel(inv) { return invoiceMethods(inv).join(' + '); }
 function normalizeMethod(mRaw) {
   const x = String(mRaw == null ? '' : mRaw).toLowerCase();
   if (x.indexOf('card') >= 0 || x.indexOf('visa') >= 0 || x.indexOf('mada') >= 0) return 'card';

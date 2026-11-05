@@ -13686,7 +13686,7 @@ PAGES.invoices = (main) => {
       }
       // v6.398: multi-select — an EMPTY array means "all", and an invoice matches if it satisfies
       // ANY chosen value, so picking Cash + Card shows both rather than forcing one at a time.
-      if (filter.methods.length && !filter.methods.includes(i.method)) return false;
+      if (filter.methods.length && !invoiceMethods(i).some(m => filter.methods.includes(m)) && !filter.methods.includes(i.method)) return false;
       if (filter.sports.length) {
         const _matchSport = (_sp) => {
           // "Summer Camp" matches every camp duration variant (Summer Camp · 1 week, …).
@@ -13771,7 +13771,7 @@ PAGES.invoices = (main) => {
               return '<span class="text-mute">—</span>';
             })()}</td>
         <td>${i.coach ? `<span class="text-dim">${escapeHtml(i.coach)}</span>` : '<span class="text-mute">—</span>'}</td>
-        <td><span class="badge ${i.method === 'card' ? 'blue' : ''}">${i.method}</span></td>
+        <td><span class="badge ${invoiceMethods(i).length === 1 && i.method === 'card' ? 'blue' : ''}">${escapeHtml(invoiceMethodLabel(i))}</span></td>
         <td class="text-right num font-bold">${(() => {
           const rAmt = rowAmtOf(i), rPaid = rowPaidOf(i), rFull = invoiceTotal(i);
           // A month filter also SHOWS an invoice when a PAYMENT landed in the filtered month, even
@@ -14138,7 +14138,7 @@ PAGES.invoices = (main) => {
         i.sport || ((typeof invoiceProductLines === 'function' ? invoiceProductLines(i) : []).map(l => `${l.qty}× ${l.name}`).join(', ')) || '',
         i.coach || '',
         i.description || '',
-        i.method || '',
+        invoiceMethodLabel(i) || i.method || '',
         total,
         paid,
         Math.max(0, due),
@@ -14462,7 +14462,7 @@ window.showInvoiceHistory = function(customerId) {
                 <td class="text-dim" style="white-space:nowrap">${fmtDate(i.date)}</td>
                 <td>${i.sport ? `<span class="badge">${escapeHtml(i.sport)}</span>` : '<span class="text-mute">—</span>'}</td>
                 <td class="text-mute" style="font-size:12px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(i.description || '—')}</td>
-                <td><span class="badge ${i.method === 'card' ? 'blue' : ''}">${i.method}</span></td>
+                <td><span class="badge ${invoiceMethods(i).length === 1 && i.method === 'card' ? 'blue' : ''}">${escapeHtml(invoiceMethodLabel(i))}</span></td>
                 <td class="text-right num font-bold">${fmt(invoiceTotal(i))}</td>
                 <td class="text-right" style="white-space:nowrap">
                   <button class="btn ghost sm" onclick="closeModal();printInvoicePDF(${i.id})" title="Export PDF">⬇</button>
@@ -17458,7 +17458,8 @@ window.editInvoiceQuick = function(id) {
       <div style="font-size:11px;color:var(--blue);text-transform:uppercase;letter-spacing:.6px;font-weight:600;margin-bottom:8px">
         📦 Linked inventory${linkedExplicit.length ? '' : ' (auto-matched)'}
       </div>
-      ${linkedItems.map(({item, qty, hard}) => {
+      ${linkedItems.map(({item, qty, hard}, _li) => {
+        const _canChg = hard && linkedSale && !linkedSale.historical && inv.category === 'Product' && (currentRole() === 'admin' || currentRole() === 'receptionist');   // v6.970.0
         const remaining = item.id ? (typeof productCurrentStock === 'function' ? productCurrentStock(item.id) : (item.stock || 0)) : 0;
         const threshold = prodThreshold(item);
         const stockColor = remaining <= 0 ? 'var(--red)' : remaining <= threshold ? 'var(--accent-2)' : 'var(--green)';
@@ -17476,6 +17477,7 @@ window.editInvoiceQuick = function(id) {
                 <span style="font-size:9px;background:${stockColor};color:#fff;padding:1px 4px;border-radius:3px;margin-left:4px">${stockLabel}</span>
               </div>
             </div>
+            ${_canChg ? `<button class="btn ghost sm" style="color:var(--accent-2)" onclick="closeModal();changeInvoiceProduct(${inv.id}, ${_li})" title="${t('Change this product / quantity / price', 'تغيير المنتج / الكمية / السعر')}">✏️ ${t('Change', 'تغيير')}</button>` : ''}
             <button class="btn ghost sm" onclick="closeModal();window.navigate('invoices');setTimeout(()=>{const q=document.querySelector('#inv-search');if(q){q.value='${escapeHtml(item.name).replace(/'/g,"\\'")}';q.dispatchEvent(new Event('input'));}},200);" title="Filter invoices by this item">→</button>
           </div>
         `;
@@ -24340,6 +24342,57 @@ window.addProductToInvoice = function(invId) {
       } },
     ],
   });
+};
+// v6.970.0 — CHANGE A PRODUCT LINE of a product invoice (wrong product / size / qty / price): the sale line is replaced (stock follows), the invoice total moves by the difference, payments are untouched
+window.changeInvoiceProduct = function(invId, idx) {
+  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast(t('Only admins can edit invoices', 'تعديل الفواتير للمدير فقط'), 'error'); return; }
+  const inv = (state.invoices || []).find(i => i && i.id === invId);
+  const s = inv ? (state.sales || []).find(x => x.invoiceId === inv.id) : null;
+  if (inv && guardBooksLocked(inv.month || inv.date)) return;
+  const it = s && s.items && s.items[idx];
+  if (!inv || !s || !it) { toast(t('This invoice line was not found', 'بند الفاتورة غير موجود'), 'error'); return; }
+  const prods = (state.products || []).filter(p => p && (!p.deleted || p.id === it.productId) && String(p.name || '').trim()).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const opts = prods.map(p => '<option value="' + p.id + '" data-price="' + (p.price || 0) + '"' + (p.id === it.productId ? ' selected' : '') + '>' + escapeHtml(p.name) + (p.sku ? ' · SKU ' + escapeHtml(String(p.sku)) : '') + ' · ' + productCurrentStock(p.id) + ' ' + t('in stock', 'بالمخزون') + ' · ' + fmt(p.price || 0) + '</option>').join('');
+  showModal({
+    title: '✏️ ' + t('Change product on invoice', 'تغيير منتج في الفاتورة') + ' ' + escapeHtml(inv.ref || ''),
+    body: '<div class="text-mute" style="font-size:12px;margin-bottom:8px">' + escapeHtml(inv.customerName || '') + ' · ' + t('now', 'الحالي') + ': <b>' + escapeHtml(it.name || '') + '</b> × ' + it.qty + ' @ ' + fmt(it.unitPrice) + ' · ' + t('invoice total', 'إجمالي الفاتورة') + ' ' + fmt(inv.amount || 0) + ' · ' + t('paid', 'مدفوع') + ' ' + fmt(invoicePaid(inv)) + '</div>' +
+      '<div class="field"><label>' + t('Product', 'المنتج') + '</label><select id="cp-prod" onchange="_cpPrice(false,true)">' + opts + '</select></div>' +
+      '<div class="form-row"><div class="field"><label>' + t('Qty', 'الكمية') + '</label><input id="cp-qty" type="number" min="1" step="1" value="' + it.qty + '" oninput="_cpPrice()"></div>' +
+      '<div class="field"><label>' + t('Unit price (QAR)', 'سعر الوحدة') + '</label><input id="cp-price" type="number" min="0" step="0.01" value="' + (Number(it.unitPrice) || 0) + '" oninput="_cpPrice(true)"></div>' +
+      '<div class="field"><label>' + t('Line total', 'إجمالي البند') + '</label><input id="cp-total" type="number" readonly value="' + (Number(it.lineTotal) || 0) + '"></div></div>' +
+      '<div class="text-mute" style="font-size:11px">' + t('Stock follows the change (the old product goes back, the new one goes out). The invoice total moves by the difference; payments already taken are not changed.', 'المخزون يتبع التغيير (المنتج القديم يعود والجديد يخرج). إجمالي الفاتورة يتغير بالفرق؛ الدفعات المسجلة لا تتغير.') + '</div>',
+    actions: [
+      { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
+      { label: '✓ ' + t('Save change', 'حفظ التغيير'), class: 'btn primary', onclick: () => {
+        const pid = parseInt($('#cp-prod').value), p = (state.products || []).find(x => x.id === pid);
+        const qty = parseInt($('#cp-qty').value) || 0, price = Math.round((parseFloat($('#cp-price').value) || 0) * 100) / 100;
+        if (!p) { toast(t('Pick a product', 'اختر المنتج'), 'error'); return; }
+        if (qty <= 0) { toast(t('Quantity must be at least 1', 'الكمية 1 على الأقل'), 'error'); return; }
+        if (!(price >= 0) || !isFinite(price)) { toast(t('Price is not valid', 'السعر غير صالح'), 'error'); return; }
+        const line = Math.round(qty * price * 100) / 100, delta = Math.round((line - (Number(it.lineTotal) || 0)) * 100) / 100;
+        const newAmt = Math.round(((Number(inv.amount) || 0) + delta) * 100) / 100;
+        if (invoicePaid(inv) > newAmt + 0.004) { toast(t('Paid (' + fmt(invoicePaid(inv)) + ') is more than the new total (' + fmt(newAmt) + ') — correct the paid amount first', 'المدفوع (' + fmt(invoicePaid(inv)) + ') أكبر من الإجمالي الجديد (' + fmt(newAmt) + ') — صحّح المدفوع أولاً'), 'error'); return; }
+        const left = productCurrentStock(pid) + (pid === it.productId ? (Number(it.qty) || 0) : 0);
+        if (qty > left && !confirm(t('Only ' + left + ' in stock — continue anyway?', 'المتاح ' + left + ' فقط — المتابعة؟'))) return;
+        const old = it.name + ' × ' + it.qty + ' @ ' + it.unitPrice;
+        Object.assign(it, { productId: pid, name: p.name, sku: p.sku || null, category: p.category || null, unitCost: Number(p.cost) || 0, qty, unitPrice: price, lineTotal: line });
+        s.subtotal = Math.round(((Number(s.subtotal) || 0) + delta) * 100) / 100;
+        s.total = Math.round(((Number(s.total) || 0) + delta) * 100) / 100;
+        inv.amount = newAmt;
+        s.balance = Math.max(0, Math.round((inv.amount - invoicePaid(inv)) * 100) / 100);
+        s.paid = Math.max(0, Math.round((s.total - s.balance) * 100) / 100);
+        stampUpdate(inv);
+        if (typeof audit === 'function') audit('sale.change_item', 'sale:' + s.id, old + ' → ' + qty + '× ' + p.name + ' @ ' + price + ' on ' + (inv.ref || '') + ' · total ' + (newAmt - delta) + ' → ' + newAmt);
+        closeModal();
+        withCloudConfirm({ verify: [{ collection: 'invoices', id: inv.id }, { collection: 'sales', id: s.id }], okMsg: t('Changed to ' + qty + '× ' + p.name + ' · invoice total ' + fmt(inv.amount) + ' QAR', 'تم التغيير · إجمالي الفاتورة ' + fmt(inv.amount)), afterOk: () => render() });
+      } },
+    ],
+  });
+};
+window._cpPrice = function(fromPrice, fromProd) {
+  const sel = $('#cp-prod'), opt = sel && sel.options[sel.selectedIndex];
+  if (fromProd && opt && opt.dataset && opt.dataset.price != null) $('#cp-price').value = opt.dataset.price;
+  $('#cp-total').value = Math.round(((parseInt($('#cp-qty').value) || 0) * (parseFloat($('#cp-price').value) || 0)) * 100) / 100;
 };
 window._apPrice = function(fromPrice) {
   const sel = $('#ap-prod'), opt = sel && sel.options[sel.selectedIndex];
@@ -39530,7 +39583,7 @@ PAGES.transactions = (main) => {
       // ── Category filter (multi) ──
       if (catSel.length && !catSel.includes(cat)) continue;
       // ── Method filter (multi) ──
-      if (methSel.length && !methSel.includes(inv.method || '')) continue;
+      if (methSel.length && !invoiceMethods(inv).some(m => methSel.includes(m)) && !methSel.includes(inv.method || '')) continue;
       // ── Activity / Sport filter (multi) ── Summer Camp is standalone (no coach).
       // Keep only line items whose sport matches ANY selected activity ('__camp__' = camp).
       const matchesActivity = (li) => actSel.some(a => a === '__camp__' ? isCampItem(li) : (li.sport || '') === a);
@@ -39639,7 +39692,7 @@ PAGES.transactions = (main) => {
         const phoneHit = phoneQueryMatches(cust.phone, st.search) || phoneQueryMatches(cust.phone2, st.search) || phoneQueryMatches(inv.customerPhone, st.search);
         if (!(customer.toLowerCase().includes(q) || ref.toLowerCase().includes(q) || sport.toLowerCase().includes(q) || phoneHit)) continue;
       }
-      txns.push({ id: inv.id, ref, date: (inv.date || '').slice(0, 10), payDates: (Array.isArray(inv.payments) ? inv.payments : []).filter(p => p && (Number(p.amount) || 0) > 0 && !p._recon).map(p => String(p.date || inv.date || '').slice(0, 10)).filter(Boolean).sort(), category: cat, customer, sport, coach: coachName(displayCoachId) || '—', amount: invAmount, paid, due, netDue, method: inv.method || '' });
+      txns.push({ id: inv.id, ref, date: (inv.date || '').slice(0, 10), payDates: (Array.isArray(inv.payments) ? inv.payments : []).filter(p => p && (Number(p.amount) || 0) > 0 && !p._recon).map(p => String(p.date || inv.date || '').slice(0, 10)).filter(Boolean).sort(), category: cat, customer, sport, coach: coachName(displayCoachId) || '—', amount: invAmount, paid, due, netDue, method: invoiceMethodLabel(inv) || inv.method || '' });
       byCategory[cat] = byCategory[cat] || { total: 0, count: 0, due: 0, netDue: 0 };
       byCategory[cat].total += invAmount; byCategory[cat].count += 1;
       byCategory[cat].due += due; byCategory[cat].netDue += netDue;
@@ -39724,7 +39777,7 @@ PAGES.transactions = (main) => {
         <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(tx.customer)}">${escapeHtml(tx.customer)}</td>
         <td class="text-mute" style="font-size:12px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(tx.sport)}">${escapeHtml(tx.sport)}</td>
         <td class="text-mute" style="font-size:12px">${escapeHtml(tx.coach)}</td>
-        <td>${tx.method ? `<span class="badge ${tx.method === 'card' ? 'blue' : tx.method === 'transfer' ? 'cyan' : ''}">${escapeHtml(tx.method)}</span>` : '—'}</td>
+        <td>${tx.method ? `<span class="badge ${tx.method === 'card' ? 'blue' : tx.method === 'transfer' ? 'cyan' : tx.method.includes(' + ') ? 'purple' : ''}">${escapeHtml(tx.method)}</span>` : '—'}</td>
         <td class="text-mute font-mono" style="font-size:11px">${escapeHtml(tx.ref)}</td>
         <td class="text-right num font-bold">${fmt(tx.amount)}</td>
         <td class="text-right num" style="color:var(--green)">${fmt(tx.paid)}${(() => { const pd = tx.payDates || []; if (!pd.length) return ''; const last = pd[pd.length - 1]; const today = pd.includes(TODAY); return `<div style="font-size:10px;font-weight:600;white-space:nowrap;color:${today ? 'var(--green)' : 'var(--text-mute)'}" title="${escapeHtml(pd.map(d => fmtDate(d)).join(' · '))}">${today ? '💰 ' + t('paid today', 'دُفع اليوم') : t('paid', 'دُفع') + ' ' + fmtDate(last)}${pd.length > 1 ? ' +' + (pd.length - 1) : ''}</div>`; })()}</td>
