@@ -122,6 +122,9 @@
   // app computes in the background (auto-heal, status refresh) is dropped client-side, never sent — one denied
   // op would otherwise fail the whole atomic batch and lose the attendance mark with it.
   const COACH_WRITABLE = new Set(['members', 'advices', 'posts', 'trials']);
+  // v6.980.0 — the member fields a coach may change: EXACTLY the list in firestore.rules (coachMemberFieldsOnly). A coach tablet that held an older copy of a member
+  // (another device renewed it, auto-renew log, reminder dates…) re-sent those other fields → permission-denied → the red bar came back after every save. Only these fields are sent now.
+  const COACH_MEMBER_FIELDS = new Set(['id', 'dailyAttendance', 'mixedAttendance', 'subscriptions', 'renewals', 'enrollments', 'startDate', 'expiryDate', 'status', 'months', 'updatedAt', 'updatedBy', 'updatedByName', 'createdAt', 'createdBy', 'createdByName']);
   let _scopedLogin = false;   // a coach/member login holds only part of the club — never judge "data went missing" from it
   const DEVICE_ONLY = ['user', 'route', 'session'];
   const MAX_BATCH_OPS = 400;   // Firestore hard limit is 500 ops/batch.
@@ -713,6 +716,15 @@
           if (o._audit) continue;
           const ok = COACH_WRITABLE.has(o.name) && !(o.name === 'members' && (o.kind === 'del' || o.isNew));
           if (!ok) { console.warn('[Storage] coach login — not persisted: ' + o.kind + ' ' + o.name + '/' + o.id); ops.splice(oi, 1); continue; }
+          if (o.name === 'members' && o.kind !== 'del' && !o.isNew && o.data) {   // v6.980.0
+            const keep = {}, dropped = [];
+            for (const k of Object.keys(o.data)) { if (COACH_MEMBER_FIELDS.has(k)) keep[k] = o.data[k]; else dropped.push(k); }
+            if (dropped.length) console.warn('[Storage] coach login — member fields not persisted (not his to write): members/' + o.id + ' · ' + dropped.join(', '));
+            o.data = keep;
+            if (o.arrayFields) o.arrayFields = o.arrayFields.filter(f => COACH_MEMBER_FIELDS.has(f));
+            if (o.mapFields) o.mapFields = o.mapFields.filter(f => COACH_MEMBER_FIELDS.has(f));
+            if (!Object.keys(keep).some(k => k !== 'id')) { ops.splice(oi, 1); continue; }
+          }
           if (o.isNew && typeof window !== 'undefined' && typeof window.coachAccessStamps === 'function') {
             const one = {}; one[o.name] = [o.data];
             const st = window.coachAccessStamps(one)[o.name].get(String(o.data.id));

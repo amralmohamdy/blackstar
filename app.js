@@ -14,7 +14,13 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.974.0';   // 6.974.0 Transactions: top box 'Earlier months revenue' (payments received this period for earlier months' invoices, split by method);
+const APP_VERSION = '6.980.0';   // 6.980.0 Coach login: only the member fields the rules allow are written (a stale tablet copy no longer triggers permission-denied / the red bar);
+// prev:   // 6.979.0 Late adjustment: accept / reject LINE BY LINE per coach (✓ / ✗ on each member line, bonus and rest; open lines stay for later; bulk buttons);
+// prev:   // 6.978.0 Reception income targets: 50k→500 · 60k→1,000 · 70k→1,500 · 80k→2,000 · 100k→3,000;
+// prev:   // 6.977.0 Salaries 'Late adjustment' window: full detail per line (Arabic name, sport, package dates, class dates, old → new classes/base, rate, pay) + bonus split + reconciliation to the total;
+// prev:   // 6.976.0 Transactions (invoices view): Start date / Paid on switch like the Invoices screen;
+// prev:   // 6.975.0 Transactions: optional 'Money collected · Payments' view (one row per payment by the day received) behind a button; the screen opens on the invoices view;
+// prev:   // 6.974.0 Transactions: top box 'Earlier months revenue' (payments received this period for earlier months' invoices, split by method);
 // prev:   // 6.973.0 Summary strip always shows Cash / Card / Fawran / Transfer separately (Transfer chip even when 0);
 // prev:   // 6.972.0 Invoices + Transactions summary: Cash / Card / Fawran shown separately (was Card + Fawran together);
 // prev:   // 6.971.0 Product SKUs popup: total row (SKU count, total stock, stock value);
@@ -6411,7 +6417,7 @@ function refreshNotifBadge() {
 // ─── Bonus targets (v6.632) ─────────────────────────────────────────
 // Reception bonus by monthly COLLECTED income; coach bonus by new/renew packages sold this month.
 // Defaults below; an admin can override later via state.settings.targets.{reception,coach}.
-const RECEPTION_TARGETS_DEFAULT = [{ at: 45000, bonus: 500 }, { at: 50000, bonus: 1000 }, { at: 60000, bonus: 1500 }, { at: 70000, bonus: 2000 }];
+const RECEPTION_TARGETS_DEFAULT = [{ at: 50000, bonus: 500 }, { at: 60000, bonus: 1000 }, { at: 70000, bonus: 1500 }, { at: 80000, bonus: 2000 }, { at: 100000, bonus: 3000 }];   // v6.978.0 — 50k→500 · 60k→1,000 · 70k→1,500 · 80k→2,000 · 100k→3,000
 const COACH_TARGETS_DEFAULT = [{ at: 40, bonus: 500 }, { at: 50, bonus: 1000 }, { at: 60, bonus: 1500 }];
 function receptionTargets() { const c = state.settings && state.settings.targets && state.settings.targets.reception; return (Array.isArray(c) && c.length) ? c.slice().sort((a, b) => a.at - b.at) : RECEPTION_TARGETS_DEFAULT; }
 function coachTargets() { const c = state.settings && state.settings.targets && state.settings.targets.coach; return (Array.isArray(c) && c.length) ? c.slice().sort((a, b) => a.at - b.at) : COACH_TARGETS_DEFAULT; }
@@ -9799,10 +9805,10 @@ function salaryGrowthReason(coachId, monthKey) {
   const r2 = x => Math.round(x * 100) / 100, items = [];
   for (const [k, l] of now) {
     const o = old.get(k);
-    if (!o) items.push({ type: 'new', n: l.n, sp: l.sp, kind: l.kind, cls: l.cls, dBase: l.base, dPay: r2(l.base * rate) });
-    else if (Math.abs(l.base - o.base) > 0.005) items.push({ type: 'changed', n: l.n, sp: l.sp, kind: l.kind, cls: l.cls, oldCls: o.cls, dBase: r2(l.base - o.base), dPay: r2((l.base - o.base) * rate) });
+    if (!o) items.push({ type: 'new', k, n: l.n, sp: l.sp, kind: l.kind, cls: l.cls, newBase: l.base, dBase: l.base, dPay: r2(l.base * rate) });
+    else if (Math.abs(l.base - o.base) > 0.005) items.push({ type: 'changed', k, n: l.n, sp: l.sp, kind: l.kind, cls: l.cls, oldCls: o.cls, newBase: l.base, dBase: r2(l.base - o.base), dPay: r2((l.base - o.base) * rate) });
   }
-  for (const [k, o] of old) if (!now.has(k)) items.push({ type: 'removed', n: o.n, sp: o.sp, kind: o.kind, cls: o.cls, dBase: r2(-o.base), dPay: r2(-o.base * rate) });
+  for (const [k, o] of old) if (!now.has(k)) items.push({ type: 'removed', k, n: o.n, sp: o.sp, kind: o.kind, cls: o.cls, dBase: r2(-o.base), dPay: r2(-o.base * rate) });
   items.sort((a, b) => Math.abs(b.dPay) - Math.abs(a.dPay));
   const ot = rec.snapshotTot || {}, other = [];
   const dB = r2((cur.tot.bonus || 0) - (ot.bonus || 0)); if (Math.abs(dB) > 0.005) other.push({ label: 'bonus', d: dB });
@@ -9902,6 +9908,8 @@ function salaryLateDetail(coachId, monthKey) {
         for (const k of new Set([...A0.keys(), ...B0.keys()])) {
           const a = A0.get(k) || { base: 0, cls: 0 }, b = B0.get(k) || { base: 0, cls: 0 }, db = Math.round((b.base - a.base) * 100) / 100;
           if (Math.abs(db) < 0.05) continue;   // a cent of rounding is not a line
+          let _selAmt = null;   // v6.979.0 — a line-by-line decision lists only the lines it settled, at the amount it settled them
+          if (rec.lines && typeof rec.lines === 'object') { const _ks = Object.keys(rec.lines).filter(x => x === k || x.indexOf(k + '|') === 0); if (!_ks.length) continue; _selAmt = _ks.reduce((s, x) => s + (Number(rec.lines[x]) || 0), 0); }
           const ref = b.n ? b : a;
           // v6.961.0 — the class DATES of the closed month on this package (not the package's start date): the member's marks of that month inside the package window
           let days = [];
@@ -9913,16 +9921,16 @@ function salaryLateDetail(coachId, monthKey) {
               days = Object.keys(cell).filter(d => cell[d] === 'Y').map(d => rec.fromMonth + '-' + String(parseInt(d, 10)).padStart(2, '0')).filter(iso => (!w.from || iso >= w.from) && (!w.to || iso <= w.to)).sort();
             }
           } catch (e) {}
-          item.rows.push({ raw: b.raw || null, mid: ref.mid || b.mid || '', member: ref.n, sport: ref.sp, kind: ref.kind, start: ref.start, days, priv: b.priv || '', classes: Math.round((b.cls - a.cls) * 100) / 100, base: db, commission: Math.round(db * rate) / 100, rate });
+          item.rows.push({ raw: b.raw || null, mid: ref.mid || b.mid || '', member: ref.n, sport: ref.sp, kind: ref.kind, start: ref.start, days, priv: b.priv || '', classes: Math.round((b.cls - a.cls) * 100) / 100, base: db, commission: _selAmt != null ? Math.round(_selAmt * 100) / 100 : Math.round(db * rate) / 100, rate });
         }
         item.pay = { rate, pct: p.privateBonusPct, allPriv: p.privateExtraAll };   // v6.962.0 — the old month's rates, so the page prices the lines exactly like its salary table
         const st = p.salaryRecord.snapshotTot || {};
         const bonusNow = (Number(p.gross) || 0) - (Number(p.commissionAmount) || 0) - (Number(p.fixed) || 0);
         const bonusThen = (Number(st.gross) || 0) - (Number(st.base) || 0) * rate / 100 - (Number(st.fixed) || 0);
-        item.bonus = Math.round((bonusNow - bonusThen) * 100) / 100;
+        item.bonus = rec.lines ? (rec.lines['o:bonus'] != null ? Math.round(Number(rec.lines['o:bonus']) * 100) / 100 : 0) : Math.round((bonusNow - bonusThen) * 100) / 100;
         // v6.960.0 — a month that was paid MORE (or less) than it calculated to at that time: that gap is its own line, not a "rounding"
         const _snapNet = Number(p.salaryRecord.snapshotNet), _paid = Number(p.paidTotal) || 0;
-        if (isFinite(_snapNet) && Math.abs(_paid - _snapNet) > 1) { item.paidAbove = Math.round((_paid - _snapNet) * 100) / 100; item.paidTotal = Math.round(_paid * 100) / 100; item.calcThen = Math.round(_snapNet * 100) / 100; }
+        if (isFinite(_snapNet) && Math.abs(_paid - _snapNet) > 1 && (!rec.lines || rec.lines['__rest'] != null)) { item.paidAbove = Math.round((_paid - _snapNet) * 100) / 100; item.paidTotal = Math.round(_paid * 100) / 100; item.calcThen = Math.round(_snapNet * 100) / 100; }
       }
     } catch (e) { console.error('salaryLateDetail failed', e); }
     const listed = item.rows.reduce((s, r) => s + r.commission, 0) + item.bonus - item.paidAbove;

@@ -21952,21 +21952,106 @@ window.showSalaryLate = function (coachId, fromMonth) {
   const kindAr = { attended: t('attended', 'حضور'), trueup: t('expiry true-up', 'تسوية انتهاء') };
   const typ = { new: t('new', 'جديد'), changed: t('changed', 'تغيّر'), removed: t('removed', 'أُزيل') };
   const sg = x => (x >= 0 ? '+' : '−') + fmt(Math.abs(x));
-  const items = (R.baseline ? R.items : []);
-  const explained = items.reduce((s, i) => s + (i.dPay || 0), 0) + (R.other || []).reduce((s, o) => s + (o.d || 0), 0);
-  const rest = Math.round((late.delta - explained) * 100) / 100;
-  const rows = items.map(i => '<tr><td>' + escapeHtml(i.n) + '</td><td><span class="badge" style="font-size:10px">' + typ[i.type] + '</span> ' + escapeHtml(i.sp) + ' · ' + (kindAr[i.kind] || escapeHtml(i.kind)) + (i.type === 'changed' ? ' · ' + i.oldCls + ' → ' + i.cls : (i.cls ? ' · ' + i.cls : '')) + '</td><td class="text-right num" style="font-weight:700;color:' + (i.dPay >= 0 ? 'var(--green)' : 'var(--red)') + '">' + sg(i.dPay) + '</td></tr>').join('') +
-    (R.other || []).map(o => '<tr><td colspan="2">' + escapeHtml({ bonus: t('Bonuses', 'المكافآت'), fixed: t('Fixed salary', 'الراتب الثابت'), advance: t('Advances', 'السلف') }[o.label] || o.label) + '</td><td class="text-right num" style="font-weight:700">' + sg(o.d) + '</td></tr>').join('') +
-    (Math.abs(rest) >= 1 ? '<tr><td colspan="2" class="text-mute">' + t('Other changes before the system kept the payment lines (no member detail available)', 'تغييرات أخرى قبل أن يحتفظ النظام بأسطر الدفع (لا تفاصيل بالأعضاء)') + '</td><td class="text-right num" style="font-weight:700">' + sg(rest) + '</td></tr>' : '');
-  const body = '<div style="font-size:13px;line-height:1.7"><div>' + t('Paid and frozen', 'المدفوع والمجمّد') + ' <b>' + escapeHtml(fmtMonth(fromMonth)) + '</b>: <b>' + fmt(late.frozenNet) + '</b> · ' + t('live calculation now', 'الحساب الحالي') + ': <b>' + fmt(late.liveNet) + '</b></div>' +
-    '<div style="margin:8px 0;font-weight:700">' + t('Difference', 'الفرق') + ': <span style="color:' + (late.delta >= 0 ? 'var(--green)' : 'var(--red)') + '">' + sg(late.delta) + ' QAR</span> → ' + t('shown in', 'يظهر في') + ' ' + escapeHtml(fmtMonth(late.to)) + '</div>' +
-    (rows ? '<table class="data-table" style="width:100%;font-size:12px"><thead><tr><th>' + t('Member', 'العضو') + '</th><th>' + t('What changed', 'ما الذي تغيّر') + '</th><th class="text-right">' + t('Pay', 'الأثر') + '</th></tr></thead><tbody>' + rows + '</tbody></table>' : '<div class="text-mute">' + t('No member detail is available for this month.', 'لا تفاصيل بالأعضاء لهذا الشهر.') + '</div>') +
-    '<div class="text-mute" style="margin-top:8px;font-size:11px">' + t('Accept = add it to ' + fmtMonth(late.to) + '’s pay. Dismiss = leave it out (nothing changes in the pay).', 'اعتماد = يُضاف لمرتب ' + fmtMonth(late.to) + '. تجاهل = لا يُضاف (لا تغيير في المرتب).') + '</div></div>';
-  showModal({ title: '↩ ' + t('Late adjustment', 'تعديل متأخر') + ' — ' + escapeHtml(c ? c.name : '') + ' · ' + escapeHtml(fmtMonth(fromMonth)), body, actions: [
+  const col = x => (x >= 0 ? 'var(--green)' : 'var(--red)');
+  const r2 = x => Math.round(x * 100) / 100;
+  // v6.979.0 — decide LINE BY LINE: what an earlier decision already settled (per line) is taken off, so only the open lines are listed
+  const done = {};
+  (state.salaries || []).filter(s => s && s.kind === 'lateadj' && s.coachId === coachId && s.fromMonth === fromMonth).forEach(s => Object.keys(s.lines || {}).forEach(k => { done[k] = (done[k] || 0) + (Number(s.lines[k]) || 0); }));
+  const items = (R.baseline ? R.items : []).map(i => Object.assign({}, i, { rem: r2((i.dPay || 0) - (done[i.k] || 0)) })).filter(i => Math.abs(i.rem) >= 0.05);
+  const others = (R.baseline ? (R.other || []) : []).map(o => ({ label: o.label, key: 'o:' + o.label, rem: r2((o.d || 0) - (done['o:' + o.label] || 0)) })).filter(o => Math.abs(o.rem) >= 0.05);
+  const explained = items.reduce((s, i) => s + i.rem, 0) + others.reduce((s, o) => s + o.rem, 0);
+  const rest = r2(late.delta - explained);
+  let P = null; try { P = computeMonthlyPay(coachId, fromMonth); } catch (_) {}
+  const rate = P ? (Number(P.commissionRate) || 0) : 0;
+  const W = window._slWin = { coachId, fromMonth, rows: [], pick: {} };
+  const mkId = (key, amt) => { const id = 'r' + W.rows.length; W.rows.push({ id, key, amt }); return id; };
+  const dec = id => '<td style="white-space:nowrap;text-align:center"><button type="button" class="btn ghost sm sl-a" data-id="' + id + '" style="padding:1px 8px" onclick="_slPick(\'' + id + '\',\'a\')" title="' + t('Accept this line', 'اعتماد هذا البند') + '">✓</button> <button type="button" class="btn ghost sm sl-r" data-id="' + id + '" style="padding:1px 8px" onclick="_slPick(\'' + id + '\',\'r\')" title="' + t('Reject this line', 'رفض هذا البند') + '">✗</button></td>';
+  const extra = i => {
+    const pk = String(i.k || '').split('|'), mid = pk[0] || '', start = pk[3] || '';
+    const mem = (state.members || []).find(x => x && 'm' + x.id === mid);
+    let days = [], sub = null;
+    try {
+      sub = mem && (mem.subscriptions || []).find(s => s && (s.activity || '') === i.sp && String(s.start) === String(start));
+      if (sub && i.sp !== MIXED) {
+        const w = subAttendanceWindow(mem, sub), cell = attendanceFor(mem, fromMonth, i.sp, sub.coachId) || {};
+        days = Object.keys(cell).filter(d => cell[d] === 'Y').map(d => fromMonth + '-' + String(parseInt(d, 10)).padStart(2, '0')).filter(iso => (!w.from || iso >= w.from) && (!w.to || iso <= w.to)).sort();
+      }
+    } catch (_) {}
+    return { mem, sub, start, days, priv: pk[4] || '' };
+  };
+  const rows = items.map((i, n) => {
+    const x = extra(i), id = mkId(i.k, i.rem);
+    const cls = i.type === 'changed' ? i.oldCls + ' → ' + i.cls : (i.cls || '');
+    const base = i.type === 'changed' ? fmt(r2((i.newBase || 0) - i.dBase)) + ' → ' + fmt(i.newBase || 0) : fmt(Math.abs(i.dBase));
+    return '<tr id="sl-row-' + id + '"><td class="text-mute">' + (n + 1) + '</td><td>' + escapeHtml(i.n) + (x.mem && x.mem.nameArabic ? '<div class="text-mute" dir="rtl" style="font-size:11px">' + escapeHtml(x.mem.nameArabic) + '</div>' : '') + '</td>' +
+      '<td>' + escapeHtml(i.sp) + (x.priv ? ' <span class="badge" style="font-size:9px">' + t('Private', 'خاص') + '</span>' : '') + '</td>' +
+      '<td><span class="badge" style="font-size:10px">' + typ[i.type] + '</span> ' + (kindAr[i.kind] || escapeHtml(i.kind)) + '</td>' +
+      '<td style="white-space:nowrap">' + (x.start ? escapeHtml(fmtDate(x.start)) : '—') + (x.sub && x.sub.end ? '<div class="text-mute" style="font-size:10px">→ ' + escapeHtml(fmtDate(String(x.sub.end).slice(0, 10))) + '</div>' : '') + '</td>' +
+      '<td style="font-size:11px">' + (x.days.length ? x.days.map(d => escapeHtml(fmtDate(d))).join('<br>') : '<span class="text-mute">—</span>') + '</td>' +
+      '<td class="text-right num">' + cls + '</td><td class="text-right num">' + base + '</td><td class="text-right num text-mute">' + (rate ? rate + '%' : '') + '</td>' +
+      '<td class="text-right num" style="font-weight:700;color:' + col(i.rem) + '">' + sg(i.rem) + '</td>' + dec(id) + '</tr>';
+  }).join('');
+  const bl = { bonus: t('Bonuses', 'المكافآت'), fixed: t('Fixed salary', 'الراتب الثابت'), advance: t('Advances', 'السلف') };
+  const bonusParts = P ? [[t('private', 'خاص'), P.privateBonus], [t('approach', 'منهج'), P.approachBonus], [t('reception', 'استقبال'), P.receptionBonus], [t('target', 'هدف'), P.targetBonus]].filter(x => Math.abs(Number(x[1]) || 0) > 0.005).map(x => x[0] + ' ' + fmt(Number(x[1]))).join(' · ') : '';
+  const otherRows = others.map(o => { const id = mkId(o.key, o.rem); return '<tr id="sl-row-' + id + '"><td colspan="9">' + escapeHtml(bl[o.label] || o.label) + (o.label === 'bonus' ? '<div class="text-mute" style="font-size:11px">' + t('now', 'الآن') + ': ' + (bonusParts || '—') + ' · ' + t('the system keeps only the bonus total from when the month was paid, so the split of the change is not available', 'النظام يحتفظ بإجمالي المكافآت فقط وقت الدفع فلا يتوفر تقسيم للتغيير') + '</div>' : '') + '</td><td class="text-right num" style="font-weight:700">' + sg(o.rem) + '</td>' + dec(id) + '</tr>'; }).join('');
+  const snapNet = P && P.salaryRecord ? Number(P.salaryRecord.snapshotNet) : NaN, paidT = P ? Number(P.paidTotal) || 0 : 0;
+  const restNote = isFinite(snapNet) && Math.abs(paidT - snapNet) > 1
+    ? t('The month was paid ' + fmt(paidT) + ' but calculated ' + fmt(snapNet) + ' when it was paid: that gap is part of this line.', 'الشهر دُفع ' + fmt(paidT) + ' بينما كان محسوباً ' + fmt(snapNet) + ' وقت الدفع: هذا الفرق جزء من هذا السطر.')
+    : t('Changes made before the system kept the payment lines (no member detail available)', 'تغييرات أخرى قبل أن يحتفظ النظام بأسطر الدفع (لا تفاصيل بالأعضاء)');
+  const restRow = Math.abs(rest) >= 1 ? (() => { const id = mkId('__rest', rest); return '<tr id="sl-row-' + id + '"><td colspan="9" class="text-mute">' + restNote + '</td><td class="text-right num" style="font-weight:700">' + sg(rest) + '</td>' + dec(id) + '</tr>'; })() : '';
+  const tot = '<tr style="font-weight:800;border-top:2px solid var(--border)"><td colspan="9">' + t('Open difference', 'الفرق المفتوح') + '</td><td class="text-right num" style="color:' + col(late.delta) + '">' + sg(late.delta) + '</td><td></td></tr>';
+  const info = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin:6px 0 10px">' + [
+    [t('Paid & frozen', 'المدفوع والمجمّد'), fmt(late.frozenNet)], [t('Live calculation now', 'الحساب الحالي'), fmt(late.liveNet)], [t('Difference', 'الفرق'), '<span style="color:' + col(late.delta) + '">' + sg(late.delta) + '</span>'],
+    [t('Commission rate', 'نسبة العمولة'), rate ? rate + '%' : '—'], [t('Lines open', 'بنود مفتوحة'), String(W.rows.length)], [t('Goes to', 'يذهب إلى'), escapeHtml(fmtMonth(late.to))]
+  ].map(x => '<div style="padding:7px 12px;border:1px solid var(--border);border-radius:10px"><div class="text-mute" style="font-size:10px;text-transform:uppercase;letter-spacing:.5px">' + x[0] + '</div><div class="num" style="font-weight:800;font-size:15px">' + x[1] + '</div></div>').join('') + '</div>';
+  const head = '<thead><tr><th>#</th><th>' + t('Member', 'العضو') + '</th><th>' + t('Sport', 'الرياضة') + '</th><th>' + t('What changed', 'ما الذي تغيّر') + '</th><th>' + t('Package', 'الباقة') + '</th><th>' + t('Class dates', 'تواريخ الحصص') + ' (' + escapeHtml(fmtMonth(fromMonth)) + ')</th><th class="text-right">' + t('Classes', 'الحصص') + '</th><th class="text-right">' + t('Base', 'الأساس') + '</th><th class="text-right">' + t('Rate', 'النسبة') + '</th><th class="text-right">' + t('Pay', 'الأثر') + '</th><th>' + t('Decision', 'القرار') + '</th></tr></thead>';
+  const bulk = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0"><button type="button" class="btn ghost sm" onclick="_slBulk(\'a\')">✓ ' + t('Mark all accept', 'اعتماد الكل') + '</button><button type="button" class="btn ghost sm" onclick="_slBulk(\'r\')">✗ ' + t('Mark all reject', 'رفض الكل') + '</button><button type="button" class="btn ghost sm" onclick="_slBulk(\'\')">' + t('Clear', 'مسح') + '</button><span id="sl-sum" class="text-mute" style="font-size:12px"></span></div>';
+  const body = '<div style="font-size:13px;line-height:1.6">' + info + (W.rows.length ? bulk + '<div class="table-wrap" style="max-height:48vh;overflow:auto"><table class="data-table" style="width:100%;font-size:12px">' + head + '<tbody>' + rows + otherRows + restRow + '</tbody><tfoot>' + tot + '</tfoot></table></div>'
+      : '<div class="text-mute">' + t('No member detail is available for this month.', 'لا تفاصيل بالأعضاء لهذا الشهر.') + '</div>') +
+    '<div class="text-mute" style="margin-top:8px;font-size:11px">' + t('Choose ✓ or ✗ on each line, then press “Apply my choices”. ✓ = added to ' + fmtMonth(late.to) + '’s pay · ✗ = left out for good · a line with no choice stays open for later.', 'اختر ✓ أو ✗ لكل بند ثم اضغط «تطبيق اختياراتي». ✓ = يُضاف لمرتب ' + fmtMonth(late.to) + ' · ✗ = يُستبعد نهائياً · البند بدون اختيار يبقى مفتوحاً لوقت لاحق.') + '</div></div>';
+  showModal({ title: '↩ ' + t('Late adjustment', 'تعديل متأخر') + ' — ' + escapeHtml(c ? c.name : '') + ' · ' + escapeHtml(fmtMonth(fromMonth)), size: 'xl', body, actions: [
     { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
-    { label: t('Dismiss', 'تجاهل'), class: 'btn ghost', onclick: () => window._salLateDecide(coachId, fromMonth, false) },
-    { label: '✓ ' + t('Accept into ' + fmtMonth(late.to), 'اعتماد في ' + fmtMonth(late.to)), class: 'btn primary', onclick: () => window._salLateDecide(coachId, fromMonth, true) },
+    { label: '✗ ' + t('Reject all', 'رفض الكل'), class: 'btn ghost', onclick: () => { window._slBulk('r'); window._slApply(); } },
+    { label: '✓ ' + t('Accept all into ' + fmtMonth(late.to), 'اعتماد الكل في ' + fmtMonth(late.to)), class: 'btn ghost', onclick: () => { window._slBulk('a'); window._slApply(); } },
+    { label: t('Apply my choices', 'تطبيق اختياراتي'), class: 'btn primary', onclick: () => window._slApply() },
   ] });
+  window._slRefresh();
+};
+window._slPick = function (id, v) { const W = window._slWin; if (!W) return; W.pick[id] = (W.pick[id] === v) ? '' : v; window._slRefresh(); };
+window._slBulk = function (v) { const W = window._slWin; if (!W) return; W.rows.forEach(r => { W.pick[r.id] = v; }); window._slRefresh(); };
+window._slRefresh = function () {
+  const W = window._slWin; if (!W) return;
+  let a = 0, r = 0, o = 0, na = 0, nr = 0;
+  const cell = (id, cls, on, tint) => { const b = document.querySelector('.' + cls + '[data-id="' + id + '"]'); if (b) { b.style.background = on ? tint : ''; b.style.color = on ? '#fff' : ''; } };
+  W.rows.forEach(x => {
+    const p = W.pick[x.id] || '';
+    if (p === 'a') { a += x.amt; na++; } else if (p === 'r') { r += x.amt; nr++; } else o += x.amt;
+    cell(x.id, 'sl-a', p === 'a', 'var(--green)'); cell(x.id, 'sl-r', p === 'r', 'var(--red)');
+  });
+  const sg = x => (x >= 0 ? '+' : '−') + fmt(Math.abs(Math.round(x * 100) / 100));
+  const s = document.getElementById('sl-sum');
+  if (s) s.innerHTML = '✓ ' + t('accept', 'اعتماد') + ' <b>' + na + '</b> (' + sg(a) + ') · ✗ ' + t('reject', 'رفض') + ' <b>' + nr + '</b> (' + sg(r) + ') · ' + t('open', 'مفتوح') + ' <b>' + (W.rows.length - na - nr) + '</b> (' + sg(o) + ')';
+};
+window._slApply = function () {
+  const W = window._slWin; if (!W) return;
+  const r2 = x => Math.round(x * 100) / 100;
+  const pickOf = v => W.rows.filter(x => W.pick[x.id] === v);
+  const acc = pickOf('a'), rej = pickOf('r');
+  if (!acc.length && !rej.length) { toast(t('Choose ✓ or ✗ on at least one line', 'اختر ✓ أو ✗ لبند واحد على الأقل'), 'error'); return; }
+  if (!Array.isArray(state.salaries)) state.salaries = [];
+  const c = state.coaches.find(x => x.id === W.coachId), to = _salNextMonth(W.fromMonth), made = [];
+  const mk = (list, status) => {
+    if (!list.length) return;
+    const lines = {}; list.forEach(x => { lines[x.key] = r2(x.amt); });
+    const rec = { id: nextId(state.salaries), kind: 'lateadj', coachId: W.coachId, fromMonth: W.fromMonth, month: to, amount: r2(list.reduce((s, x) => s + x.amt, 0)), status, lines, at: new Date().toISOString() };
+    state.salaries.push(rec); made.push(rec);
+    audit('salary.late_adjustment', 'coach:' + W.coachId, (status === 'accepted' ? 'Accepted' : 'Rejected') + ' ' + list.length + ' late-adjustment line(s) = ' + fmt(rec.amount) + ' QAR of ' + fmtMonth(W.fromMonth) + ' for ' + (c ? c.name : '') + (status === 'accepted' ? ' into ' + fmtMonth(to) : ''), { coachId: W.coachId, fromMonth: W.fromMonth, month: to, amount: rec.amount, status, lines: list.length });
+  };
+  mk(acc, 'accepted'); mk(rej, 'dismissed');
+  closeModal();
+  const okMsg = t(acc.length + ' accepted · ' + rej.length + ' rejected', 'اعتماد ' + acc.length + ' · رفض ' + rej.length);
+  if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: made.map(m => ({ collection: 'salaries', id: m.id })), okMsg, afterOk: () => render() });
+  else { save(); render(); toast(okMsg); }
 };
 window._salLateDecide = function (coachId, fromMonth, accept) {
   const p = computeMonthlyPay(coachId, fromMonth);
@@ -39498,7 +39583,98 @@ window._repSportToTxn = (idx) => {
   window._txnLinkFilter = { sport, months: (window._repSportMonths || []).slice() };
   navigate('transactions');
 };
+// v6.975.0 — MONEY COLLECTED: PAYMENTS. One row per payment, the period is the day the money was RECEIVED (not the month the package belongs to).
+// The old invoice-by-month view stays one click away (window._txnMode = 'invoices').
+function txnModeNow() { try { return window._txnMode || window.__txnModeDefault || 'invoices'; } catch (_) { return 'invoices'; } }
+window._txnSetMode = function (m) { window._txnMode = m; if (typeof render === 'function') render(); };
+function payViewState() {
+  if (!window._payView) window._payView = { preset: 'this_month', from: '', to: '', methods: [], category: 'all', search: '' };
+  return window._payView;
+}
+function payViewRange(st) {
+  const today = TODAY, ym = today.slice(0, 7);
+  const monthEnd = m => { const [y, mo] = m.split('-').map(Number); return m + '-' + String(new Date(y, mo, 0).getDate()).padStart(2, '0'); };
+  switch (st.preset) {
+    case 'today': return [today, today];
+    case 'yesterday': { const y = addDays(today, -1); return [y, y]; }
+    case 'last7': return [addDays(today, -6), today];
+    case 'last_month': { const d = new Date(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)) - 2, 1); const m = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); return [m + '-01', monthEnd(m)]; }
+    case 'all': return ['2000-01-01', '2999-12-31'];
+    case 'custom': return [st.from || '2000-01-01', st.to || '2999-12-31'];
+    default: return [ym + '-01', monthEnd(ym)];
+  }
+}
+function payViewRows(st) {
+  const [a, b] = payViewRange(st), q = String(st.search || '').trim();
+  const rows = [];
+  for (const inv of (state.invoices || [])) {
+    if (!inv || inv.deleted) continue;
+    const cat = inv.category || 'Membership';
+    if (st.category !== 'all' && cat !== st.category) continue;
+    const cust = (typeof customerInfo === 'function' ? (customerInfo(inv) || {}).name : '') || inv.customerName || '—';
+    const sports = [...new Set((inv.lineItems || []).map(l => l && l.sport).filter(Boolean))].join(', ') || cat;
+    if (q && !(typeof searchMatchesFields === 'function' ? searchMatchesFields(q, [cust, inv.ref, sports, inv.customerName]) : (cust + ' ' + inv.ref + ' ' + sports).toLowerCase().includes(q.toLowerCase()))) continue;
+    for (const p of invoicePaymentRowsDeduped(inv)) {
+      const day = String(p && p.date || '').slice(0, 10), amt = Number(p && p.amount) || 0;
+      if (!day || !amt || day < a || day > b) continue;
+      const meth = normalizeMethod(p.method || inv.method);
+      if (st.methods.length && !st.methods.includes(meth)) continue;
+      rows.push({ day, inv, cust, cat, sports, meth, amt, bill: String(invoiceBillMonth(inv) || '').slice(0, 7) });
+    }
+  }
+  rows.sort((x, y) => y.day.localeCompare(x.day) || y.amt - x.amt);
+  return rows;
+}
+function renderTxnPayments(main) {
+  const st = payViewState(), r2 = v => Math.round(v * 100) / 100;
+  const cats = [...new Set((state.invoices || []).filter(i => i && !i.deleted).map(i => i.category || 'Membership'))].sort();
+  const PRESETS = [['today', t('Today', 'اليوم')], ['yesterday', t('Yesterday', 'أمس')], ['last7', t('Last 7 days', 'آخر 7 أيام')], ['this_month', t('This month', 'هذا الشهر')], ['last_month', t('Last month', 'الشهر الماضي')], ['all', t('All time', 'كل الوقت')], ['custom', t('Custom', 'مخصص')]];
+  main.innerHTML = `
+    <div class="topbar"><div><h1>💵 ${t('Money collected · Payments', 'تحصيل الفلوس · المدفوعات')}</h1>
+      <div class="subtitle"><span id="pv-count"></span></div></div>
+      <div class="topbar-actions"><button class="btn ghost" onclick="_txnSetMode('invoices')">🧾 ${t('Invoices view (by month)', 'عرض الفواتير (حسب الشهر)')}</button>
+      <button class="btn ghost" onclick="_payViewCSV()">⬇ ${t('Export CSV', 'تصدير CSV')}</button></div></div>
+    <div class="card">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+        <select id="pv-preset">${PRESETS.map(([k, l]) => `<option value="${k}" ${st.preset === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        <span id="pv-custom" style="display:${st.preset === 'custom' ? 'inline-flex' : 'none'};gap:6px;align-items:center"><input type="date" id="pv-from" value="${escapeHtml(st.from)}"> → <input type="date" id="pv-to" value="${escapeHtml(st.to)}"></span>
+        <select id="pv-cat"><option value="all">${t('All categories', 'كل الفئات')}</option>${cats.map(c => `<option value="${escapeHtml(c)}" ${st.category === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}</select>
+        ${['cash', 'card', 'fawran', 'transfer'].map(m => `<label style="display:inline-flex;gap:4px;align-items:center;font-size:13px"><input type="checkbox" class="pv-meth" value="${m}" ${st.methods.includes(m) ? 'checked' : ''}> ${m === 'cash' ? t('Cash', 'نقداً') : m === 'card' ? t('Card', 'بطاقة') : m === 'fawran' ? t('Fawran', 'فوران') : t('Transfer', 'تحويل')}</label>`).join('')}
+        <input type="search" id="pv-search" value="${escapeHtml(st.search)}" placeholder="${t('Search customer / ref / sport…', 'بحث عميل / مرجع / رياضة…')}" style="min-width:220px">
+      </div>
+      <div id="pv-kpis" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px"></div>
+      <div id="pv-cats" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"></div>
+      <div class="table-wrap"><table><thead><tr><th>${t('Paid on', 'تاريخ الدفع')}</th><th>${t('Customer', 'العميل')}</th><th>${t('Invoice', 'الفاتورة')}</th><th>${t('Category', 'الفئة')}</th><th>${t('Sport', 'الرياضة')}</th><th>${t('Invoice month', 'شهر الفاتورة')}</th><th>${t('Method', 'الطريقة')}</th><th class="text-right">${t('Amount', 'المبلغ')}</th></tr></thead><tbody id="pv-tbody"></tbody><tfoot id="pv-tfoot"></tfoot></table></div>
+    </div>`;
+  const refresh = () => {
+    const rows = payViewRows(st), [a] = payViewRange(st), pm = (st.preset === 'custom' ? (st.from || '').slice(0, 7) : a.slice(0, 7));
+    const by = { cash: 0, card: 0, fawran: 0, transfer: 0 }; let total = 0, other = 0;
+    const byCat = {};
+    for (const x of rows) { by[x.meth] = (by[x.meth] || 0) + x.amt; total += x.amt; (byCat[x.cat] = byCat[x.cat] || { n: 0, s: 0 }); byCat[x.cat].n++; byCat[x.cat].s += x.amt; if (x.bill && x.bill !== x.day.slice(0, 7)) other += x.amt; }
+    const card = (icon, label, v, sub, tint) => `<div style="flex:1 1 170px;min-width:150px;padding:12px 14px;border-radius:14px;border:1px solid ${tint};background:var(--surface)"><div style="font-size:10.5px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--text-mute)">${icon} ${label}</div><div class="num" style="font-size:23px;font-weight:800">${fmt(r2(v))} <span style="font-size:12px;font-weight:500;color:var(--text-dim)">QAR</span></div>${sub ? `<div style="font-size:11px;color:var(--text-mute)">${sub}</div>` : ''}</div>`;
+    $('#pv-kpis').innerHTML = card('✅', t('Received', 'المُحصّل'), total, rows.length + ' ' + t('payments', 'دفعات'), 'rgba(16,185,129,.4)') + card('💵', t('Cash', 'نقداً'), by.cash, '', 'rgba(148,163,184,.3)') + card('💳', t('Card', 'بطاقة'), by.card, '', 'rgba(148,163,184,.3)') + card('📲', t('Fawran', 'فوران'), by.fawran, '', 'rgba(148,163,184,.3)') + card('🏦', t('Transfer', 'تحويل'), by.transfer, '', 'rgba(148,163,184,.3)') + card('💰', t('For other months\' invoices', 'عن فواتير شهور أخرى'), other, t('already inside Received', 'داخل المُحصّل'), 'rgba(99,102,241,.4)');
+    $('#pv-cats').innerHTML = Object.keys(byCat).sort((x, y) => byCat[y].s - byCat[x].s).map(c => `<span class="badge" style="font-size:12px">${escapeHtml(c)} · ${byCat[c].n} · <b>${fmt(r2(byCat[c].s))}</b></span>`).join('');
+    $('#pv-count').textContent = rows.length + ' ' + t('payments', 'دفعات') + ' · ' + fmt(r2(total)) + ' QAR';
+    const mlab = mk => (mk && typeof fmtMonth === 'function') ? fmtMonth(mk) : (mk || '—');
+    $('#pv-tbody').innerHTML = rows.length ? rows.slice(0, 1500).map(x => { const oth = x.bill && x.bill !== x.day.slice(0, 7); return `<tr><td style="white-space:nowrap">${fmtDate(x.day)}</td><td>${escapeHtml(x.cust)}</td><td class="font-mono" style="font-size:11px">${escapeHtml(x.inv.ref || '#' + x.inv.id)}</td><td><span class="badge" style="font-size:10px">${escapeHtml(x.cat)}</span></td><td class="text-mute">${escapeHtml(x.sports)}</td><td>${oth ? `<span class="badge" style="background:rgba(99,102,241,.16)">${escapeHtml(mlab(x.bill))}</span>` : `<span class="text-mute">${escapeHtml(mlab(x.bill))}</span>`}</td><td><span class="badge ${x.meth === 'card' ? 'blue' : x.meth === 'transfer' ? 'cyan' : ''}">${escapeHtml(x.meth)}</span></td><td class="text-right num font-bold" style="${x.amt < 0 ? 'color:var(--red)' : 'color:var(--green)'}">${fmt(x.amt)}</td></tr>`; }).join('') : `<tr><td colspan="8" class="text-mute" style="text-align:center;padding:14px">${t('No payments in this period', 'لا توجد دفعات في هذه الفترة')}</td></tr>`;
+    $('#pv-tfoot').innerHTML = `<tr style="font-weight:800;border-top:2px solid var(--border)"><td colspan="7">${t('Total', 'الإجمالي')} · ${rows.length} ${t('payments', 'دفعات')}</td><td class="text-right num">${fmt(r2(total))}</td></tr>`;
+    window._payViewLast = rows;
+  };
+  $('#pv-preset').onchange = e => { st.preset = e.target.value; $('#pv-custom').style.display = st.preset === 'custom' ? 'inline-flex' : 'none'; refresh(); };
+  $('#pv-from').onchange = e => { st.from = e.target.value; refresh(); };
+  $('#pv-to').onchange = e => { st.to = e.target.value; refresh(); };
+  $('#pv-cat').onchange = e => { st.category = e.target.value; refresh(); };
+  document.querySelectorAll('.pv-meth').forEach(cb => cb.onchange = () => { st.methods = [...document.querySelectorAll('.pv-meth')].filter(c => c.checked).map(c => c.value); refresh(); });
+  $('#pv-search').oninput = e => { st.search = e.target.value; refresh(); };
+  refresh();
+}
+window._payViewCSV = function () {
+  const rows = window._payViewLast || [];
+  const lines = [['Paid on', 'Customer', 'Invoice', 'Category', 'Sport', 'Invoice month', 'Method', 'Amount']].concat(rows.map(x => [x.day, x.cust, x.inv.ref || x.inv.id, x.cat, x.sports, x.bill, x.meth, x.amt]));
+  downloadFile('payments-' + TODAY + '.csv', '﻿' + lines.map(l => l.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\n'), 'text/csv');
+};
 PAGES.transactions = (main) => {
+  if (txnModeNow() === 'payments' && !window._txnLinkFilter && !isViewerRole()) return renderTxnPayments(main);   // v6.975.0
   const isoOf = x => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;   // v6.634 — LOCAL date parts (toISOString shifted UTC+3 → "yesterday"/"this week" off by one)
   if (!window._txnState) window._txnState = { preset: 'this_month', from: '', to: '', months: [], years: [], categories: [], activities: [], methods: [], coachIds: [], hasDue: false, dueMode: 'gross', amountField: 'due', amountPreset: 'any', amountMin: '', amountMax: '', search: '' };
   // Migrate older single-value state shape → arrays (so a returning session doesn't break).
@@ -39560,8 +39736,13 @@ PAGES.transactions = (main) => {
       if (mos.length) { for (const y of yrs) for (const mo of mos) monthScopes.push(`${y}-${String(mo).padStart(2, '0')}`); }
       else { for (const y of yrs) for (let mo = 1; mo <= 12; mo++) monthScopes.push(`${y}-${String(mo).padStart(2, '0')}`); }   // whole selected year(s)
     }
+    // v6.976.0 — 'Paid on' (like the Invoices screen): the period answers on the day money was RECEIVED, and the whole invoice is listed; 'Start date' (default) = the package start month
+    const _by = st.dateBy === 'paid' ? 'paid' : 'start';
+    const _payMonths = monthScopes.slice();
+    if (_by === 'paid') monthScopes = [];
     const scoped = monthScopes.length > 0;
     const inRange = inv => {
+      if (_by === 'paid') return ((typeof invoicePaymentDates === 'function') ? invoicePaymentDates(inv) : []).some(d => { d = String(d || '').slice(0, 10); if (!d) return false; if (_payMonths.length) return _payMonths.includes(d.slice(0, 7)); if (range.from && d < range.from) return false; if (range.to && d > range.to) return false; return true; });
       if (scoped) return monthScopes.some(ym => invoiceTouchesMonth(inv, ym));
       const d = (inv.date || '').slice(0, 10);
       if (range.from && d < range.from) return false;
@@ -39705,7 +39886,7 @@ PAGES.transactions = (main) => {
     // v6.759 — money RECEIVED in this period on invoices dated BEFORE it (a member paying an old month's due today): those invoices are not in the list above
     // (they are dated outside the period), so their payments would be invisible. Listed apart — the totals above are untouched.
     const latePays = [];
-    if (!st.sportKey) {
+    if (!st.sportKey && _by !== 'paid') {
       const inP = d => { d = String(d || '').slice(0, 10); if (!d) return false; if (scoped) return monthScopes.includes(d.slice(0, 7)); if (range.from && d < range.from) return false; if (range.to && d > range.to) return false; return true; };
       const catSel2 = st.categories || [], actSel2 = st.activities || [], methSel2 = st.methods || [], coachSel2 = (st.coachIds || []).map(String);
       for (const inv of (state.invoices || [])) {
@@ -39852,11 +40033,16 @@ PAGES.transactions = (main) => {
         <div class="subtitle"><span id="txn-count">${t('Loading…', 'جارٍ التحميل…')}</span></div>
       </div>
       <div class="topbar-actions">
+        ${isViewerRole() ? '' : `<button class="btn ghost" onclick="_txnSetMode('payments')">💵 ${t('Payments view (money received)', 'عرض المدفوعات (الفلوس المستلمة)')}</button>`}
         <button class="btn ghost" onclick="_txnExportCSV()">⬇ ${t('Export CSV', 'تصدير CSV')}</button>
       </div>
     </div>
     <div class="card">
       <div class="filter-bar" style="flex-wrap:wrap;gap:8px">
+        <select id="txn-dateby" class="btn ghost" style="padding:6px 8px" title="${t('The period filters answer on this date', 'فلاتر الفترة تعمل على هذا التاريخ')}">
+          <option value="start" ${st.dateBy !== 'paid' ? 'selected' : ''}>${t('Start date', 'تاريخ البداية')}</option>
+          <option value="paid" ${st.dateBy === 'paid' ? 'selected' : ''}>${t('Paid on', 'تاريخ الدفع')}</option>
+        </select>
         <select id="txn-preset" class="btn ghost">
           ${presetOpt('today', t('Today', 'اليوم'))}
           ${presetOpt('yesterday', t('Yesterday', 'أمس'))}
@@ -39929,6 +40115,7 @@ PAGES.transactions = (main) => {
       <div id="txn-pagination"></div>
     </div>
   `;
+  $('#txn-dateby').addEventListener('change', e => { st.dateBy = e.target.value; pg.page = 1; refresh(); });
   $('#txn-preset').addEventListener('change', e => { st.preset = e.target.value; st.monthKeys = []; pg.page = 1; refresh(); });
   $('#txn-day')?.addEventListener('change', e => { st.day = e.target.value || ''; const c = $('#txn-day-clear'); if (c) c.style.display = st.day ? '' : 'none'; pg.page = 1; refresh(); });
   $('#txn-day-clear')?.addEventListener('click', () => { st.day = ''; const i = $('#txn-day'); if (i) i.value = ''; const c = $('#txn-day-clear'); if (c) c.style.display = 'none'; pg.page = 1; refresh(); });
