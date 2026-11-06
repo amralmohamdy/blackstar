@@ -13673,7 +13673,7 @@ PAGES.invoices = (main) => {
   filter.coaches = asMulti(filter.coaches !== undefined ? filter.coaches : filter.coach);
   filter.categories = asMulti(filter.categories !== undefined ? filter.categories : filter.category);
   delete filter.method; delete filter.sport; delete filter.coach; delete filter.category;
-  if (!['start', 'paid', 'any'].includes(filter.dateBy)) filter.dateBy = 'start';   // v6.922 — what the Month / Day / From-To filters answer on: the package START date, the PAID ON date, or either
+  if (!['start', 'paid', 'any'].includes(filter.dateBy)) filter.dateBy = window.__invDateByDefault || 'any';   // v6.987.0 — opens on Start or paid (the harness sets __invDateByDefault); v6.922 — what the Month / Day / From-To filters answer on: the package START date, the PAID ON date, or either
   const pg = makePager(10);
   const selected = new Set();   // invoice ids ticked for merging
 
@@ -26653,7 +26653,7 @@ PAGES.attendance = (main) => {
         }
         showModal({
           title: t('No package on this day', 'لا توجد باقة في هذا اليوم'),
-          body: '<div style="font-size:13px;line-height:1.7"><p><b>' + escapeHtml(m2.name) + '</b> · ' + escapeHtml(base) + ' — ' + fmtDate(iso) + '</p><p style="margin-top:8px">' + t('No package covers this day' + (_swSub ? ' — ' + base + ' was switched to ' + _swSub.switchedAwayTo + ' on ' + fmtDate(String(_swSub.switchedAt).slice(0, 10)) + ', so mark the class under ' + _swSub.switchedAwayTo : (lastEnd ? ' (the last one ended ' + fmtDate(lastEnd) + ')' : '')) + '. The class would count for nobody. Renew first, or mark it anyway.', 'لا توجد باقة تغطي هذا اليوم' + (_swSub ? ' — ' + base + ' اتبدّلت إلى ' + _swSub.switchedAwayTo + ' يوم ' + fmtDate(String(_swSub.switchedAt).slice(0, 10)) + '، فسجّل الحصة تحت ' + _swSub.switchedAwayTo : (lastEnd ? ' (آخر باقة انتهت ' + fmtDate(lastEnd) + ')' : '')) + '. الحصة لن تُحتسب لأحد. جدّد أولاً أو سجّلها رغم ذلك.') + '</p></div>',
+          body: '<div style="font-size:17px;line-height:1.8"><p style="font-size:19px"><b>' + escapeHtml(m2.name) + '</b> · ' + escapeHtml(base) + ' — ' + fmtDate(iso) + '</p><p style="margin-top:12px">' + t('No package covers this day' + (_swSub ? ' — ' + base + ' was switched to ' + _swSub.switchedAwayTo + ' on ' + fmtDate(String(_swSub.switchedAt).slice(0, 10)) + ', so mark the class under ' + _swSub.switchedAwayTo : (lastEnd ? ' (the last one ended ' + fmtDate(lastEnd) + ')' : '')) + '. The class would count for nobody. Renew first, or mark it anyway.', 'لا توجد باقة تغطي هذا اليوم' + (_swSub ? ' — ' + base + ' اتبدّلت إلى ' + _swSub.switchedAwayTo + ' يوم ' + fmtDate(String(_swSub.switchedAt).slice(0, 10)) + '، فسجّل الحصة تحت ' + _swSub.switchedAwayTo : (lastEnd ? ' (آخر باقة انتهت ' + fmtDate(lastEnd) + ')' : '')) + '. الحصة لن تُحتسب لأحد. جدّد أولاً أو سجّلها رغم ذلك.') + '</p></div>',
           actions: [
             { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
             { label: t('Mark anyway', 'سجّل رغم ذلك'), class: 'btn ghost', onclick: () => { closeModal(); applyMark(memberId, sport, day, next); } },
@@ -26735,7 +26735,7 @@ PAGES.attendance = (main) => {
     if (pr) {
       showModal({
         title: pr.kind === 'full' ? t('Mixed package fully used', 'باقة Mixed مستهلكة بالكامل') : t('No Mixed package on this day', 'لا توجد باقة Mixed في هذا اليوم'),
-        body: '<div style="font-size:13px;line-height:1.7"><p><b>' + escapeHtml(m0.name) + '</b> — ' + fmtDate(iso) + '</p><p style="margin-top:8px">' + (pr.kind === 'full'
+        body: '<div style="font-size:17px;line-height:1.8"><p style="font-size:19px"><b>' + escapeHtml(m0.name) + '</b> — ' + fmtDate(iso) + '</p><p style="margin-top:12px">' + (pr.kind === 'full'
           ? t('All ' + pr.total + ' classes of the Mixed package are already marked (' + pr.used + '). Another class would count for nobody — renew first, or mark it anyway.', 'كل حصص باقة Mixed (' + pr.total + ') مسجَّلة بالفعل (' + pr.used + '). حصة إضافية لن تُحتسب لأحد — جدّد أولاً أو سجّلها رغم ذلك.')
           : t('No Mixed package covers this day' + (pr.lastEnd ? ' (the last one ended ' + fmtDate(pr.lastEnd) + ')' : '') + '. The class would count for nobody. Renew first, or mark it anyway.', 'لا توجد باقة Mixed تغطي هذا اليوم' + (pr.lastEnd ? ' (آخر باقة انتهت ' + fmtDate(pr.lastEnd) + ')' : '') + '. الحصة لن تُحتسب لأحد. جدّد أولاً أو سجّلها رغم ذلك.')) + '</p></div>',
         actions: [
@@ -27029,7 +27029,7 @@ PAGES.attendance = (main) => {
       // is still overall active) OR every paid class is attended. Attendance still logs; this just
       // surfaces the over-limit / expired-package state on the row so the desk sees a renewal is due
       // without any blocking prompt. (Camp uses its own campOver flag above.)
-      let sportOver = false, sportPlanned = 0, sportMarked = 0;
+      let sportOver = false, sportPlanned = 0, sportMarked = 0, sportDone = false;   // v6.990.0 — sportDone = every class of the package attended (COMPLETED), as opposed to the window simply ending (EXPIRED)
       if (!isCampSport(sport) && sport !== MIXED && !isExpired && !hist) {   // v6.568/6.570: history + Mixed rows aren't a single-coach package — no EXPIRED/renewal flag
         // v6.540: pick the CURRENT sub, not the last array element. A renewed member keeps several subs
         // for the same sport+coach; the subscriptions array is NOT date-ordered (a renewal can sit before
@@ -27048,6 +27048,25 @@ PAGES.attendance = (main) => {
           sportMarked = (typeof liveAttendanceCount === 'function') ? (liveAttendanceCount(m, sport, _rw.from, _rw.to).y || 0) : 0;
           const _ended = !!(rsub.end && rsub.end < TODAY);
           sportOver = _ended || (sportPlanned > 0 && sportMarked >= sportPlanned);
+          sportDone = sportPlanned > 0 && sportMarked >= sportPlanned;
+        }
+      }
+      // v6.990.0 — a MIXED row too: its current package (the one covering today, else the latest) finished its classes (COMPLETED) or its window ended (EXPIRED)
+      if (_isMixedRow && !isExpired && !hist) {
+        const _mp = (m.subscriptions || []).filter(s => (s.activity || '') === MIXED && !s.switchedAwayTo);
+        const _msub = _mp.filter(s => (s.start || '') <= TODAY && (!s.end || s.end >= TODAY)).sort((a, b) => String(b.start || '').localeCompare(String(a.start || '')))[0]
+          || _mp.slice().sort((a, b) => String(b.end || b.start || '').localeCompare(String(a.end || a.start || '')))[0];
+        if (_msub) {
+          sportPlanned = parseInt(_msub.totalClasses) || 0;
+          const _mw = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, _msub) : { from: _msub.start || null, to: _msub.end || null };
+          sportMarked = 0;
+          for (const _mo of Object.keys(m.mixedAttendance || {})) for (const _k of Object.keys(m.mixedAttendance[_mo] || {})) {
+            const _r = m.mixedAttendance[_mo][_k]; if (!_r || _r.mark === 'N') continue;
+            const _iso = _mo + '-' + String(parseInt(_k, 10)).padStart(2, '0');
+            if ((!_mw.from || _iso >= _mw.from) && (!_mw.to || _iso <= _mw.to)) sportMarked++;
+          }
+          sportDone = sportPlanned > 0 && sportMarked >= sportPlanned;
+          sportOver = !!(_msub.end && _msub.end < TODAY) || sportDone;
         }
       }
       if (!_isMixedRow && sportPlanned > 0) total = sportPlanned;
@@ -27069,7 +27088,9 @@ PAGES.attendance = (main) => {
         : '';
       // v6.524: regular-sport package finished (window ended or all classes used) — attendance still
       // logs, but the row is flagged EXPIRED so the desk knows a renewal is due (no blocking prompt).
-      const sportOverBadge = sportOver
+      const sportOverBadge = sportDone
+        ? `<span class="badge" style="font-size:9px;padding:1px 6px;background:rgba(139,92,246,.16);color:#7c3aed;margin-left:4px" title="${escapeHtml(sport)} package completed — attended ${sportMarked} of ${sportPlanned} classes. Renew to add classes.">✓ ${t('COMPLETED', 'مكتملة')} ${sportMarked}/${sportPlanned}</span>`
+        : sportOver
         ? `<span class="badge" style="font-size:9px;padding:1px 6px;background:rgba(245,158,11,.18);color:var(--accent-2);margin-left:4px" title="${escapeHtml(sport)} package finished${sportPlanned ? ' — attended ' + sportMarked + ' of ' + sportPlanned + ' classes' : ''}. Attendance still logs; renew to add classes.">🔴 ${t('EXPIRED', 'منتهي')}${sportPlanned ? ' ' + sportMarked + '/' + sportPlanned : ''}</span>`
         : '';
       const unpaidBadge = _due > 0.5
@@ -29128,12 +29149,13 @@ window.switchSport = function(memberId) {
         const remaining = Math.max(0, totalClasses - attendedA);
         const moved = remaining + carried;
         const _enteredPrice = parseFloat(($('#sw-price') || {}).value);
+        { const _raw = String((($('#sw-price') || {}).value) == null ? '' : ($('#sw-price') || {}).value).trim(); if (!fromIsCamp && _raw !== '' && !(Number.isFinite(_enteredPrice) && _enteredPrice >= 0)) { toast(t('The new price is not valid — enter 0 or more.', 'السعر الجديد غير صالح — أدخل 0 أو أكثر.'), 'error'); return; } }   // v6.992.0 — a negative price used to be ignored silently
         const _exactB = Math.round((price - aShare) * 100) / 100;   // v6.838 — the dialog pre-fills a ROUNDED price; if it is left as it was, use the exact rest so the invoice total never drifts by 0.01
         const bPrice = fromIsCamp ? (parseFloat(from.price) || 0)
           : (Number.isFinite(_enteredPrice) && _enteredPrice >= 0 ? (Math.abs(_enteredPrice - _exactB) <= 0.0101 ? _exactB : Math.round(_enteredPrice * 100) / 100) : Math.round(bShare * 100) / 100);   // v6.532: carried classes are a FREE bonus — default charges only the remaining (bShare), so money stays conserved
 
         // v6.740 — only REMAINING classes can move: a fully used package has nothing to transfer.
-        if (!skipReconciliation && totalClasses > 0 && remaining <= 0) {
+        if (!fromIsCamp && totalClasses > 0 && remaining <= 0) {   // v6.992.0 — also when the target is a Summer Camp (a fully used package has nothing to move)
           toast(t('Nothing to switch: ' + from.sport + ' with ' + coachName(from.coachId) + ' has no classes left (' + attendedA + '/' + totalClasses + ' attended). To start a NEW package with the new coach use Renew.', 'لا يوجد ما يُبدَّل: ' + from.sport + ' مع ' + coachName(from.coachId) + ' لا توجد حصص متبقية (' + attendedA + '/' + totalClasses + '). لبدء باقة جديدة مع المدرب الجديد استخدم «تجديد».'), 'error');
           return;
         }
@@ -37940,7 +37962,8 @@ function rentalFormHtml(r) {
       ${!r.id ? `<div class="field"><label>Payment</label><select id="r-paystatus">
         <option value="paid">💵 Paid in full now</option>
         <option value="due">⏳ Pay later (mark as due)</option>
-      </select></div>` : ''}
+      </select></div>
+      <div class="field" id="r-paydate-wrap"><label>${t('Payment date', 'تاريخ الدفع')} <span class="text-mute" style="font-size:10px">(${t('when the money was received', 'متى استُلم المبلغ')})</span></label><input type="date" id="r-paydate" value="${(r.date && r.date <= TODAY) ? r.date : TODAY}" max="${TODAY}" /></div>` : ''}
       <div class="field" style="flex:2"><label>Notes</label><input type="text" id="r-notes" value="${escapeHtml(r.notes || '')}" placeholder="e.g. Birthday party, weekly booking, etc." /></div>
     </div>
     ${!r.id ? `<div id="r-split-wrap" style="margin-top:6px;padding:10px 12px;border:1px solid var(--border);border-radius:8px">
@@ -37999,6 +38022,13 @@ function wireRentalForm() {
     document.querySelectorAll('.r-sp').forEach(i => i.addEventListener('input', splitUpdate));
   }
   facSel.addEventListener('change', autoFillRate);
+  // v6.993.0 — the payment date follows the booking date (never a future day) until it is changed by hand; it is not asked for 'pay later'
+  { const _bd = $('#r-date'), _pd = $('#r-paydate'), _ps = $('#r-paystatus'), _wrap = $('#r-paydate-wrap');
+    if (_bd && _pd) {
+      _pd.addEventListener('change', () => { _pd.dataset.manual = '1'; });
+      _bd.addEventListener('change', () => { if (_pd.dataset.manual !== '1') _pd.value = (_bd.value && _bd.value <= TODAY) ? _bd.value : TODAY; });
+    }
+    if (_ps && _wrap) _ps.addEventListener('change', () => { _wrap.style.display = _ps.value === 'due' ? 'none' : ''; }); }
   hoursInp.addEventListener('input', recalc);
   rateInp.addEventListener('input', () => { rateInp.dataset.auto = 'manual'; recalc(); });
 
@@ -38571,6 +38601,10 @@ function saveRental(existingId, onDone) {
   if (splitOn && splitTotal > amount + 0.009) { toast(t('The split amounts are more than the rental total', 'مجموع المبالغ المقسّمة أكبر من إجمالي الحجز'), 'error'); return; }
   if (splitOn) method = splitParts.slice().sort((a, b) => b.amount - a.amount)[0].method;   // headline method = the biggest part
   const paidNow = splitOn ? splitTotal : (payStatus === 'due' ? 0 : amount);
+  // v6.993.0 — the PAYMENT date is its own field (the booking date is when the court is used; the payment date is when the money came in)
+  const payDate = (($('#r-paydate') || {}).value || (date <= TODAY ? date : TODAY)).slice(0, 10);
+  if (paidNow > 0 && payDate > TODAY) { toast(t('The payment date cannot be in the future', 'تاريخ الدفع لا يكون في المستقبل'), 'error'); return; }
+  const payMonth = payDate.slice(0, 7);
   const newInv = {
     id: nextId(state.invoices),
     date, description: desc, amount, method, month, ref,
@@ -38583,7 +38617,7 @@ function saveRental(existingId, onDone) {
     customerPhone: phone,              // so a walk-in renter's due keeps their phone
     amountPaid: paidNow,
     payments: (() => { const _at = new Date().toISOString(), _by = (typeof currentUserId === 'function' ? currentUserId() : undefined), _bn = (typeof currentUserName === 'function' ? currentUserName() : undefined);   // v6.767 — "at" lets Cash in Hand count it on a count day
-      return (splitOn ? splitParts : (paidNow > 0 ? [{ amount: paidNow, method }] : [])).map(p => ({ amount: p.amount, method: p.method, date, month, by: _by, byName: _bn, at: _at })); })(),
+      return (splitOn ? splitParts : (paidNow > 0 ? [{ amount: paidNow, method }] : [])).map(p => ({ amount: p.amount, method: p.method, date: payDate, month: payMonth, by: _by, byName: _bn, at: _at })); })(),
     rentalId,                          // back-reference to the rental
   };
   stampUpdate(newInv); state.invoices.push(newInv);
@@ -38779,8 +38813,116 @@ function transferNumbers(A, sport, enr) {
   return { found, coachId, fullClasses, aSub, attended, classes, price, attendedValue, transferValue };
 }
 
-// Execute the transfer. Returns true on success.
-window.transferMembership = function(fromId, sport, toId) {
+// v6.988.0 — SMART TRANSFER: the sender's REMAINING classes + money go to the receiver as one or several lines (sport / coach / classes / price).
+// Same sport + same coach as one of his packages → the classes are ADDED to it; anything else → a new package. If the lines cost more than the moved money, the difference is paid now.
+function _transferCustom(c) {
+  const { A, B, sport, enr, found, coachId, fullClasses, attended, classes, price, attendedValue, transferValue, lines, payNow } = c;
+  const r2 = x => Math.round((Number(x) || 0) * 100) / 100;
+  const sameCoach = (a, b) => String(a == null ? '' : a) === String(b == null ? '' : b);
+  const start = TODAY, startMonth = start.slice(0, 7);
+  const inv = found && found.inv;
+  // 1) the sender: the enrollment, the package rows and the headline fields (as in a normal transfer)
+  A.enrollments = (A.enrollments || []).filter(e => e.sport !== sport);
+  A.subscriptions = (A.subscriptions || []).filter(s => (s.activity || '') !== sport);
+  if (A.sport === sport) { const nextEnr = (A.enrollments || [])[0] || null; A.sport = nextEnr ? nextEnr.sport : ''; A.coachId = nextEnr ? nextEnr.coachId : null; }
+  if (A.enrollments && A.enrollments.length) { if (A.status === 'Transferred') A.status = 'Active'; const dd = deriveMemberDates(A.enrollments, A.firstRegistration); A.startDate = dd.startDate; A.expiryDate = dd.expiryDate; }
+  else { A.expiryDate = null; A.status = 'Transferred'; }
+  // 2) the money: A keeps the value of the classes already attended (his coach's commission); the rest of the PAYMENTS move, each with its own date and method
+  let movedPays = [];
+  if (inv) {
+    const items = found.items, moved = items.find(x => x.sport === sport);
+    const origCoachId = (moved && moved.coachId != null) ? moved.coachId : coachId;
+    const fullLinePrice = Math.max(0, Number(moved && moved.price) || price || 0);
+    const origPays = Array.isArray(inv.payments) ? inv.payments.map(p => Object.assign({}, p)) : [];
+    const paidBefore = invoicePaid(inv);
+    let movedFactor = 1;
+    if (items.length <= 1) {
+      const keepValue = fullLinePrice > 0 && attended > 0 && fullClasses > 0 ? Math.round(fullLinePrice * (attended / fullClasses)) : 0;
+      if (keepValue > 0) {
+        const keepFactor = fullLinePrice > 0 ? keepValue / fullLinePrice : 0;
+        inv.amount = keepValue;
+        inv.lineItems = [{ sport, coach: coachName(origCoachId), coachId: origCoachId, classes: attended, price: keepValue, durationLabel: 'transferred · consumed' }];
+        inv.description = A.name + ' — ' + sport + ' (classes taken before transfer)';
+        if (Array.isArray(inv.payments) && inv.payments.length) { inv.payments = inv.payments.map(p => ({ ...p, amount: (p.amount || 0) * keepFactor })).filter(p => Math.abs(p.amount) > 0.001); inv.amountPaid = inv.payments.reduce((s, p) => s + (p.amount || 0), 0); }
+        else if (inv.amountPaid != null) inv.amountPaid = paidBefore * keepFactor;
+        movedFactor = 1 - keepFactor;
+        stampUpdate(inv);
+      } else {   // nothing attended: the whole invoice leaves A (archived, restorable) and a new one is made for B
+        inv.deleted = true; inv.deletedAt = new Date().toISOString(); inv.deletedBy = 'transfer';
+        stampUpdate(inv);
+      }
+    } else {
+      const movedPrice = Math.max(0, Number(moved && moved.price) || 0);
+      const oldAmount = inv.amount || items.reduce((s, li) => s + (Number(li.price) || 0), 0);
+      const keepHere = (movedPrice > 0 && attended > 0 && fullClasses > 0) ? Math.round(movedPrice * (attended / fullClasses)) : 0;
+      const moveOut = Math.max(0, movedPrice - keepHere);
+      const remaining = items.filter(x => x.sport !== sport);
+      if (keepHere > 0) remaining.push({ sport, coach: coachName(origCoachId), coachId: origCoachId, classes: attended, price: keepHere, durationLabel: 'transferred · consumed' });
+      const newAmount = Math.max(0, oldAmount - moveOut), factor = oldAmount > 0 ? newAmount / oldAmount : 0;
+      inv.lineItems = remaining; inv.amount = newAmount;
+      if (Array.isArray(inv.payments) && inv.payments.length) { inv.payments = inv.payments.map(p => ({ ...p, amount: (p.amount || 0) * factor })).filter(p => Math.abs(p.amount) > 0.001); inv.amountPaid = inv.payments.reduce((s, p) => s + (p.amount || 0), 0); }
+      else if (inv.amountPaid != null) inv.amountPaid = inv.amountPaid * factor;
+      if (inv.sport === sport && remaining[0]) inv.sport = remaining[0].sport;
+      movedFactor = oldAmount > 0 ? moveOut / oldAmount : 0;
+      stampUpdate(inv);
+    }
+    movedPays = _movedPays(origPays, movedFactor, 0, start, inv.method);
+  }
+  // 3) ONE invoice for the receiver: every line, the moved payments (original dates) and what he pays now for the difference
+  const total = r2(lines.reduce((s, L) => s + L.price, 0));
+  const payments = movedPays.slice();
+  if (payNow) payments.push({ amount: payNow.amount, date: payNow.date, month: String(payNow.date).slice(0, 7), method: payNow.method, pid: 'trpay_' + Date.now() });
+  const newInv = {
+    id: nextId(state.invoices), date: start, month: startMonth, ref: nextInvoiceRef(),
+    description: B.name + ' — membership transfer in: ' + lines.map(L => L.sport).join(', ') + ' (from ' + A.name + ')',
+    amount: total, method: (payNow && payNow.method) || (inv && inv.method) || 'transfer',
+    sport: lines.length === 1 ? lines[0].sport : lines.map(L => L.sport).join(', '), coach: lines.length === 1 ? coachName(lines[0].coachId) : '', coachId: lines.length === 1 ? lines[0].coachId : null,
+    customerId: B.id, customerName: B.name, category: 'Membership', activityType: 'subscription',
+    lineItems: lines.map(L => ({ sport: L.sport, coach: coachName(L.coachId), coachId: L.coachId, classes: L.classes, price: L.price, billMonth: startMonth })),
+    payments,
+  };
+  newInv.amountPaid = r2(payments.reduce((s, p) => s + (Number(p.amount) || 0), 0));
+  stampUpdate(newInv); state.invoices.push(newInv);
+  // 4) the receiver's packages: add to the same sport + coach, otherwise a new package
+  if (!Array.isArray(B.enrollments)) B.enrollments = [];
+  if (!Array.isArray(B.subscriptions)) B.subscriptions = [];
+  let lastEnd = null; const landed = [];
+  lines.forEach((L, k) => {
+    const validity = (L.sport === sport) ? (enr.validity || DEFAULT_VALIDITY) : DEFAULT_VALIDITY;
+    const end = rowEndDate(L.sport, start, validity, L.classes, null, undefined);
+    const exEnr = B.enrollments.find(e => e.sport === L.sport && sameCoach(e.coachId, L.coachId));
+    if (exEnr) {
+      exEnr.classes = (parseInt(exEnr.classes) || 0) + L.classes;
+      exEnr.price = r2((parseFloat(exEnr.price) || 0) + L.price);
+      if (end && (!exEnr.start || end > addDays(exEnr.start, exEnr.validity || DEFAULT_VALIDITY))) { exEnr.validity = validity; exEnr.start = exEnr.start || start; }
+      const exSub = B.subscriptions.filter(s => (s.activity || '') === L.sport && sameCoach(s.coachId, L.coachId) && s.status !== 'Withdrawn').sort((a, b) => String(a.start || '').localeCompare(String(b.start || ''))).slice(-1)[0];
+      if (exSub) { exSub.totalClasses = (parseInt(exSub.totalClasses) || 0) + L.classes; exSub.amountPaid = r2((parseFloat(exSub.amountPaid) || 0) + L.price); if (end && (!exSub.end || end > exSub.end)) exSub.end = end; }
+      landed.push({ sport: L.sport, coachId: L.coachId, merged: true });
+    } else {
+      B.enrollments.push({ sport: L.sport, coachId: L.coachId, classes: L.classes, price: L.price, start, validity, transferLocked: true });
+      B.subscriptions.push({ _rid: 'tr_' + Date.now() + '_' + k, activity: L.sport, coachId: L.coachId, coach: coachName(L.coachId), totalClasses: L.classes, attendedClasses: 0, amountPaid: L.price, invoiceNumber: newInv.ref, start, end, validity, month: ymToShort(startMonth) || startMonth, status: 'Active', transferredFrom: A.id });
+      landed.push({ sport: L.sport, coachId: L.coachId, merged: false });
+    }
+    if (end && (!lastEnd || end > lastEnd)) lastEnd = end;
+  });
+  if (!B.sport) { B.sport = lines[0].sport; B.coachId = lines[0].coachId; }
+  if (!B.startDate || (B.expiryDate && lastEnd && lastEnd > B.expiryDate)) { B.startDate = start; if (lastEnd) B.expiryDate = lastEnd; }
+  // 5) history + audit
+  if (!Array.isArray(state.membershipTransfers)) state.membershipTransfers = [];
+  state.membershipTransfers.push({
+    id: 'mt_' + Date.now(), date: start, sport, coachId, coach: coachName(coachId),
+    fromId: A.id, fromName: A.name, toId: B.id, toName: B.name,
+    classes, price: transferValue, fullPrice: price, validity: enr.validity || DEFAULT_VALIDITY, invoiceId: newInv.id,
+    lines: lines.map(L => ({ sport: L.sport, coachId: L.coachId, coach: coachName(L.coachId), classes: L.classes, price: L.price })), paidNow: payNow ? payNow.amount : 0, landed,
+    createdAt: new Date().toISOString(),
+  });
+  if (typeof audit === 'function') audit('membership.transfer', 'member:' + A.id, 'Smart transfer ' + sport + ' ' + A.name + ' → ' + B.name + ' (' + classes + ' classes, ' + fmt(transferValue) + ' QAR moved; lines: ' + lines.map(L => L.classes + '× ' + L.sport + ' ' + fmt(L.price)).join(' + ') + (payNow ? '; paid now ' + fmt(payNow.amount) : '') + ')', { fromId: A.id, toId: B.id, sport });
+  save();
+  return true;
+}
+
+// Execute the transfer. Returns true on success. `plan` (optional) = { lines:[{sport, coachId, classes, price}], pay:{amount, method} } — see _transferCustom.
+window.transferMembership = function(fromId, sport, toId, plan) {
   if (currentRole() !== 'admin') { toast('Only admins can transfer a membership', 'error'); return false; }
   const A = state.members.find(x => x.id === fromId);
   const B = state.members.find(x => x.id === toId);
@@ -38793,6 +38935,29 @@ window.transferMembership = function(fromId, sport, toId) {
   if (enr.transferLocked) { toast(`This ${sport} membership was already transferred once — it can't be transferred again.`, 'error'); return false; }
   if (isCampSport(sport)) { toast('Summer Camp memberships can\'t be transferred.', 'error'); return false; }
   const { found, coachId, fullClasses, aSub, attended, classes, price, attendedValue, transferValue } = transferNumbers(A, sport, enr);
+  if (fullClasses > 0 && classes <= 0) { toast(`${A.name} already attended every class of ${sport} (${attended}/${fullClasses}) — there is nothing left to transfer.`, 'error'); return false; }   // v6.992.0 — a fully used package used to "transfer" as an empty 0-class package
+  // v6.988.0 — a plan = the smart transfer
+  if (plan && Array.isArray(plan.lines) && plan.lines.length) {
+    const r2 = x => Math.round((Number(x) || 0) * 100) / 100, sameCoach = (a, b) => String(a == null ? '' : a) === String(b == null ? '' : b), lines = [];
+    for (const L of plan.lines) {
+      const sp = String((L && L.sport) || '').trim(), cl = parseInt(L && L.classes), pr = r2(L && L.price);
+      if (!sp) { toast('Pick a sport for every line', 'error'); return false; }
+      if (isCampSport(sp)) { toast('A Summer Camp cannot receive a transfer', 'error'); return false; }
+      if (!(cl >= 1)) { toast('Classes must be at least 1 on every line', 'error'); return false; }
+      if (!(pr >= 0)) { toast('A price is not valid', 'error'); return false; }
+      const co = (L.coachId === '' || L.coachId == null) ? null : (state.coaches || []).find(x => x && !x.deleted && String(x.id) === String(L.coachId));
+      if (!co) { toast('Pick a coach for ' + sp, 'error'); return false; }
+      lines.push({ sport: sp, coachId: co.id, classes: cl, price: pr });
+    }
+    const total = r2(lines.reduce((s, L) => s + L.price, 0)), diff = r2(total - transferValue);
+    if (diff < -0.005) { toast('The lines cost ' + fmt(total) + ' — less than the money moved (' + fmt(transferValue) + '). Raise a price so the whole balance is used.', 'error'); return false; }
+    const pAmt = r2(plan.pay && plan.pay.amount);
+    if (pAmt < 0 || pAmt > diff + 0.005) { toast('The payment cannot be more than the difference (' + fmt(Math.max(0, diff)) + ')', 'error'); return false; }
+    const payNow = pAmt > 0.004 ? { amount: pAmt, method: (plan.pay && plan.pay.method) || 'cash', date: TODAY } : null;
+    const isDefault = lines.length === 1 && lines[0].sport === sport && sameCoach(lines[0].coachId, coachId) && lines[0].classes === classes && Math.abs(lines[0].price - transferValue) < 0.005 && !payNow;
+    const sameSportOtherCoach = (B.enrollments || []).some(e => e.sport === lines[0].sport && !sameCoach(e.coachId, lines[0].coachId));
+    if (!isDefault || sameSportOtherCoach || lines.length > 1) return _transferCustom({ A, B, sport, enr, found, coachId, fullClasses, attended, classes, price, attendedValue, transferValue, lines, payNow });
+  }
   const validity = enr.validity || DEFAULT_VALIDITY;
   const start = TODAY;
   // Camp end = the Nth camp-day for a Custom pass, else the preset window; calendar for other sports. (v6.458)
@@ -39322,6 +39487,23 @@ PAGES.social = (main) => {
 };
 
 // ─── Transfer Membership page ───────────────────────────────────────────────
+// v6.988.0 — the smart-plan line editor
+window._trLine = function (i, f, v, live) {
+  const p = (window._trState || {}).plan; if (!p || !p.lines[i]) return;
+  const L = p.lines[i];
+  if (f === 'sport') { L.sport = v; const cs = coachesForSport(v || '', null); const keep = cs.find(c => String(c.id) === String(L.coachId)); L.coachId = keep ? keep.id : (cs.length === 1 ? cs[0].id : null); }
+  else if (f === 'coachId') { const c = (state.coaches || []).find(x => String(x.id) === String(v)); L.coachId = c ? c.id : null; }
+  else L[f] = v;
+  if (live && typeof window.__trSummaryFn === 'function') window.__trSummaryFn(); else render();
+};
+window._trAddLine = function () {
+  const p = (window._trState || {}).plan; if (!p) return;
+  const used = p.lines.reduce((s, L) => s + (Number(L.price) || 0), 0), left = Math.max(0, Math.round((((window.__trV || 0) - used)) * 100) / 100);
+  p.lines.push({ sport: '', coachId: null, classes: '', price: left });
+  render();
+};
+window._trDelLine = function (i) { const p = (window._trState || {}).plan; if (p && p.lines.length > 1) { p.lines.splice(i, 1); render(); } };
+window._trPay = function (f, v) { const p = (window._trState || {}).plan; if (!p) return; p[f] = v; if (typeof window.__trSummaryFn === 'function') window.__trSummaryFn(); };
 PAGES.transfers = (main) => {
   if (currentRole() !== 'admin') { main.innerHTML = `<div class="empty"><div class="empty-icon">🔐</div>${t('Admins only','للمشرفين فقط')}</div>`; return; }
   const st = window._trState || (window._trState = { fromId: null, sport: null, toId: null, fromQ: '', toQ: '', fcoach: 'all', fsport: 'all', tab: 'transfer' });
@@ -39391,8 +39573,60 @@ PAGES.transfers = (main) => {
   let blockMsg = '';
   if (fromMember && selEnr && toMember) {
     if (toMember.id === fromMember.id) blockMsg = t('Receiver must be a different member', 'يجب أن يكون المستلم عضواً مختلفاً');
-    else if ((toMember.enrollments || []).some(e => e.sport === selEnr.sport)) blockMsg = `${toMember.name} ${t('is already enrolled in', 'مسجّل بالفعل في')} ${selEnr.sport}`;
+    // v6.988.0 — the smart plan decides where the classes go (adds to the same sport + coach, otherwise a new package)
   }
+
+  // v6.988.0 — SMART PLAN: the sender's remaining balance goes to one or several lines on the receiver
+  let _num = null, _planKey = '';
+  if (fromMember && selEnr) _num = transferNumbers(fromMember, selEnr.sport, (fromMember.enrollments || []).find(e => e.sport === selEnr.sport) || selEnr);
+  if (_num && toMember) _planKey = [fromMember.id, selEnr.sport, toMember.id].join('|');
+  if (!_planKey) st.plan = null;
+  else if (!st.plan || st.plan.key !== _planKey) st.plan = { key: _planKey, lines: [{ sport: selEnr.sport, coachId: _num.coachId, classes: _num.classes, price: _num.transferValue }], payMethod: 'cash', payAmt: null };
+  const _r2 = x => Math.round((Number(x) || 0) * 100) / 100;
+  const planCalc = () => {
+    const p = st.plan; if (!p || !_num) return null;
+    const total = _r2(p.lines.reduce((s, L) => s + (Number(L.price) || 0), 0)), Vm = _num.transferValue, diff = _r2(total - Vm), errs = [];
+    p.lines.forEach((L, i) => { const n = i + 1; if (!L.sport) errs.push(t('Line ' + n + ': pick a sport', 'السطر ' + n + ': اختر رياضة')); else if (!(parseInt(L.classes) >= 1)) errs.push(t('Line ' + n + ': classes must be at least 1', 'السطر ' + n + ': الحصص 1 على الأقل')); else if (L.coachId == null || L.coachId === '') errs.push(t('Line ' + n + ': pick a coach', 'السطر ' + n + ': اختر مدرباً')); else if (!(Number(L.price) >= 0)) errs.push(t('Line ' + n + ': price is not valid', 'السطر ' + n + ': السعر غير صالح')); });
+    if (diff < -0.005) errs.push(t('The lines cost ' + fmt(total) + ' — less than the moved money (' + fmt(Vm) + '). Raise a price so the whole balance is used.', 'مجموع الأسطر ' + fmt(total) + ' أقل من المبلغ المحوّل (' + fmt(Vm) + '). ارفع سعراً ليُستخدم الرصيد كله.'));
+    const payAmt = diff > 0.005 ? (p.payAmt == null || p.payAmt === '' ? diff : Math.min(diff, Math.max(0, _r2(p.payAmt)))) : 0;
+    return { total, V: Vm, diff, errs, payAmt, due: _r2(Math.max(0, diff) - payAmt), ok: !errs.length };
+  };
+  const _enabledSports = ((state.settings && Array.isArray(state.settings.sports)) ? state.settings.sports.filter(s => s.enabled !== false && !isCampSport(s.name)).map(s => s.name) : []).slice();
+  const summaryHtml = () => {
+    const c = planCalc(); if (!c) return '';
+    const sel = 'padding:7px 9px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px';
+    const payBox = c.diff > 0.005 ? '<div style="margin-top:8px;padding:10px 12px;border:1px solid rgba(245,158,11,.5);background:rgba(245,158,11,.08);border-radius:8px">' +
+      '<div style="font-weight:700;color:#b45309">⚠ ' + t('The lines cost more than the moved money — pay the difference', 'الأسطر أغلى من المبلغ المحوّل — ادفع الفرق') + ': <span style="font-size:16px">' + fmt(c.diff) + ' QAR</span></div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px"><span>' + t('Pay now', 'ادفع الآن') + '</span><input type="number" min="0" max="' + c.diff + '" step="0.01" value="' + c.payAmt + '" onchange="_trPay(\'payAmt\',this.value)" style="' + sel + ';width:110px" />' +
+      '<select onchange="_trPay(\'payMethod\',this.value)" style="' + sel + '">' + [['cash', t('Cash', 'نقدي')], ['card', t('Card', 'بطاقة')], ['fawran', t('Fawran', 'فوران')], ['transfer', t('Bank transfer', 'تحويل')]].map(([k, l]) => '<option value="' + k + '"' + (st.plan.payMethod === k ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>' +
+      (c.due > 0.005 ? '<span style="color:var(--red);font-weight:700">' + t('stays due', 'يبقى مستحقاً') + ' ' + fmt(c.due) + '</span>' : '<span style="color:var(--green);font-weight:700">✓ ' + t('paid in full', 'مدفوع بالكامل') + '</span>') + '</div></div>' : '';
+    return '<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:14px"><div>💰 ' + t('Moved money', 'المبلغ المحوّل') + ': <b>' + fmt(c.V) + '</b> QAR</div><div>🧾 ' + t('Lines total', 'مجموع الأسطر') + ': <b>' + fmt(c.total) + '</b> QAR</div>' +
+      (Math.abs(c.diff) <= 0.005 ? '<div style="color:var(--green);font-weight:700">✓ ' + t('the whole balance is used', 'الرصيد كله مستخدم') + '</div>' : '') + '</div>' + payBox +
+      (c.errs.length ? '<div style="margin-top:8px;color:var(--red);font-size:12.5px;font-weight:600">' + c.errs.map(x => '⛔ ' + escapeHtml(x)).join('<br>') + '</div>' : '');
+  };
+  window.__trV = _num ? _num.transferValue : 0;
+  window.__trSummaryFn = () => { const el = $('#tr-sum'); if (el) el.innerHTML = summaryHtml(); const b = $('#tr-go'); const c = planCalc(); if (b && c) { b.disabled = !c.ok; b.style.opacity = c.ok ? '' : '.45'; b.style.cursor = c.ok ? '' : 'not-allowed'; } };
+  const lineRow = (L, i) => {
+    const sports = _enabledSports.includes(L.sport) || !L.sport ? _enabledSports : _enabledSports.concat([L.sport]);
+    const coaches = coachesForSport(L.sport || '', L.coachId);
+    const lbl = 'font-size:11px;color:var(--text-mute);display:block;margin-bottom:3px', inp = 'width:100%;padding:9px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px';
+    const merged = L.sport && toMember && (toMember.enrollments || []).some(e => e.sport === L.sport && String(e.coachId == null ? '' : e.coachId) === String(L.coachId == null ? '' : L.coachId));
+    return '<div style="display:grid;grid-template-columns:1.2fr 1.2fr .6fr .8fr auto;gap:8px;align-items:end;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface)">' +
+      '<div><label style="' + lbl + '">' + t('Sport', 'الرياضة') + '</label><select style="' + inp + '" onchange="_trLine(' + i + ',\'sport\',this.value)"><option value="">—</option>' + sports.map(s => '<option value="' + escapeHtml(s) + '"' + (L.sport === s ? ' selected' : '') + '>' + escapeHtml(s) + '</option>').join('') + '</select></div>' +
+      '<div><label style="' + lbl + '">' + t('Coach', 'المدرب') + '</label><select style="' + inp + '" onchange="_trLine(' + i + ',\'coachId\',this.value)"><option value="">—</option>' + coaches.map(c => '<option value="' + c.id + '"' + (String(L.coachId) === String(c.id) ? ' selected' : '') + '>' + escapeHtml(c.name) + '</option>').join('') + '</select></div>' +
+      '<div><label style="' + lbl + '">' + t('Classes', 'الحصص') + '</label><input type="number" min="1" step="1" style="' + inp + '" value="' + escapeHtml(String(L.classes == null ? '' : L.classes)) + '" oninput="_trLine(' + i + ',\'classes\',this.value,true)" /></div>' +
+      '<div><label style="' + lbl + '">' + t('Price (QAR)', 'السعر') + '</label><input type="number" min="0" step="0.01" style="' + inp + '" value="' + escapeHtml(String(L.price == null ? '' : L.price)) + '" oninput="_trLine(' + i + ',\'price\',this.value,true)" /></div>' +
+      '<div>' + (st.plan.lines.length > 1 ? '<button type="button" class="btn ghost sm" title="' + t('Remove this line', 'احذف هذا السطر') + '" onclick="_trDelLine(' + i + ')">✕</button>' : '') + '</div>' +
+      '<div style="grid-column:1/-1;font-size:11.5px;' + (merged ? 'color:var(--green)' : 'color:var(--text-mute)') + '">' + (merged ? '➕ ' + t('adds to his existing package (same sport + coach)', 'تُضاف على اشتراكه الحالي (نفس الرياضة والمدرب)') : (L.sport ? '🆕 ' + t('a new package for him', 'اشتراك جديد له') : '')) + '</div></div>';
+  };
+  const recvPkgs = toMember ? (toMember.enrollments || []).map(e => { const sub = (toMember.subscriptions || []).filter(s => (s.activity || '') === e.sport && String(s.coachId == null ? '' : s.coachId) === String(e.coachId == null ? '' : e.coachId)).sort((a, b) => String(a.start || '').localeCompare(String(b.start || ''))).slice(-1)[0]; return { e, sub }; }) : [];
+  const step4Html = () => (!(fromMember && selEnr && toMember && _num && st.plan)) ? '' :
+    '<div style="border-top:1px solid var(--border);padding-top:16px">' + stepLabel('4', t('Where do the remaining classes and money go?', 'أين تذهب الحصص والمبلغ المتبقيان؟')) +
+    '<div style="font-size:13px;margin-bottom:10px;padding:10px 12px;background:rgba(91,141,239,.08);border:1px solid rgba(91,141,239,.3);border-radius:8px">🔁 <b>' + escapeHtml(fromMember.name) + '</b> · ' + escapeHtml(selEnr.sport) + ' (' + escapeHtml(coachName(selEnr.coachId) || '—') + '): ' + t('remaining', 'المتبقي') + ' <b>' + _num.classes + '</b> ' + t('of', 'من') + ' ' + _num.fullClasses + ' ' + t('classes', 'حصة') + ' · <b>' + fmt(_num.transferValue) + '</b> ' + t('of', 'من') + ' ' + fmt(_num.price) + ' QAR' + (_num.attended ? ' <span class="text-mute">(' + _num.attended + ' ' + t('already attended stay with', 'حضرها وتبقى مع') + ' ' + escapeHtml(fromMember.name) + ' · ' + fmt(_num.attendedValue) + ')</span>' : '') + '</div>' +
+    '<div style="font-size:12.5px;margin-bottom:10px"><b>' + escapeHtml(toMember.name) + '</b> — ' + t('current packages', 'اشتراكاته الحالية') + ': ' + (recvPkgs.length ? recvPkgs.map(({ e, sub }) => '<span class="badge" style="margin:2px">' + escapeHtml(e.sport) + ' · ' + escapeHtml(coachName(e.coachId) || '—') + ' · ' + (sub ? (parseInt(sub.totalClasses) || e.classes || 0) : (e.classes || 0)) + ' ' + t('classes', 'حصة') + (sub && sub.end ? ' · → ' + fmtDate(sub.end) : '') + '</span>').join('') : '<span class="text-mute">' + t('none', 'لا يوجد') + '</span>') + '</div>' +
+    '<div style="display:flex;flex-direction:column;gap:8px">' + st.plan.lines.map(lineRow).join('') + '</div>' +
+    '<div style="margin-top:8px"><button type="button" class="btn ghost sm" onclick="_trAddLine()">➕ ' + t('Add another sport with the remaining money', 'أضف رياضة أخرى بالمبلغ المتبقي') + '</button></div>' +
+    '<div id="tr-sum" style="margin-top:12px;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--surface)">' + summaryHtml() + '</div></div>';
 
   // Reusable styled control bits — v6.463: larger, clearer fonts throughout.
   const inputStyle = 'width:100%;padding:11px 13px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:15px';
@@ -39428,7 +39662,7 @@ PAGES.transfers = (main) => {
     <div class="topbar">
       <div>
         <h1>🔁 ${t('Transfer Membership', 'نقل الاشتراك')}</h1>
-        <div class="subtitle" style="font-size:14px;margin-top:4px">${t('Move one sport from one member to another. Receiver gets a full reset; payment moves with it. One transfer per membership.', 'نقل رياضة واحدة من عضو إلى آخر. يحصل المستلم على تجديد كامل، وينتقل الدفع معه. نقل واحد لكل اشتراك.')}</div>
+        <div class="subtitle" style="font-size:14px;margin-top:4px">${t('Move what is LEFT of one membership (classes + money, pro rata) to another member: add it to his package or open one or several new sports. If the new sports cost more, you pay the difference.', 'نقل المتبقي من اشتراك واحد (الحصص والمبلغ بنسبتها) إلى عضو آخر: يُضاف على اشتراكه أو تُفتح رياضة جديدة أو أكثر. إذا كانت الرياضات الجديدة أغلى تدفع الفرق.')}</div>
       </div>
     </div>
 
@@ -39480,7 +39714,7 @@ PAGES.transfers = (main) => {
                   <input type="radio" name="tr-sport" value="${escapeHtml(e.sport)}" ${st.sport === e.sport ? 'checked' : ''} />
                   <div style="flex:1;min-width:0">
                     <div style="font-weight:600">${escapeHtml(e.sport)}</div>
-                    <div class="text-mute" style="font-size:11px">${t('Coach', 'المدرب')}: ${escapeHtml(coachName(e.coachId) || '—')} · ${e.classes || 0} ${t('classes', 'حصة')} · ${fmt(e.price || 0)} QAR</div>
+                    <div class="text-mute" style="font-size:11px">${t('Coach', 'المدرب')}: ${escapeHtml(coachName(e.coachId) || '—')} · ${(() => { const _n = transferNumbers(fromMember, e.sport, (fromMember.enrollments || []).find(x => x.sport === e.sport) || e); return `${_n.fullClasses} ${t('classes', 'حصة')} · ${fmt(_n.price)} QAR → <b>${t('remaining', 'المتبقي')} ${_n.classes} ${t('classes', 'حصة')} · ${fmt(_n.transferValue)} QAR</b>`; })()}</div>
                   </div>
                 </label>`).join('')}
             </div>
@@ -39506,19 +39740,13 @@ PAGES.transfers = (main) => {
             `}
           </div>` : ''}
 
-          <!-- Preview + action -->
-          ${(fromMember && selEnr && toMember) ? `
-          <div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.3);border-radius:10px;padding:14px;font-size:13px;line-height:1.7">
-            <div style="font-weight:700;margin-bottom:6px">✅ ${t('Ready to transfer', 'جاهز للنقل')}</div>
-            <div>🔁 <b>${escapeHtml(selEnr.sport)}</b> · ${escapeHtml(coachName(selEnr.coachId) || '—')}</div>
-            <div>${escapeHtml(fromMember.name)} <span style="color:var(--green)">→</span> <b>${escapeHtml(toMember.name)}</b></div>
-            <div class="text-mute" style="font-size:11px;margin-top:4px">${(() => { const _n = transferNumbers(fromMember, selEnr.sport, (fromMember.enrollments || []).find(e => e.sport === selEnr.sport) || selEnr); return `${escapeHtml(toMember.name)} ${t('gets', 'يحصل على')} <b>${_n.classes}</b> ${t('classes', 'حصة')}${_n.attended ? ` (${_n.attended} ${t('already attended stay with', 'حضرها وتبقى مع')} ${escapeHtml(fromMember.name)})` : ''}, ${t('fresh expiry', 'انتهاء جديد')} ${fmtDate(addDays(TODAY, selEnr.validity || DEFAULT_VALIDITY))} · <b>${fmt(_n.transferValue)}</b> QAR ${t('moves with it', 'ينتقل معه')}${_n.attendedValue ? ` (${fmt(_n.attendedValue)} ${t('stays', 'تبقى')})` : ''}`; })()}</div>
-          </div>` : ''}
+          <!-- v6.988.0 — STEP 4: the smart plan -->
+          ${step4Html()}
 
           ${blockMsg ? `<div style="color:var(--red);font-size:12px;font-weight:600">⛔ ${escapeHtml(blockMsg)}</div>` : ''}
 
           ${(() => {
-            const ready = fromMember && selEnr && toMember && !blockMsg;
+            const ready = fromMember && selEnr && toMember && !blockMsg && ((planCalc() || {}).ok === true);
             // v6.619 — a single style attr (the old code emitted TWO, so the disabled look never applied),
             // + a hint of what's still missing so the gated button is self-explanatory.
             const missing = [];
@@ -39540,7 +39768,7 @@ PAGES.transfers = (main) => {
               <td class="text-mute" style="white-space:nowrap">${tr.date ? fmtDate(tr.date) : '—'}</td>
               <td style="min-width:120px">${escapeHtml(tr.fromName || '—')}</td>
               <td class="font-bold" style="min-width:120px">${escapeHtml(tr.toName || '—')}</td>
-              <td style="white-space:nowrap">${escapeHtml(tr.sport || '—')}</td>
+              <td style="white-space:nowrap">${escapeHtml(tr.sport || '—')}${(tr.lines && tr.lines.length) ? ` <span class="text-mute" style="font-size:11px">→ ${tr.lines.map(L => escapeHtml(L.sport) + ' ' + L.classes).join(' + ')}</span>` : ''}</td>
               <td class="text-mute" style="white-space:nowrap">${escapeHtml(tr.coach || coachName(tr.coachId) || '—')}</td>
               <td class="text-right num">${tr.classes || 0}</td>
               <td class="text-right num" style="white-space:nowrap">${fmt(tr.price || 0)} QAR</td>
@@ -39561,26 +39789,28 @@ PAGES.transfers = (main) => {
   document.querySelectorAll('input[name="tr-sport"]').forEach(r => r.addEventListener('change', e => { st.sport = e.target.value; st.toId = null; render(); }));
   $('#tr-toq')?.addEventListener('input', e => { st.toQ = e.target.value; render(); setTimeout(() => { const el = $('#tr-toq'); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }, 0); });
   $('#tr-go')?.addEventListener('click', () => {
-    if (!(fromMember && selEnr && toMember)) return;
+    const c = planCalc();
+    if (!(fromMember && selEnr && toMember && c && c.ok)) return;
+    const lines = st.plan.lines.map(L => ({ sport: L.sport, coachId: L.coachId, classes: parseInt(L.classes), price: Number(L.price) }));
     showModal({
       title: '🔁 ' + t('Confirm transfer', 'تأكيد النقل'),
-      body: `<div style="font-size:13px;line-height:1.8">
-        <div>${t('Transfer', 'نقل')} <b>${escapeHtml(selEnr.sport)}</b> (${escapeHtml(coachName(selEnr.coachId) || '—')})</div>
-        <div>${t('from', 'من')} <b>${escapeHtml(fromMember.name)}</b> ${t('to', 'إلى')} <b>${escapeHtml(toMember.name)}</b>?</div>
-        <div class="text-mute" style="font-size:12px;margin-top:8px">${toMember.name} ${t('receives a full reset', 'يحصل على تجديد كامل')} (${selEnr.classes || 0} ${t('classes', 'حصة')}, ${t('new expiry', 'انتهاء جديد')} ${fmtDate(addDays(TODAY, selEnr.validity || DEFAULT_VALIDITY))}) ${t('and the payment moves to them. This membership cannot be transferred again.', 'وينتقل الدفع إليه. لا يمكن نقل هذا الاشتراك مرة أخرى.')}</div>
-      </div>`,
+      body: '<div style="font-size:13px;line-height:1.9">' +
+        '<div>' + t('From', 'من') + ' <b>' + escapeHtml(fromMember.name) + '</b> (' + escapeHtml(selEnr.sport) + ' · ' + escapeHtml(coachName(selEnr.coachId) || '—') + ') ' + t('to', 'إلى') + ' <b>' + escapeHtml(toMember.name) + '</b></div>' +
+        '<div class="text-mute">' + t('Remaining moved', 'المحوّل من المتبقي') + ': ' + _num.classes + ' ' + t('classes', 'حصة') + ' · ' + fmt(c.V) + ' QAR</div>' +
+        lines.map(L => '<div>• <b>' + L.classes + '</b> × ' + escapeHtml(L.sport) + ' · ' + escapeHtml(coachName(L.coachId) || '—') + ' — <b>' + fmt(L.price) + '</b> QAR</div>').join('') +
+        (c.diff > 0.005 ? '<div style="color:#b45309">' + t('Paid now', 'مدفوع الآن') + ': <b>' + fmt(c.payAmt) + '</b> ' + escapeHtml(st.plan.payMethod) + (c.due > 0.005 ? ' · ' + t('stays due', 'يبقى مستحقاً') + ' ' + fmt(c.due) : '') + '</div>' : '') + '</div>',
       actions: [
         { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
         { label: '🔁 ' + t('Transfer', 'نقل'), class: 'btn primary', onclick: () => {
           if (typeof assertCloudWritable === 'function' && !assertCloudWritable('transfer this membership', 'نقل هذا الاشتراك')) return;
-          const ok = window.transferMembership(fromMember.id, selEnr.sport, toMember.id);
+          const ok = window.transferMembership(fromMember.id, selEnr.sport, toMember.id, { lines, pay: { amount: c.payAmt, method: st.plan.payMethod } });
           if (!ok) return;
-          window._trState = { fromId: null, sport: null, toId: null, fromQ: '', toQ: '' }; closeModal(); render();
-          // Write-through confirm before saying "transferred". (v6.332)
-          const _trMsg = `✓ ${selEnr.sport} ${t('transferred to', 'نُقل إلى')} ${toMember.name}`;
-          if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'members', id: toMember.id }], okMsg: _trMsg });
+          const _last = (state.membershipTransfers || []).slice(-1)[0] || {};
+          window._trState = { fromId: null, sport: null, toId: null, fromQ: '', toQ: '', plan: null }; closeModal(); render();
+          const _trMsg = '✓ ' + selEnr.sport + ' ' + t('transferred to', 'نُقل إلى') + ' ' + toMember.name;
+          if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'members', id: toMember.id }, { collection: 'members', id: fromMember.id }].concat(_last.invoiceId != null ? [{ collection: 'invoices', id: _last.invoiceId }] : []), okMsg: _trMsg });
           else toast(_trMsg);
-        }},
+        } },
       ],
     });
   });
@@ -39767,6 +39997,8 @@ window._payViewCSV = function () {
   const lines = [['Paid on', 'Customer', 'Invoice', 'Category', 'Sport', 'Invoice month', 'Method', 'Amount']].concat(rows.map(x => [x.day, x.cust, x.inv.ref || x.inv.id, x.cat, x.sports, x.bill, x.meth, x.amt]));
   downloadFile('payments-' + TODAY + '.csv', '﻿' + lines.map(l => l.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\n'), 'text/csv');
 };
+// v6.989.0 — the two 'money received' boxes on Transactions fold / unfold (closed by default); the choice is kept while the page stays open
+window._txnFoldSet = function (k, open) { window._txnFold = window._txnFold || {}; window._txnFold[k] = !!open; };
 PAGES.transactions = (main) => {
   if (txnModeNow() === 'payments' && !window._txnLinkFilter && !isViewerRole()) return renderTxnPayments(main);   // v6.975.0
   const isoOf = x => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;   // v6.634 — LOCAL date parts (toISOString shifted UTC+3 → "yesterday"/"this week" off by one)
@@ -40036,21 +40268,21 @@ PAGES.transactions = (main) => {
     const rows = paginate(txns, pg);
     { const ep = $('#txn-earlypay'); if (ep) {   // v6.983.0
       const tot = Math.round((earlyPays || []).reduce((s, x) => s + x.amount, 0) * 100) / 100;
-      ep.innerHTML = (earlyPays && earlyPays.length) ? `<div style="border:1px solid rgba(99,102,241,.4);background:rgba(99,102,241,.06);border-radius:10px;padding:10px 12px;margin:0 2px 12px">
-        <div style="font-weight:800;font-size:13px;margin-bottom:6px">🗓 ${t('Money received in EARLIER months for this period’s packages', 'فلوس استُلمت في أشهر سابقة عن باقات هذه الفترة')} · ${earlyPays.length} · <span style="color:#6366f1">${fmt(tot)} QAR</span></div>
+      ep.innerHTML = (earlyPays && earlyPays.length) ? `<details ${(window._txnFold && window._txnFold.early) ? 'open' : ''} ontoggle="_txnFoldSet('early', this.open)" style="border:1px solid rgba(99,102,241,.4);background:rgba(99,102,241,.06);border-radius:10px;padding:10px 12px;margin:0 2px 12px">
+        <summary style="cursor:pointer;font-weight:800;font-size:13px;margin-bottom:6px">🗓 ${t('Money received in EARLIER months for this period’s packages', 'فلوس استُلمت في أشهر سابقة عن باقات هذه الفترة')} · ${earlyPays.length} · <span style="color:#6366f1">${fmt(tot)} QAR</span></summary>
         <div class="text-mute" style="font-size:11px;margin-bottom:6px">${t('Already collected — paid before the period (e.g. a switch or an advance payment) for a package that starts in it. It is inside the Collected figure above; it did not reach the bank this period.', 'تم تحصيلها — دُفعت قبل الفترة (مثل تحويل اشتراك أو دفع مقدّم) عن باقة تبدأ فيها. هي داخل رقم المحصّل أعلاه، ولم تدخل البنك في هذه الفترة.')}</div>
         <div style="overflow:auto;max-height:240px"><table style="width:100%;font-size:12px"><thead><tr><th>${t('Paid on', 'تاريخ الدفع')}</th><th>${t('Customer', 'العميل')}</th><th>${t('Invoice', 'الفاتورة')}</th><th>${t('Invoice date', 'تاريخ الفاتورة')}</th><th>${t('Sport', 'الرياضة')}</th><th>${t('Method', 'الطريقة')}</th><th class="text-right">${t('Amount', 'المبلغ')}</th></tr></thead><tbody>
         ${earlyPays.slice(0, 200).map(x => `<tr><td style="white-space:nowrap">${fmtDate(x.date)}</td><td>${escapeHtml(x.customer)}</td><td class="font-mono" style="font-size:11px">${escapeHtml(x.ref)}</td><td class="text-mute" style="white-space:nowrap">${x.invDate ? fmtDate(x.invDate) : '—'}</td><td class="text-mute">${escapeHtml(x.sport)}</td><td>${escapeHtml(x.method)}</td><td class="text-right num font-bold" style="color:#6366f1">${fmt(x.amount)}</td></tr>`).join('')}
-        </tbody></table></div></div>` : '';
+        </tbody></table></div></details>` : '';
     } }
     { const lp = $('#txn-latepay'); if (lp) {
       const tot = Math.round((latePays || []).reduce((s, x) => s + x.amount, 0) * 100) / 100;
-      lp.innerHTML = (latePays && latePays.length) ? `<div style="border:1px solid rgba(16,185,129,.4);background:rgba(16,185,129,.06);border-radius:10px;padding:10px 12px;margin:0 2px 12px">
-        <div style="font-weight:800;font-size:13px;margin-bottom:6px">💰 ${t('Payments received in this period for EARLIER invoices', 'دفعات مُستلمة في هذه الفترة عن فواتير سابقة')} · ${latePays.length} · <span style="color:var(--green)">${fmt(tot)} QAR</span></div>
+      lp.innerHTML = (latePays && latePays.length) ? `<details ${(window._txnFold && window._txnFold.late) ? 'open' : ''} ontoggle="_txnFoldSet('late', this.open)" style="border:1px solid rgba(16,185,129,.4);background:rgba(16,185,129,.06);border-radius:10px;padding:10px 12px;margin:0 2px 12px">
+        <summary style="cursor:pointer;font-weight:800;font-size:13px;margin-bottom:6px">💰 ${t('Payments received in this period for EARLIER invoices', 'دفعات مُستلمة في هذه الفترة عن فواتير سابقة')} · ${latePays.length} · <span style="color:var(--green)">${fmt(tot)} QAR</span></summary>
         <div class="text-mute" style="font-size:11px;margin-bottom:6px">${t('Members who paid an older month’s due. These invoices are dated before the period so they are not in the list below — the totals below are unchanged.', 'أعضاء سدّدوا مستحقات شهور سابقة. هذه الفواتير بتاريخ قبل الفترة فلا تظهر في القائمة أدناه — والإجماليات أدناه لم تتغيّر.')}</div>
         <div style="overflow:auto;max-height:240px"><table style="width:100%;font-size:12px"><thead><tr><th>${t('Paid on', 'تاريخ الدفع')}</th><th>${t('Customer', 'العميل')}</th><th>${t('Invoice', 'الفاتورة')}</th><th>${t('Invoice date', 'تاريخ الفاتورة')}</th><th>${t('Sport', 'الرياضة')}</th><th>${t('Method', 'الطريقة')}</th><th class="text-right">${t('Amount', 'المبلغ')}</th></tr></thead><tbody>
         ${latePays.slice(0, 200).map(x => `<tr><td style="white-space:nowrap">${fmtDate(x.date)}${x.date === TODAY ? ` <span class="badge active" style="font-size:9px">${t('today', 'اليوم')}</span>` : ''}</td><td>${escapeHtml(x.customer)}</td><td class="font-mono" style="font-size:11px">${escapeHtml(x.ref)}</td><td class="text-mute" style="white-space:nowrap">${x.invDate ? fmtDate(x.invDate) : '—'}</td><td class="text-mute">${escapeHtml(x.sport)}</td><td>${escapeHtml(x.method)}</td><td class="text-right num font-bold" style="color:var(--green)">${fmt(x.amount)}</td></tr>`).join('')}
-        </tbody></table></div></div>` : '';
+        </tbody></table></div></details>` : '';
     } }
     const catRows = Object.entries(byCategory).sort((a, b) =>
       st.hasDue ? (b[1].netDue - a[1].netDue) : (b[1].total - a[1].total));

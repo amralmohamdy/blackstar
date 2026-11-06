@@ -14,7 +14,14 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.986.0';   // 6.986.0 Printed attendance sheets: the same Mixed sport under two coaches gets the coach's initial in its code (KB-A / KB-M);
+const APP_VERSION = '6.993.0';   // 6.993.0 Rentals (court / pool / boxing room): the booking date and the PAYMENT date are separate fields (the payment date is when the money was received);
+// prev:   // 6.992.0 Transfer membership: a package whose classes are ALL attended is refused (it used to move as an empty 0-class package); a coach hand-over on the package's last day no longer creates a backwards package, a switch with a negative / invalid new price is refused, and a switch to a camp with no classes left is refused; the sweep tests for transfer / switch sport / switch coach added;
+// prev:   // 6.991.0 Attendance warning popups (Mixed package fully used / no package on this day): bigger text so they read at a glance;
+// prev:   // 6.990.0 Attendance rows: a package whose classes are all attended shows a purple COMPLETED label (like the member card); EXPIRED stays for a finished window; Mixed rows get both labels too;
+// prev:   // 6.989.0 Transactions: the two 'money received in earlier months / on earlier invoices' boxes collapse / expand (closed by default);
+// prev:   // 6.988.0 Smart transfer: the receiver's packages are listed; the sender's remaining classes + money go to one or SEVERAL lines (sport / coach / classes / price); same sport + coach adds to his package; a higher price shows the difference to pay;
+// prev:   // 6.987.0 Invoices screen opens on 'Start or paid' (was Start date);
+// prev:   // 6.986.0 Printed attendance sheets: the same Mixed sport under two coaches gets the coach's initial in its code (KB-A / KB-M);
 // prev:   // 6.985.0 Transfer membership: the screen shows the REAL figures (remaining classes + moved value); the moved payment keeps its original date / method; B's package carries the moved value and is linked to its invoice; the new invoice gets a normal INV number;
 // prev:   // 6.984.0 Printed attendance sheets: a Mixed student's classes show WHICH sport (and coach) each one was (sheet cells, all-months sheet, detailed sheet);
 // prev:   // 6.983.0 Transactions: second table 'Money received in EARLIER months for this period's packages' (a package paid in October that starts in November), the mirror of the earlier-invoices table; Month Reconciliation takes off money received in earlier months for this month's packages (and adds money received now for later months) so the bank figure matches the month;
@@ -5955,6 +5962,7 @@ function handOverSubToCoach(m, sub, toCoachId, eff) {
     const e0 = oldEnr(); if (e0) e0.coachId = to.id;
     return { mode: 'whole', attended, remaining, base };
   }
+  if (origEnd && nextDay > origEnd) return { mode: 'none', attended, remaining, base };   // v6.992.0 — the package ends on/before the hand-over day: no day is left for the new coach (a split would start the new package AFTER its own end)
   const aShare = Math.round((attended / total) * base * 100) / 100, bShare = Math.round((base - aShare) * 100) / 100;
   // OLD sub → completed at the attended classes, paid its share (attendance basis: per-class × attended = aShare; payment basis: its line = aShare).
   sub.totalClasses = attended; sub.status = 'completed'; sub.amountPaid = aShare;
