@@ -38871,11 +38871,11 @@ function _transferCustom(c) {
   // 3) ONE invoice for the receiver: every line, the moved payments (original dates) and what he pays now for the difference
   const total = r2(lines.reduce((s, L) => s + L.price, 0));
   const payments = movedPays.slice();
-  if (payNow) payments.push({ amount: payNow.amount, date: payNow.date, month: String(payNow.date).slice(0, 7), method: payNow.method, pid: 'trpay_' + Date.now() });
+  payNow.forEach((p, k) => payments.push({ amount: p.amount, date: p.date, month: String(p.date).slice(0, 7), method: p.method, pid: 'trpay_' + Date.now() + '_' + k }));
   const newInv = {
     id: nextId(state.invoices), date: start, month: startMonth, ref: nextInvoiceRef(),
     description: B.name + ' — membership transfer in: ' + lines.map(L => L.sport).join(', ') + ' (from ' + A.name + ')',
-    amount: total, method: (payNow && payNow.method) || (inv && inv.method) || 'transfer',
+    amount: total, method: (payNow.length ? payNow[0].method : '') || (inv && inv.method) || 'transfer',
     sport: lines.length === 1 ? lines[0].sport : lines.map(L => L.sport).join(', '), coach: lines.length === 1 ? coachName(lines[0].coachId) : '', coachId: lines.length === 1 ? lines[0].coachId : null,
     customerId: B.id, customerName: B.name, category: 'Membership', activityType: 'subscription',
     lineItems: lines.map(L => ({ sport: L.sport, coach: coachName(L.coachId), coachId: L.coachId, classes: L.classes, price: L.price, billMonth: startMonth })),
@@ -38913,10 +38913,10 @@ function _transferCustom(c) {
     id: 'mt_' + Date.now(), date: start, sport, coachId, coach: coachName(coachId),
     fromId: A.id, fromName: A.name, toId: B.id, toName: B.name,
     classes, price: transferValue, fullPrice: price, validity: enr.validity || DEFAULT_VALIDITY, invoiceId: newInv.id,
-    lines: lines.map(L => ({ sport: L.sport, coachId: L.coachId, coach: coachName(L.coachId), classes: L.classes, price: L.price })), paidNow: payNow ? payNow.amount : 0, landed,
+    lines: lines.map(L => ({ sport: L.sport, coachId: L.coachId, coach: coachName(L.coachId), classes: L.classes, price: L.price })), paidNow: r2(payNow.reduce((s, p) => s + p.amount, 0)), paidWith: payNow.map(p => ({ method: p.method, amount: p.amount })), landed,
     createdAt: new Date().toISOString(),
   });
-  if (typeof audit === 'function') audit('membership.transfer', 'member:' + A.id, 'Smart transfer ' + sport + ' ' + A.name + ' → ' + B.name + ' (' + classes + ' classes, ' + fmt(transferValue) + ' QAR moved; lines: ' + lines.map(L => L.classes + '× ' + L.sport + ' ' + fmt(L.price)).join(' + ') + (payNow ? '; paid now ' + fmt(payNow.amount) : '') + ')', { fromId: A.id, toId: B.id, sport });
+  if (typeof audit === 'function') audit('membership.transfer', 'member:' + A.id, 'Smart transfer ' + sport + ' ' + A.name + ' → ' + B.name + ' (' + classes + ' classes, ' + fmt(transferValue) + ' QAR moved; lines: ' + lines.map(L => L.classes + '× ' + L.sport + ' ' + fmt(L.price)).join(' + ') + (payNow.length ? '; paid now ' + payNow.map(p => fmt(p.amount) + ' ' + p.method).join(' + ') : '') + ')', { fromId: A.id, toId: B.id, sport });
   save();
   return true;
 }
@@ -38951,10 +38951,13 @@ window.transferMembership = function(fromId, sport, toId, plan) {
     }
     const total = r2(lines.reduce((s, L) => s + L.price, 0)), diff = r2(total - transferValue);
     if (diff < -0.005) { toast('The lines cost ' + fmt(total) + ' — less than the money moved (' + fmt(transferValue) + '). Raise a price so the whole balance is used.', 'error'); return false; }
-    const pAmt = r2(plan.pay && plan.pay.amount);
-    if (pAmt < 0 || pAmt > diff + 0.005) { toast('The payment cannot be more than the difference (' + fmt(Math.max(0, diff)) + ')', 'error'); return false; }
-    const payNow = pAmt > 0.004 ? { amount: pAmt, method: (plan.pay && plan.pay.method) || 'cash', date: TODAY } : null;
-    const isDefault = lines.length === 1 && lines[0].sport === sport && sameCoach(lines[0].coachId, coachId) && lines[0].classes === classes && Math.abs(lines[0].price - transferValue) < 0.005 && !payNow;
+    // v6.995.0 — the difference can be paid with SEVERAL methods: plan.pays = [{ method, amount }] (plan.pay = the single-method form)
+    const payNow = [];
+    if (Array.isArray(plan.pays)) { for (const p of plan.pays) { const a = r2(p && p.amount); if (a < 0) { toast('A payment is not valid', 'error'); return false; } if (a > 0.004) payNow.push({ amount: a, method: (p && p.method) || 'cash', date: TODAY }); } }
+    else if (plan.pay && r2(plan.pay.amount) > 0.004) payNow.push({ amount: r2(plan.pay.amount), method: plan.pay.method || 'cash', date: TODAY });
+    const pAmt = r2(payNow.reduce((s, p) => s + p.amount, 0));
+    if (pAmt > diff + 0.005) { toast('The payments (' + fmt(pAmt) + ') are more than the difference (' + fmt(Math.max(0, diff)) + ')', 'error'); return false; }
+    const isDefault = lines.length === 1 && lines[0].sport === sport && sameCoach(lines[0].coachId, coachId) && lines[0].classes === classes && Math.abs(lines[0].price - transferValue) < 0.005 && !payNow.length;
     const sameSportOtherCoach = (B.enrollments || []).some(e => e.sport === lines[0].sport && !sameCoach(e.coachId, lines[0].coachId));
     if (!isDefault || sameSportOtherCoach || lines.length > 1) return _transferCustom({ A, B, sport, enr, found, coachId, fullClasses, attended, classes, price, attendedValue, transferValue, lines, payNow });
   }
@@ -39503,7 +39506,19 @@ window._trAddLine = function () {
   render();
 };
 window._trDelLine = function (i) { const p = (window._trState || {}).plan; if (p && p.lines.length > 1) { p.lines.splice(i, 1); render(); } };
-window._trPay = function (f, v) { const p = (window._trState || {}).plan; if (!p) return; p[f] = v; if (typeof window.__trSummaryFn === 'function') window.__trSummaryFn(); };
+window._trPay = function (m, v) {   // v6.995.0 — one amount per payment method
+  const p = (window._trState || {}).plan; if (!p) return;
+  if (!p.paysTouched) { p.paysTouched = true; p.pays = {}; }
+  p.pays[m] = v;
+  if (typeof window.__trSummaryFn === 'function') window.__trSummaryFn();
+};
+window._trFillPay = function (m) {   // put what is still unpaid on this method
+  const p = (window._trState || {}).plan; if (!p || typeof window.__trCalc !== 'function') return;
+  const c = window.__trCalc(); if (!c) return;
+  p.paysTouched = true; p.pays = Object.assign({}, c.paysEff);
+  p.pays[m] = Math.round(((Number(p.pays[m]) || 0) + c.due) * 100) / 100;
+  if (typeof window.__trSummaryFn === 'function') window.__trSummaryFn();
+};
 PAGES.transfers = (main) => {
   if (currentRole() !== 'admin') { main.innerHTML = `<div class="empty"><div class="empty-icon">🔐</div>${t('Admins only','للمشرفين فقط')}</div>`; return; }
   const st = window._trState || (window._trState = { fromId: null, sport: null, toId: null, fromQ: '', toQ: '', fcoach: 'all', fsport: 'all', tab: 'transfer' });
@@ -39581,30 +39596,37 @@ PAGES.transfers = (main) => {
   if (fromMember && selEnr) _num = transferNumbers(fromMember, selEnr.sport, (fromMember.enrollments || []).find(e => e.sport === selEnr.sport) || selEnr);
   if (_num && toMember) _planKey = [fromMember.id, selEnr.sport, toMember.id].join('|');
   if (!_planKey) st.plan = null;
-  else if (!st.plan || st.plan.key !== _planKey) st.plan = { key: _planKey, lines: [{ sport: selEnr.sport, coachId: _num.coachId, classes: _num.classes, price: _num.transferValue }], payMethod: 'cash', payAmt: null };
+  else if (!st.plan || st.plan.key !== _planKey) st.plan = { key: _planKey, lines: [{ sport: selEnr.sport, coachId: _num.coachId, classes: _num.classes, price: _num.transferValue }], pays: {}, paysTouched: false };
   const _r2 = x => Math.round((Number(x) || 0) * 100) / 100;
   const planCalc = () => {
     const p = st.plan; if (!p || !_num) return null;
     const total = _r2(p.lines.reduce((s, L) => s + (Number(L.price) || 0), 0)), Vm = _num.transferValue, diff = _r2(total - Vm), errs = [];
     p.lines.forEach((L, i) => { const n = i + 1; if (!L.sport) errs.push(t('Line ' + n + ': pick a sport', 'السطر ' + n + ': اختر رياضة')); else if (!(parseInt(L.classes) >= 1)) errs.push(t('Line ' + n + ': classes must be at least 1', 'السطر ' + n + ': الحصص 1 على الأقل')); else if (L.coachId == null || L.coachId === '') errs.push(t('Line ' + n + ': pick a coach', 'السطر ' + n + ': اختر مدرباً')); else if (!(Number(L.price) >= 0)) errs.push(t('Line ' + n + ': price is not valid', 'السطر ' + n + ': السعر غير صالح')); });
     if (diff < -0.005) errs.push(t('The lines cost ' + fmt(total) + ' — less than the moved money (' + fmt(Vm) + '). Raise a price so the whole balance is used.', 'مجموع الأسطر ' + fmt(total) + ' أقل من المبلغ المحوّل (' + fmt(Vm) + '). ارفع سعراً ليُستخدم الرصيد كله.'));
-    const payAmt = diff > 0.005 ? (p.payAmt == null || p.payAmt === '' ? diff : Math.min(diff, Math.max(0, _r2(p.payAmt)))) : 0;
-    return { total, V: Vm, diff, errs, payAmt, due: _r2(Math.max(0, diff) - payAmt), ok: !errs.length };
+    // v6.995.0 — the difference is paid with one or several methods; untouched = all of it in cash
+    const _methods = ['cash', 'card', 'fawran', 'transfer'], paysEff = {};
+    _methods.forEach(m => { paysEff[m] = diff > 0.005 ? (p.paysTouched ? Math.max(0, _r2((p.pays || {})[m])) : (m === 'cash' ? diff : 0)) : 0; });
+    const payAmt = _r2(_methods.reduce((s, m) => s + paysEff[m], 0));
+    if (payAmt > Math.max(0, diff) + 0.005) errs.push(t('The payments (' + fmt(payAmt) + ') are more than the difference (' + fmt(Math.max(0, diff)) + ')', 'المدفوع (' + fmt(payAmt) + ') أكبر من الفرق (' + fmt(Math.max(0, diff)) + ')'));
+    const payList = _methods.filter(m => paysEff[m] > 0.004).map(m => ({ method: m, amount: paysEff[m] }));
+    return { total, V: Vm, diff, errs, payAmt, payList, paysEff, due: _r2(Math.max(0, diff) - payAmt), ok: !errs.length };
   };
   const _enabledSports = ((state.settings && Array.isArray(state.settings.sports)) ? state.settings.sports.filter(s => s.enabled !== false && !isCampSport(s.name)).map(s => s.name) : []).slice();
   const summaryHtml = () => {
     const c = planCalc(); if (!c) return '';
     const sel = 'padding:7px 9px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px';
+    const _mLbl = { cash: t('Cash', 'نقدي'), card: t('Card', 'بطاقة'), fawran: t('Fawran', 'فوران'), transfer: t('Bank transfer', 'تحويل') }, _mIcon = { cash: '💵', card: '💳', fawran: '📲', transfer: '🏦' };
     const payBox = c.diff > 0.005 ? '<div style="margin-top:8px;padding:10px 12px;border:1px solid rgba(245,158,11,.5);background:rgba(245,158,11,.08);border-radius:8px">' +
       '<div style="font-weight:700;color:#b45309">⚠ ' + t('The lines cost more than the moved money — pay the difference', 'الأسطر أغلى من المبلغ المحوّل — ادفع الفرق') + ': <span style="font-size:16px">' + fmt(c.diff) + ' QAR</span></div>' +
-      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px"><span>' + t('Pay now', 'ادفع الآن') + '</span><input type="number" min="0" max="' + c.diff + '" step="0.01" value="' + c.payAmt + '" onchange="_trPay(\'payAmt\',this.value)" style="' + sel + ';width:110px" />' +
-      '<select onchange="_trPay(\'payMethod\',this.value)" style="' + sel + '">' + [['cash', t('Cash', 'نقدي')], ['card', t('Card', 'بطاقة')], ['fawran', t('Fawran', 'فوران')], ['transfer', t('Bank transfer', 'تحويل')]].map(([k, l]) => '<option value="' + k + '"' + (st.plan.payMethod === k ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>' +
-      (c.due > 0.005 ? '<span style="color:var(--red);font-weight:700">' + t('stays due', 'يبقى مستحقاً') + ' ' + fmt(c.due) + '</span>' : '<span style="color:var(--green);font-weight:700">✓ ' + t('paid in full', 'مدفوع بالكامل') + '</span>') + '</div></div>' : '';
+      '<div style="font-size:12px;margin:4px 0 6px" class="text-mute">' + t('You can split it across several methods', 'يمكنك تقسيمه على عدة طرق دفع') + '</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px">' + ['cash', 'card', 'fawran', 'transfer'].map(m => '<div><label style="font-size:11px;color:var(--text-mute);display:block;margin-bottom:3px">' + _mIcon[m] + ' ' + _mLbl[m] + '</label><div style="display:flex;gap:4px"><input type="number" min="0" step="0.01" value="' + (c.paysEff[m] || '') + '" placeholder="0" onchange="_trPay(\'' + m + '\',this.value)" style="' + sel + ';width:100%" /><button type="button" class="btn ghost sm" title="' + t('Put the rest here', 'ضع المتبقي هنا') + '" onclick="_trFillPay(\'' + m + '\')">⤓</button></div></div>').join('') + '</div>' +
+      '<div style="margin-top:8px;display:flex;gap:14px;flex-wrap:wrap"><span>' + t('Paid now', 'مدفوع الآن') + ': <b>' + fmt(c.payAmt) + '</b></span>' + (c.due > 0.005 ? '<span style="color:var(--red);font-weight:700">' + t('stays due', 'يبقى مستحقاً') + ' ' + fmt(c.due) + '</span>' : (c.payAmt > 0.005 ? '<span style="color:var(--green);font-weight:700">✓ ' + t('paid in full', 'مدفوع بالكامل') + '</span>' : '')) + '</div></div>' : '';
     return '<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:14px"><div>💰 ' + t('Moved money', 'المبلغ المحوّل') + ': <b>' + fmt(c.V) + '</b> QAR</div><div>🧾 ' + t('Lines total', 'مجموع الأسطر') + ': <b>' + fmt(c.total) + '</b> QAR</div>' +
       (Math.abs(c.diff) <= 0.005 ? '<div style="color:var(--green);font-weight:700">✓ ' + t('the whole balance is used', 'الرصيد كله مستخدم') + '</div>' : '') + '</div>' + payBox +
       (c.errs.length ? '<div style="margin-top:8px;color:var(--red);font-size:12.5px;font-weight:600">' + c.errs.map(x => '⛔ ' + escapeHtml(x)).join('<br>') + '</div>' : '');
   };
   window.__trV = _num ? _num.transferValue : 0;
+  window.__trCalc = planCalc;
   window.__trSummaryFn = () => { const el = $('#tr-sum'); if (el) el.innerHTML = summaryHtml(); const b = $('#tr-go'); const c = planCalc(); if (b && c) { b.disabled = !c.ok; b.style.opacity = c.ok ? '' : '.45'; b.style.cursor = c.ok ? '' : 'not-allowed'; } };
   const lineRow = (L, i) => {
     const sports = _enabledSports.includes(L.sport) || !L.sport ? _enabledSports : _enabledSports.concat([L.sport]);
@@ -39691,10 +39713,9 @@ PAGES.transfers = (main) => {
             ` : `
               <!-- v6.619 — searchable coach/sport filters (type to filter; pick from the list; clear = all) -->
               <div style="display:flex;gap:6px;margin-bottom:8px">
-                <input id="tr-fcoach" list="tr-fcoach-dl" placeholder="🔍 ${t('All coaches', 'كل المدربين')}" value="${st.fcoach === 'all' ? '' : escapeHtml(coachName(parseInt(st.fcoach)) || '')}" style="${selStyle}" />
-                <datalist id="tr-fcoach-dl">${coachIdsInList.map(cid => `<option value="${escapeHtml(coachName(cid) || '')}"></option>`).join('')}</datalist>
-                <input id="tr-fsport" list="tr-fsport-dl" placeholder="🔍 ${st.fcoach === 'all' ? t('All sports', 'كل الرياضات') : t('All his sports', 'كل رياضاته')}" value="${st.fsport === 'all' ? '' : escapeHtml(st.fsport)}" style="${selStyle}" />
-                <datalist id="tr-fsport-dl">${sportsInList.map(s => `<option value="${escapeHtml(s)}"></option>`).join('')}</datalist>
+                <!-- v6.994.0 — dropdown lists (were type-to-search boxes) -->
+                <select id="tr-fcoach" style="${selStyle}"><option value="all">${t('All coaches', 'كل المدربين')}</option>${coachIdsInList.map(cid => `<option value="${cid}" ${String(st.fcoach) === String(cid) ? 'selected' : ''}>${escapeHtml(coachName(cid) || '')}</option>`).join('')}</select>
+                <select id="tr-fsport" style="${selStyle}"><option value="all">${st.fcoach === 'all' ? t('All sports', 'كل الرياضات') : t('All his sports', 'كل رياضاته')}</option>${sportsInList.map(s => `<option value="${escapeHtml(s)}" ${st.fsport === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}</select>
               </div>
               <input id="tr-fromq" placeholder="🔍 ${t('Search name (EN/AR) or mobile…', 'ابحث بالاسم (عربي/إنجليزي) أو الجوال…')}" value="${escapeHtml(st.fromQ)}" style="${inputStyle};margin-bottom:8px" />
               <div class="text-mute" style="font-size:11px;margin-bottom:6px">${fromFiltered.length} ${t('of', 'من')} ${eligible.length} ${t('transferable members', 'عضو قابل للنقل')}${fromFiltered.length > 40 ? ' · ' + t('showing first 40', 'أول 40') : ''}</div>
@@ -39782,9 +39803,9 @@ PAGES.transfers = (main) => {
   // Wiring
   document.querySelectorAll('[data-trtab]').forEach(b => b.addEventListener('click', () => { st.tab = b.dataset.trtab; render(); }));
   // v6.619 — coach/sport are searchable datalist inputs: map the typed/picked text back to an id/sport.
-  $('#tr-fsport')?.addEventListener('change', e => { const v = (e.target.value || '').trim(); st.fsport = (v && sportsInList.some(s => s.toLowerCase() === v.toLowerCase())) ? sportsInList.find(s => s.toLowerCase() === v.toLowerCase()) : 'all'; render(); });
+  $('#tr-fsport')?.addEventListener('change', e => { const v = e.target.value; st.fsport = (v && v !== 'all' && sportsInList.includes(v)) ? v : 'all'; render(); });
   // Switching coach resets the sport pick so the sport list re-narrows to the new coach's sports.
-  $('#tr-fcoach')?.addEventListener('change', e => { const v = (e.target.value || '').trim(); const hit = v ? coachIdsInList.find(cid => (coachName(cid) || '').toLowerCase() === v.toLowerCase()) : null; st.fcoach = (hit != null) ? String(hit) : 'all'; st.fsport = 'all'; render(); });
+  $('#tr-fcoach')?.addEventListener('change', e => { const v = e.target.value; const hit = (v && v !== 'all') ? coachIdsInList.find(cid => String(cid) === String(v)) : null; st.fcoach = (hit != null) ? String(hit) : 'all'; st.fsport = 'all'; render(); });
   $('#tr-fromq')?.addEventListener('input', e => { st.fromQ = e.target.value; render(); setTimeout(() => { const el = $('#tr-fromq'); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }, 0); });
   document.querySelectorAll('input[name="tr-sport"]').forEach(r => r.addEventListener('change', e => { st.sport = e.target.value; st.toId = null; render(); }));
   $('#tr-toq')?.addEventListener('input', e => { st.toQ = e.target.value; render(); setTimeout(() => { const el = $('#tr-toq'); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }, 0); });
@@ -39798,12 +39819,12 @@ PAGES.transfers = (main) => {
         '<div>' + t('From', 'من') + ' <b>' + escapeHtml(fromMember.name) + '</b> (' + escapeHtml(selEnr.sport) + ' · ' + escapeHtml(coachName(selEnr.coachId) || '—') + ') ' + t('to', 'إلى') + ' <b>' + escapeHtml(toMember.name) + '</b></div>' +
         '<div class="text-mute">' + t('Remaining moved', 'المحوّل من المتبقي') + ': ' + _num.classes + ' ' + t('classes', 'حصة') + ' · ' + fmt(c.V) + ' QAR</div>' +
         lines.map(L => '<div>• <b>' + L.classes + '</b> × ' + escapeHtml(L.sport) + ' · ' + escapeHtml(coachName(L.coachId) || '—') + ' — <b>' + fmt(L.price) + '</b> QAR</div>').join('') +
-        (c.diff > 0.005 ? '<div style="color:#b45309">' + t('Paid now', 'مدفوع الآن') + ': <b>' + fmt(c.payAmt) + '</b> ' + escapeHtml(st.plan.payMethod) + (c.due > 0.005 ? ' · ' + t('stays due', 'يبقى مستحقاً') + ' ' + fmt(c.due) : '') + '</div>' : '') + '</div>',
+        (c.diff > 0.005 ? '<div style="color:#b45309">' + t('Paid now', 'مدفوع الآن') + ': <b>' + fmt(c.payAmt) + '</b> (' + c.payList.map(p => escapeHtml(p.method) + ' ' + fmt(p.amount)).join(' + ') + ')' + (c.due > 0.005 ? ' · ' + t('stays due', 'يبقى مستحقاً') + ' ' + fmt(c.due) : '') + '</div>' : '') + '</div>',
       actions: [
         { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
         { label: '🔁 ' + t('Transfer', 'نقل'), class: 'btn primary', onclick: () => {
           if (typeof assertCloudWritable === 'function' && !assertCloudWritable('transfer this membership', 'نقل هذا الاشتراك')) return;
-          const ok = window.transferMembership(fromMember.id, selEnr.sport, toMember.id, { lines, pay: { amount: c.payAmt, method: st.plan.payMethod } });
+          const ok = window.transferMembership(fromMember.id, selEnr.sport, toMember.id, { lines, pays: c.payList });
           if (!ok) return;
           const _last = (state.membershipTransfers || []).slice(-1)[0] || {};
           window._trState = { fromId: null, sport: null, toId: null, fromQ: '', toQ: '', plan: null }; closeModal(); render();

@@ -14,7 +14,10 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.993.0';   // 6.993.0 Rentals (court / pool / boxing room): the booking date and the PAYMENT date are separate fields (the payment date is when the money was received);
+const APP_VERSION = '6.996.0';   // 6.996.0 Renew: a package that used ALL its classes before its calendar end renews from the first class already attended beyond it (Malika: 5 Nov), not from the day after its end;
+// prev:   // 6.995.0 Smart transfer: the difference can be split across cash / card / Fawran / bank transfer;
+// prev:   // 6.994.0 Transfer membership: the coach and sport filters are dropdown lists (were type-to-search boxes);
+// prev:   // 6.993.0 Rentals (court / pool / boxing room): the booking date and the PAYMENT date are separate fields (the payment date is when the money was received);
 // prev:   // 6.992.0 Transfer membership: a package whose classes are ALL attended is refused (it used to move as an empty 0-class package); a coach hand-over on the package's last day no longer creates a backwards package, a switch with a negative / invalid new price is refused, and a switch to a camp with no classes left is refused; the sweep tests for transfer / switch sport / switch coach added;
 // prev:   // 6.991.0 Attendance warning popups (Mixed package fully used / no package on this day): bigger text so they read at a glance;
 // prev:   // 6.990.0 Attendance rows: a package whose classes are all attended shows a purple COMPLETED label (like the member card); EXPIRED stays for a finished window; Mixed rows get both labels too;
@@ -599,10 +602,22 @@ function renewalPreviousExpiry(m, sport) {
   const ends = (m && m.subscriptions || []).filter(s => s && (s.activity || '') === sport && s.end && String(s.status || '').toLowerCase() !== 'withdrawn').map(s => String(s.end).slice(0, 10));
   return ends.length ? ends.sort().pop() : null;
 }
+// v6.996.0 — the member's latest package of this sport has had ALL its classes attended (even though its calendar window is still open)
+function runningPackageUsedUp(m, sport) {
+  const subs = (m && m.subscriptions || []).filter(s => s && (s.activity || '') === sport && s.end && String(s.status || '').toLowerCase() !== 'withdrawn' && !s.switchedAwayTo).sort((a, b) => String(a.end).localeCompare(String(b.end)));
+  const last = subs[subs.length - 1]; if (!last) return false;
+  const total = parseInt(last.totalClasses) || 0; if (!(total > 0)) return false;
+  try { const w = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, last) : { from: last.start || null, to: last.end || null }; return (typeof subLiveAttendance === 'function') && subLiveAttendance(m, last, w).y >= total; } catch (_) { return false; }
+}
 function computeRenewalStart(m, sport, today, afterRunning) {
   today = today || TODAY;
   const prevExpiry = renewalPreviousExpiry(m, sport);
   if (!prevExpiry) return { start: today, source: 'today', prevExpiry: null, firstClass: null };
+  // v6.996.0 — a package that used ALL its classes before its calendar end (Malika: 8/8 on 2 Nov, ends 13 Nov, attended again on 5 Nov) renews from the first class beyond it when she already attended one — NOT from the day after its end
+  if (afterRunning && prevExpiry > today && runningPackageUsedUp(m, sport)) {
+    let first = null; try { const ex = (typeof memberExtraClasses === 'function') ? memberExtraClasses(m) : []; const row = (ex || []).find(e => e && e.sport === sport); first = row && (row.days || []).slice().sort().find(d => d <= today) || null; } catch (_) {}
+    if (first) return { start: first, source: 'attendance', prevExpiry, firstClass: first };   // no class beyond the old package yet → the long-standing 'running' rule below (day after its end)
+  }
   // v6.838 — (classic Renew dialog only, afterRunning=true) a package that is STILL RUNNING is renewed from the day after it ends (starting today overlapped it, and right after a switch made a duplicate package)
   if (afterRunning && prevExpiry > today) return { start: addDays(prevExpiry, 1), source: 'running', prevExpiry, firstClass: null };
   const first = renewalAttendanceDates(m, sport).find(d => d > prevExpiry && d <= today) || null;
