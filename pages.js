@@ -2841,7 +2841,8 @@ function viewMember(id) {
           const _switchedTo = s.switchedAwayTo || (Array.isArray(m.sportSwitches)
             ? (m.sportSwitches.find(sw => sw && sw.fromSport === s.activity && String(sw.fromCoachId) === String(s.coachId)) || {}).toSport
             : null);
-          if (_switchedTo) { label = 'switched'; cls = 'switched'; }
+          if (s.transferredToName) { label = 'transferred'; cls = 'transferred'; }   // v6.998.0
+          else if (_switchedTo) { label = 'switched'; cls = 'switched'; }
           else if (isCompleted) { label = 'completed'; cls = 'completed'; }
           else if (s.end && s.end < TODAY) { label = 'expired'; cls = 'expired'; }
           else if (typeof isMemberFrozenAt === 'function' && isMemberFrozenAt(m, TODAY, s.activity) && !(s.end && s.end < TODAY)) { label = 'frozen'; cls = 'frozen'; }   // v6.851 — this sport is frozen
@@ -2859,7 +2860,9 @@ function viewMember(id) {
             // FULL delete: a completed / attended sport — also removes its attendance.
             delBtn = ` <button onclick="event.stopPropagation();deleteSportFull(${m.id}, '${sid}')" title="Delete this sport from the member — also removes its attendance + linked invoice (admin, permanent)" style="background:transparent;border:0;color:var(--red);opacity:.85;cursor:pointer;padding:0 3px;font-size:13px">🗑</button>`;
           }
-          const badge = cls === 'switched'
+          const badge = cls === 'transferred'
+            ? `<span class="badge" style="background:rgba(14,165,233,.16);color:#0369a1;font-weight:700" title="${t('Transferred to', 'منقول إلى')} ${escapeHtml(s.transferredToName || '')}${s.transferredAt ? ' · ' + fmtDate(String(s.transferredAt).slice(0, 10)) : ''} — ${t('the classes attended stay here; the remaining classes moved to him', 'الحصص المحضورة تبقى هنا؛ والباقي انتقل إليه')}">↗ ${t('transferred', 'منقول')} → ${escapeHtml(s.transferredToName || '')}</span>`
+            : cls === 'switched'
             ? `<span class="badge" style="background:rgba(245,158,11,.18);color:var(--accent-2);font-weight:700" title="${t('Switched to', 'محوّل إلى')} ${escapeHtml(_switchedTo)}${s.switchedAt ? ' · ' + fmtDate(s.switchedAt) : ''} — ${t('the coach keeps the classes attended here; the remaining classes moved to the new sport', 'المدرب يحتفظ بالحصص التي حضرها هنا؛ والباقي انتقل للرياضة الجديدة')}">🔀 ${t('switched', 'محوّل')} → ${escapeHtml(_switchedTo)}</span>`
             : cls === 'completed'
               ? `<span class="badge" style="background:rgba(139,92,246,.16);color:#7c3aed;font-weight:700" title="All classes attended">✓ ${label}</span>`
@@ -38813,6 +38816,39 @@ function transferNumbers(A, sport, enr) {
   return { found, coachId, fullClasses, aSub, attended, classes, price, attendedValue, transferValue };
 }
 
+// v6.998.0 — the sender's package STAYS in his history: capped to what he attended (the whole count when nothing was attended), completed, flagged "transferred → receiver"
+function _markSenderTransferred(A, B, sport, coachId, attended, day) {
+  const same = (a, b) => String(a == null ? '' : a) === String(b == null ? '' : b);
+  const subs = (A.subscriptions || []).filter(s => s && (s.activity || '') === sport && String(s.status || '').toLowerCase() !== 'withdrawn');
+  const byStart = (x, y) => String(x.start || '').localeCompare(String(y.start || ''));
+  const cur = (subs.filter(s => coachId == null || s.coachId == null || same(s.coachId, coachId)).sort(byStart).slice(-1)[0]) || subs.sort(byStart).slice(-1)[0] || null;
+  if (!cur) return null;
+  if (attended > 0) cur.totalClasses = attended;
+  cur.status = 'completed'; cur.transferredToId = B.id; cur.transferredToName = B.name; cur.transferredAt = day;
+  return cur;
+}
+// v6.998.0 — moving classes into a package the receiver ALREADY has (same sport + coach): that LINE (with its share of the payments) is folded into the invoice of that package, so the package stays ONE invoice line (two lines for one package are flagged as a duplicate and the commission engine drops the twin). Returns the surviving invoice, or null (then the transfer keeps its own invoice).
+function _foldTransferLine(B, newInv, existingSub, line) {
+  const same = (a, b) => String(a == null ? '' : a) === String(b == null ? '' : b), r2 = x => Math.round((Number(x) || 0) * 100) / 100;
+  if (!newInv || !existingSub || !existingSub.invoiceNumber || !line || newInv.customerId !== B.id || !Array.isArray(newInv.lineItems)) return null;
+  const exInv = (state.invoices || []).find(v => v && !v.deleted && v !== newInv && v.customerId === B.id && v.ref === existingSub.invoiceNumber && (v.category || 'Membership') === 'Membership' && Array.isArray(v.lineItems));
+  if (!exInv) return null;
+  const exLine = exInv.lineItems.find(l => l && l.sport === line.sport && same(l.coachId, line.coachId));
+  const idx = newInv.lineItems.findIndex(l => l && l.sport === line.sport && same(l.coachId, line.coachId) && (parseInt(l.classes) || 0) === (parseInt(line.classes) || 0) && Math.abs((Number(l.price) || 0) - (Number(line.price) || 0)) < 0.005);
+  if (!exLine || idx < 0) return null;
+  const totalBefore = newInv.lineItems.reduce((s, l) => s + (Number(l.price) || 0), 0), share = totalBefore > 0 ? (Number(line.price) || 0) / totalBefore : 1;
+  const toEx = [], keep = [];
+  for (const p of (newInv.payments || [])) { const a = Number(p.amount) || 0, x = r2(a * share), rest = r2(a - x); if (x > 0.004) toEx.push(Object.assign({}, p, { amount: x, pid: String(p.pid || 'p') + '_f' })); if (rest > 0.004) keep.push(Object.assign({}, p, { amount: rest })); }
+  exLine.classes = (parseInt(exLine.classes) || 0) + (parseInt(line.classes) || 0); exLine.price = r2((Number(exLine.price) || 0) + (Number(line.price) || 0));
+  exInv.amount = (typeof invoiceTotal === 'function') ? invoiceTotal(exInv) : exInv.lineItems.reduce((s, l) => s + (Number(l.price) || 0), 0);
+  exInv.payments = (Array.isArray(exInv.payments) ? exInv.payments : []).concat(toEx);
+  exInv.amountPaid = r2(exInv.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0));
+  newInv.lineItems.splice(idx, 1); newInv.amount = r2(newInv.lineItems.reduce((s, l) => s + (Number(l.price) || 0), 0));
+  newInv.payments = keep; newInv.amountPaid = r2(keep.reduce((s, p) => s + (Number(p.amount) || 0), 0));
+  if (!newInv.lineItems.length) { newInv.deleted = true; newInv.deletedAt = new Date().toISOString(); newInv.deletedBy = 'transfer-merge'; }
+  stampUpdate(exInv); stampUpdate(newInv);
+  return exInv;
+}
 // v6.988.0 — SMART TRANSFER: the sender's REMAINING classes + money go to the receiver as one or several lines (sport / coach / classes / price).
 // Same sport + same coach as one of his packages → the classes are ADDED to it; anything else → a new package. If the lines cost more than the moved money, the difference is paid now.
 function _transferCustom(c) {
@@ -38823,7 +38859,7 @@ function _transferCustom(c) {
   const inv = found && found.inv;
   // 1) the sender: the enrollment, the package rows and the headline fields (as in a normal transfer)
   A.enrollments = (A.enrollments || []).filter(e => e.sport !== sport);
-  A.subscriptions = (A.subscriptions || []).filter(s => (s.activity || '') !== sport);
+  _markSenderTransferred(A, B, sport, coachId, attended, start);   // v6.998.0 — his package stays in the history as transferred (it was deleted)
   if (A.sport === sport) { const nextEnr = (A.enrollments || [])[0] || null; A.sport = nextEnr ? nextEnr.sport : ''; A.coachId = nextEnr ? nextEnr.coachId : null; }
   if (A.enrollments && A.enrollments.length) { if (A.status === 'Transferred') A.status = 'Active'; const dd = deriveMemberDates(A.enrollments, A.firstRegistration); A.startDate = dd.startDate; A.expiryDate = dd.expiryDate; }
   else { A.expiryDate = null; A.status = 'Transferred'; }
@@ -38886,7 +38922,7 @@ function _transferCustom(c) {
   // 4) the receiver's packages: add to the same sport + coach, otherwise a new package
   if (!Array.isArray(B.enrollments)) B.enrollments = [];
   if (!Array.isArray(B.subscriptions)) B.subscriptions = [];
-  let lastEnd = null; const landed = [];
+  let lastEnd = null, foldedInv = null; const landed = [];
   lines.forEach((L, k) => {
     const validity = (L.sport === sport) ? (enr.validity || DEFAULT_VALIDITY) : DEFAULT_VALIDITY;
     const end = rowEndDate(L.sport, start, validity, L.classes, null, undefined);
@@ -38896,7 +38932,7 @@ function _transferCustom(c) {
       exEnr.price = r2((parseFloat(exEnr.price) || 0) + L.price);
       if (end && (!exEnr.start || end > addDays(exEnr.start, exEnr.validity || DEFAULT_VALIDITY))) { exEnr.validity = validity; exEnr.start = exEnr.start || start; }
       const exSub = B.subscriptions.filter(s => (s.activity || '') === L.sport && sameCoach(s.coachId, L.coachId) && s.status !== 'Withdrawn').sort((a, b) => String(a.start || '').localeCompare(String(b.start || ''))).slice(-1)[0];
-      if (exSub) { exSub.totalClasses = (parseInt(exSub.totalClasses) || 0) + L.classes; exSub.amountPaid = r2((parseFloat(exSub.amountPaid) || 0) + L.price); if (end && (!exSub.end || end > exSub.end)) exSub.end = end; }
+      if (exSub) { if (_foldTransferLine(B, newInv, exSub, L)) foldedInv = exSub; exSub.totalClasses = (parseInt(exSub.totalClasses) || 0) + L.classes; exSub.amountPaid = r2((parseFloat(exSub.amountPaid) || 0) + L.price); if (end && (!exSub.end || end > exSub.end)) exSub.end = end; }
       landed.push({ sport: L.sport, coachId: L.coachId, merged: true });
     } else {
       B.enrollments.push({ sport: L.sport, coachId: L.coachId, classes: L.classes, price: L.price, start, validity, transferLocked: true });
@@ -38912,7 +38948,7 @@ function _transferCustom(c) {
   state.membershipTransfers.push({
     id: 'mt_' + Date.now(), date: start, sport, coachId, coach: coachName(coachId),
     fromId: A.id, fromName: A.name, toId: B.id, toName: B.name,
-    classes, price: transferValue, fullPrice: price, validity: enr.validity || DEFAULT_VALIDITY, invoiceId: newInv.id,
+    classes, price: transferValue, fullPrice: price, validity: enr.validity || DEFAULT_VALIDITY, invoiceId: foldedInv ? ((state.invoices || []).find(v => v && !v.deleted && v.customerId === B.id && v.ref === foldedInv.invoiceNumber) || newInv).id : newInv.id,
     lines: lines.map(L => ({ sport: L.sport, coachId: L.coachId, coach: coachName(L.coachId), classes: L.classes, price: L.price })), paidNow: r2(payNow.reduce((s, p) => s + p.amount, 0)), paidWith: payNow.map(p => ({ method: p.method, amount: p.amount })), landed,
     createdAt: new Date().toISOString(),
   });
@@ -38945,9 +38981,10 @@ window.transferMembership = function(fromId, sport, toId, plan) {
       if (isCampSport(sp)) { toast('A Summer Camp cannot receive a transfer', 'error'); return false; }
       if (!(cl >= 1)) { toast('Classes must be at least 1 on every line', 'error'); return false; }
       if (!(pr >= 0)) { toast('A price is not valid', 'error'); return false; }
-      const co = (L.coachId === '' || L.coachId == null) ? null : (state.coaches || []).find(x => x && !x.deleted && String(x.id) === String(L.coachId));
-      if (!co) { toast('Pick a coach for ' + sp, 'error'); return false; }
-      lines.push({ sport: sp, coachId: co.id, classes: cl, price: pr });
+      const _noCoach = sp === MIXED;   // v6.997.0 — a Mixed package has no single coach (each class takes its own sport + coach when it is marked)
+      const co = _noCoach ? null : ((L.coachId === '' || L.coachId == null) ? null : (state.coaches || []).find(x => x && !x.deleted && String(x.id) === String(L.coachId)));
+      if (!_noCoach && !co) { toast('Pick a coach for ' + sp, 'error'); return false; }
+      lines.push({ sport: sp, coachId: _noCoach ? null : co.id, classes: cl, price: pr });
     }
     const total = r2(lines.reduce((s, L) => s + L.price, 0)), diff = r2(total - transferValue);
     if (diff < -0.005) { toast('The lines cost ' + fmt(total) + ' — less than the money moved (' + fmt(transferValue) + '). Raise a price so the whole balance is used.', 'error'); return false; }
@@ -38978,8 +39015,8 @@ window.transferMembership = function(fromId, sport, toId, plan) {
 
   // 1) Remove the enrollment from A.
   A.enrollments = (A.enrollments || []).filter(e => e.sport !== sport);
-  // 2) Remove A's subscription history rows for this sport (the membership moves out).
-  A.subscriptions = (A.subscriptions || []).filter(s => (s.activity || '') !== sport);
+  // 2) v6.998.0 — A's package of this sport STAYS in his history (capped to what he attended, completed, flagged transferred → B); it used to be deleted.
+  _markSenderTransferred(A, B, sport, coachId, attended, start);
   // 2b) Repair A's headline fields if the transferred sport was their primary
   //     one (same pattern as deleteMemberSport / switchSport) so the profile and
   //     members list don't keep showing the moved sport with a stale expiry.
@@ -39127,6 +39164,7 @@ window.transferMembership = function(fromId, sport, toId, plan) {
     ? B.subscriptions.find(s => (s.activity || '') === sport && String(s.coachId == null ? '' : s.coachId) === String(coachId == null ? '' : coachId) && s.status !== 'Withdrawn')   // v6.634 — string-normalized coachId (else a "5" vs 5 makes a duplicate sub)
     : null;
   if (bExistingSub) {
+    { const _f = (_invObj && Array.isArray(_invObj.lineItems) && _invObj.lineItems.length === 1) ? _foldTransferLine(B, _invObj, bExistingSub, _invObj.lineItems[0]) : null; if (_f) invId = _f.id; }   // v6.998.0 — one package = ONE invoice line (no duplicate-line warning, no dropped commission)
     bExistingSub.totalClasses = (parseInt(bExistingSub.totalClasses) || 0) + classes;
     bExistingSub.amountPaid = (parseFloat(bExistingSub.amountPaid) || 0) + transferValue;
     if (end && (!bExistingSub.end || end > bExistingSub.end)) bExistingSub.end = end;
@@ -39601,7 +39639,7 @@ PAGES.transfers = (main) => {
   const planCalc = () => {
     const p = st.plan; if (!p || !_num) return null;
     const total = _r2(p.lines.reduce((s, L) => s + (Number(L.price) || 0), 0)), Vm = _num.transferValue, diff = _r2(total - Vm), errs = [];
-    p.lines.forEach((L, i) => { const n = i + 1; if (!L.sport) errs.push(t('Line ' + n + ': pick a sport', 'السطر ' + n + ': اختر رياضة')); else if (!(parseInt(L.classes) >= 1)) errs.push(t('Line ' + n + ': classes must be at least 1', 'السطر ' + n + ': الحصص 1 على الأقل')); else if (L.coachId == null || L.coachId === '') errs.push(t('Line ' + n + ': pick a coach', 'السطر ' + n + ': اختر مدرباً')); else if (!(Number(L.price) >= 0)) errs.push(t('Line ' + n + ': price is not valid', 'السطر ' + n + ': السعر غير صالح')); });
+    p.lines.forEach((L, i) => { const n = i + 1; if (!L.sport) errs.push(t('Line ' + n + ': pick a sport', 'السطر ' + n + ': اختر رياضة')); else if (!(parseInt(L.classes) >= 1)) errs.push(t('Line ' + n + ': classes must be at least 1', 'السطر ' + n + ': الحصص 1 على الأقل')); else if ((L.coachId == null || L.coachId === '') && L.sport !== MIXED) errs.push(t('Line ' + n + ': pick a coach', 'السطر ' + n + ': اختر مدرباً')); else if (!(Number(L.price) >= 0)) errs.push(t('Line ' + n + ': price is not valid', 'السطر ' + n + ': السعر غير صالح')); });
     if (diff < -0.005) errs.push(t('The lines cost ' + fmt(total) + ' — less than the moved money (' + fmt(Vm) + '). Raise a price so the whole balance is used.', 'مجموع الأسطر ' + fmt(total) + ' أقل من المبلغ المحوّل (' + fmt(Vm) + '). ارفع سعراً ليُستخدم الرصيد كله.'));
     // v6.995.0 — the difference is paid with one or several methods; untouched = all of it in cash
     const _methods = ['cash', 'card', 'fawran', 'transfer'], paysEff = {};

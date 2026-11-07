@@ -14,7 +14,9 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.996.0';   // 6.996.0 Renew: a package that used ALL its classes before its calendar end renews from the first class already attended beyond it (Malika: 5 Nov), not from the day after its end;
+const APP_VERSION = '6.998.0';   // 6.998.0 Transfer membership: the SENDER's package stays visible (capped at what he attended, 'transferred → receiver'); moving classes into a package the receiver already has folds them into that package's ONE invoice line (no more 'billed on 2 invoice lines' warning / dropped commission);
+// prev:   // 6.997.0 Transfer membership: a line to MIXED needs no coach (it asked for one and blocked the transfer);
+// prev:   // 6.996.0 Renew: a package that used ALL its classes before its calendar end renews from the first class already attended beyond it (Malika: 5 Nov), not from the day after its end;
 // prev:   // 6.995.0 Smart transfer: the difference can be split across cash / card / Fawran / bank transfer;
 // prev:   // 6.994.0 Transfer membership: the coach and sport filters are dropdown lists (were type-to-search boxes);
 // prev:   // 6.993.0 Rentals (court / pool / boxing room): the booking date and the PAYMENT date are separate fields (the payment date is when the money was received);
