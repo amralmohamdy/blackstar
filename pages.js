@@ -2838,9 +2838,15 @@ function viewMember(id) {
           // flagged "switched" (it was re-deriving as "active" because its end date hadn't passed). The
           // coach kept the classes attended here; the rest moved to the new sport. Detect BOTH a
           // reconciled switch (s.switchedAwayTo) AND an old-way one recorded only in m.sportSwitches.
-          const _switchedTo = s.switchedAwayTo || (Array.isArray(m.sportSwitches)
-            ? (m.sportSwitches.find(sw => sw && sw.fromSport === s.activity && String(sw.fromCoachId) === String(s.coachId)) || {}).toSport
-            : null);
+          // v6.1000.0 — the sportSwitches fallback used to flag EVERY package of that sport + coach as switched (an older, finished 8/8 package read "switched → Mixed"). Now: only when no package carries the reconciled switch, and only the package the switch belongs to (the latest one that started on/before the switch date).
+          const _switchedTo = s.switchedAwayTo || (() => {
+            if (!Array.isArray(m.sportSwitches)) return null;
+            const sw = m.sportSwitches.find(x => x && x.fromSport === s.activity && String(x.fromCoachId) === String(s.coachId)); if (!sw) return null;
+            const sib = (m.subscriptions || []).filter(x => x && (x.activity || '') === s.activity && String(x.coachId) === String(s.coachId));
+            if (sib.some(x => x.switchedAwayTo)) return null;
+            const cands = sib.filter(x => !sw.date || !x.start || String(x.start) <= String(sw.date)).sort((a, b) => String(a.start || '').localeCompare(String(b.start || '')));
+            return (cands[cands.length - 1] === s) ? sw.toSport : null;
+          })();
           if (s.transferredToName) { label = 'transferred'; cls = 'transferred'; }   // v6.998.0
           else if (_switchedTo) { label = 'switched'; cls = 'switched'; }
           else if (isCompleted) { label = 'completed'; cls = 'completed'; }
@@ -2861,7 +2867,7 @@ function viewMember(id) {
             delBtn = ` <button onclick="event.stopPropagation();deleteSportFull(${m.id}, '${sid}')" title="Delete this sport from the member — also removes its attendance + linked invoice (admin, permanent)" style="background:transparent;border:0;color:var(--red);opacity:.85;cursor:pointer;padding:0 3px;font-size:13px">🗑</button>`;
           }
           const badge = cls === 'transferred'
-            ? `<span class="badge" style="background:rgba(14,165,233,.16);color:#0369a1;font-weight:700" title="${t('Transferred to', 'منقول إلى')} ${escapeHtml(s.transferredToName || '')}${s.transferredAt ? ' · ' + fmtDate(String(s.transferredAt).slice(0, 10)) : ''} — ${t('the classes attended stay here; the remaining classes moved to him', 'الحصص المحضورة تبقى هنا؛ والباقي انتقل إليه')}">↗ ${t('transferred', 'منقول')} → ${escapeHtml(s.transferredToName || '')}</span>`
+            ? `<span class="badge" ${((s.transferredToId != null) && (state.members || []).some(x => x && x.id === s.transferredToId)) ? `onclick="event.stopPropagation();viewMember(${s.transferredToId})" ` : ''}style="background:rgba(14,165,233,.16);color:#0369a1;font-weight:700;${((s.transferredToId != null) && (state.members || []).some(x => x && x.id === s.transferredToId)) ? 'cursor:pointer;text-decoration:underline' : ''}" title="${((s.transferredToId != null) && (state.members || []).some(x => x && x.id === s.transferredToId)) ? t('Click to open his profile — ', 'اضغط لفتح ملفه — ') : ''}${t('Transferred to', 'منقول إلى')} ${escapeHtml(s.transferredToName || '')}${s.transferredAt ? ' · ' + fmtDate(String(s.transferredAt).slice(0, 10)) : ''} — ${t('the classes attended stay here; the remaining classes moved to him', 'الحصص المحضورة تبقى هنا؛ والباقي انتقل إليه')}">↗ ${t('transferred', 'منقول')} → ${escapeHtml(s.transferredToName || '')}</span>`
             : cls === 'switched'
             ? `<span class="badge" style="background:rgba(245,158,11,.18);color:var(--accent-2);font-weight:700" title="${t('Switched to', 'محوّل إلى')} ${escapeHtml(_switchedTo)}${s.switchedAt ? ' · ' + fmtDate(s.switchedAt) : ''} — ${t('the coach keeps the classes attended here; the remaining classes moved to the new sport', 'المدرب يحتفظ بالحصص التي حضرها هنا؛ والباقي انتقل للرياضة الجديدة')}">🔀 ${t('switched', 'محوّل')} → ${escapeHtml(_switchedTo)}</span>`
             : cls === 'completed'
@@ -2918,7 +2924,7 @@ function viewMember(id) {
           <div style="${small};margin-top:3px">${fa.att}/${fa.tot} + ${fb.att}/${fb.tot}</div>
         </div></td>
         ${isViewerRole() ? '' : `<td class="text-right num">${(pa + pb) ? fmt(pa + pb) : '—'}<div style="${small}">${fmt(pa)} + ${fmt(pb)}</div></td>`}
-        <td>${sb.badge}${line(`<span style="${small}">${escapeHtml(src.activity || '')}</span> ${sa.acts}`, `<span style="${small}">${escapeHtml(s.activity || '')}</span> ${sb.acts}`)}</td>
+        <td>${sb.badge}${(sa.badge && sa.badge !== sb.badge) ? `<div style="margin-top:3px">${sa.badge}</div>` : ''}${line(`<span style="${small}">${escapeHtml(src.activity || '')}</span> ${sa.acts}`, `<span style="${small}">${escapeHtml(s.activity || '')}</span> ${sb.acts}`)}</td>
       </tr>
     `;
   }).join('');
