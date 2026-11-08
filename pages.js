@@ -23318,7 +23318,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
             <tr${l._dupIgnored ? ' style="background:#fafafa;color:#b0b0b0"' : ''}>
               <td style="color:#999">${n}</td>
               <td>${l._dupIgnored ? `<span style="text-decoration:line-through">${escapeHtml(l.memberName)}</span> <span class="badge" style="background:#fee2e2;color:#b91c1c">DUPLICATE — NOT PAID</span>` : escapeHtml(l.memberName)}${_arNameOf(l, true)}${l.isSwitch ? '<span class="badge">SWITCH</span>' : ''}${l._kind === 'trueup'
-                ? `<div style="margin-top:3px"><span style="display:inline-block;background:#fff7ed;color:#9a3412;border:1px solid #fdba74;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700;line-height:1.4">⏳ EXPIRED — ${l._trueupClasses} paid class${l._trueupClasses === 1 ? '' : 'es'} not attended, paid in full</span></div>`
+                ? `<div style="margin-top:3px"><span style="display:inline-block;background:#fef08a;color:#713f12;border:1px solid #eab308;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:700;line-height:1.4">⏳ EXPIRED — ${l._trueupClasses} paid class${l._trueupClasses === 1 ? '' : 'es'} not attended${(l.total && l.attended != null && (l.total - l.attended) > l._trueupClasses) ? ' (of ' + (l.total - l.attended) + ' unattended — only ' + l._trueupClasses + ' paid)' : ''}</span></div>`
                 : `<div style="color:#999;font-size:10px">${escapeHtml(l.invoiceRef || '')}${l.invoiceDate ? ' · ' + fmtDate(l.invoiceDate) : ''}</div>`}</td>
               <td>${escapeHtml(l.sport || '—')}${_privTagHtml(l.priv, true)}</td>
               <td style="font-size:11px">${l.start ? fmtDate(l.start) : '—'}</td>
