@@ -23544,6 +23544,20 @@ PAGES.products = (main) => {
       actions: [{ label: t('Close', 'إغلاق'), class: 'btn primary', onclick: closeModal }],
     });
   };   // v6.971.0 — total row under the SKUs
+  // v6.1002 — click the Out of stock card → popup of every SKU at 0 stock (with Restock)
+  window.showOutOfStock = function() {
+    const money = !isViewerRole();
+    const items = (state.products || []).filter(p => productCurrentStock(p.id) === 0).sort((a, b) => String(a.category || '').localeCompare(String(b.category || '')) || String(a.name || '').localeCompare(String(b.name || '')));
+    showModal({
+      title: '⛔ ' + t('Out of stock', 'نفد المخزون') + ' — ' + items.length,
+      body: items.length ? `<div class="table-wrap"><table><thead><tr><th>#</th><th>${t('Product', 'المنتج')}</th><th>SKU</th><th>${t('Category', 'الفئة')}</th><th class="text-right">${t('Sell price', 'سعر البيع')}</th><th></th></tr></thead><tbody>${items.map((p, i) => `<tr>
+          <td class="text-mute num">${i + 1}</td><td class="font-bold">${escapeHtml(p.name || '—')}</td><td>${escapeHtml(p.sku || '—')}</td><td><span class="badge">${escapeHtml(p.category || '—')}</span></td>
+          <td class="text-right num">${fmt(p.price || 0)}</td>
+          <td class="text-right" style="white-space:nowrap"><button class="btn ghost sm" onclick="closeModal();restockProduct(${p.id})">➕ ${t('Restock', 'إعادة تخزين')}</button></td></tr>`).join('')}</tbody></table></div>`
+        : `<div class="empty"><div class="empty-icon">✅</div>${t('Nothing is out of stock', 'لا يوجد ما نفد')}</div>`,
+      actions: [{ label: t('Close', 'إغلاق'), class: 'btn primary', onclick: closeModal }],
+    });
+  };
 
   function refresh() {
     const all = applyFilter();
@@ -23623,7 +23637,7 @@ PAGES.products = (main) => {
         <div class="kpi-value">${totalUnits}</div>
         <div class="kpi-sub">${t('units across all products', 'قطعة عبر كل المنتجات')}</div>
       </div>
-      <div class="kpi red">
+      <div class="kpi red" style="cursor:pointer" onclick="showOutOfStock()" title="${t('Click to see what is out of stock', 'اضغط لعرض ما نفد')}">
         <div class="kpi-label">⛔ ${t('Out of stock', 'نفد المخزون')}</div>
         <div class="kpi-value">${outCount}</div>
         <div class="kpi-sub">${t('need restocking', 'يحتاج إعادة تخزين')}</div>
