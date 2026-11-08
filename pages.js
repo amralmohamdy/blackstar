@@ -23096,9 +23096,10 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
         return { memberName: r.member, memberId: /^m/.test(String(r.mid || '')) ? String(r.mid).slice(1) : null, mid: r.mid, sport: r.sport, price: r.base, priv: r.priv || '', _kind: r.kind, start: w.start || r.start || null, end: w.end || null, attended: w.attended, total: w.total, status: w.status || '',
           fee: (w.perClass != null && w.total) ? Math.round(w.perClass * w.total * 100) / 100 : null, _dc: r.classes, _days: r.days || [] };
       });
-      const commSum = mapped.reduce((s, l) => s + _lineComm(l, rate, pct, allPriv), 0);
+      const shown = mapped.filter(l => !(Math.abs(l.price) < 1 && Math.abs(_lineComm(l, rate, pct, allPriv)) < 0.5));   // v6.1006 — a rounding crumb (< 1 QAR) is not a row: it folds into the "rounding" line below
+      const commSum = shown.reduce((s, l) => s + _lineComm(l, rate, pct, allPriv), 0);
       const rest = Math.round((it.amount - (commSum - (it.paidAbove || 0))) * 100) / 100;
-      const body = mapped.map((l, i) => '<tr><td style="color:#999">' + (i + 1) + '</td><td>' + escapeHtml(l.memberName || '') + _arNameOf(l, true)
+      const body = shown.map((l, i) => '<tr><td style="color:#999">' + (i + 1) + '</td><td>' + escapeHtml(l.memberName || '') + _arNameOf(l, true)
         + (l._days.length ? '<div style="color:#999;font-size:10px">Classes: ' + l._days.map(d => fmtDate(d)).join(', ') + '</div>' : (l._kind === 'trueup' ? '<div style="color:#999;font-size:10px">expiry true-up</div>' : ''))
         + '</td><td>' + escapeHtml(l.sport || '—') + _privTagHtml(l.priv, true) + '</td><td style="font-size:11px">' + (l.start ? fmtDate(l.start) : '—') + '</td><td style="font-size:11px">' + (l.end ? fmtDate(l.end) : '—') + '</td>'
         + '<td style="font-size:11px">' + (l._dc > 0 ? '+' : '') + l._dc + (l.total ? ' / ' + l.total : '') + '</td><td style="font-size:11px">' + escapeHtml(l.status || '—') + '</td>'
