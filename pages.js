@@ -8478,6 +8478,18 @@ window.markReminded = function(id, opts) {
   return true;
 };
 
+// v6.1007 — mark a reminder on a walk-in's INVOICE (no member record): max 3, dates kept in inv.reminderDates.
+window.markInvReminded = function(id) {
+  const inv = (state.invoices || []).find(x => x && x.id === id); if (!inv) return false;
+  if (!Array.isArray(inv.reminderDates)) inv.reminderDates = [];
+  if (inv.reminderDates.length >= MAX_REMINDERS) { toast(`${inv.ref || 'This invoice'} has already been reminded ${MAX_REMINDERS} times.`, 'info'); return false; }
+  inv.reminderDates.push(TODAY);
+  if (typeof audit === 'function') audit('invoice.remind', 'invoice:' + id, `payment reminder #${inv.reminderDates.length} sent`);
+  save();
+  render();
+  return true;
+};
+
 // ─── Club Revenue Summary ────────────────────────────────────────────
 // Per-sport and per-coach revenue + commission, for a chosen month or "all
 // time". Reads from invoice line items so it stays correct with switch/split
@@ -9366,6 +9378,7 @@ PAGES.duepayment = (main) => {
   // v6.769 — EVERY due: also the invoices of people who are NOT members (walk-in rentals, hall, products, an archived member).
   // One row per invoice; Collect opens that invoice's payment dialog. (Reconciliation's "Due" already counts them.)
   const _liveMember = id => id != null && (state.members || []).some(m => m && m.id === id && !m.deleted);
+  const _invRemind = inv => { const d = Array.isArray(inv.reminderDates) ? inv.reminderDates : []; return { count: d.length, last: d[d.length - 1] || null }; };   // v6.1007 — a walk-in's reminders are kept on its invoice
   for (const inv of (state.invoices || [])) {
     if (!inv || inv.deleted || inv.switchCredit || inv.activityType === 'switch-credit' || _liveMember(inv.customerId)) continue;
     if (f.months.length && !f.months.includes(inv.month || String(inv.date || '').slice(0, 7))) continue;
@@ -9374,7 +9387,7 @@ PAGES.duepayment = (main) => {
     const info = (typeof customerInfo === 'function' ? (customerInfo(inv) || {}) : {});
     const nm = inv.customerName || info.name || inv.description || '—';
     const cat = inv.category || inv.sport || 'Other';
-    all.push({ walk: true, inv, refs: [String(inv.ref || '#' + inv.id)], m: { id: null, name: nm, nameArabic: '', phone: inv.customerPhone || info.phone || '' }, total: bal, bySport: { [cat]: bal }, st: 'Walk-in', expiry: null, lastReminded: null, remind: { count: 0, last: null }, age: 0, needs: false });
+    all.push({ walk: true, inv, refs: [String(inv.ref || '#' + inv.id)], m: { id: null, name: nm, nameArabic: '', phone: inv.customerPhone || info.phone || '' }, total: bal, bySport: { [cat]: bal }, st: 'Walk-in', expiry: null, lastReminded: null, remind: _invRemind(inv), age: 0, needs: false });
   }
 
   // Apply filters
@@ -9619,8 +9632,36 @@ Black Stars Academy`;
     return `https://wa.me/${digits}?text=${encodeURIComponent(msg)}`;
   };
 
+  // v6.1007 — WhatsApp reminder for a walk-in (court rental / product / hall / ex-member invoice): same 3 escalating tones, worded for a customer instead of a parent.
+  const buildWalkInReminderMsg = (r, level) => {
+    const inv = r.inv || {}, cat = Object.keys(r.bySport || {})[0] || inv.category || '';
+    const catAr = (typeof sportNameAR === 'function') ? sportNameAR(cat) : cat;
+    const nm = r.m.name || '', lvl = Math.max(1, Math.min(3, parseInt(level) || 1));
+    const arItem = `• ${catAr}: ${fmt(r.total)} ر.ق${inv.ref ? ' (فاتورة ' + inv.ref + (inv.date ? ' — ' + fmtDate(inv.date) : '') + ')' : ''}`;
+    const enItem = `• ${cat}: ${fmt(r.total)} QAR${inv.ref ? ' (invoice ' + inv.ref + (inv.date ? ' — ' + fmtDate(inv.date) : '') + ')' : ''}`;
+    let ar, en;
+    if (lvl === 1) {
+      ar = `🌟 عزيزنا ${nm}،\nنتمنى أن تكونوا بخير. نود تذكيركم بلطف من أكاديمية بلاك ستارز بوجود مبلغ مستحق:\n\n${arItem}\n\nنرجو التكرم بالسداد في أقرب وقت ممكن.\nفي حال تم الدفع مسبقًا يرجى تجاهل هذه الرسالة.\nشكرًا لتعاونكم 🌟\nأكاديمية بلاك ستارز`;
+      en = `🌟 Dear ${nm},\nWe hope you are well. This is a gentle reminder from Black Stars Academy of an outstanding amount:\n\n${enItem}\n\nKindly settle it at your earliest convenience.\nIf you have already paid, please disregard this message.\nThank you for your cooperation 🌟\nBlack Stars Academy`;
+    } else if (lvl === 2) {
+      ar = `🔔 عزيزنا ${nm}،\nهذا تذكير ثانٍ من أكاديمية بلاك ستارز بشأن مبلغ متأخر:\n\n${arItem}\n\nنرجو سداد المبلغ في أقرب وقت. في حال تم الدفع يرجى تجاهل الرسالة مع الشكر.\nأكاديمية بلاك ستارز`;
+      en = `🔔 Dear ${nm},\nThis is a second reminder from Black Stars Academy about an overdue amount:\n\n${enItem}\n\nPlease settle it as soon as possible. If you have already paid, please disregard this message with our thanks.\nBlack Stars Academy`;
+    } else {
+      ar = `⚠️ إشعار أخير — عزيزنا ${nm}،\nرغم التذكيرات السابقة لا يزال المبلغ التالي غير مسدد:\n\n${arItem}\n\nنرجو السداد فورًا أو التواصل معنا بالرد على هذه الرسالة لترتيب الدفع.\nشكرًا لتفهمكم.\nأكاديمية بلاك ستارز`;
+      en = `⚠️ Final Notice — Dear ${nm},\nDespite our previous reminders, the following amount remains unpaid:\n\n${enItem}\n\nPlease settle it immediately, or reply to this message to arrange payment.\nThank you for your understanding.\nBlack Stars Academy`;
+    }
+    return ar + '\n\n———\n\n' + en;
+  };
+  const waLinkWalk = (r) => {
+    let digits = String(r.m.phone || '').replace(/\D/g, '');
+    if (!digits) return null;
+    if (digits.startsWith('00')) digits = digits.slice(2);
+    if (digits.length === 8) digits = '974' + digits;
+    return `https://wa.me/${digits}?text=${encodeURIComponent(buildWalkInReminderMsg(r, Math.min(3, (r.remind.count || 0) + 1)))}`;
+  };
+
   const rowHtml = list.length ? list.map((r, i) => {
-    const wa = r.walk ? null : waLink(r.m, r.total);
+    const wa = r.walk ? waLinkWalk(r) : waLink(r.m, r.total);
     const sportChips = Object.entries(r.bySport).map(([sp, amt]) => `<span class="badge" style="font-size:10px;background:rgba(242,163,60,.15);color:var(--accent-2)" title="${escapeHtml(sp)}: ${fmt(amt)} QAR due">${escapeHtml(sp)} · ${fmt(amt)}</span>`).join(' ');
     return `<tr>
       <td class="text-mute" style="text-align:center;font-size:12px">${i + 1}</td>
@@ -9647,7 +9688,7 @@ Black Stars Academy`;
           const disabled = sent >= 3;
           return disabled
             ? `<span class="btn ghost sm" style="opacity:.5;cursor:default" title="${t('All 3 reminders sent this cycle', 'تم إرسال 3 تذكيرات هذه الدورة')}">✓ ${t('Reminded', 'تم التذكير')}</span>`
-            : `<a class="btn ghost sm" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;${lvlColor}" href="${wa}" target="_blank" rel="noopener" onclick="markReminded(${r.m.id})" title="${t('Send', 'إرسال')}: ${lvlLabel}">${lvlIcon} ${lvlLabel}</a>`;
+            : `<a class="btn ghost sm" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;${lvlColor}" href="${wa}" target="_blank" rel="noopener" onclick="${r.walk ? 'markInvReminded(' + r.inv.id + ')' : 'markReminded(' + r.m.id + ')'}" title="${t('Send', 'إرسال')}: ${lvlLabel}">${lvlIcon} ${lvlLabel}</a>`;
         })()}
         ${r.walk ? '' : `<button class="btn ghost sm" onclick="viewMember(${r.m.id})" title="${t('Open profile', 'فتح الملف')}">👁</button>`}
         ${(r.walk && r.inv && r.inv.customerId != null && !r.inv.rentalId && currentRole() === 'admin') ? `<button class="btn ghost sm" style="color:var(--red)" onclick="dueArchiveInvoice(${r.inv.id})" title="${t('This person is no longer a member — archive this invoice (it leaves Due Payment)', 'لم يعد عضواً — أرشفة هذه الفاتورة (تخرج من المستحقات)')}">🗑 ${t('Archive', 'أرشفة')}</button>` : ''}
