@@ -22807,6 +22807,32 @@ window.coachAttributionCheck = function () {
 // attended, resize the destination sub to the remaining classes, split the invoice line prices
 // (source→aShare, dest→bShare) so the one package is one split payment, and void the now-redundant
 // switch-credit invoice. (v6.440)
+function _switchSourceSub(subs, date) {
+  const list = (subs || []).filter(s => s && s.start).sort((a, b) => String(a.start).localeCompare(String(b.start)));
+  if (!list.length) return (subs || [])[0] || null;
+  const d = String(date || '').slice(0, 10);
+  if (!d) return list[list.length - 1];
+  const covering = list.filter(s => s.start <= d && (!s.end || s.end >= d));
+  if (covering.length) return covering[covering.length - 1];
+  const before = list.filter(s => s.start <= d);
+  return before.length ? before[before.length - 1] : list[0];
+}
+// v6.1008 — would re-splitting this switch's invoice leave it PAID for more than its new total? Then the reconcile must not silently shrink a paid invoice: it holds and says so.
+function _switchReconcileHold(m, sw, snap, fromSub) {
+  const toSub = (m.subscriptions || []).find(s => (s.activity || '') === sw.toSport && String(s.coachId) === String(sw.toCoachId));
+  const invRef = fromSub.invoiceNumber || (toSub && toSub.invoiceNumber);
+  const inv = (state.invoices || []).find(v => !v.deleted && !v.switchCredit && v.customerId === m.id
+    && (v.ref === invRef || (Array.isArray(v.lineItems) && v.lineItems.some(li => li.sport === sw.fromSport && li.coachId === sw.fromCoachId))));
+  if (!inv || !Array.isArray(inv.lineItems)) return null;
+  const fl = inv.lineItems.find(li => li.sport === sw.fromSport && String(li.coachId) === String(sw.fromCoachId));
+  const tl = inv.lineItems.find(li => li.sport === sw.toSport && String(li.coachId) === String(sw.toCoachId));
+  if (!fl && !tl) return null;
+  const aShare = Math.round((Number(snap.aShare) || 0) * 100) / 100, bShare = Math.round((Number(snap.bShare) || 0) * 100) / 100;
+  const others = inv.lineItems.reduce((s, li) => (li === fl || li === tl) ? s : s + (Number(li.price) || 0), 0);
+  const newTotal = Math.round((others + (fl ? aShare : 0) + (tl ? bShare : 0)) * 100) / 100;
+  const paid = Math.round(invoicePaid(inv) * 100) / 100;
+  return paid > newTotal + 0.5 ? { ref: inv.ref, paid, newTotal } : null;
+}
 function _switchedUnreconciled() {
   const out = [];
   for (const m of (state.members || [])) {
@@ -22816,18 +22842,25 @@ function _switchedUnreconciled() {
       // v6.486: String-normalize coachId (a legacy string "5" must match a numeric 5) so this detection
       // agrees with the compute-path helper — else auto-reconcile could miss a switch the salary treats
       // as unreconciled, leaving a double-pay un-healed.
-      const fromSub = (m.subscriptions || []).find(s => (s.activity || '') === sw.fromSport && String(s.coachId) === String(sw.fromCoachId));
+      // v6.1008 — the SOURCE package is the one that covers the switch date (else the latest started before it), NOT the first package of that sport + coach: a switch made in November against the
+      // October package was being applied to the member's old SEPTEMBER package (still 'active'), which re-split a long-paid August invoice (Alshahrani: 600 → 400, 200 overpaid).
+      const _matching = (m.subscriptions || []).filter(s => (s.activity || '') === sw.fromSport && String(s.coachId) === String(sw.fromCoachId));
+      // a package already marked "switched to <this sport> on <this date>" means THIS switch is done — whatever package covers that date now (Maryam: the switch belonged to her July package, which had already ended)
+      if (_matching.some(s => s.switchedAwayTo && String(s.switchedAwayTo).split(/\s*,\s*/).includes(sw.toSport) && s.switchedAt && String(s.switchedAt).slice(0, 10) === String(sw.date || '').slice(0, 10))) continue;
+      const fromSub = _switchSourceSub(_matching, sw.date);
       if (!fromSub || fromSub.status === 'completed' || fromSub.switchedAwayTo) continue;   // already reconciled / gone
       out.push({ m, sw, snap: sw.snapshot, fromSub });
     }
   }
   return out;
 }
-window._applySwitchReconcile = function (memberId) {
+window._applySwitchReconcile = function (memberId, opts) {
   const m = (state.members || []).find(x => x.id === memberId);
   if (!m) return 0;
   let did = 0;
   for (const { sw, snap, fromSub } of _switchedUnreconciled().filter(r => r.m.id === memberId)) {
+    // v6.1008 — the AUTOMATIC run (guard) never shrinks an invoice below what was already paid on it unless the admin forces it (the screen's Reconcile button does, with the numbers in front of them)
+    if (opts && opts.guard && !opts.force) { const hold = _switchReconcileHold(m, sw, snap, fromSub); if (hold) { (window._switchHeld = window._switchHeld || []).push(Object.assign({ member: m.name }, hold)); continue; } }
     const attended = parseInt(snap.attendedByOld) || 0;
     const total = parseInt(snap.totalClasses) || (parseInt(fromSub.totalClasses) || 0);
     const aShare = Math.round((Number(snap.aShare) || 0) * 100) / 100;
@@ -22884,8 +22917,10 @@ window._autoReconcileSwitches = function () {
       if (m.deleted) continue;
       for (const s of (m.subscriptions || [])) {
         if (!s.switchedAwayTo) continue;
-        const inv = (state.invoices || []).find(v => !v.deleted && !v.switchCredit && v.customerId === m.id
-          && Array.isArray(v.lineItems) && v.lineItems.some(li => li.sport === s.activity && String(li.coachId) === String(s.coachId)));
+        const _hasLine = v => Array.isArray(v.lineItems) && v.lineItems.some(li => li.sport === s.activity && String(li.coachId) === String(s.coachId));
+        // v6.1008 — the package's OWN invoice first (it used to take the first invoice with such a line, so an old August invoice got its class count rewritten for an October package)
+        const inv = (state.invoices || []).find(v => !v.deleted && !v.switchCredit && v.customerId === m.id && s.invoiceNumber && v.ref === s.invoiceNumber && _hasLine(v))
+          || (state.invoices || []).find(v => !v.deleted && !v.switchCredit && v.customerId === m.id && _hasLine(v));
         if (!inv) continue;
         const li = inv.lineItems.find(x => x.sport === s.activity && String(x.coachId) === String(s.coachId));
         if (li && (parseInt(li.classes) || 0) !== (parseInt(s.totalClasses) || 0)) staleClassSubs.push({ m, inv, li, s });
@@ -22895,7 +22930,9 @@ window._autoReconcileSwitches = function () {
     try { if (typeof window.downloadBackup === 'function') window.downloadBackup(); } catch (_) {}
     let n = 0;
     const memberIds = [...new Set(pending.map(r => r.m.id))];
-    for (const id of memberIds) { try { n += (window._applySwitchReconcile(id) || 0); } catch (_) {} }
+    window._switchHeld = [];
+    for (const id of memberIds) { try { n += (window._applySwitchReconcile(id, { guard: true }) || 0); } catch (_) {} }
+    if (window._switchHeld.length && typeof toast === 'function') toast(t('Switch NOT reconciled for ', 'لم تتم معالجة التبديل لـ ') + window._switchHeld.map(h => h.member + ' (' + h.ref + ' paid ' + fmt(h.paid) + ' > ' + fmt(h.newTotal) + ')').join(', ') + t(' — review it in Switch reconciliation.', ' — راجعه في معالجة التبديل.'), 'info');
     // Heal stale line class counts (skip any member just reconciled above — that path already fixed them).
     for (const { m, inv, li, s } of staleClassSubs) {
       if (memberIds.includes(m.id)) continue;
@@ -22972,8 +23009,8 @@ window.switchReconcileCheck = function () {
       ${rows.map(r => { const at = parseInt(r.snap.attendedByOld) || 0, tot = parseInt(r.snap.totalClasses) || 0; return `<tr>
         <td style="padding:7px 10px;font-weight:600">${escapeHtml(r.m.name)}</td>
         <td style="padding:7px 10px">${escapeHtml(r.sw.fromSport)} → ${escapeHtml(r.sw.toSport)}</td>
-        <td style="padding:7px 10px;font-size:11px">${escapeHtml(r.sw.fromSport)}: <b>${t('completed', 'مكتمل')} @${at}</b> (${fmt(r.snap.aShare)}) · ${escapeHtml(r.sw.toSport)}: <b>${Math.max(0, tot - at)} ${t('classes', 'حصص')}</b> (${fmt(r.snap.bShare)})</td>
-        <td style="padding:7px 10px;text-align:right"><button class="btn primary sm" onclick="if(typeof window.downloadBackup==='function'){try{window.downloadBackup();}catch(e){}} const n=window._applySwitchReconcile(${JSON.stringify(r.m.id)}); confirmSaved('${t('Reconciled', 'تمت المعالجة')} '+n, { onOk: () => switchReconcileCheck() })">🔀 ${t('Reconcile', 'معالجة')}</button></td>
+        <td style="padding:7px 10px;font-size:11px">${escapeHtml(r.sw.fromSport)}: <b>${t('completed', 'مكتمل')} @${at}</b> (${fmt(r.snap.aShare)}) · ${escapeHtml(r.sw.toSport)}: <b>${Math.max(0, tot - at)} ${t('classes', 'حصص')}</b> (${fmt(r.snap.bShare)})${(() => { const h = _switchReconcileHold(r.m, r.sw, r.snap, r.fromSub); return h ? `<div style="color:#b45309;margin-top:4px">⚠ ${t('Held: invoice ' + h.ref + ' is paid ' + fmt(h.paid) + ' but the split totals ' + fmt(h.newTotal) + ' — Reconcile would leave it overpaid by ' + fmt(h.paid - h.newTotal) + '.', 'محجوز: الفاتورة ' + h.ref + ' مدفوعة ' + fmt(h.paid) + ' والتقسيم مجموعه ' + fmt(h.newTotal) + ' — المعالجة ستترك زيادة ' + fmt(h.paid - h.newTotal) + '.')}</div>` : ''; })()}</td>
+        <td style="padding:7px 10px;text-align:right"><button class="btn primary sm" onclick="if(typeof window.downloadBackup==='function'){try{window.downloadBackup();}catch(e){}} const n=window._applySwitchReconcile(${JSON.stringify(r.m.id)}, { force: true }); confirmSaved('${t('Reconciled', 'تمت المعالجة')} '+n, { onOk: () => switchReconcileCheck() })">🔀 ${t('Reconcile', 'معالجة')}</button></td>
       </tr>`; }).join('')}</tbody></table></div>`
     : `<div class="text-mute" style="padding:26px;text-align:center">✓ ${t('No unreconciled switches — every switched sport is properly split.', 'لا توجد تبديلات غير معالَجة.')}</div>`;
   showModal({ title: `🔀 ${t('Switch reconciliation', 'معالجة التبديل')}${rows.length ? ' · ' + rows.length : ''}`, body,
