@@ -2031,7 +2031,15 @@ PAGES.members = (main) => {
           <div id="filter-sport-menu" style="display:none;position:absolute;left:0;top:100%;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-top:4px;padding:8px;min-width:180px;max-height:300px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.4)">
             <div style="display:flex;justify-content:space-between;padding:2px 6px 6px;border-bottom:1px solid var(--border);margin-bottom:4px"><button type="button" class="mfilter-all" data-cb="filter-sport-cb" data-group="sports" style="background:none;border:none;color:var(--accent);font-size:12px;cursor:pointer;font-weight:600">All</button><button type="button" class="mfilter-none" data-cb="filter-sport-cb" data-group="sports" style="background:none;border:none;color:var(--text-mute);font-size:12px;cursor:pointer">Clear</button></div>
             <input type="text" class="mf2-search" placeholder="🔍 ${t('Search…', 'بحث…')}" style="width:100%;box-sizing:border-box;margin:0 0 6px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px" />
-            ${SPORTS.slice().sort((a, b) => String(a).localeCompare(String(b), undefined, { sensitivity: 'base' })).map(s => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px;white-space:nowrap"><input type="checkbox" class="filter-sport-cb" value="${escapeHtml(s)}" ${(filter.sports||[]).includes(s) ? 'checked' : ''} /> ${escapeHtml(s)}</label>`).join('')}
+            ${(() => {
+              // v6.1009 — the CAMPS (Summer / Winter / Autumn Camp…) sit under a separator behind a collapsible header, closed unless one of them is ticked
+              const all = SPORTS.slice().sort((a, b) => String(a).localeCompare(String(b), undefined, { sensitivity: 'base' }));
+              const camps = all.filter(s => /\bcamps?\b/i.test(String(s)));
+              const offs = (camps.length && camps.length < all.length) ? camps : [], main = offs.length ? all.filter(s => !offs.includes(s)) : all;
+              const sel = filter.sports || [], open = offs.some(s => sel.includes(s));
+              const row = (s, cls) => `<label${cls ? ' class="' + cls + '"' : ''} style="display:${cls && !open ? 'none' : 'flex'};align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px;white-space:nowrap"><input type="checkbox" class="filter-sport-cb" value="${escapeHtml(s)}" ${sel.includes(s) ? 'checked' : ''} /> ${escapeHtml(s)}</label>`;
+              return main.map(s => row(s)).join('') + (offs.length ? `<div class="mf2-camp-toggle" data-open="${open ? 1 : 0}" style="padding:7px 6px 3px;margin-top:4px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-mute);border-top:1px solid var(--border);cursor:pointer;user-select:none"><span class="mf2-camp-arrow">${open ? '▾' : '▸'}</span> ${t('Camps', 'المعسكرات')} (${offs.length})</div>` + offs.map(s => row(s, 'mf2-camprow')).join('') : '');
+            })()}
             <div class="mf2-empty text-mute" style="display:none;padding:8px 6px;font-size:12px">${t('No matches', 'لا نتائج')}</div>
           </div>
         </div>
@@ -2145,15 +2153,17 @@ PAGES.members = (main) => {
     const _search = menu.querySelector('.mf2-search');
     const _empty = menu.querySelector('.mf2-empty');
     const _norm = s => (typeof normalizeArabicForSearch === 'function') ? normalizeArabicForSearch(String(s || '')) : String(s || '').toLowerCase();
+    const _ct = menu.querySelector('.mf2-camp-toggle');   // v6.1009 — the collapsible Camps group of the sports menu
     const _applySearch = () => {
       const q = _norm((_search && _search.value || '').trim());
       let shown = 0;
       // v6.588 — restore 'flex' (not ''), or the <label>s revert to their inline DEFAULT display and
       // flow horizontally, so short options paired up on one line (Boxing+Football, Mixed+MMA). The rows
       // are display:flex, so re-showing them must set flex to keep the single-column layout.
-      $$('.' + cbClass).forEach(cb => { const lab = cb.parentElement; if (!lab) return; const hit = !q || _norm(lab.textContent).includes(q); lab.style.display = hit ? 'flex' : 'none'; if (hit) shown++; });
+      $$('.' + cbClass).forEach(cb => { const lab = cb.parentElement; if (!lab) return; const hit = !q || _norm(lab.textContent).includes(q); const campClosed = lab.classList.contains('mf2-camprow') && !q && !(_ct && _ct.dataset.open === '1'); const show = hit && !campClosed; lab.style.display = show ? 'flex' : 'none'; if (show) shown++; });
       if (_empty) _empty.style.display = shown ? 'none' : '';
     };
+    if (_ct) _ct.addEventListener('click', e => { e.stopPropagation(); _ct.dataset.open = _ct.dataset.open === '1' ? '0' : '1'; const ar = _ct.querySelector('.mf2-camp-arrow'); if (ar) ar.textContent = _ct.dataset.open === '1' ? '▾' : '▸'; _applySearch(); });
     if (_search) { _search.addEventListener('click', e => e.stopPropagation()); _search.addEventListener('keydown', e => e.stopPropagation()); _search.addEventListener('input', _applySearch); }
     btn.addEventListener('click', e => {
       e.stopPropagation();
@@ -7373,7 +7383,7 @@ window.moneyPanel = function(memberId) {
   const sportName = (g) => ar && typeof sportNameAR === 'function' ? sportNameAR(g.sport) : g.sport;
   const target = md.rows.find(g => g.remaining > 0.001);
   const reconciles = Math.abs(md.charged - (md.paidTotal + md.due)) < 0.02;
-  const emoji = { 'Kick Boxing': '🥊', 'Boxing': '🥊', 'Karate': '🥋', 'Taekwondo': '🥋', 'MMA': '👊', 'Gymnastic': '🤸', 'Swimming': '🏊', 'Football': '⚽', 'Zumba': '💃' };
+  const emoji = { 'Kick Boxing': '🥊', 'Boxing': '🥊', 'Karate': '🥋', 'Taekwondo': '🥋', 'MMA': '👊', 'Gymnastic': '🤸', 'Swimming': '🏊', 'Football': '⚽' };
   const kpi = (l, v, cls) => `<div style="flex:1;text-align:center;padding:12px 8px"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-mute);font-weight:700">${l}</div><div class="num" style="font-family:ui-monospace,monospace;font-weight:700;font-size:22px;margin-top:4px${cls ? ';color:' + cls : ''}">${fmt(v)}</div></div>`;
   const sportRow = (g) => {
     const pct = g.price > 0 ? Math.min(100, g.paid / g.price * 100) : 0;
@@ -12020,7 +12030,6 @@ PAGES.schedule = (main) => {
     'MMA':         { color: '#f59e0b', emoji: '👊' },
     'Karate':      { color: '#84cc16', emoji: '🥋' },
     'Swimming':    { color: '#06b6d4', emoji: '🏊' },
-    'Zumba':       { color: '#ec4899', emoji: '💃' },
     'External coach': { color: '#7c3aed', emoji: '🎟' },   // v6.675: placeholder slot for an outside coach
   };
   const sportColor = sp => (SPORT_THEME[baseSportName(sp)] || SPORT_THEME[sp] || { color: '#5b8def', emoji: '🏃' }).color;
@@ -13494,12 +13503,15 @@ function multiFilterHTML(id, options, selected, o) {
         const row = ([v, lab]) => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px;white-space:nowrap">
         <input type="checkbox" class="mf-cb" value="${escapeHtml(String(v))}" ${sel.has(String(v)) ? 'checked' : ''} /> ${escapeHtml(String(lab))}</label>`;
         const grp = txt => `<div class="mf-grp" style="padding:7px 6px 3px;margin-top:4px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-mute);border-top:1px solid var(--border)">${txt}</div>`;
-        const sp = (typeof coachSplitPairs === 'function') ? coachSplitPairs(pairs) : null;
+        const _coachSp = (typeof coachSplitPairs === 'function') ? coachSplitPairs(pairs) : null;
+        // v6.1009 — a sport list: the CAMPS (Summer / Winter / Autumn Camp…) sit behind their own collapsible header under a separator, closed unless one is ticked
+        const _campOff = (!_coachSp && o.camps !== false) ? pairs.filter(p => /\bcamps?\b/i.test(String(p[1]))) : [];
+        const sp = _coachSp || ((_campOff.length && _campOff.length < pairs.length) ? { act: pairs.filter(p => !_campOff.includes(p)), off: _campOff, camp: true } : null);
         // v6.825 — inactive coaches are COLLAPSED behind a header (▸ / ▾); open by default only when one of them is already ticked
         const offOpen = !!(sp && sp.off.some(([v]) => sel.has(String(v))));
         const offRow = pr => row(pr).replace('<label ', '<label class="mf-offrow" ').replace('display:flex;', 'display:' + (offOpen ? 'flex' : 'none') + ';');
-        const offHdr = n => '<div class="mf-grp mf-off-toggle" style="padding:7px 6px 3px;margin-top:4px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-mute);border-top:1px solid var(--border);cursor:pointer;user-select:none"><span class="mf-off-arrow">' + (offOpen ? '▾' : '▸') + '</span> ' + t('Inactive coaches', 'المدربون غير النشطين') + ' (' + n + ')</div>';
-        return sp ? '<span class="mf-off-state" data-open="' + (offOpen ? '1' : '0') + '" style="display:none"></span>' + grp(t('Active coaches', 'المدربون النشطون')) + sp.act.map(row).join('') + offHdr(sp.off.length) + sp.off.map(offRow).join('') : pairs.map(row).join('');
+        const offHdr = n => '<div class="mf-grp mf-off-toggle" style="padding:7px 6px 3px;margin-top:4px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-mute);border-top:1px solid var(--border);cursor:pointer;user-select:none"><span class="mf-off-arrow">' + (offOpen ? '▾' : '▸') + '</span> ' + (sp && sp.camp ? t('Camps', 'المعسكرات') : t('Inactive coaches', 'المدربون غير النشطين')) + ' (' + n + ')</div>';
+        return sp ? '<span class="mf-off-state" data-open="' + (offOpen ? '1' : '0') + '" style="display:none"></span>' + (sp.camp ? '' : grp(t('Active coaches', 'المدربون النشطون'))) + sp.act.map(row).join('') + offHdr(sp.off.length) + sp.off.map(offRow).join('') : pairs.map(row).join('');
       })()}
       <div class="mf-empty text-mute" style="display:none;padding:8px 6px;font-size:12px">${t('No matches', 'لا نتائج')}</div></div>
     </div>
@@ -13842,7 +13854,6 @@ PAGES.invoices = (main) => {
         'Gymnastic':'blue',
         'Football':'',
         'Swimming':'cyan',
-        'Zumba':'purple',
         'Merchandise':'pending',
         'Court Rental':'pending',
       }[i.sport] || '';
@@ -14343,7 +14354,7 @@ function walkInWireRaw(nameId, io) {
 }
 
 function addInvoice() {
-  const sports = ['MMA','Boxing','Kick Boxing','Karate','Taekwondo','Gymnastic','Football','Swimming','Zumba','Court Rental','Merchandise'];
+  const sports = ['MMA','Boxing','Kick Boxing','Karate','Taekwondo','Gymnastic','Football','Swimming','Court Rental','Merchandise'];
   const coachOptions = activeCoaches().map(c => c.name).concat(['Yasmin (guest)','Ibrahim (guest)']);
 
   // Cart state for Product category (shared with the existing helpers
@@ -17514,7 +17525,7 @@ window.editInvoiceQuick = function(id) {
   const inv = state.invoices.find(i => i.id === id);
   if (!inv) return;
   if (guardBooksLocked(inv.month || inv.date)) return;   // v6.868
-  const sports = ['MMA','Boxing','Kick Boxing','Karate','Taekwondo','Gymnastic','Football','Swimming','Zumba','Court Rental','Merchandise'];
+  const sports = ['MMA','Boxing','Kick Boxing','Karate','Taekwondo','Gymnastic','Football','Swimming','Court Rental','Merchandise'];
   const coachOptions = state.coaches.map(c => c.name).concat(['Yasmin (guest)','Ibrahim (guest)']);
 
   // ─ Build "linked stock items" panel ─
@@ -17588,7 +17599,7 @@ window.editInvoiceQuick = function(id) {
         ${_efRows.map(({ p, i }) => `<div style="display:flex;align-items:center;gap:8px;margin-top:4px;flex-wrap:wrap">
           <input type="date" class="ef-pdate" data-i="${i}" value="${escapeHtml(String(p.date || '').slice(0, 10))}" style="flex:0 0 170px" />
           <span class="num" style="font-weight:700;font-size:13px;${Number(p.amount) < 0 ? 'color:var(--red)' : ''}">${fmt(p.amount)} QAR</span>
-          <span class="badge" style="font-size:10px">${escapeHtml(p.method || '')}</span>
+          ${(() => { const _cur = normalizeMethod(p.method || inv.method); return `<select class="ef-pmethod" data-i="${i}" data-orig="${_cur}" title="${t('How this payment was made — change it to correct a wrong method', 'طريقة هذه الدفعة — غيّرها لتصحيح طريقة خاطئة')}" style="flex:0 0 auto;width:auto;padding:2px 6px;font-size:12px">${[['cash', 'Cash'], ['card', 'Card'], ['fawran', 'Fawran'], ['transfer', 'Transfer']].map(([v, l]) => `<option value="${v}" ${_cur === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`; })()}
           ${p._correction || p._adj ? `<span class="text-mute" style="font-size:10px">${t('correction', 'تصحيح')}</span>` : ''}
           ${currentRole() === 'admin' ? `<button type="button" class="btn ghost sm" style="color:var(--red);padding:2px 8px" title="${t('Delete this payment entry', 'حذف قيد الدفع هذا')}" onclick="_efDeletePayment(${inv.id}, ${i}, ${Number(p.amount) || 0}, '${String(p.date || '').slice(0, 10)}')">🗑</button>` : ''}</div>`).join('')}
       </div>`
@@ -17667,6 +17678,20 @@ window.editInvoiceQuick = function(id) {
         }
         { const _newM = $('#ef-method').value; if (!document.getElementById('ef-split')?.checked) { const _n = cascadePaymentMethod(inv, inv.method, _newM); if (_n && typeof audit === 'function') audit('invoice.payment_method', 'invoice:' + inv.id, (inv.ref || '') + ': payment method → ' + _newM + ' (' + _n + ' payment row(s))'); } }   // v6.858
         inv.method = $('#ef-method').value;
+        // v6.1009 — the METHOD of each payment row can be corrected on its own (a 15 fawran + 15 cash split can become 30 cash, or any row can change): the row keeps its amount and date, the old method is kept in methodWas
+        { const _pmEls = Array.from(document.querySelectorAll('.ef-pmethod') || []), _pmDone = [];
+          for (const el of _pmEls) {
+            const row = (inv.payments || [])[parseInt(el.dataset.i, 10)], v = String(el.value || '');
+            if (!row || !v || v === el.dataset.orig || normalizeMethod(row.method || inv.method) === v) continue;
+            _pmDone.push(fmt(row.amount) + ' ' + normalizeMethod(row.method || el.dataset.orig) + ' → ' + v);
+            row.methodWas = row.method || el.dataset.orig; row.method = v;
+          }
+          if (_pmDone.length) {
+            const _pos = (inv.payments || []).filter(p => p && (Number(p.amount) || 0) > 0);
+            if (_pos.length && _pos.every(p => normalizeMethod(p.method) === normalizeMethod(_pos[0].method))) inv.method = normalizeMethod(_pos[0].method);   // all rows now agree → the header follows
+            if (typeof stampUpdate === 'function') stampUpdate(inv);
+            if (typeof audit === 'function') audit('invoice.payment_method', 'invoice:' + inv.id, (inv.ref || '#' + inv.id) + ': payment method corrected — ' + _pmDone.join(', '), { invoiceId: inv.id });
+          } }
         inv.amount = parseFloat($('#ef-amt').value) || 0;
         inv.date = $('#ef-date').value;
         inv.month = inv.date.slice(0, 7);
@@ -24657,7 +24682,7 @@ window.deleteSale = function(id) {
 PAGES.sports = (main) => {
   if (!state.settings) state.settings = {};
   if (!Array.isArray(state.settings.sports) || !state.settings.sports.length) {
-    state.settings.sports = ['MMA','Boxing','Kick Boxing','Karate','Taekwondo','Gymnastic','Football','Swimming','Zumba']
+    state.settings.sports = ['MMA','Boxing','Kick Boxing','Karate','Taekwondo','Gymnastic','Football','Swimming']
       .map((name, i) => ({ name, enabled: true, order: i }));
     save();
   }
@@ -30014,7 +30039,7 @@ window.addRenewal = function(memberId, opts) {   // opts.start / opts.sport (v6.
   opts = opts || {};
   const m = state.members.find(x => x.id === memberId);
   if (!m) return;
-  const sports = ['MMA','Boxing','Kick Boxing','Karate','Taekwondo','Gymnastic','Football','Swimming','Zumba'];
+  const sports = ['MMA','Boxing','Kick Boxing','Karate','Taekwondo','Gymnastic','Football','Swimming'];
 
   // Active coaches (registration rule), keeping current coach selectable if inactive
   const selCoaches = activeCoaches();
@@ -32438,7 +32463,7 @@ PAGES.mymembership = (main) => {
   const SPORT_META = {
     'MMA': { e: '🥋', c: '#f59e0b' }, 'Boxing': { e: '🥊', c: '#ef4444' }, 'Kick Boxing': { e: '🥊', c: '#dc2626' },
     'Karate': { e: '🥋', c: '#84cc16' }, 'Taekwondo': { e: '🦵', c: '#6366f1' }, 'Gymnastic': { e: '🤸', c: '#10b981' },
-    'Football': { e: '⚽', c: '#22c55e' }, 'Swimming': { e: '🏊', c: '#06b6d4' }, 'Zumba': { e: '💃', c: '#ec4899' },
+    'Football': { e: '⚽', c: '#22c55e' }, 'Swimming': { e: '🏊', c: '#06b6d4' },
     'Summer Camp': { e: '☀️', c: '#f59e0b' },
   };
   const sportMeta = sp => { const b = SPORT_META[baseSportName(sp)] || SPORT_META[sp] || { e: '🏅', c: '#5b8def' }; return { c: b.c, e: isPrivateSport(sp) ? b.e + '🔒' : b.e, priv: isPrivateSport(sp) }; };
