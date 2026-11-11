@@ -36817,9 +36817,10 @@ function rentalFormHtml(r) {
       <div class="field"><label>Start time <span class="text-mute" style="font-size:10px">(optional)</span></label><input type="time" id="r-time" value="${r.startTime || ''}" /></div>
     </div>
     <div class="form-row">
-      <div class="field"><label>Hours</label><input type="number" min="0.5" step="0.5" id="r-hours" value="${r.hours ?? 1}" /></div>
-      <div class="field"><label>Hourly rate (QAR)</label><input type="number" min="0" step="1" id="r-rate" value="${r.hourlyRate ?? ''}" placeholder="auto from facility default" /></div>
-      <div class="field"><label>Total amount</label><input type="number" id="r-amount" value="${r.amount ?? ''}" readonly style="background:var(--surface-2);font-weight:700" /></div>
+      <div class="field"><label>Hours</label><input type="number" min="0.5" step="0.5" id="r-hours" value="${r.hours ?? 1}" />
+        <div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap">${[1, 1.5, 2, 3].map(h => `<button type="button" class="btn ghost sm r-hchip" data-h="${h}" style="padding:2px 8px;font-size:11px">${h}h</button>`).join('')}</div></div>
+      <div class="field"><label>Hourly rate (QAR)</label><input type="number" min="0" step="any" id="r-rate" value="${r.hourlyRate ?? ''}" placeholder="auto from facility default" /></div>
+      <div class="field"><label>${t('Total amount', 'الإجمالي')} <span class="text-mute" style="font-size:10px">(${t('type it to price the whole booking — the rate follows', 'اكتبه لتسعير الحجز كله — والسعر بالساعة يتبعه')})</span></label><input type="number" min="0" step="any" id="r-amount" value="${r.amount ?? ''}" style="font-weight:700" /></div>
     </div>
     <div style="margin-top:6px;padding:12px;background:rgba(91,141,239,.06);border:1px solid rgba(91,141,239,.22);border-radius:8px">
       <div style="font-size:11px;color:var(--blue);text-transform:uppercase;letter-spacing:.6px;font-weight:600;margin-bottom:8px">👤 Customer</div>
@@ -36876,15 +36877,26 @@ function wireRentalForm() {
     if (!rateInp.value || rateInp.dataset.auto !== 'manual') {
       rateInp.value = facilityRate(facSel.value);
       rateInp.dataset.auto = 'default';
+      delete rateInp.dataset.exact;
     }
     recalc();
   }
+  // v6.1026 — a typed TOTAL (1.5 h for 200 QAR) sets the hourly rate (133.33); that exact rate is kept so changing the hours re-prices without rounding drift
+  function exactRate() {
+    const ex = parseFloat(rateInp.dataset.exact), shown = parseFloat(rateInp.value);
+    return (isFinite(ex) && Math.round(ex * 100) / 100 === shown) ? ex : (shown || 0);
+  }
   function recalc() {
     const hrs = parseFloat(hoursInp.value) || 0;
-    const rate = parseFloat(rateInp.value) || 0;
-    amtInp.value = (hrs * rate).toFixed(2).replace(/\.00$/, '');
+    amtInp.value = (Math.round(hrs * exactRate() * 100) / 100).toFixed(2).replace(/\.00$/, '');
     splitUpdate();
   }
+  amtInp.addEventListener('input', () => {
+    const hrs = parseFloat(hoursInp.value) || 0, tot = parseFloat(amtInp.value) || 0;
+    if (hrs > 0) { rateInp.dataset.exact = String(tot / hrs); rateInp.dataset.auto = 'manual'; rateInp.value = String(Math.round(tot / hrs * 100) / 100); }
+    splitUpdate();
+  });
+  document.querySelectorAll('.r-hchip').forEach(b => b.addEventListener('click', () => { hoursInp.value = b.dataset.h; recalc(); }));
 
   // v6.766 — split the payment across methods: boxes per method, live "entered / total / remaining"
   const splitCb = $('#r-split'), splitBoxes = $('#r-split-boxes'), splitSum = $('#r-split-sum');
@@ -36914,7 +36926,7 @@ function wireRentalForm() {
     }
     if (_ps && _wrap) _ps.addEventListener('change', () => { _wrap.style.display = _ps.value === 'due' ? 'none' : ''; }); }
   hoursInp.addEventListener('input', recalc);
-  rateInp.addEventListener('input', () => { rateInp.dataset.auto = 'manual'; recalc(); });
+  rateInp.addEventListener('input', () => { rateInp.dataset.auto = 'manual'; delete rateInp.dataset.exact; recalc(); });
 
   // ─── Rental-customer searchable picker ─────────────────────────────
   // Searches by name OR mobile (case-insensitive substring). Click a result

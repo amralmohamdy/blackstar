@@ -14,7 +14,8 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.1025.0';   // 6.1025.0 Reception target tiers (new + renewal subscribers, from Nov 2026): 50 → 250, 100 → 500, 150 → 1,500, 200 → 2,000 (was 50 → 500, 100 → 1,000, 150 → 1,500); the start-month setting check is fixed so a value saved in settings is honoured.
+const APP_VERSION = '6.1026.0';   // 6.1026.0 Rental / court booking form: the Total amount box is now typed directly (1.5 h for 200 QAR) and the hourly rate follows it (133.33, kept exact so changing the hours re-prices without rounding drift); quick duration buttons 1h / 1.5h / 2h / 3h under Hours.
+// prev:   // 6.1025.0 Reception target tiers (new + renewal subscribers, from Nov 2026): 50 → 250, 100 → 500, 150 → 1,500, 200 → 2,000 (was 50 → 500, 100 → 1,000, 150 → 1,500); the start-month setting check is fixed so a value saved in settings is honoured.
 // prev:   // 6.1024.0 Class Schedule > Week PNG (English and Arabic): each tile now carries the class name exactly as the screen shows it ('Swimming (Girls)', 'Kids U 13', 'Football (Private Yard)') instead of only the sport name; a long name shrinks to fit its tile.
 // prev:   // 6.1023.0 Add Member > Scan Qatar ID: after the scan fills the birthdate the Age box now fills too (a script-set value fired no event, so Age stayed empty); the scan message says Gender is not printed on the card and must be chosen by hand.
 // prev:   // 6.1022.0 Class Schedule: the Mixed and External coach tiles are removed from the sports palette and the sport filter, and the coach filter lists only ACTIVE coaches (no more '(inactive)' group); classes already booked for an outside coach or Mixed still show on the grid.
