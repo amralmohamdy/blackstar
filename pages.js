@@ -433,9 +433,12 @@ PAGES.targets = (main) => {
     // Reception income target (club cash collected this month) → tiered bonus, split equally among the
     // ACTIVE receptionists. v6.636 — the RECEPTION role sees the dial + THEIR (equal) share only; ADMIN
     // sees the full split (all receptionist staff) + every coach's dial ("all coaches and staff").
-    const income = receptionIncome(ym);
-    const receptionCard = `<div style="max-width:420px;margin:0 auto 6px">${role === 'admin' ? _targetCard('🧾', t('Reception — Income Target', 'الاستقبال — هدف الدخل'), t('Income this month (membership + rentals + shop)', 'الدخل هذا الشهر (اشتراكات + إيجارات + متجر)'), income, receptionTargets(), 'QAR') : _targetCardNoIncome('🧾', t('Reception — Income Target', 'الاستقبال — هدف الدخل'), t('Progress this month', 'التقدم هذا الشهر'), income, receptionTargets())}</div>`;
-    const _recTT = targetTier(income, receptionTargets());
+    const _byCnt = receptionByCount(ym);   // v6.1020 — from Nov 2026 the reception target counts new + renewal subscribers (no income shown)
+    const income = receptionMetric(ym);
+    const _rTiers = receptionTargets(ym);
+    const _cntCard = `<div ${role === 'admin' ? `style="cursor:pointer" onclick="coachTargetDetail('*', '${ym}')" title="${t('Show every new / renew transaction this month', 'عرض كل عمليات الجديد/التجديد هذا الشهر')}"` : ''}>${_targetCard('🧾', t('Reception — New / Renew Target', 'الاستقبال — هدف الجديد والتجديد'), t('New + renewal subscribers this month (all packages)', 'المشتركون الجدد + التجديد هذا الشهر (كل الباقات)'), income, _rTiers, 'count')}</div>`;
+    const receptionCard = `<div style="max-width:420px;margin:0 auto 6px">${_byCnt ? _cntCard : role === 'admin' ? _targetCard('🧾', t('Reception — Income Target', 'الاستقبال — هدف الدخل'), t('Income this month (membership + rentals + shop)', 'الدخل هذا الشهر (اشتراكات + إيجارات + متجر)'), income, _rTiers, 'QAR') : _targetCardNoIncome('🧾', t('Reception — Income Target', 'الاستقبال — هدف الدخل'), t('Progress this month', 'التقدم هذا الشهر'), income, _rTiers)}</div>`;
+    const _recTT = targetTier(income, _rTiers);
     const _recAll = (state.coaches || []).filter(c => _coachActive(c) && isReceptionStaff(c));
     const _recps = _recAll;   // v6.840 — equal slices for ALL receptionists; an unticked one forfeits his slice
     const _n = _recps.length;
@@ -488,7 +491,7 @@ PAGES.targets = (main) => {
       </div>
     </div>
     ${bodyHtml}
-    <div class="text-mute" style="font-size:11px;margin-top:14px;text-align:center">${t('Coaches are notified automatically when they reach a target. Reception income = total invoiced this month (membership + rentals + shop, incl. amounts still due).', 'يُخطَر المدربون تلقائياً عند بلوغ الهدف. دخل الاستقبال = إجمالي المفوتر هذا الشهر (اشتراكات + إيجارات + متجر، شاملاً المستحق).')}</div>
+    <div class="text-mute" style="font-size:11px;margin-top:14px;text-align:center">${t('Coaches are notified automatically when they reach a target. ' + (receptionByCount(ym) ? 'Reception target = new + renewal subscribers this month (one per payment transaction).' : 'Reception income = total invoiced this month (membership + rentals + shop, incl. amounts still due).'), 'يُخطَر المدربون تلقائياً عند بلوغ الهدف. ' + (receptionByCount(ym) ? 'هدف الاستقبال = المشتركون الجدد + التجديد هذا الشهر (واحد لكل عملية دفع).' : 'دخل الاستقبال = إجمالي المفوتر هذا الشهر (اشتراكات + إيجارات + متجر، شاملاً المستحق).'))}</div>
   `;
   const msel = $('#tgt-month');
   if (msel) msel.addEventListener('change', () => { window._targetMonth = msel.value; PAGES.targets(main); });
@@ -501,7 +504,7 @@ window.coachTargetDetail = function(coachId, ym) {
   // v6.640 — resolve the coach by string-compare (the id arrives as a string from the click handler, and
   // coachName uses a strict === so it would miss a numeric id).
   const _c = (state.coaches || []).find(c => String(c.id) === String(coachId));
-  const name = _c ? (_c.name || '') : ((typeof coachName === 'function') ? (coachName(coachId) || '') : '');
+  const name = coachId === '*' ? t('Reception — all packages', 'الاستقبال — كل الباقات') : (_c ? (_c.name || '') : ((typeof coachName === 'function') ? (coachName(coachId) || '') : ''));
   const label = (typeof fmtMonth === 'function') ? fmtMonth(ym) : ym;
   const total = Math.round(rows.reduce((s, r) => s + (Number(r.amount) || 0), 0) * 100) / 100;
   const body = rows.length ? `
@@ -12863,14 +12866,14 @@ PAGES.schedule = (main) => {
   // newly-added sports show up and disabled sports can't be booked. Summer Camp
   // has its own page, so it's excluded here. Falls back to the themed list.
   const scheduleSports = (state.settings && Array.isArray(state.settings.sports) && state.settings.sports.length)
-    ? state.settings.sports.filter(s => s.enabled !== false && !isCampSport(s.name))
+    ? state.settings.sports.filter(s => s.enabled !== false && !isCampSport(s.name) && s.name !== MIXED)   // v6.1021 — Mixed has no tile on the schedule
         .slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map(s => s.name)
     : Object.keys(SPORT_THEME);
   // v6.899 — a coach's Sports filter lists only the sports he teaches (his own classes on the schedule), never the whole club
   const _mySportSet = myCoachId != null ? new Set([...(state.schedule || []).filter(c => String(c.coachId) === String(myCoachId)).map(c => baseSportName(c.sport)), ...(((state.coaches || []).find(x => String(x.id) === String(myCoachId)) || {}).sports || []).map(baseSportName)]) : null;
-  const _filterSports = _mySportSet ? scheduleSports.filter(x => _mySportSet.has(baseSportName(x))) : scheduleSports.concat([SCHEDULE_EXTERNAL]);
+  const _filterSports = _mySportSet ? scheduleSports.filter(x => _mySportSet.has(baseSportName(x))) : scheduleSports;   // v6.1021 — no 'External coach' / 'Mixed' entries
   // Sport palette (draggable tiles) — admins only
-  const sportTiles = !canEdit ? '' : scheduleSports.concat([SCHEDULE_EXTERNAL]).map(sport => `
+  const sportTiles = !canEdit ? '' : scheduleSports.map(sport => `
     <div class="sport-tile" draggable="true" data-sport="${escapeHtml(sport)}" title="${t('Click to filter the schedule by this sport · drag onto a cell to add a class', 'اضغط لتصفية الجدول حسب هذه الرياضة · اسحب إلى خانة لإضافة حصة')}"
          style="background:${sportColor(sport)};color:white;padding:8px 14px;border-radius:8px;font-weight:700;font-size:12px;cursor:grab;user-select:none;display:inline-flex;align-items:center;gap:6px;box-shadow:0 2px 6px rgba(0,0,0,.15)">
       <span style="font-size:16px">${sportEmoji(sport)}</span> ${escapeHtml(sport)}
@@ -12953,7 +12956,7 @@ PAGES.schedule = (main) => {
             <input type="text" id="sch-coach-search" placeholder="🔍 ${t('Search…', 'بحث…')}" style="width:100%;box-sizing:border-box;margin:0 0 6px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px" />
             <div id="sch-coach-list">
             ${(() => {
-              const _teach = state.coaches.filter(isCoachRole).slice().sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' }));   // v6.575: A→Z
+              const _teach = state.coaches.filter(c => isCoachRole(c) && isCoachActive(c)).slice().sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' }));   // v6.575: A→Z
               const active = _teach.filter(c => isCoachActive(c));
               const inactive = _teach.filter(c => !isCoachActive(c));
               const row = (c, faded) => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px${faded ? ';opacity:.72' : ''}"><input type="checkbox" class="sch-coach-cb" value="${c.id}" ${filter.coaches.includes(c.id) ? 'checked' : ''} /> ${escapeHtml(c.name)}${c.nameArabic ? ' <span style="font-size:11px;color:var(--text-mute)" dir="rtl">' + escapeHtml(c.nameArabic) + '</span>' : ''}${faded ? ' <span class="text-mute" style="font-size:10px">(inactive)</span>' : ''}</label>`;
@@ -16578,9 +16581,10 @@ async function scanIdCard(file) {
     apply('f-qid', f.qid, 'QID');
     apply('f-bdate', f.birthdate, 'birthdate');
     apply('f-nationality', f.nationality, 'nationality');
+    if (filled.includes('birthdate')) { const _bd = document.getElementById('f-bdate'); if (_bd) _bd.dispatchEvent(new Event('input', { bubbles: true })); }   // a script-set value fires no event, so the Age box stayed empty
 
     if (filled.length) {
-      setStatus(`✓ Filled: ${filled.join(', ')}.${missed.length ? ' Couldn\'t read: ' + missed.join(', ') + '.' : ''}${skipped.length ? ' Kept your: ' + skipped.join(', ') + '.' : ''} Please verify.`, 'var(--green)');
+      setStatus(`✓ Filled: ${filled.join(', ')}.${missed.length ? ' Couldn\'t read: ' + missed.join(', ') + '.' : ''}${skipped.length ? ' Kept your: ' + skipped.join(', ') + '.' : ''} Gender is not printed on the card — choose it yourself. Please verify.`, 'var(--green)');
       toast(`Scanned ID · filled ${filled.length} field${filled.length === 1 ? '' : 's'} — please verify`, 'success');
     } else {
       setStatus(`Couldn't read the fields clearly${missed.length ? ' (' + missed.join(', ') + ')' : ''}. Try a sharper, well-lit photo, or enter manually.`, 'var(--accent-2)');
@@ -22807,7 +22811,7 @@ window.downloadPayslipPDF = function(coachId, monthKey) {
       ${pay.privateBonus > 0 ? `<div class="row"><span>Private bonus (+${pay.privateBonusPct}% on ${fmt(pay.privateBonusBase)} QAR of private packages${pay.privateExtraAll ? "" : " you brought in"})</span><span>${fmt(pay.privateBonus - (pay.approachBonus || 0))} QAR</span></div>` : ''}${(pay.approachBonus || 0) > 0 ? `<div class="row"><span>Brought-in bonus (+${pay.receptionSharePct}% on ${fmt(pay.approachBase)} QAR of private customers you brought)</span><span>${fmt(pay.approachBonus)} QAR</span></div>` : ''}
       ${pay.receptionBonus > 0 ? `<div class="row"><span>Reception private share (${pay.receptionPoolPct != null ? pay.receptionPoolPct : pay.receptionSharePct}% of ${fmt(pay.receptionPoolBase)} QAR ÷ ${pay.receptionStaffCount} staff)</span><span>${fmt(pay.receptionBonus)} QAR</span></div>` : ''}
       ${(pay.privateBonusPending || 0) + (pay.receptionBonusPending || 0) > 0.005 ? `<div class="row" style="color:#7c3aed"><span>⏳ Pending private ${pay.receptionBonusPending > 0 ? 'share' : 'bonus'} (not in gross — ${pay.receptionBonusPending > 0 ? 'paid in full next month' : 'earned as the private member attends'})</span><span>${fmt((pay.privateBonusPending || 0) + (pay.receptionBonusPending || 0))} QAR</span></div>` : ''}
-      ${pay.targetBonus > 0 ? `<div class="row"><span>Target bonus (${pay.targetKind === 'reception' ? 'reception income target ' + fmt(pay.targetTierBonus) + ' ÷ ' + pay.targetStaff + ' staff' : pay.targetValue + ' new/renew this month'})</span><span>${fmt(pay.targetBonus)} QAR</span></div>` : ''}
+      ${pay.targetBonus > 0 ? `<div class="row"><span>Target bonus (${pay.targetKind === 'reception' ? (pay.targetByCount ? 'reception new/renew target (' + pay.targetValue + ') ' : 'reception income target ') + fmt(pay.targetTierBonus) + ' ÷ ' + pay.targetStaff + ' staff' : pay.targetValue + ' new/renew this month'})</span><span>${fmt(pay.targetBonus)} QAR</span></div>` : ''}
       <div class="row bold"><span>Gross pay</span><span>${fmt(pay.gross)} QAR</span></div>
 
       ${pay.basis === 'attendance' ? `
@@ -23605,7 +23609,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
       ${pay.privateBonus > 0 ? `<div class="row"><span>Private bonus (+${pay.privateBonusPct}% on ${fmt(pay.privateBonusBase)} QAR of private packages)</span><span style="font-family:monospace">${fmt(pay.privateBonus)} QAR</span></div>` : ''}
       ${pay.receptionBonus > 0 ? `<div class="row"><span>Reception private share (${pay.receptionPoolPct != null ? pay.receptionPoolPct : pay.receptionSharePct}% of ${fmt(pay.receptionPoolBase)} QAR ÷ ${pay.receptionStaffCount} staff)</span><span style="font-family:monospace">${fmt(pay.receptionBonus)} QAR</span></div>` : ''}
       ${(pay.privateBonusPending || 0) + (pay.receptionBonusPending || 0) > 0.005 ? `<div class="row" style="color:#7c3aed"><span>⏳ Pending private ${pay.receptionBonusPending > 0 ? 'share' : 'bonus'} (not in gross — ${pay.receptionBonusPending > 0 ? 'paid in full next month' : 'earned as the private member attends'})</span><span style="font-family:monospace">${fmt((pay.privateBonusPending || 0) + (pay.receptionBonusPending || 0))} QAR</span></div>` : ''}
-      ${pay.targetBonus > 0 ? `<div class="row"><span>Target bonus (${pay.targetKind === 'reception' ? 'reception income target ' + fmt(pay.targetTierBonus) + ' ÷ ' + pay.targetStaff + ' staff' : pay.targetValue + ' new/renew this month'})</span><span style="font-family:monospace">${fmt(pay.targetBonus)} QAR</span></div>` : ''}
+      ${pay.targetBonus > 0 ? `<div class="row"><span>Target bonus (${pay.targetKind === 'reception' ? (pay.targetByCount ? 'reception new/renew target (' + pay.targetValue + ') ' : 'reception income target ') + fmt(pay.targetTierBonus) + ' ÷ ' + pay.targetStaff + ' staff' : pay.targetValue + ' new/renew this month'})</span><span style="font-family:monospace">${fmt(pay.targetBonus)} QAR</span></div>` : ''}
       <div class="row bold"><span>Gross pay</span><span style="font-family:monospace">${fmt(pay.gross)} QAR</span></div>
 
       ${pay.advance > 0 ? `

@@ -14,7 +14,11 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.1019.0';   // 6.1019.0 A fix file (bs-fix/1) can now set the colour of schedule slots (collection 'schedule'), so one class name can be given one colour; nothing else changes.
+const APP_VERSION = '6.1023.0';   // 6.1023.0 Add Member > Scan Qatar ID: after the scan fills the birthdate the Age box now fills too (a script-set value fired no event, so Age stayed empty); the scan message says Gender is not printed on the card and must be chosen by hand.
+// prev:   // 6.1022.0 Class Schedule: the Mixed and External coach tiles are removed from the sports palette and the sport filter, and the coach filter lists only ACTIVE coaches (no more '(inactive)' group); classes already booked for an outside coach or Mixed still show on the grid.
+// prev:   // 6.1021.0 Reception target is now a COUNT of new + renewal subscribers (club-wide, one per payment transaction, like the coaches): 50 / 100 / 150 → 500 / 1,000 / 1,500, from Nov 2026 (earlier months keep the income tiers; settings.receptionTargetCountFrom moves the start); the Targets screen is open to the reception login again (a count, no club income); admin taps the card for every transaction; the receptionist salary line says 'reception new/renew target'.
+// prev:   // 6.1020.0 Hidden mode is ON by default (Dashboard, Reports, and the Invoices totals strip — Charged / Collected / Due with the cash, card, fawran and transfer split); the invoice rows stay readable. The Show amounts button turns it off until the tab closes.
+// prev:   // 6.1019.0 A fix file (bs-fix/1) can now set the colour of schedule slots (collection 'schedule'), so one class name can be given one colour; nothing else changes.
 // prev:   // 6.1018.0 Cash in Hand is LIVE again: the last count + every invoice payment made in CASH − every owner cash collection (and any cash refund handed back); card / transfer payments and cash expenses / salaries never touch it. The Record cash collection box shows what the drawer holds and warns when the collection is more than that. The flat figure is now opt-in (settings.cashFlat = true).
 // prev:   // 6.1017.0 Dashboard + Reports: a 'Hidden mode' button masks every money figure (amounts, chart labels, revenue trends) so the system can be shown to a visitor; off by default and reset when the tab closes; display only (exports and other screens are unchanged).
 // prev:   // 6.1016.0 The Lamaa Stars hall-booking module is removed (screen, menu section, hall packages, hallBookings collection); the admin menu's third block is now 'Camps'.
@@ -6483,7 +6487,16 @@ function refreshNotifBadge() {
 // Defaults below; an admin can override later via state.settings.targets.{reception,coach}.
 const RECEPTION_TARGETS_DEFAULT = [{ at: 50000, bonus: 500 }, { at: 60000, bonus: 1000 }, { at: 70000, bonus: 1500 }, { at: 80000, bonus: 2000 }, { at: 100000, bonus: 3000 }];   // v6.978.0 — 50k→500 · 60k→1,000 · 70k→1,500 · 80k→2,000 · 100k→3,000
 const COACH_TARGETS_DEFAULT = [{ at: 40, bonus: 500 }, { at: 50, bonus: 1000 }, { at: 60, bonus: 1500 }];
-function receptionTargets() { const c = state.settings && state.settings.targets && state.settings.targets.reception; return (Array.isArray(c) && c.length) ? c.slice().sort((a, b) => a.at - b.at) : RECEPTION_TARGETS_DEFAULT; }
+// v6.1020 — from Nov 2026 the reception target counts NEW + RENEWAL subscribers (club-wide), like the coaches: 50 / 100 / 150 → 500 / 1,000 / 1,500. Months before keep the income tiers (settings.receptionTargetCountFrom moves the start).
+const RECEPTION_COUNT_TARGETS_DEFAULT = [{ at: 50, bonus: 500 }, { at: 100, bonus: 1000 }, { at: 150, bonus: 1500 }];
+function receptionCountFrom() { const v = state.settings && state.settings.receptionTargetCountFrom; return /^d{4}-d{2}$/.test(String(v || '')) ? String(v) : '2026-11'; }
+function receptionByCount(ym) { return !!ym && String(ym).slice(0, 7) >= receptionCountFrom(); }
+function receptionTargets(ym) {
+  if (receptionByCount(ym)) { const k = state.settings && state.settings.targets && state.settings.targets.receptionCount; return (Array.isArray(k) && k.length) ? k.slice().sort((a, b) => a.at - b.at) : RECEPTION_COUNT_TARGETS_DEFAULT; }
+  const c = state.settings && state.settings.targets && state.settings.targets.reception; return (Array.isArray(c) && c.length) ? c.slice().sort((a, b) => a.at - b.at) : RECEPTION_TARGETS_DEFAULT;
+}
+function receptionNewRenewCount(ym) { return coachNewRenewRows('*', ym).length; }
+function receptionMetric(ym) { return receptionByCount(ym) ? receptionNewRenewCount(ym) : receptionIncome(ym); }
 function coachTargets() { const c = state.settings && state.settings.targets && state.settings.targets.coach; return (Array.isArray(c) && c.length) ? c.slice().sort((a, b) => a.at - b.at) : COACH_TARGETS_DEFAULT; }
 // The highest tier whose threshold is met, plus the next unmet tier.
 function targetTier(value, tiers) {
@@ -6507,7 +6520,7 @@ function coachNewRenewRows(coachId, ym) {
   for (const m of (state.members || [])) {
     if (m.deleted) continue;
     for (const s of (m.subscriptions || [])) {
-      if (String(s.coachId) !== String(coachId)) continue;
+      if (coachId !== '*' && String(s.coachId) !== String(coachId)) continue;   // '*' = every package of the club (the reception target)
       if ((s.status || '').toLowerCase() === 'withdrawn') continue;
       if (String(s.start || '').slice(0, 7) !== ym) continue;
       // v6.778 — a package whose invoice was VOIDED (soft-deleted, no live invoice with that number) is not a real new/renewal (40 voided invoices gave +500 target bonus)
@@ -10025,7 +10038,7 @@ function salaryTarget(rec, netFallback) {
 // receptionists; coach: new/renew count) but nothing carried the bonus into the salary. Now computeMonthlyPay adds it, for the months
 // from settings.targetBonusFrom (default 2026-09) — the SAME numbers the Targets screen shows (same tiers, same rounding).
 function targetBonusFor(c, monthKey) {
-  const none = { amount: 0, kind: '', value: 0, bonus: 0, staff: 0 };
+  const none = { amount: 0, kind: '', value: 0, bonus: 0, staff: 0, byCount: false };
   const ym = String(monthKey || '').slice(0, 7);
   const from = (state.settings && state.settings.targetBonusFrom) || '2026-09';
   if (!c || !ym || ym < from || !isCoachActive(c)) return none;
@@ -10034,9 +10047,10 @@ function targetBonusFor(c, monthKey) {
   let r = none;
   if (c.role === 'receptionist') {
     const n = receptionBonusPool().length;
-    const income = receptionIncome(ym);
-    const tt = targetTier(income, receptionTargets());
-    if (tt.hit && n > 0 && receptionBonusEligible(c)) r = { amount: Math.round(tt.bonus / n), kind: 'reception', value: income, bonus: tt.bonus, staff: n };
+    const byCount = receptionByCount(ym);
+    const income = receptionMetric(ym);
+    const tt = targetTier(income, receptionTargets(ym));
+    if (tt.hit && n > 0 && receptionBonusEligible(c)) r = { amount: Math.round(tt.bonus / n), kind: 'reception', value: income, bonus: tt.bonus, staff: n, byCount };
   } else if (isCoachRole(c)) {
     const cnt = coachNewRenewCount(c.id, ym);
     const tt = targetTier(cnt, coachTargets());
@@ -10327,7 +10341,7 @@ function computeMonthlyPay(coachId, monthKey, uptoDate) {
     privateBonusBase: _pbBase, privateExtraAll: _allPriv, privateBonusPct: _coachPct, receptionSharePct: _bonusPct, receptionPoolPct: _recPct, privateBonus, approachBonus, approachBase: _allPriv ? privCoachBase : 0,
     privateReceptionBase: privRecBase, receptionBonus, receptionPoolBase, receptionStaffCount,
     privateBonusPending, privateReceptionPendingBase: privateReceptionPendingBase_, receptionBonusPending,
-    targetBonus, targetKind: _tb.kind, targetValue: _tb.value, targetTierBonus: _tb.bonus, targetStaff: _tb.staff,
+    targetBonus, targetKind: _tb.kind, targetByCount: !!_tb.byCount, targetValue: _tb.value, targetTierBonus: _tb.bonus, targetStaff: _tb.staff,
     gross,
     advance,
     advanceRecords,
@@ -11283,6 +11297,7 @@ const ROLE_ALLOWED = {
     'cashcollection', 'cashinhand',
     'attention',   // v6.836 — daily check list
     'notes',   // v6.902 — Notes & Reminders are back for reception
+    'targets',   // v6.1020 — the reception target is now a COUNT of new + renewal subscribers (no club income), so reception sees it again
     // v6.895 — 'targets' removed: its income target / bonus figures reveal what the club earns
     // Owner request (v6.327): re-enable Staff roster ('coaches') + the Sports/Activities
     // screen ('sports') for reception; Invoices + Expenses were already enabled above.
@@ -11919,9 +11934,9 @@ window._systemUnlock = function() {
 
 // v6.646: every screen build runs inside a calc scope (see CALC SCOPE), so repeated pure calculations are computed once.
 // ── HIDDEN MODE (v6.1017) — Dashboard + Reports: one button masks every money figure so the system can be shown to a visitor.
-const HM_ROUTES = { dashboard: 1, reports: 1 };
+const HM_ROUTES = { dashboard: 'all', reports: 'all', invoices: '#inv-kpis', transactions: ['#txn-count', '#txn-kpis', '#txn-linkbanner', '#txn-latepay', '#txn-earlypay', '#txn-summary', '#txn-tfoot'] };   // 'all' = the whole screen; a selector = only those totals (the invoice rows stay readable for daily work)
 const HM_WORDS = /revenue|income|collect|paid|due\b|expense|profit|salar|commission|price|cash|bank|balance|amount|sales|share|fee|outstanding|earn|cost|refund|discount|qar|payment|rent|bonus|advance|\bnet\b|gross|deposit|owed|loss|margin|ريال|ر\.ق|إيراد|ايراد|دخل|مصروف|ربح|راتب|عمولة|سعر|نقد|رصيد|مبلغ|مبيعات|حصة|رسوم|مستحق|مدفوع|تكلفة|خصم|إيجار|سلفة|صافي|إجمالي|تحصيل/i;
-function hmOn() { try { return sessionStorage.getItem('bs-hidden-mode') === '1'; } catch (_) { return !!window._hmOn; } }
+function hmOn() { try { return sessionStorage.getItem('bs-hidden-mode') !== '0'; } catch (_) { return window._hmOn !== false; } }   // ON by default; turning it off lasts until the tab closes
 function hmSet(v) { window._hmOn = !!v; try { sessionStorage.setItem('bs-hidden-mode', v ? '1' : '0'); } catch (_) {} }
 // Pure: mask the money numbers of one string. `ctxMoney` = the surrounding label talks about money.
 function hmMaskString(s, ctxMoney) {
@@ -11931,7 +11946,8 @@ function hmMaskString(s, ctxMoney) {
     if (prev === '-' && /\d/.test(whole.charAt(at - 2))) return tok;                          // 2026-11-10
     if (/^20\d\d$/.test(tok)) return tok;                                                       // a year
     const near = whole.slice(Math.max(0, at - 8), at) + whole.slice(at + tok.length, at + tok.length + 8);
-    if (ctxMoney || /[.,]/.test(tok) || /qar|ر\.ق|ريال/i.test(near)) return '•••';
+    const isCount = !/[.,]/.test(tok) && /^\s*(transactions?|invoices?|records?|members?|classes|عملية|عمليات|فاتورة|فواتير|عضو|أعضاء)/i.test(whole.slice(at + tok.length, at + tok.length + 14));   // '108 transactions' is a count
+    if (!isCount && (ctxMoney || /[.,]/.test(tok) || /qar|ر\.ق|ريال/i.test(near))) return '•••';
     return tok;
   });
 }
@@ -11962,7 +11978,8 @@ function hmApply() {
   if (!hmOn() || !HM_ROUTES[state.route]) return;
   window._hmBusy = true;
   try {
-    for (const root of [document.querySelector('.main'), document.getElementById('modal-backdrop')]) {
+    const scope = HM_ROUTES[state.route];
+    for (const root of (scope === 'all' ? [document.querySelector('.main'), document.getElementById('modal-backdrop')] : [].concat(scope).map(q => document.querySelector(q)))) {
       if (!root) continue;
       const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
       const nodes = [];
