@@ -931,7 +931,7 @@ PAGES.dashboard = (main) => {
     <!-- Data & Cloud Sync — document count + server load/save confirmation -->
     ${_secHead('☁️', t('Data & storage', 'البيانات والتخزين'), true)}
     ${(() => {
-      const COLS = ['members','coaches','invoices','expenses','salaries','sales','advices','trials','rentals','hallBookings','rentalCustomers','schedule','swimGroups','auditLog','membershipTransfers','cashCounts','families','notes','products','drivers','posts'];
+      const COLS = ['members','coaches','invoices','expenses','salaries','sales','advices','trials','rentals','rentalCustomers','schedule','swimGroups','auditLog','membershipTransfers','cashCounts','families','notes','products','drivers','posts'];
       const counts = {}; let totalDocs = 1;   // + parent meta document
       for (const k of COLS) { const n = Array.isArray(state[k]) ? state[k].length : 0; counts[k] = n; totalDocs += n; }
       const paymentRows = (state.invoices || []).reduce((sm, i) => sm + (Array.isArray(i.payments) ? i.payments.length : 0), 0);
@@ -3787,7 +3787,7 @@ function enrollRowHtml(row, idx) {
             <option value="">${t('— Approached by… —', '— تم التواصل عن طريق… —')}</option>
             <option value="coach" ${row.approach === 'coach' ? 'selected' : ''}>${t('Approached by the coach', 'عن طريق المدرب')}</option>
             <option value="reception" ${row.approach === 'reception' ? 'selected' : ''}>${t('Approached by reception', 'عن طريق الاستقبال')}</option></select></div>
-          <span class="text-mute" style="font-size:11px">${row.approach === 'coach' ? t('The coach earns +' + privateCoachPctDefault() + '% on top of his commission.', 'يحصل المدرب على +' + privateCoachPctDefault() + '% فوق عمولته.') : row.approach === 'reception' ? t(privateBonusPct() + '% goes to the reception staff, shared equally.', privateBonusPct() + '% لموظفي الاستقبال بالتساوي.') : t('Required: who brought this customer?', 'مطلوب: من أحضر هذا العميل؟')}</span>` : ''}
+          <span class="text-mute" style="font-size:11px">${row.approach === 'coach' ? t('The coach earns +' + privateCoachPctDefault() + '% on top of his commission.', 'يحصل المدرب على +' + privateCoachPctDefault() + '% فوق عمولته.') : row.approach === 'reception' ? t(receptionPoolPct() + '% goes to the reception staff, shared equally.', receptionPoolPct() + '% لموظفي الاستقبال بالتساوي.') : t('Required: who brought this customer?', 'مطلوب: من أحضر هذا العميل؟')}</span>` : ''}
       </div>`}
     </div>`;
 }
@@ -8802,7 +8802,29 @@ function citadelGroups() {
 // Pure aggregation for the Citadel screen — testable. `selMonths` = [] (all) or a
 // list of 'YYYY-MM'. Splits each contributing invoice line into its group's
 // membership vs rent bucket, scaled so the parts re-sum to the invoice amount.
-function citadelCompute(selMonths) {
+// v6.1015 — a Football / Swimming membership line is credited per class, in the month each class was ATTENDED (price ÷ paid classes), never the whole package; null = no class plan → invoice month
+function citadelAttendedSlices(inv, li) {
+  const mem = inv.customerId ? (state.members || []).find(x => x.id === inv.customerId) : null;
+  const price = Number(li.price) || 0;
+  if (!mem || price <= 0) return null;
+  const sub = findSubForLine(mem, inv, li);
+  const tot = (sub && parseFloat(sub.totalClasses)) || 0;
+  if (!sub || tot <= 0) return null;
+  const w = subAttendanceWindow(mem, sub);
+  const from = String(commissionStartDate()).slice(0, 7);
+  const per = price / tot;
+  const out = [];
+  let left = tot;
+  for (const mo of Object.keys(mem.dailyAttendance || {}).sort()) {
+    if (left <= 0) break;
+    const n = Math.min(left, attendedYInMonth(mem, sub.activity, mo, w.from, w.to, undefined, sub.coachId));
+    if (n <= 0) continue;
+    left -= n;
+    if (mo >= from) out.push({ month: mo, amt: per * n });
+  }
+  return out;
+}
+function citadelCompute(selMonths, _oldBasis) {
   const GROUPS = citadelGroups();
   const groupFor = (sport) => {
     for (const g of GROUPS) { if (g.membership.includes(sport)) return { g, type: 'membership' }; if (g.rent.includes(sport)) return { g, type: 'rent' }; }
@@ -8821,6 +8843,21 @@ function citadelCompute(selMonths) {
     const items = (inv.lineItems && inv.lineItems.length) ? inv.lineItems : [{ sport: inv.sport || null, price: inv.amount || 0 }];
     // v6.797 — a line's value is its own price (li.price is already net), NOT scaled to the stored invoice amount; a NEGATIVE line (a withdrawal / switch-away credit) reduces the share
     for (const li of items) {
+      const _h0 = (li.sport !== MIXED) ? groupFor(li.sport) : null;
+      if (_h0 && _h0.type === 'membership' && !_oldBasis) {   // v6.1015 — only the classes attended, each in its own month
+        const _sl = citadelAttendedSlices(inv, li);
+        if (_sl) {
+          const _ci0 = (typeof customerInfo === 'function') ? customerInfo(inv) : null;
+          const _cu0 = (_ci0 && _ci0.name) || inv.customerName || '—';
+          for (const _s of _sl) {
+            if (selSet.size && !selSet.has(_s.month)) continue;
+            agg[_h0.g.key].membership += _s.amt;
+            eligByInv.set(inv, (eligByInv.get(inv) || 0) + _s.amt);
+            details.push({ month: _s.month, ref: inv.ref || ('#' + inv.id), date: (inv.date || '').slice(0, 10), customer: _cu0, group: _h0.g, type: 'membership', sport: li.sport, amount: _s.amt });
+          }
+          continue;
+        }
+      }
       if (li.sport !== MIXED && !_inMonth) continue;
       // v6.572 — MIXED: the line's sport is "Mixed", but the member may have spent those classes on
       // Football/Swimming (which DO carry the facility share). Split the Mixed line's revenue across the
@@ -8882,6 +8919,89 @@ function citadelCompute(selMonths) {
   paid = Math.round(paid * 100) / 100;
   return { GROUPS, agg, details, grand, paid };
 }
+
+// ── TEMPORARY screen (v6.1015) — Citadel class differences: the old basis (whole package in its invoice month) vs the attended classes.
+// To remove: this block + the `citadeldiff` route and its Arabic label in app.js. Nothing else uses it.
+PAGES.citadeldiff = (main) => {
+  if (currentRole() !== 'admin') { main.innerHTML = `<div class="card"><div class="empty">${t('Admins only.', 'المسؤولون فقط.')}</div></div>`; return; }
+  const rawRate = Number(state.settings && state.settings.citadelRate);
+  const RATE = (isNaN(rawRate) || rawRate < 0) ? 30 : rawRate;
+  const from = String(commissionStartDate()).slice(0, 7), last = (TODAY || '').slice(0, 7);
+  const months = [];
+  for (let m = from; m <= last; m = _salNextMonth(m)) months.push(m);
+  const mem = new Map((state.members || []).map(x => [x.id, x]));
+  const byMonth = {}; months.forEach(m => { byMonth[m] = { old: 0, nw: 0 }; });
+  const rows = [];
+  for (const inv of (state.invoices || [])) {
+    if (inv.deleted) continue;
+    for (const li of (inv.lineItems || [])) {
+      if (li.sport !== 'Football' && li.sport !== 'Swimming') continue;
+      const price = Number(li.price) || 0;
+      if (!price) continue;
+      const mk = inv.month || String(inv.date || '').slice(0, 7);
+      const m = inv.customerId ? mem.get(inv.customerId) : null;
+      const sl = citadelAttendedSlices(inv, li);
+      if (byMonth[mk]) byMonth[mk].old += price;
+      const row = { ref: inv.ref || ('#' + inv.id), name: (m && (m.name || m.nameArabic)) || inv.customerName || '—', sport: li.sport, mk, price, tot: 0, counted: 0, pre: 0, left: 0, val: 0, per: {}, status: '' };
+      if (!sl) {
+        if (byMonth[mk]) byMonth[mk].nw += price;
+        row.status = 'plan';
+        rows.push(row);
+        continue;
+      }
+      const sub = findSubForLine(m, inv, li);
+      row.tot = parseFloat(sub.totalClasses) || 0;
+      const perC = price / row.tot;
+      for (const s of sl) { row.per[s.month] = (row.per[s.month] || 0) + s.amt; if (byMonth[s.month]) byMonth[s.month].nw += s.amt; }
+      row.counted = Math.round(sl.reduce((a, s) => a + s.amt, 0) / perC);
+      const att = Math.min(row.tot, attendedYForSub(m, sub));
+      row.pre = Math.max(0, att - row.counted);
+      row.left = Math.max(0, row.tot - att);
+      row.val = row.left * perC;
+      row.status = row.left <= 0 ? 'done' : (sub.end && sub.end < TODAY ? 'expired' : 'active');
+      rows.push(row);
+    }
+  }
+  const ba = months.map(k => {
+    const o = citadelCompute([k], true), n = citadelCompute([k]), paidCo = citadelPaidToCompany([k]);
+    const memb = r => r.agg.football.membership + r.agg.swimming.membership, rent = r => r.agg.football.rent + r.agg.swimming.rent;
+    return { k, mo: memb(o), mn: memb(n), rent: rent(n), go: o.grand, gn: n.grand, so: o.grand * RATE / 100, sn: n.grand * RATE / 100, paidCo };
+  });
+  const sum = (a, f) => a.reduce((s, x) => s + f(x), 0);
+  const oldT = sum(months, k => byMonth[k].old), newT = sum(months, k => byMonth[k].nw);
+  const expired = rows.filter(r => r.status === 'expired'), active = rows.filter(r => r.status === 'active');
+  const flt = window._cdFilter || 'all';
+  const shown = rows.filter(r => flt === 'all' ? (r.status !== 'plan' || true) : r.status === flt).sort((a, b) => b.val - a.val || a.name.localeCompare(b.name));
+  const lbl = { plan: t('No class plan · invoice month', 'بدون خطة حصص · شهر الفاتورة'), done: t('All attended', 'كلها اتحضرت'), expired: t('Expired · unattended', 'انتهت · لم تُحضر'), active: t('Active · remaining', 'سارية · متبقية') };
+  const sh = x => fmt(x * RATE / 100);
+  const kpi = (label, value, sub) => `<div class="kpi"><div class="kpi-label">${label}</div><div class="kpi-value num">${fmt(value)}</div>${sub ? `<div class="text-mute" style="font-size:11px">${sub}</div>` : ''}</div>`;
+  const monthRows = months.map(k => { const d = byMonth[k].nw - byMonth[k].old; return `<tr><td>${escapeHtml(fmtMonth(k))}</td><td class="text-right num">${fmt(byMonth[k].old)}</td><td class="text-right num">${fmt(byMonth[k].nw)}</td><td class="text-right num" style="color:${d < 0 ? 'var(--red)' : 'var(--green)'}">${d > 0 ? '+' : ''}${fmt(d)}</td><td class="text-right num" style="color:${d < 0 ? 'var(--red)' : 'var(--green)'}">${d > 0 ? '+' : ''}${sh(d)}</td></tr>`; }).join('');
+  const lineRows = shown.map(r => `<tr>
+    <td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.ref)}</td><td>${escapeHtml(r.sport)}</td><td>${escapeHtml(fmtMonth(r.mk))}</td>
+    <td class="text-right num">${fmt(r.price)}</td><td class="text-right num">${r.tot || '—'}</td><td class="text-right num">${r.counted}</td><td class="text-right num">${r.pre || ''}</td><td class="text-right num">${r.left || ''}</td>
+    <td>${Object.keys(r.per).sort().map(k => escapeHtml(fmtMonth(k)) + ' ' + fmt(r.per[k])).join(' · ') || '—'}</td>
+    <td class="text-right num">${r.val ? fmt(r.val) : ''}</td><td>${lbl[r.status]}</td></tr>`).join('');
+  main.innerHTML = `
+    <div class="page-header"><div><div class="page-title">🏛 ${t('Citadel · class differences', 'سيتاديل · فرق الحصص')}</div>
+      <div class="subtitle">${t('Temporary screen — Football + Swimming memberships only: the whole package in its invoice month (old) vs only the classes attended, each in its own month (new), from', 'شاشة مؤقتة — اشتراكات الكرة والسباحة فقط: الباقة كلها في شهر فاتورتها (القديم) مقابل الحصص المتحضرة فقط كل حصة في شهرها (الجديد)، من')} ${escapeHtml(fmtMonth(from))}. ${t('Rent and Mixed are unchanged.', 'الإيجارات والـ Mixed لم تتغير.')}</div></div></div>
+    <div class="kpi-row" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-bottom:14px">
+      ${kpi(t('Old basis', 'الأساس القديم'), oldT, t('company share', 'حصة الشركة') + ' ' + sh(oldT))}
+      ${kpi(t('Attended classes', 'الحصص المتحضرة'), newT, t('company share', 'حصة الشركة') + ' ' + sh(newT))}
+      ${kpi(t('Difference', 'الفرق'), newT - oldT, t('share', 'الحصة') + ' ' + sh(newT - oldT))}
+      ${kpi(t('Expired, never attended', 'انتهت بدون حضور'), sum(expired, r => r.val), expired.length + ' ' + t('lines · share', 'سطر · الحصة') + ' ' + sh(sum(expired, r => r.val)))}
+      ${kpi(t('Active, still to attend', 'سارية ولسه متبقي'), sum(active, r => r.val), active.length + ' ' + t('lines · share', 'سطر · الحصة') + ' ' + sh(sum(active, r => r.val)))}
+    </div>
+    <div class="card" style="margin-bottom:14px"><div class="card-header"><div class="card-title">${t('Citadel share · before and after', 'حصة سيتاديل · قبل وبعد')} · ${RATE}%</div><div class="card-subtitle">${t('Whole Citadel figure per month (membership + rent + Mixed). Before = whole package in the invoice month; after = attended classes only.', 'رقم سيتاديل كامل لكل شهر (اشتراكات + إيجار + Mixed). قبل = الباقة كلها في شهر الفاتورة؛ بعد = الحصص المتحضرة فقط.')}</div></div>
+      <div class="table-wrap"><table><thead><tr><th>${t('Month', 'الشهر')}</th><th class="text-right">${t('Membership before', 'الاشتراكات قبل')}</th><th class="text-right">${t('Membership after', 'الاشتراكات بعد')}</th><th class="text-right">${t('Rent', 'الإيجار')}</th><th class="text-right">${t('Total before', 'الإجمالي قبل')}</th><th class="text-right">${t('Total after', 'الإجمالي بعد')}</th><th class="text-right">${t('Share before', 'الحصة قبل')}</th><th class="text-right">${t('Share after', 'الحصة بعد')}</th><th class="text-right">${t('Share difference', 'فرق الحصة')}</th><th class="text-right">${t('Already posted', 'المسجّل كمدفوع')}</th><th class="text-right">${t('Balance after', 'المتبقي بعد')}</th></tr></thead><tbody>${ba.map(r => `<tr><td>${escapeHtml(fmtMonth(r.k))}</td><td class="text-right num">${fmt(r.mo)}</td><td class="text-right num">${fmt(r.mn)}</td><td class="text-right num">${fmt(r.rent)}</td><td class="text-right num">${fmt(r.go)}</td><td class="text-right num">${fmt(r.gn)}</td><td class="text-right num">${fmt(r.so)}</td><td class="text-right num"><b>${fmt(r.sn)}</b></td><td class="text-right num" style="color:${r.sn - r.so < 0 ? 'var(--red)' : 'var(--green)'}">${r.sn - r.so > 0 ? '+' : ''}${fmt(r.sn - r.so)}</td><td class="text-right num">${fmt(r.paidCo)}</td><td class="text-right num">${fmt(r.sn - r.paidCo)}</td></tr>`).join('')}
+      <tr style="font-weight:700"><td>${t('Total', 'الإجمالي')}</td><td class="text-right num">${fmt(sum(ba, r => r.mo))}</td><td class="text-right num">${fmt(sum(ba, r => r.mn))}</td><td class="text-right num">${fmt(sum(ba, r => r.rent))}</td><td class="text-right num">${fmt(sum(ba, r => r.go))}</td><td class="text-right num">${fmt(sum(ba, r => r.gn))}</td><td class="text-right num">${fmt(sum(ba, r => r.so))}</td><td class="text-right num">${fmt(sum(ba, r => r.sn))}</td><td class="text-right num">${fmt(sum(ba, r => r.sn - r.so))}</td><td class="text-right num">${fmt(sum(ba, r => r.paidCo))}</td><td class="text-right num">${fmt(sum(ba, r => r.sn - r.paidCo))}</td></tr></tbody></table></div></div>
+    <div class="card"><div class="card-header"><div class="card-title">${t('By month', 'حسب الشهر')} · ${RATE}%</div></div>
+      <div class="table-wrap"><table><thead><tr><th>${t('Month', 'الشهر')}</th><th class="text-right">${t('Old basis', 'القديم')}</th><th class="text-right">${t('Attended', 'المتحضر')}</th><th class="text-right">${t('Difference', 'الفرق')}</th><th class="text-right">${t('Share difference', 'فرق الحصة')}</th></tr></thead><tbody>${monthRows}
+      <tr style="font-weight:700"><td>${t('Total', 'الإجمالي')}</td><td class="text-right num">${fmt(oldT)}</td><td class="text-right num">${fmt(newT)}</td><td class="text-right num">${fmt(newT - oldT)}</td><td class="text-right num">${sh(newT - oldT)}</td></tr></tbody></table></div></div>
+    <div class="card" style="margin-top:14px"><div class="card-header"><div class="card-title">${t('Lines', 'السطور')} (${shown.length})</div>
+      <select id="cd-flt"><option value="all"${flt === 'all' ? ' selected' : ''}>${t('All lines', 'كل السطور')}</option><option value="expired"${flt === 'expired' ? ' selected' : ''}>${lbl.expired}</option><option value="active"${flt === 'active' ? ' selected' : ''}>${lbl.active}</option><option value="done"${flt === 'done' ? ' selected' : ''}>${lbl.done}</option><option value="plan"${flt === 'plan' ? ' selected' : ''}>${lbl.plan}</option></select></div>
+      <div class="table-wrap"><table><thead><tr><th>${t('Member', 'العضو')}</th><th>${t('Invoice', 'الفاتورة')}</th><th>${t('Sport', 'الرياضة')}</th><th>${t('Invoice month', 'شهر الفاتورة')}</th><th class="text-right">${t('Price', 'السعر')}</th><th class="text-right">${t('Classes', 'الحصص')}</th><th class="text-right">${t('Attended (counted)', 'متحضرة (محسوبة)')}</th><th class="text-right">${t('Attended before start', 'متحضرة قبل البداية')}</th><th class="text-right">${t('Unattended', 'لم تُحضر')}</th><th>${t('Counted per month', 'المحسوب لكل شهر')}</th><th class="text-right">${t('Unattended value', 'قيمة غير المتحضر')}</th><th>${t('Status', 'الحالة')}</th></tr></thead><tbody>${lineRows}</tbody></table></div></div>`;
+  $('#cd-flt')?.addEventListener('change', e => { window._cdFilter = e.target.value; PAGES.citadeldiff(main); });
+};
 
 // Sum of Citadel Company Share expenses actually posted (paid to the facility company) within the
 // selected month scope ([] = all months). Includes the auto rows and any manual ones. (v6.577)
@@ -17133,7 +17253,7 @@ window.showDataHealthUI = function () {
 // reads/writes live in the Firebase Console (Firestore → Usage); no app can read those about itself.
 const _CLOUD_COLLECTIONS = [
   'members', 'coaches', 'invoices', 'expenses', 'salaries', 'sales', 'advices',
-  'trials', 'rentals', 'hallBookings', 'rentalCustomers', 'schedule', 'swimGroups', 'auditLog',
+  'trials', 'rentals', 'rentalCustomers', 'schedule', 'swimGroups', 'auditLog',
   'membershipTransfers', 'cashCounts', 'families', 'notes', 'products', 'drivers', 'posts',
 ];
 const _CLOUD_LABELS = {
@@ -21370,13 +21490,13 @@ window.openPrivateCheck = function (monthKey) {
       <td class="text-right num">${fmt(x.sub.amountPaid || 0)}</td>
       <td style="white-space:nowrap">
         <button class="btn ghost sm" onclick="markPackagePrivate(${i}, 'coach')" title="${t('Approached by the coach: coach +' + privateCoachPctDefault() + '%', 'عن طريق المدرب')}">🏃 ${t('Coach', 'مدرب')}</button>
-        <button class="btn ghost sm" onclick="markPackagePrivate(${i}, 'reception')" title="${t('Approached by reception: ' + privateBonusPct() + '% shared by reception', 'عن طريق الاستقبال')}">🧾 ${t('Reception', 'استقبال')}</button>
+        <button class="btn ghost sm" onclick="markPackagePrivate(${i}, 'reception')" title="${t('Approached by reception: ' + receptionPoolPct() + '% shared by reception', 'عن طريق الاستقبال')}">🧾 ${t('Reception', 'استقبال')}</button>
         <button class="btn ghost sm" onclick="markPackagePrivate(${i}, 'none')" title="${t('Not a private package — stop listing it', 'ليست باقة خاصة')}">✕ ${t('Not private', 'ليست خاصة')}</button>
       </td></tr>`).join('');
   showModal({
     title: '🔒 ' + t('Private check', 'فحص الخاص') + ' · ' + escapeHtml(label),
     size: 'xl',
-    body: `<div class="text-mute" style="font-size:12px;margin-bottom:8px;line-height:1.6">${t('These packages are with a private coach (or a private sport) but not marked Private, so no private bonus is paid on them. For each one say who approached the customer — the coach (coach earns +' + privateBonusPct() + '%) or reception (' + privateBonusPct() + '% shared by the reception staff) — or mark it Not private.', 'هذه الباقات لدى مدرب خاص (أو رياضة خاصة) لكنها غير معلَّمة كخاصة، فلا يُدفع عليها بونس. لكل واحدة حدّد من أحضر العميل — المدرب أو الاستقبال — أو علّمها ليست خاصة.')}</div>
+    body: `<div class="text-mute" style="font-size:12px;margin-bottom:8px;line-height:1.6">${t('These packages are with a private coach (or a private sport) but not marked Private, so no private bonus is paid on them. For each one say who approached the customer — the coach (coach earns +' + privateBonusPct() + '%) or reception (' + receptionPoolPct() + '% shared by the reception staff) — or mark it Not private.', 'هذه الباقات لدى مدرب خاص (أو رياضة خاصة) لكنها غير معلَّمة كخاصة، فلا يُدفع عليها بونس. لكل واحدة حدّد من أحضر العميل — المدرب أو الاستقبال — أو علّمها ليست خاصة.')}</div>
       ${list.length ? `<div class="table-wrap"><table style="width:100%;font-size:12.5px"><thead><tr><th>#</th><th style="text-align:left">${t('Member', 'العضو')}</th><th style="text-align:left">${t('Sport', 'الرياضة')}</th><th style="text-align:left">${t('Coach', 'المدرب')}</th><th style="text-align:left">${t('Period', 'الفترة')}</th><th class="text-right">${t('Paid', 'المدفوع')}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
         : `<div style="text-align:center;padding:22px;color:var(--green);font-weight:700">✅ ${t('Nothing to check — every package under a private coach is classified.', 'لا شيء للفحص — كل باقة لدى مدرب خاص مصنَّفة.')}</div>`}`,
     actions: [{ label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal }],
@@ -21442,7 +21562,7 @@ PAGES.salaries = (main) => {
       }
       if (p.privateBonus > 0) breakdown.push(`🔒 private +${p.privateBonusPct}% × ${fmt(p.privateBonusBase)} = ${fmt(p.privateBonus - (p.approachBonus || 0))}`);   // v6.653
       if ((p.approachBonus || 0) > 0) breakdown.push(`🤝 brought-in +${p.receptionSharePct}% × ${fmt(p.approachBase)} = ${fmt(p.approachBonus)}`);   // v6.891
-      if (p.receptionBonus > 0) breakdown.push(`🔒 reception share ${p.receptionSharePct}% × ${fmt(p.receptionPoolBase)} ÷ ${p.receptionStaffCount} = ${fmt(p.receptionBonus)}`);
+      if (p.receptionBonus > 0) breakdown.push(`🔒 reception share ${p.receptionPoolPct != null ? p.receptionPoolPct : p.receptionSharePct}% × ${fmt(p.receptionPoolBase)} ÷ ${p.receptionStaffCount} = ${fmt(p.receptionBonus)}`);
       if (p.targetBonus > 0) breakdown.push(`🎯 target bonus ${fmt(p.targetBonus)}${p.targetKind === 'reception' ? ` (${fmt(p.targetTierBonus)} ÷ ${p.targetStaff})` : ` (${p.targetValue} new/renew)`}`);   // v6.655
       const breakdownStr = breakdown.join(' + ') || '—';
       const _pvPend = (p.privateBonusPending || 0) + (p.receptionBonusPending || 0);   // v6.664
@@ -22688,7 +22808,7 @@ window.downloadPayslipPDF = function(coachId, monthKey) {
         ${pay.basis === 'attendance' && pay.commissionPending > 0 ? `<div class="row" style="color:#b45309"><span>Pending (not yet earned — see rule below)</span><span>${fmt(pay.commissionPending)} QAR</span></div>` : ''}
       ` : ''}
       ${pay.privateBonus > 0 ? `<div class="row"><span>Private bonus (+${pay.privateBonusPct}% on ${fmt(pay.privateBonusBase)} QAR of private packages${pay.privateExtraAll ? "" : " you brought in"})</span><span>${fmt(pay.privateBonus - (pay.approachBonus || 0))} QAR</span></div>` : ''}${(pay.approachBonus || 0) > 0 ? `<div class="row"><span>Brought-in bonus (+${pay.receptionSharePct}% on ${fmt(pay.approachBase)} QAR of private customers you brought)</span><span>${fmt(pay.approachBonus)} QAR</span></div>` : ''}
-      ${pay.receptionBonus > 0 ? `<div class="row"><span>Reception private share (${pay.receptionSharePct}% of ${fmt(pay.receptionPoolBase)} QAR ÷ ${pay.receptionStaffCount} staff)</span><span>${fmt(pay.receptionBonus)} QAR</span></div>` : ''}
+      ${pay.receptionBonus > 0 ? `<div class="row"><span>Reception private share (${pay.receptionPoolPct != null ? pay.receptionPoolPct : pay.receptionSharePct}% of ${fmt(pay.receptionPoolBase)} QAR ÷ ${pay.receptionStaffCount} staff)</span><span>${fmt(pay.receptionBonus)} QAR</span></div>` : ''}
       ${(pay.privateBonusPending || 0) + (pay.receptionBonusPending || 0) > 0.005 ? `<div class="row" style="color:#7c3aed"><span>⏳ Pending private ${pay.receptionBonusPending > 0 ? 'share' : 'bonus'} (not in gross — ${pay.receptionBonusPending > 0 ? 'paid in full next month' : 'earned as the private member attends'})</span><span>${fmt((pay.privateBonusPending || 0) + (pay.receptionBonusPending || 0))} QAR</span></div>` : ''}
       ${pay.targetBonus > 0 ? `<div class="row"><span>Target bonus (${pay.targetKind === 'reception' ? 'reception income target ' + fmt(pay.targetTierBonus) + ' ÷ ' + pay.targetStaff + ' staff' : pay.targetValue + ' new/renew this month'})</span><span>${fmt(pay.targetBonus)} QAR</span></div>` : ''}
       <div class="row bold"><span>Gross pay</span><span>${fmt(pay.gross)} QAR</span></div>
@@ -23486,7 +23606,7 @@ window.downloadRevenueDetailPDF = function(coachId, monthKey) {
         <div class="row"><span>Commission earned</span><span style="font-family:monospace">${fmt(pay.commissionAmount)} QAR</span></div>
       ` : ''}
       ${pay.privateBonus > 0 ? `<div class="row"><span>Private bonus (+${pay.privateBonusPct}% on ${fmt(pay.privateBonusBase)} QAR of private packages)</span><span style="font-family:monospace">${fmt(pay.privateBonus)} QAR</span></div>` : ''}
-      ${pay.receptionBonus > 0 ? `<div class="row"><span>Reception private share (${pay.receptionSharePct}% of ${fmt(pay.receptionPoolBase)} QAR ÷ ${pay.receptionStaffCount} staff)</span><span style="font-family:monospace">${fmt(pay.receptionBonus)} QAR</span></div>` : ''}
+      ${pay.receptionBonus > 0 ? `<div class="row"><span>Reception private share (${pay.receptionPoolPct != null ? pay.receptionPoolPct : pay.receptionSharePct}% of ${fmt(pay.receptionPoolBase)} QAR ÷ ${pay.receptionStaffCount} staff)</span><span style="font-family:monospace">${fmt(pay.receptionBonus)} QAR</span></div>` : ''}
       ${(pay.privateBonusPending || 0) + (pay.receptionBonusPending || 0) > 0.005 ? `<div class="row" style="color:#7c3aed"><span>⏳ Pending private ${pay.receptionBonusPending > 0 ? 'share' : 'bonus'} (not in gross — ${pay.receptionBonusPending > 0 ? 'paid in full next month' : 'earned as the private member attends'})</span><span style="font-family:monospace">${fmt((pay.privateBonusPending || 0) + (pay.receptionBonusPending || 0))} QAR</span></div>` : ''}
       ${pay.targetBonus > 0 ? `<div class="row"><span>Target bonus (${pay.targetKind === 'reception' ? 'reception income target ' + fmt(pay.targetTierBonus) + ' ÷ ' + pay.targetStaff + ' staff' : pay.targetValue + ' new/renew this month'})</span><span style="font-family:monospace">${fmt(pay.targetBonus)} QAR</span></div>` : ''}
       <div class="row bold"><span>Gross pay</span><span style="font-family:monospace">${fmt(pay.gross)} QAR</span></div>
@@ -30113,7 +30233,7 @@ window.addRenewal = function(memberId, opts) {   // opts.start / opts.sport (v6.
           <select id="rn-approach" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)">
             <option value="">${t('— Approached by… —', '— تم التواصل عن طريق… —')}</option>
             <option value="coach">${t('Approached by the coach (coach +' + privateCoachPctDefault() + '%)', 'عن طريق المدرب (المدرب +' + privateCoachPctDefault() + '%)')}</option>
-            <option value="reception">${t('Approached by reception (' + privateBonusPct() + '% shared by reception)', 'عن طريق الاستقبال (' + privateBonusPct() + '% للاستقبال)')}</option>
+            <option value="reception">${t('Approached by reception (' + receptionPoolPct() + '% shared by reception)', 'عن طريق الاستقبال (' + receptionPoolPct() + '% للاستقبال)')}</option>
           </select>
         </div>
         <div id="rn-priv-hint" class="text-mute" style="font-size:11px"></div>
@@ -30375,7 +30495,7 @@ window.addRenewal = function(memberId, opts) {   // opts.start / opts.sport (v6.
     if (!chk || !sel) return;
     if (wrap) wrap.style.display = chk.checked ? 'grid' : 'none';
     if (hint) hint.textContent = !chk.checked ? '' : (sel.value === 'coach' ? t('The coach earns +' + privateCoachPctDefault() + '% on top of his commission.', 'يحصل المدرب على +' + privateCoachPctDefault() + '% فوق عمولته.')
-      : sel.value === 'reception' ? t(privateBonusPct() + '% goes to the reception staff, shared equally.', privateBonusPct() + '% لموظفي الاستقبال بالتساوي.') : t('Required: who brought this customer?', 'مطلوب: من أحضر هذا العميل؟'));
+      : sel.value === 'reception' ? t(receptionPoolPct() + '% goes to the reception staff, shared equally.', receptionPoolPct() + '% لموظفي الاستقبال بالتساوي.') : t('Required: who brought this customer?', 'مطلوب: من أحضر هذا العميل؟'));
   }
   function applyRnPrivateDefault() {
     const box = $('#rn-priv-box'), chk = $('#rn-private'), sel = $('#rn-approach'); if (!box || !chk || !sel) return;
@@ -30700,7 +30820,7 @@ window.editSubscription = function(memberId, sid) {
             <select id="es-approach" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)">
               <option value="">${t('— Approached by… —', '— تم التواصل عن طريق… —')}</option>
               <option value="coach" ${sub.approach === 'coach' ? 'selected' : ''}>${t('Approached by the coach (coach +' + privateCoachPctDefault() + '%)', 'عن طريق المدرب (المدرب +' + privateCoachPctDefault() + '%)')}</option>
-              <option value="reception" ${sub.approach === 'reception' ? 'selected' : ''}>${t('Approached by reception (' + privateBonusPct() + '% shared by reception)', 'عن طريق الاستقبال (' + privateBonusPct() + '% للاستقبال)')}</option>
+              <option value="reception" ${sub.approach === 'reception' ? 'selected' : ''}>${t('Approached by reception (' + receptionPoolPct() + '% shared by reception)', 'عن طريق الاستقبال (' + receptionPoolPct() + '% للاستقبال)')}</option>
             </select>
           </div></div>`}
         <label style="display:grid;gap:4px">${t('Status', 'الحالة')}
@@ -36214,304 +36334,6 @@ PAGES.reports = (main) => {
 // Each rental: { id, facility, date, hours, hourlyRate, amount, method,
 //                customerName, customerPhone, customerId?, customerQid?,
 //                notes, invoiceId? (created automatically), createdAt }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// LAMAA STARS — ground-floor hall booking module (v6.641). Its own section. Bookings are stored in
-// state.hallBookings; each creates a linked 'Hall Rental' invoice (activityType 'rental' → flows into
-// Finance / Due Payment / reception income). Pricing = a configurable package OR a flat custom price;
-// captures guests, occasion, a setup/cleanup buffer (overlap guard) and a deposit (rest = due, Collect).
-// ═══════════════════════════════════════════════════════════════════════════
-const HALL_NAME = 'Lamaa Stars';
-PAGES.lamaa = (main) => {
-  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { main.innerHTML = `<div class="empty"><div class="empty-icon">🔐</div>${t('Admins or reception only', 'المشرفون أو الاستقبال فقط')}</div>`; return; }
-  let filter = { search: '', status: 'all', months: [] };
-  const pg = makePager(10);
-  const bDue = (b) => (typeof hallBookingDue === 'function') ? hallBookingDue(b) : 0;
-
-  function applyFilter() {
-    return (state.hallBookings || []).filter(b => {
-      if (filter.search) { const q = filter.search.toLowerCase(); const hay = [b.customerName, b.customerPhone, b.occasion, b.notes, b.packageLabel].filter(Boolean).join(' ').toLowerCase(); if (!hay.includes(q)) return false; }
-      if (filter.months.length && !filter.months.includes((b.date || '').slice(0, 7))) return false;
-      if (filter.status === 'due' && !(bDue(b) > 0.5)) return false;
-      if (filter.status === 'paid' && bDue(b) > 0.5) return false;
-      return true;
-    });
-  }
-
-  function refresh() {
-    const all = applyFilter().sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.startTime || '').localeCompare(a.startTime || ''));
-    const totalAmt = all.reduce((s, b) => s + (Number(b.amount) || 0), 0);
-    const totalDue = Math.round(all.reduce((s, b) => s + bDue(b), 0) * 100) / 100;
-    const rows = paginate(all, pg);
-    $('#lam-tbody').innerHTML = rows.length ? rows.map(b => { const _due = bDue(b); const _ref = (typeof hallReferralAmount === 'function') ? hallReferralAmount(b) : 0; return `
-      <tr>
-        <td class="text-dim" style="white-space:nowrap">${b.date ? fmtDate(b.date) : '—'}${(b.startTime || b.endTime) ? `<div class="text-mute" style="font-size:10px">${escapeHtml(b.startTime || '')}${b.endTime ? '–' + escapeHtml(b.endTime) : ''}</div>` : ''}</td>
-        <td><div class="font-bold">${escapeHtml(b.customerName || '—')}</div>${b.customerPhone ? `<div class="text-mute" style="font-size:11px">${phoneCell(b.customerPhone)}</div>` : ''}${(b.referrer && !isViewerRole()) ? `<div style="font-size:10px;color:var(--accent-2);margin-top:2px" title="${t('Referral payout', 'مستحق الإحالة')}">🤝 ${escapeHtml(b.referrer)} · ${fmt(_ref)} (${b.referralPct != null ? b.referralPct : 10}%)</div>` : ''}</td>
-        <td>${b.occasion ? `<span class="badge">${escapeHtml(b.occasion)}</span>` : '<span class="text-mute">—</span>'}${b.packageLabel ? `<div class="text-mute" style="font-size:10px">${escapeHtml(b.packageLabel)}</div>` : ''}</td>
-        <td class="text-right num">${b.guests ? b.guests : '—'}</td>
-        <td class="text-right num font-bold">${fmt(b.amount || 0)}${_due > 0.5 ? `<div style="font-size:10px;color:var(--red);font-weight:700">⏳ ${fmt(_due)} due</div>` : ''}</td>
-        <td>${_due > 0.5 ? `<span class="badge red" title="Unpaid balance">⏳ DUE</span>` : `<span class="badge green">✓ ${t('paid', 'مدفوع')}</span>`}</td>
-        <td class="text-mute" style="font-size:11px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(b.notes || '')}</td>
-        <td class="text-right" style="white-space:nowrap">
-          ${_due > 0.5 ? `<button class="btn primary sm" onclick="collectLamaaBooking(${b.id})" title="Record payment (${fmt(_due)})">💵 ${t('Collect', 'تحصيل')}</button>` : ''}
-          ${b.invoiceId ? `<button class="btn ghost sm" onclick="printInvoicePDF(${b.invoiceId})" title="Invoice PDF">📄</button>` : ''}
-          <button class="btn ghost sm" onclick="editLamaaBooking(${b.id})" title="Edit">✏️</button>
-          <button class="btn ghost sm" onclick="deleteLamaaBooking(${b.id})" title="Delete" style="color:var(--red)">🗑</button>
-        </td>
-      </tr>`; }).join('') : `<tr><td colspan="8" class="empty"><div class="empty-icon">✨</div>${t('No hall bookings match the filter', 'لا توجد حجوزات مطابقة')}</td></tr>`;
-    $('#lam-count').textContent = isViewerRole() ? `${all.length} ${t('booking(s)', 'حجز')}` : `${all.length} ${t('booking(s)', 'حجز')} · ${fmt(totalAmt)} QAR` + (totalDue > 0.5 ? ` · ⏳ ${fmt(totalDue)} ${t('due', 'مستحق')}` : '');   // v6.782 — reception: count only
-    renderPagination('lam-pagination', pg, all.length, () => refresh());
-  }
-
-  const monthsIn = [...new Set((state.hallBookings || []).map(b => (b.date || '').slice(0, 7)).filter(Boolean))].sort().reverse();
-  const curMonth = currentMonth();
-  const thisMonth = (state.hallBookings || []).filter(b => (b.date || '').slice(0, 7) === curMonth);
-  const monthAmt = thisMonth.reduce((s, b) => s + (Number(b.amount) || 0), 0);
-  const monthDue = Math.round(thisMonth.reduce((s, b) => s + bDue(b), 0) * 100) / 100;
-  const monthRef = Math.round(thisMonth.reduce((s, b) => s + ((typeof hallReferralAmount === 'function') ? hallReferralAmount(b) : 0), 0) * 100) / 100;
-  const monthShort = new Date(curMonth + '-01T00:00:00').toLocaleString('en', { month: 'short' });
-
-  main.innerHTML = `
-    <div class="topbar">
-      <div><h1>✨ ${escapeHtml(HALL_NAME)}</h1><div class="subtitle"><span id="lam-count">Loading…</span></div></div>
-      <div class="topbar-actions">
-        ${currentRole() === 'admin' ? `<button class="btn ghost" id="lam-packages" title="Edit hall packages + prices">⚙ ${t('Packages', 'الباقات')}</button>` : ''}
-        ${isViewerRole() ? '' : `<button class="btn ghost" id="lam-export" title="Export to CSV">📥 ${t('Export', 'تصدير')}</button>`}
-        <button class="btn primary" id="lam-add">+ ${t('New Booking', 'حجز جديد')}</button>
-      </div>
-    </div>
-    <div class="kpi-grid" style="grid-template-columns:repeat(${isViewerRole() ? 2 : 4},1fr);gap:12px;margin-bottom:16px">
-      ${isViewerRole() ? `<div class="kpi purple"><div class="kpi-label">✨ ${escapeHtml(HALL_NAME)} — ${monthShort}</div><div class="kpi-value num">${thisMonth.length}</div><div class="kpi-sub">${t('booking(s)', 'حجز')}</div></div>` : `<div class="kpi purple"><div class="kpi-label">✨ ${escapeHtml(HALL_NAME)} — ${monthShort}</div><div class="kpi-value num">${fmt(monthAmt)}</div><div class="kpi-sub">${thisMonth.length} ${t('booking(s)', 'حجز')} · QAR</div></div>
-      <div class="kpi ${monthDue > 0.5 ? 'red' : 'green'}"><div class="kpi-label">⏳ ${t('Due this month', 'المستحق هذا الشهر')}</div><div class="kpi-value num">${fmt(monthDue)}</div><div class="kpi-sub">QAR</div></div>
-      <div class="kpi orange"><div class="kpi-label">🤝 ${t('Referral payouts', 'مستحقات الإحالة')} — ${monthShort}</div><div class="kpi-value num">${fmt(monthRef)}</div><div class="kpi-sub">${t('to whoever brought the customer', 'لمن أحضر العميل')} · QAR</div></div>`}
-      <div class="kpi"><div class="kpi-label">📅 ${t('Total bookings', 'إجمالي الحجوزات')}</div><div class="kpi-value num">${(state.hallBookings || []).length}</div><div class="kpi-sub">${t('all time', 'كل الوقت')}</div></div>
-    </div>
-    <div class="card">
-      <div class="filter-bar">
-        <div class="search"><input id="lam-search" type="text" placeholder="${t('Search customer, occasion, notes…', 'ابحث بالعميل أو المناسبة…')}" /></div>
-        <select id="lam-status" class="btn ghost"><option value="all">${t('All', 'الكل')}</option><option value="due">⏳ ${t('Due only', 'المستحق فقط')}</option><option value="paid">✓ ${t('Paid only', 'المدفوع فقط')}</option></select>
-        ${monthMultiHTML('lam-month', monthsIn, filter.months)}
-      </div>
-      <div class="table-wrap"><table><thead><tr>
-        <th>${t('Date / Time', 'التاريخ / الوقت')}</th><th>${t('Customer', 'العميل')}</th><th>${t('Occasion', 'المناسبة')}</th>
-        <th class="text-right">${t('Guests', 'الضيوف')}</th><th class="text-right">${t('Amount', 'المبلغ')}</th><th>${t('Status', 'الحالة')}</th><th>${t('Notes', 'ملاحظات')}</th><th></th>
-      </tr></thead><tbody id="lam-tbody"></tbody></table></div>
-      <div id="lam-pagination"></div>
-    </div>`;
-  $('#lam-search').addEventListener('input', e => { filter.search = e.target.value; pg.page = 1; refresh(); });
-  $('#lam-status').addEventListener('change', e => { filter.status = e.target.value; pg.page = 1; refresh(); });
-  bindMonthMulti('lam-month', (months) => { filter.months = months; pg.page = 1; refresh(); });
-  $('#lam-add').addEventListener('click', () => addLamaaBooking(refresh));
-  $('#lam-packages')?.addEventListener('click', () => editLamaaPackages(refresh));
-  $('#lam-export')?.addEventListener('click', () => {
-    const all = applyFilter().sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-    const head = ['Date', 'Start', 'End', 'Customer', 'Phone', 'Occasion', 'Package', 'Guests', 'Amount', 'Paid', 'Due', 'Referred by', 'Referral %', 'Referral payout', 'Notes'];
-    const body = all.map(b => { const due = bDue(b); const ref = (typeof hallReferralAmount === 'function') ? hallReferralAmount(b) : 0; return [b.date || '', b.startTime || '', b.endTime || '', b.customerName || '', b.customerPhone || '', b.occasion || '', b.packageLabel || '', b.guests || '', b.amount || 0, Math.round(((b.amount || 0) - due) * 100) / 100, due, b.referrer || '', b.referrer ? (b.referralPct != null ? b.referralPct : 10) : '', ref, (b.notes || '').replace(/\n/g, ' ')]; });
-    const csv = [head, ...body].map(r => r.map(v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`).join(',')).join('\n');
-    downloadFile(`lamaa-stars-bookings-${TODAY}.csv`, csv, 'text/csv');
-    toast(t('Exported', 'تم التصدير'));
-  });
-  refresh();
-};
-
-function _lamaaCustomerDatalist() {
-  const names = new Set();
-  for (const m of (state.members || [])) { if (!m.deleted && m.name) names.add(m.name + (m.phone ? ' · ' + m.phone : '')); }
-  for (const c of (state.rentalCustomers || [])) { if (c && c.name) names.add(c.name + (c.phone ? ' · ' + c.phone : '')); }
-  return `<datalist id="lam-cust-dl">${[...names].slice(0, 400).map(n => `<option value="${escapeHtml(n)}"></option>`).join('')}</datalist>`;
-}
-function renderLamaaForm(b) {
-  b = b || {};
-  const pkgs = lamaaPackages();
-  const isCustom = b.packageLabel === 'Custom' || (b.id && !pkgs.some(p => p.label === b.packageLabel));
-  const pkgOpts = pkgs.map(p => `<option value="${escapeHtml(p.label)}" data-price="${p.price}" ${b.packageLabel === p.label ? 'selected' : ''}>${escapeHtml(p.label)} · ${fmt(p.price)} QAR</option>`).join('')
-    + `<option value="Custom" ${isCustom ? 'selected' : ''}>${t('Custom (flat price)', 'مخصّص (سعر ثابت)')}</option>`;
-  return `
-    <div class="form-row">
-      <div class="field"><label>${t('Date', 'التاريخ')} <span style="color:var(--accent)">*</span></label><input type="date" id="lam-date" value="${b.date || TODAY}" /></div>
-      <div class="field"><label>${t('Start time', 'وقت البدء')}</label><input type="time" id="lam-start" value="${b.startTime || ''}" /></div>
-      <div class="field"><label>${t('End time', 'وقت الانتهاء')}</label><input type="time" id="lam-end" value="${b.endTime || ''}" /></div>
-    </div>
-    <div class="form-row">
-      <div class="field"><label>${t('Package', 'الباقة')}</label><select id="lam-package">${pkgOpts}</select></div>
-      <div class="field"><label>${t('Amount (QAR)', 'المبلغ')} <span style="color:var(--accent)">*</span></label><input type="number" id="lam-amount" min="0" step="1" value="${b.amount != null ? b.amount : ''}" placeholder="auto from package" /></div>
-      <div class="field"><label>${t('Setup buffer (min)', 'وقت التجهيز (دقيقة)')} <span class="text-mute" style="font-size:10px">${t('blocks before/after', 'يحجب قبل/بعد')}</span></label><input type="number" id="lam-buffer" min="0" step="15" value="${b.setupBuffer != null ? b.setupBuffer : 0}" /></div>
-    </div>
-    <div style="margin-top:6px;padding:12px;background:rgba(139,92,246,.06);border:1px solid rgba(139,92,246,.22);border-radius:8px">
-      <div style="font-size:11px;color:var(--purple);text-transform:uppercase;letter-spacing:.6px;font-weight:600;margin-bottom:8px">👤 ${t('Customer', 'العميل')}</div>
-      <div class="form-row">
-        <div class="field"><label>${t('Name', 'الاسم')} <span style="color:var(--accent)">*</span></label><input type="text" id="lam-name" list="lam-cust-dl" value="${escapeHtml(b.customerName || '')}" placeholder="${t('Type or pick a known customer', 'اكتب أو اختر عميلاً معروفاً')}" />${_lamaaCustomerDatalist()}</div>
-        ${phoneInputHtml('lam-phone', b.customerPhone, { label: t('Mobile', 'الجوال') })}
-      </div>
-      <div class="form-row">
-        <div class="field"><label>QID <span class="text-mute" style="font-size:10px">(${t('optional', 'اختياري')})</span></label><input type="text" id="lam-qid" value="${escapeHtml(b.customerQid || '')}" /></div>
-        <div class="field"><label>${t('Guests', 'عدد الضيوف')}</label><input type="number" id="lam-guests" min="0" step="1" value="${b.guests != null ? b.guests : ''}" /></div>
-        <div class="field"><label>${t('Occasion', 'المناسبة')}</label><input type="text" id="lam-occasion" value="${escapeHtml(b.occasion || '')}" placeholder="${t('Birthday, corporate…', 'عيد ميلاد، شركة…')}" /></div>
-      </div>
-    </div>
-    <div style="margin-top:6px;padding:12px;background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.22);border-radius:8px">
-      <div style="font-size:11px;color:var(--accent-2);text-transform:uppercase;letter-spacing:.6px;font-weight:600;margin-bottom:8px">🤝 ${t('Referral', 'الإحالة')} <span class="text-mute" style="text-transform:none;letter-spacing:0;font-weight:400">${t('who brought the customer — earns a % of the booking', 'من أحضر العميل — يكسب نسبة من الحجز')}</span></div>
-      <div class="form-row">
-        <div class="field" style="flex:2"><label>${t('Referred by', 'أحضره')}</label><input type="text" id="lam-referrer" value="${escapeHtml(b.referrer || '')}" placeholder="${t('name (leave blank if none)', 'الاسم (اتركه فارغاً إن لا يوجد)')}" /></div>
-        <div class="field"><label>${t('Referral %', 'نسبة الإحالة')}</label><input type="number" id="lam-refpct" min="0" max="100" step="1" value="${b.referralPct != null ? b.referralPct : 10}" /></div>
-        <div class="field"><label>${t('Payout', 'المستحق')}</label><input type="text" id="lam-refout" disabled value="" style="background:var(--surface-2)" /></div>
-      </div>
-    </div>
-    ${!b.id ? `<div class="form-row" style="margin-top:8px">
-      <div class="field"><label>${t('Paid now (QAR)', 'المدفوع الآن')} <span class="text-mute" style="font-size:10px">${t('deposit — rest becomes due', 'عربون — الباقي يصبح مستحقاً')}</span></label><input type="number" id="lam-paid" min="0" step="1" value="" placeholder="${t('= full amount', '= كامل المبلغ')}" /></div>
-      <div class="field"><label>${t('Method', 'الطريقة')}</label><select id="lam-method"><option value="cash">Cash</option><option value="card">Card</option><option value="fawran">Fawran</option><option value="transfer">Transfer</option></select></div>
-    </div>` : ''}
-    <div class="field" style="margin-top:6px"><label>${t('Notes', 'ملاحظات')}</label><input type="text" id="lam-notes" value="${escapeHtml(b.notes || '')}" /></div>
-    <div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.25);border-radius:8px;padding:10px;margin-top:8px;font-size:12px">💡 ${t('An invoice is created automatically. Leave “Paid now” blank for a fully-paid booking, or enter a deposit to leave the rest as due.', 'تُنشأ فاتورة تلقائياً. اترك «المدفوع الآن» فارغاً للحجز المدفوع بالكامل، أو أدخل عربوناً ليبقى الباقي مستحقاً.')}</div>`;
-}
-function wireLamaaForm() {
-  const pkg = document.getElementById('lam-package'), amt = document.getElementById('lam-amount');
-  const refpct = document.getElementById('lam-refpct'), refout = document.getElementById('lam-refout'), refby = document.getElementById('lam-referrer');
-  const syncRef = () => { if (!refout) return;
-    const a = parseFloat(amt && amt.value) || 0, p = parseFloat(refpct && refpct.value) || 0;
-    const has = (refby && refby.value.trim()) ? 1 : 0;
-    refout.value = has ? (fmt(a * p / 100) + ' QAR') : '—';
-  };
-  if (pkg && amt) pkg.addEventListener('change', () => {
-    const opt = pkg.options[pkg.selectedIndex];
-    const price = opt ? opt.getAttribute('data-price') : null;
-    if (pkg.value !== 'Custom' && price != null) amt.value = price;
-    else if (pkg.value === 'Custom') { amt.value = ''; amt.focus(); }
-    syncRef();
-  });
-  [amt, refpct, refby].forEach(elm => elm && elm.addEventListener('input', syncRef));
-  syncRef();
-}
-window.addLamaaBooking = function(onDone) {
-  showModal({ title: '✨ ' + t('New Hall Booking', 'حجز قاعة جديد'), wide: true, body: renderLamaaForm({}),
-    actions: [{ label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal }, { label: t('Save', 'حفظ'), class: 'btn primary', onclick: () => saveLamaaBooking(null, onDone) }] });
-  setTimeout(wireLamaaForm, 0);
-};
-window.editLamaaBooking = function(id, onDone) {
-  const b = (state.hallBookings || []).find(x => x.id === id); if (!b) { toast('Booking not found', 'error'); return; }
-  showModal({ title: '✎ ' + t('Edit Hall Booking', 'تعديل حجز القاعة'), wide: true, body: renderLamaaForm(b),
-    actions: [{ label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal }, { label: t('Save', 'حفظ'), class: 'btn primary', onclick: () => saveLamaaBooking(id, onDone) }] });
-  setTimeout(wireLamaaForm, 0);
-};
-function saveLamaaBooking(existingId, onDone) {
-  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast('Admins or reception only', 'error'); return; }
-  const name = ($('#lam-name').value || '').trim().split(' · ')[0].trim();   // datalist may append " · phone"
-  if (!name) { toast(t('Customer name required', 'اسم العميل مطلوب'), 'error'); $('#lam-name')?.focus(); return; }
-  const phoneInput = readPhoneInput('lam-phone'); const phone = phoneInput.phone;
-  if (phoneInput.digits && !phoneInput.valid) { toast(phoneInput.error || 'Mobile invalid', 'error'); return; }
-  const date = $('#lam-date').value || TODAY;
-  const startTime = $('#lam-start').value || null, endTime = $('#lam-end').value || null;
-  const packageLabel = $('#lam-package').value || 'Custom';
-  const amount = parseFloat($('#lam-amount').value) || 0;
-  if (amount <= 0) { toast(t('Enter the amount', 'أدخل المبلغ'), 'error'); $('#lam-amount')?.focus(); return; }
-  const setupBuffer = parseInt($('#lam-buffer').value) || 0;
-  const guests = parseInt($('#lam-guests').value) || 0;
-  const occasion = ($('#lam-occasion').value || '').trim() || null;
-  const qid = ($('#lam-qid').value || '').trim() || null;
-  const notes = ($('#lam-notes').value || '').trim() || null;
-  const referrer = (($('#lam-referrer') || {}).value || '').trim() || null;   // who brought the customer
-  const referralPct = referrer ? (parseFloat(($('#lam-refpct') || {}).value) || 0) : 0;
-  // Overlap guard — one hall, same date, ranges (incl. setup buffer both sides) must not overlap.
-  if (startTime && endTime) {
-    const toMin = x => { const [h, mm] = String(x).split(':').map(Number); return (h || 0) * 60 + (mm || 0); };
-    const s = toMin(startTime) - setupBuffer, e = toMin(endTime) + setupBuffer;
-    const clash = (state.hallBookings || []).find(x => x.id !== existingId && x.date === date && x.startTime && x.endTime && (() => { const s2 = toMin(x.startTime) - (x.setupBuffer || 0), e2 = toMin(x.endTime) + (x.setupBuffer || 0); return s < e2 && s2 < e; })());
-    if (clash) { toast(`${HALL_NAME} ${t('is already booked at', 'محجوزة في')} ${clash.startTime} ${t('on', 'يوم')} ${fmtDate(date)}`, 'error'); return; }
-  }
-  // Link to a member if the phone matches; else track a rental customer (reused directory).
-  const matchedMember = (state.members || []).find(m => m.phone && m.phone === phone && !m.deleted);
-  let rcust = null;
-  if (!matchedMember && phone) {
-    rcust = (state.rentalCustomers || []).find(c => (c.phone || '') === phone) || null;
-    if (!rcust) { rcust = { id: nextId(state.rentalCustomers || []), name, phone, qid: qid || null, notes: null }; state.rentalCustomers.push(rcust); }
-    else { if (name && !rcust.name) rcust.name = name; if (qid && !rcust.qid) rcust.qid = qid; }
-  }
-  const desc = `✨ ${HALL_NAME} — ${occasion || t('booking', 'حجز')}${startTime ? ' @ ' + startTime : ''} — ${name}`;
-  const month = date.slice(0, 7);
-
-  if (existingId) {
-    const idx = state.hallBookings.findIndex(x => x.id === existingId); const old = state.hallBookings[idx];
-    state.hallBookings[idx] = { ...old, date, startTime, endTime, packageLabel, amount, setupBuffer, guests, occasion, customerName: name, customerPhone: phone, customerQid: qid, customerRentalId: rcust ? rcust.id : (old.customerRentalId ?? null), memberId: matchedMember ? matchedMember.id : (old.memberId ?? null), notes, referrer, referralPct };
-    if (old.invoiceId) { const inv = (state.invoices || []).find(i => i.id === old.invoiceId); if (inv) { inv.date = date; inv.description = desc; inv.amount = amount; inv.month = month; inv.customerName = name; inv.customerPhone = phone; inv.customerId = matchedMember ? matchedMember.id : null; if (Array.isArray(inv.lineItems) && inv.lineItems[0]) inv.lineItems[0].price = amount; if (typeof stampUpdate === 'function') stampUpdate(inv); offerOverpaymentRefund(inv); } }
-    if (typeof stampUpdate === 'function') stampUpdate(state.hallBookings[idx]);
-    closeModal(); if (onDone) onDone(); else render(); if (typeof confirmSaved === 'function') confirmSaved(t('Booking updated', 'تم تحديث الحجز')); else { save(); toast(t('Booking updated', 'تم تحديث الحجز')); }
-    return;
-  }
-  // New booking + invoice. Paid-now (deposit) → rest due.
-  const paidRaw = $('#lam-paid') ? $('#lam-paid').value : '';
-  const paidNow = paidRaw === '' ? amount : Math.max(0, Math.min(amount, parseFloat(paidRaw) || 0));
-  const method = ($('#lam-method') || {}).value || 'cash';
-  const bookingId = nextId(state.hallBookings || []);
-  const ref = nextInvoiceRef();
-  const newInv = {
-    id: nextId(state.invoices), date, description: desc, amount, method, month, ref,
-    category: 'Hall Rental', activityType: 'rental', sport: HALL_NAME, coach: null, coachId: null,
-    customerId: matchedMember ? matchedMember.id : null, customerName: name, customerPhone: phone,
-    amountPaid: paidNow, payments: paidNow > 0 ? [{ amount: paidNow, method, date, month }] : [],
-    hallBookingId: bookingId,
-  };
-  if (typeof stampUpdate === 'function') stampUpdate(newInv);
-  state.invoices.push(newInv);
-  state.hallBookings.push({ id: bookingId, date, startTime, endTime, packageLabel, amount, setupBuffer, guests, occasion, customerName: name, customerPhone: phone, customerQid: qid, customerRentalId: rcust ? rcust.id : null, memberId: matchedMember ? matchedMember.id : null, method, notes, referrer, referralPct, invoiceId: newInv.id, createdAt: new Date().toISOString() });
-  closeModal(); if (onDone) onDone(); else render();
-  const dueMsg = paidNow < amount ? ` · ⏳ ${fmt(amount - paidNow)} ${t('due', 'مستحق')}` : '';
-  if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'invoices', id: newInv.id }], okMsg: `${t('Booking saved', 'تم حفظ الحجز')} · ${ref}${dueMsg}` });
-  else { save(); toast(`${t('Booking saved', 'تم حفظ الحجز')}${dueMsg}`); }
-}
-window.deleteLamaaBooking = function(id) {
-  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast('Admins or reception only', 'error'); return; }
-  const b = (state.hallBookings || []).find(x => x.id === id); if (!b) return;
-  { const _li = b.invoiceId ? (state.invoices || []).find(i => i.id === b.invoiceId) : null;   // v6.782 — reception cannot wipe recorded income: a booking with a payment is admin-only
-    if (currentRole() !== 'admin' && _li && !_li.deleted && invoicePaid(_li) > 0.005) { toast(t('This booking already has a payment — only an admin can delete it.', 'هذا الحجز عليه دفعة — يمكن للمسؤول فقط حذفه.'), 'error'); return; } }
-  if (!confirm(`${t('Delete this hall booking?', 'حذف هذا الحجز؟')}\n\n${b.customerName || ''} · ${b.date ? fmtDate(b.date) : ''} · ${fmt(b.amount || 0)} QAR\n\n${t('Its linked invoice is removed too (no refund record).', 'تُحذف فاتورته المرتبطة أيضاً.')}`)) return;
-  if (b.invoiceId) { const inv = (state.invoices || []).find(i => i.id === b.invoiceId); if (inv) { inv.deleted = true; inv.deletedAt = new Date().toISOString(); inv.deletedBy = (typeof currentUserName === 'function' ? currentUserName() : currentRole()); if (typeof stampUpdate === 'function') stampUpdate(inv); } }   // v6.782 — stamped, so an admin can find + restore it
-  try { if (typeof window._tombstoneEl === 'function') window._tombstoneEl(b); } catch (_) {}
-  state.hallBookings = (state.hallBookings || []).filter(x => x.id !== id);
-  if (typeof audit === 'function') audit('hall.delete', 'hall:' + id, `Deleted ${HALL_NAME} booking · ${b.customerName || ''}`);
-  if (typeof confirmSaved === 'function') confirmSaved(t('Booking deleted', 'تم حذف الحجز')); else { save(); toast(t('Booking deleted', 'تم الحذف')); }
-  render();
-};
-window.collectLamaaBooking = function(id) {
-  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast('Admins or reception only', 'error'); return; }
-  const b = (state.hallBookings || []).find(x => x.id === id); if (!b) return;
-  const inv = b.invoiceId ? (state.invoices || []).find(i => i.id === b.invoiceId) : null;
-  if (!inv) { toast('Linked invoice not found', 'error'); return; }
-  const bal = (typeof invoiceBalance === 'function') ? invoiceBalance(inv) : 0;
-  if (bal <= 0.5) { toast(t('Already paid', 'مدفوعة بالفعل')); return; }
-  showModal({ title: '💵 ' + t('Collect hall payment', 'تحصيل دفعة القاعة'),
-    body: `<div class="text-mute" style="font-size:12px;margin-bottom:8px">${escapeHtml(b.customerName || '')} · ${escapeHtml(b.occasion || HALL_NAME)} · ${b.date ? fmtDate(b.date) : ''}</div>
-      <div class="form-row"><div class="field"><label>${t('Amount (QAR)', 'المبلغ')}</label><input id="lc-amt" type="number" min="0" step="0.01" value="${bal}" /></div>
-      <div class="field"><label>${t('Method', 'الطريقة')}</label><select id="lc-mth"><option value="cash">Cash</option><option value="card">Card</option><option value="fawran">Fawran</option><option value="transfer">Transfer</option></select></div></div>
-      <div class="field"><label>${t('Date', 'التاريخ')}</label><input id="lc-date" type="date" value="${TODAY}" /></div>`,
-    actions: [{ label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal }, { label: '💵 ' + t('Collect', 'تحصيل'), class: 'btn primary', onclick: () => {
-      const amt = Math.round((parseFloat(($('#lc-amt') || {}).value) || 0) * 100) / 100;
-      if (!(amt > 0)) { toast(t('Enter an amount', 'أدخل مبلغاً'), 'error'); return; }
-      if (amt > bal + 0.01 && !confirm(t(`More than the ${fmt(bal)} QAR due — record anyway?`, `أكثر من ${fmt(bal)} ر.ق المستحقة — تسجيل على أي حال؟`))) return;
-      const mth = ($('#lc-mth') || {}).value || 'cash'; const d = ($('#lc-date') || {}).value || TODAY;
-      if (typeof recordPayment === 'function') recordPayment(inv, { amount: amt, method: mth, date: d });
-      else { if (!Array.isArray(inv.payments)) inv.payments = []; inv.payments.push({ amount: amt, method: mth, date: d, month: String(d).slice(0, 7) }); inv.amountPaid = inv.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0); }
-      if (typeof audit === 'function') audit('hall.collect', 'hall:' + b.id, `collected ${fmt(amt)} · ${mth}`, { recordName: b.customerName || '' });
-      closeModal(); if (typeof confirmSaved === 'function') confirmSaved(t('Collected', 'تم التحصيل') + ' ' + fmt(amt)); else { save(); toast(t('Collected', 'تم التحصيل')); }
-      render();
-    } }] });
-};
-function editLamaaPackages(onDone) {
-  if (currentRole() !== 'admin') { toast(t('Admins only', 'للمشرفين فقط'), 'error'); return; }
-  const pkgs = lamaaPackages();
-  showModal({ title: '⚙ ' + t('Hall Packages', 'باقات القاعة'),
-    body: `<div class="text-mute" style="font-size:12px;margin-bottom:10px">${t('Preset packages shown when adding a booking. Edit names/prices; blank name = remove.', 'الباقات الجاهزة التي تظهر عند الحجز. عدّل الأسماء/الأسعار؛ اسم فارغ = حذف.')}</div>
-      <div id="lam-pkg-rows">${pkgs.concat([{ label: '', price: '' }]).map((p, i) => `<div class="form-row lam-pkg-row" style="margin-bottom:6px"><div class="field"><input class="lam-pkg-name" placeholder="${t('Package name', 'اسم الباقة')}" value="${escapeHtml(p.label || '')}" /></div><div class="field"><input class="lam-pkg-price" type="number" min="0" step="1" placeholder="${t('Price', 'السعر')}" value="${p.price === '' ? '' : (Number(p.price) || 0)}" /></div></div>`).join('')}</div>
-      <button class="btn ghost sm" id="lam-pkg-more">+ ${t('Add row', 'إضافة صف')}</button>`,
-    actions: [{ label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal }, { label: '💾 ' + t('Save', 'حفظ'), class: 'btn primary', onclick: () => {
-      const rows = [...document.querySelectorAll('.lam-pkg-row')];
-      const out = [];
-      rows.forEach(r => { const nm = (r.querySelector('.lam-pkg-name').value || '').trim(); const pr = parseFloat(r.querySelector('.lam-pkg-price').value) || 0; if (nm) out.push({ label: nm, price: pr }); });
-      if (!state.settings) state.settings = {}; state.settings.lamaaPackages = out.length ? out : undefined;
-      closeModal(); if (typeof confirmSaved === 'function') confirmSaved(t('Packages saved', 'تم حفظ الباقات')); else { save(); toast(t('Saved', 'تم الحفظ')); }
-      if (onDone) onDone();
-    } }] });
-  setTimeout(() => { const more = document.getElementById('lam-pkg-more'); if (more) more.addEventListener('click', () => { const wrap = document.getElementById('lam-pkg-rows'); const div = document.createElement('div'); div.className = 'form-row lam-pkg-row'; div.style.marginBottom = '6px'; div.innerHTML = `<div class="field"><input class="lam-pkg-name" placeholder="${t('Package name', 'اسم الباقة')}" /></div><div class="field"><input class="lam-pkg-price" type="number" min="0" step="1" placeholder="${t('Price', 'السعر')}" /></div>`; wrap.appendChild(div); }); }, 0);
-}
 
 // ═════════════════════════════════════════════════════════════════
 // COURT BOOKINGS (v6.805) — a booking board for the Football Court: day timeline + week strip over the SAME rentals (state.rentals, facility 'Football Court'),

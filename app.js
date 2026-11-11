@@ -14,7 +14,9 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.1014.0';   // 6.1014.0 Citadel: a Mixed package is credited in the month each class was ATTENDED (30% of the class value, only the Football / Swimming classes), not in its invoice month; a normal invoice still follows its invoice month.
+const APP_VERSION = '6.1016.0';   // 6.1016.0 The Lamaa Stars hall-booking module is removed (screen, menu section, hall packages, hallBookings collection); the admin menu's third block is now 'Camps'.
+// prev:   // 6.1015.0 Citadel: a Football / Swimming membership counts only the classes ATTENDED, each in the month it was attended (price ÷ paid classes), from 1 Jun 2026 — not the whole package in its invoice month; rent and Mixed unchanged; temporary admin screen 'Citadel · Class Differences' (before / after, per month and per line). Private packages: reception's share is 5% from day one (every month; settings.receptionPctFrom restores the old % before a month).
+// prev:   // 6.1014.0 Citadel: a Mixed package is credited in the month each class was ATTENDED (30% of the class value, only the Football / Swimming classes), not in its invoice month; a normal invoice still follows its invoice month.
 // prev:   // 6.1013.0 The renewal reminder never promises more carried classes than are really left (1 class left → '1 class' / 'your remaining class', not 'up to 2'); the carry is capped by the classes the message itself shows as left, per sport. The renewal / welcome message lists ONE line per sport + coach (the newest period, not the old one too) and corrects a stored end date that is only days after the start of a 30-day package.
 // prev:   // 6.999.0 The 'transferred → name' label in the sender's Subscription History opens the receiver's profile;
 // prev:   // 6.998.0 Transfer membership: the SENDER's package stays visible (capped at what he attended, 'transferred → receiver'); moving classes into a package the receiver already has folds them into that package's ONE invoice line (no more 'billed on 2 invoice lines' warning / dropped commission);
@@ -1428,7 +1430,6 @@ let state = {
   advices: [],            // coach→student advice: {id, memberId, coachId, text, date}
   trials: [],
   rentals: [],            // booking log: facility, customer, date, hours, amount
-  hallBookings: [],       // v6.641 Lamaa Stars hall bookings: {id, date, startTime, endTime, packageLabel, amount, guests, occasion, setupBuffer, customer*, invoiceId, ...}
   rentalCustomers: [],    // {id, name, phone, qid, notes} — reusable rental contacts
   schedule: [],           // class schedule: {id, day, slot, sport, coachId}
   swimGroups: [],         // swimming groups: {id, name, coachId, memberIds:[], order, createdAt}
@@ -1507,7 +1508,6 @@ const MERGE_COLLECTIONS = [
   'members', 'coaches', 'invoices', 'expenses', 'salaries', 'sales', 'advices',
   'trials', 'rentals', 'rentalCustomers', 'schedule', 'auditLog', 'products',
   'families', 'notes', 'cashCounts', 'swimGroups', 'posts', 'membershipTransfers', 'drivers',
-  'hallBookings',
 ];
 let _syncBase = null;        // snapshot of data as last loaded/synced
 // A confirmed record that goes missing from a remote snapshot is only treated as a
@@ -7804,23 +7804,6 @@ function facilityRates() {
   return state.settings.facilityRates;
 }
 function facilityRate(f) { return Number(facilityRates()[f]) || 0; }
-// v6.641 — Lamaa Stars hall booking packages (label + price), admin-configurable via the Hall Bookings
-// screen; a booking picks a package OR a custom flat price. hallBookingDue = the linked invoice balance.
-function lamaaPackages() {
-  const c = state.settings && state.settings.lamaaPackages;
-  return (Array.isArray(c) && c.length) ? c : [{ label: '2 hours', price: 300 }, { label: '4 hours', price: 500 }, { label: 'Full day', price: 900 }];
-}
-function hallBookingDue(b) {
-  const inv = (b && b.invoiceId) ? (state.invoices || []).find(i => i.id === b.invoiceId) : null;
-  return (inv && typeof invoiceBalance === 'function') ? Math.round(invoiceBalance(inv) * 100) / 100 : 0;
-}
-// v6.644 — referral payout: whoever brought the customer earns referralPct (default 10%) of the booking.
-function hallReferralAmount(b) {
-  if (!b || !b.referrer) return 0;
-  const pct = (b.referralPct != null) ? Number(b.referralPct) : 10;
-  return Math.round((Number(b.amount) || 0) * pct / 100 * 100) / 100;
-}
-
 // Is this a real, bookable sport (so coach-eligibility should be enforced)?
 // Summer-camp activities like "Art"/"Combat" aren't sports, so no constraint there.
 function isBookableSport(sport) {
@@ -9080,6 +9063,12 @@ function privateBonusPct() {
   const v = parseFloat(state.settings && state.settings.privateBonusPct);
   return (isFinite(v) && v >= 0) ? v : PRIVATE_BONUS_DEFAULT_PCT;
 }
+// v6.1015 — OWNER (11 Nov 2026): reception's share of a private package is 5% from day one (every month); settings.receptionPctFrom can restore the old % before a month
+function receptionPoolPct(monthKey) {
+  const f = state.settings && state.settings.receptionPctFrom, from = /^\d{4}-\d{2}$/.test(String(f || '')) ? String(f) : '0000-00';
+  const nv = parseFloat(state.settings && state.settings.receptionPctNew), nw = (isFinite(nv) && nv >= 0) ? nv : 5;
+  return (monthKey && String(monthKey) < from) ? privateBonusPct() : nw;
+}
 // v6.806 — OWNER RULE (22 Oct 2026): on a PRIVATE package the coach earns his private extra (+10 points) whoever approached the customer; if RECEPTION approached, reception ALSO gets its 10% (a separate pool) — if the COACH approached, the extra is the only 10%.
 // Forward-only: months before settings.privateCoachExtraFrom (default 2026-10) keep the old rule (the extra only on coach-approached packages), so salaries already worked out do not move.
 function privateCoachExtraFrom() { const v = state.settings && state.settings.privateCoachExtraFrom; return /^\d{4}-\d{2}$/.test(String(v || '')) ? String(v) : '2026-10'; }
@@ -10213,6 +10202,7 @@ function computeMonthlyPay(coachId, monthKey, uptoDate) {
   // Reception staff: bonus% of the base of the private packages RECEPTION brought in (all coaches), split equally between
   // the active receptionists.
   const _bonusPct = privateBonusPct();
+  const _recPct = receptionPoolPct(monthKey);   // v6.1015 — reception's own share: 5% from Nov 2026
   const _coachPct = coachPrivatePct(c);   // v6.665: per-coach % (blank = club default 10)
   const _allPriv = !monthKey || String(monthKey) >= privateCoachExtraFrom();   // v6.806 — the coach's extra on EVERY private package from the cut-over month
   const _pbBase = privCoachBase + (_allPriv ? privRecBase : 0);
@@ -10223,7 +10213,7 @@ function computeMonthlyPay(coachId, monthKey, uptoDate) {
   if (c.role === 'receptionist' && isCoachActive(c) && receptionBonusEligible(c)) {
     receptionStaffCount = receptionBonusPool().length;
     receptionPoolBase = privateReceptionPoolBase(monthKey, uptoDate);
-    receptionBonus = receptionStaffCount > 0 ? receptionPoolBase * _bonusPct / 100 / receptionStaffCount : 0;
+    receptionBonus = receptionStaffCount > 0 ? receptionPoolBase * _recPct / 100 / receptionStaffCount : 0;
   }
   // v6.664 — pending private shares (informational, NOT in gross): base on the unattended remainder of private packages.
   const _pendL = (attendanceLines && attendanceLines.pendingLines) || [];
@@ -10231,7 +10221,7 @@ function computeMonthlyPay(coachId, monthKey, uptoDate) {
   const privateBonusPending = (_pendBase('coach') + (_allPriv ? _pendBase('reception') : 0)) * _coachPct / 100 + (_allPriv ? _pendBase('coach') * _bonusPct / 100 : 0);
   const privateReceptionPendingBase_ = _pendBase('reception');
   let receptionBonusPending = 0;
-  if (c.role === 'receptionist' && isCoachActive(c) && receptionBonusEligible(c) && receptionStaffCount > 0) receptionBonusPending = privateReceptionPendingBase(monthKey, uptoDate) * _bonusPct / 100 / receptionStaffCount;
+  if (c.role === 'receptionist' && isCoachActive(c) && receptionBonusEligible(c) && receptionStaffCount > 0) receptionBonusPending = privateReceptionPendingBase(monthKey, uptoDate) * _recPct / 100 / receptionStaffCount;
   const _tb = targetBonusFor(c, monthKey);
   const targetBonus = (_lcM && _lcM.after && !uptoDate) ? 0 : _tb.amount;   // v6.707 — nothing after the resignation month
   const gross = fixed + commissionAmount + privateBonus + receptionBonus + targetBonus;
@@ -10331,7 +10321,7 @@ function computeMonthlyPay(coachId, monthKey, uptoDate) {
     commissionPending,
     attendanceLines,
     paymentLines,
-    privateBonusBase: _pbBase, privateExtraAll: _allPriv, privateBonusPct: _coachPct, receptionSharePct: _bonusPct, privateBonus, approachBonus, approachBase: _allPriv ? privCoachBase : 0,
+    privateBonusBase: _pbBase, privateExtraAll: _allPriv, privateBonusPct: _coachPct, receptionSharePct: _bonusPct, receptionPoolPct: _recPct, privateBonus, approachBonus, approachBase: _allPriv ? privCoachBase : 0,
     privateReceptionBase: privRecBase, receptionBonus, receptionPoolBase, receptionStaffCount,
     privateBonusPending, privateReceptionPendingBase: privateReceptionPendingBase_, receptionBonusPending,
     targetBonus, targetKind: _tb.kind, targetValue: _tb.value, targetTierBonus: _tb.bonus, targetStaff: _tb.staff,
@@ -11211,7 +11201,6 @@ const ROUTES = {
   welcome:    { label: 'Welcome Messages', icon: '👋', section: 'Engagement', badge: () => (typeof pendingWelcomeCount === 'function' ? pendingWelcomeCount() : 0) },   // v6.510 — greet new joiners + renewals over WhatsApp with their membership details
   rentals:    { label: 'Rentals',    icon: '🏟', section: 'Activities' },
   courtbookings: { label: 'Court Bookings', icon: '⚽', section: 'Activities' },   // v6.805 — Football Court booking board over the rentals
-  lamaa:      { label: 'Hall Bookings', icon: '✨', section: 'Lamaa Stars' },   // v6.641 — Lamaa Stars ground-floor hall
   coaches:    { label: 'Staff',      icon: '🥋', section: 'Team & Sports' },
   attendance: { label: 'Attendance', icon: '✓',  section: 'Attendance' },   // v6.427 own module
   coachattendance: { label: 'Attendance Report', icon: '📋', section: 'Attendance', coachOnly: true },   // v6.427 own module
@@ -11229,6 +11218,7 @@ const ROUTES = {
   expenses:   { label: 'Expenses',   icon: '💸', section: 'Finance' },
   salaries:   { label: 'Salaries',   icon: '💰', section: 'Finance' },
   citadel:    { label: 'Citadel',    icon: '🏛', section: 'Finance', adminOnly: true },
+  citadeldiff: { label: 'Citadel · Class Differences', icon: '🧮', section: 'Finance', adminOnly: true },   // TEMPORARY (v6.1015) — remove with PAGES.citadeldiff
   products:   { label: 'Products',   icon: '📦', section: 'Shop' },       // v6.424 own module
   productsales:{ label: 'Product Sales', icon: '📊', section: 'Shop' },   // v6.424 own module
   dashboardkpi: { label: 'Owner Dashboard', icon: '📊', section: 'Insights', adminOnly: true, hidden: true },
@@ -11291,7 +11281,6 @@ const ROLE_ALLOWED = {
     'attention',   // v6.836 — daily check list
     'notes',   // v6.902 — Notes & Reminders are back for reception
     // v6.895 — 'targets' removed: its income target / bonus figures reveal what the club earns
-    'lamaa',     // v6.641 — Lamaa Stars hall bookings (front desk manages)
     // Owner request (v6.327): re-enable Staff roster ('coaches') + the Sports/Activities
     // screen ('sports') for reception; Invoices + Expenses were already enabled above.
     'sports',   // v6.865 — the Staff roster ('coaches') is admin-only again: it shows pay / rates
@@ -11363,6 +11352,7 @@ const NAV_AR = {
   monthrec: 'تسوية الشهر',
   salaries: 'الرواتب',
   citadel: 'سيتاديل',
+  citadeldiff: 'سيتاديل · فرق الحصص',
   products: 'المنتجات',
   productsales: 'مبيعات المنتجات',
   reports: 'التقارير',
@@ -12356,10 +12346,10 @@ function renderSidebar() {
   // was reverted for them per owner request; only the two simple roles stay flat).
   const nav = el('nav', { className: 'nav' });
   // Primary set first, then a visual SEPARATOR, then the "more" set (owner layout, v6.432).
-  const sections = ['Main','Membership','Attendance','Activities','Finance','Shop','Engagement','Advice','Team & Sports','Insights','System','Lamaa Stars','Summer Camp','Autumn Camp','Winter Camp'];   // v6.910 — the facility / camp pages sit at the bottom
+  const sections = ['Main','Membership','Attendance','Activities','Finance','Shop','Engagement','Advice','Team & Sports','Insights','System','Summer Camp','Autumn Camp','Winter Camp'];   // v6.910 — the facility / camp pages sit at the bottom
   // A divider precedes each of these — grouping the facility/camp modules and the "more" set.
-  const SEP_SECTIONS = new Set(['Lamaa Stars','Engagement']);
-  const SECTION_AR = { Main: 'الرئيسية', Membership: 'العضوية', Engagement: 'التواصل', Activities: 'الأنشطة', 'Lamaa Stars': 'لمعة ستارز', 'Autumn Camp': 'معسكر الخريف', Attendance: 'الحضور', Advice: 'النصائح', 'Summer Camp': 'المعسكر الصيفي', 'Winter Camp': 'المعسكر الشتوي', 'Team & Sports': 'الفريق والرياضات', Finance: 'المالية', Shop: 'المنتجات', Insights: 'التقارير', System: 'النظام' };
+  const SEP_SECTIONS = new Set(['Summer Camp','Engagement']);
+  const SECTION_AR = { Main: 'الرئيسية', Membership: 'العضوية', Engagement: 'التواصل', Activities: 'الأنشطة', 'Autumn Camp': 'معسكر الخريف', Attendance: 'الحضور', Advice: 'النصائح', 'Summer Camp': 'المعسكر الصيفي', 'Winter Camp': 'المعسكر الشتوي', 'Team & Sports': 'الفريق والرياضات', Finance: 'المالية', Shop: 'المنتجات', Insights: 'التقارير', System: 'النظام' };
   const flatNav = (currentRole() === 'coach' || currentRole() === 'student');
   const accessibleIn = (section) => Object.entries(ROUTES).filter(([key, route]) =>
     route.section === section && !route.hidden && roleCanAccess(currentRole(), key)
@@ -12410,7 +12400,7 @@ function renderSidebar() {
     const _placedSep = new Set();
     // v6.903 — ADMIN: the menu is cut into three collapsible blocks (Daily operations · Facilities & camps · Engagement & admin); each separator is a bar that folds / unfolds the sections under it
     const _isAdminNav = currentRole() === 'admin';
-    const SUPERS = [{ key: 'ops', first: null, en: 'Daily operations', ar: 'العمليات اليومية' }, { key: 'more', first: 'Engagement', en: 'Engagement & admin', ar: 'التواصل والإدارة' }, { key: 'camps', first: 'Lamaa Stars', en: 'Facilities & camps', ar: 'المرافق والمعسكرات' }];
+    const SUPERS = [{ key: 'ops', first: null, en: 'Daily operations', ar: 'العمليات اليومية' }, { key: 'more', first: 'Engagement', en: 'Engagement & admin', ar: 'التواصل والإدارة' }, { key: 'camps', first: 'Summer Camp', en: 'Camps', ar: 'المعسكرات' }];
     const collapsedSupers = (() => { try { return new Set(JSON.parse(localStorage.getItem('bs-nav-super') || '[]')); } catch (_) { return new Set(); } })();
     const _superOfSection = {}; let _curSuper = SUPERS[0].key;
     for (const s of sections) { const sp = SUPERS.find(x => x.first === s); if (sp) _curSuper = sp.key; _superOfSection[s] = _curSuper; }
