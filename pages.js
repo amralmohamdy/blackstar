@@ -16703,7 +16703,7 @@ window._applyFixDuplicateSubs = function () {
 // Refused when a row it removes / updates is missing or a field it expects differs (already fixed, or changed). All or nothing.
 // v6.933 — an op may also CREATE an invoice: { collection:'invoices', id:<new id>, create:{ …the invoice… }, linkSub:{ memberId, _sid, expectInvoice } } — its ref is the next free one, and the package row is re-pointed to it. Refused if that id already exists.
 window._fixFileCheck = function (fx) {
-  const OK = { members: 1, invoices: 1, coaches: 1, salaries: 1, expenses: 1, rentals: 1, rentalCustomers: 1 };   // v6.948.0 — salary records + expense rows too (a file that pays coaches); v6.952.0 — court bookings + their customers too
+  const OK = { members: 1, invoices: 1, coaches: 1, salaries: 1, expenses: 1, rentals: 1, rentalCustomers: 1, schedule: 1 };   // v6.1018 — schedule too (class colours)   // v6.948.0 — salary records + expense rows too (a file that pays coaches); v6.952.0 — court bookings + their customers too
   const bad = m => ({ ok: false, error: m });
   if (!fx || fx.format !== 'bs-fix/1' || !Array.isArray(fx.ops) || !fx.ops.length) return bad(t('This is not a fix file', 'هذا ليس ملف إصلاح'));
   const plan = [];
@@ -19503,9 +19503,11 @@ window.openCashCollectionModal = function(existingId) {
   if (existingId && currentRole() !== 'admin') { toast(t('Only an admin can edit a past collection.', 'يمكن للمسؤول فقط تعديل تحصيل سابق.'), 'error'); return; }   // v6.782
   const ex = existingId ? (state.expenses || []).find(e => e.id === existingId) : null;
   const today = TODAY;
+  const _dr = (typeof cashDrawerNow === 'function' && !cashFlatOn()) ? cashDrawerNow() : null;   // v6.1018 — what the drawer holds now; a collection lowers it by itself
   showModal({
     title: ex ? '✏️ ' + t('Edit cash collection', 'تعديل تحصيل النقدية') : '💵 ' + t('Record cash collection', 'تسجيل تحصيل النقدية'),
     body: `
+      ${(_dr && !ex) ? `<div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.30);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px">💰 ${t('In the drawer now', 'في الصندوق الآن')}: <b>${fmtMoney(_dr.expected)}</b> · <span class="text-mute">${t('this collection lowers it automatically', 'وهذا الاستلام ينقصها تلقائياً')}</span></div>` : ''}
       <div style="background:rgba(91,141,239,.08);border:1px solid rgba(91,141,239,.30);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;line-height:1.5;color:var(--text-dim)">
         ${t('Cash taken out of the till by the owner / partner. Treated as an expense so net profit reflects it, but stored under its own category for easy reporting.', 'النقد المسحوب من الصندوق من قِبَل المالك / الشريك. يُعامَل كمصروف بحيث يعكس صافي الربح ذلك، ولكنه يُحفظ تحت تصنيف خاص لتسهيل التقارير.')}
       </div>
@@ -19526,6 +19528,7 @@ window.openCashCollectionModal = function(existingId) {
         const date = $('#cc-date').value || today;
         if (sanityDateToast(date, 'Collection', 'التحصيل', { future: 0, past: 800 })) return;   // v6.839 (X-03)
         if (sanityAmountToast(amt, 'The amount', 'المبلغ', 1000000)) return;
+        if (_dr && !ex && amt > _dr.expected + 0.005 && !confirm(t(`The drawer holds ${fmtMoney(_dr.expected)} and you are collecting ${fmtMoney(amt)} — more than the drawer. Record it anyway?`, `الصندوق فيه ${fmtMoney(_dr.expected)} وأنت تستلم ${fmtMoney(amt)} — أكثر من الموجود. تسجّله رغم ذلك؟`))) return;
         const by = ($('#cc-by').value || '').trim();
         const note = ($('#cc-note').value || '').trim();
         const month = date.slice(0, 7);
@@ -19579,7 +19582,8 @@ function cashCountNewer(a, b) { return cashCountDay(b).localeCompare(cashCountDa
 // v6.967.0 — Cash in Hand is a FLAT figure: exactly the last count you typed. NOTHING moves it by itself — no invoice cash payment, no refund, no cash expense, no owner collection / deposit. It starts at 0 on CASH_FLAT_FROM (counts dated before are ignored).
 // state.settings.cashFlat = false brings the old "count + cash movements" figure back.
 const CASH_FLAT_FROM = '2026-11-01';
-function cashFlatOn() { try { if (typeof window !== 'undefined' && window.__cashFlatOff === true) return false; } catch (_) {} return !(state && state.settings && state.settings.cashFlat === false); }
+// v6.1018 — LIVE again by default: last count + cash invoice payments − owner collections (cash expenses never touch it); the flat figure is now opt-in (settings.cashFlat = true).
+function cashFlatOn() { try { if (typeof window !== 'undefined' && window.__cashFlatOff === true) return false; } catch (_) {} return !!(state && state.settings && state.settings.cashFlat === true); }
 function _cashFlatCounts() { return (state.cashCounts || []).filter(x => x && x.kind !== 'deposit' && cashCountDay(x) >= CASH_FLAT_FROM); }
 function cashDrawerNow() {
   if (cashFlatOn()) {
@@ -19635,14 +19639,7 @@ function cashDrawerFrom(c, upper) {
       if (amt > 0 && after(i.date, i.createdAt)) (i.noDrawer ? hidden : moves).push({ when: i.createdAt || i.date, amount: amt, label: who, ref, kind: 'in', inv: i.id, pi: -1 });
     }
   }
-  // v6.843 — expenses paid in CASH (incl. cash salary payments) leave the drawer too. Only rows that SAY cash count; a row can be taken out with noDrawer.
-  for (const e of _drawerExpenses()) {
-    if (!e || e.deleted || e.noDrawer || e.autoBankCommission || (e.category || '') === CASH_COLLECTION_CATEGORY) continue;
-    if (isSalaryCategory(e.category)) continue;   // v6.935 — a salary payment does not come out of the cash drawer (the owner pays salaries from outside it)
-    if (!e.method || normalizeMethod(e.method) !== 'cash') continue;
-    const amt = Number(e.amount) || 0;
-    if (amt > 0 && after(e.date || (e.month ? e.month + '-01' : ''), e.createdAt || e.at)) moves.push({ when: e.createdAt || e.at || e.date, amount: -amt, label: t('Cash expense: ', 'مصروف نقدي: ') + (e.description || e.category || ''), ref: e.category || '', kind: 'expense', exp: e.id });
-  }
+  // v6.1018 — cash EXPENSES and salaries do not touch the drawer (owner rule 11 Nov 2026): only cash invoice payments in, cash refunds + owner collections out.
   for (const e of (state.expenses || [])) {   // the owner taking cash out of the drawer
     if (!e || e.deleted || (e.category || '') !== CASH_COLLECTION_CATEGORY) continue;
     const amt = Number(e.amount) || 0;
@@ -19749,7 +19746,7 @@ PAGES.cashinhand = (main) => {
         ${cashFlatOn() ? '' : `<button class="btn ghost" id="cih-deposit" title="${t('Cash the owner put INTO the drawer — so it is expected, not an over', 'نقد وضعه المالك في الصندوق — فيُحسب متوقعاً وليس زيادة')}">➕ ${t('Cash added by owner', 'نقد أضافه المالك')}</button>`}
       </div>
       ${_recView ? `<div class="text-mute" style="font-size:11px;margin-top:6px">${t('Count the drawer and enter the amount. The figure above is your last count.', 'عُدّ الصندوق وأدخل المبلغ. الرقم أعلاه هو آخر جرد.')}</div>` : ''}
-      ${cashFlatOn() ? `<div class="text-mute" style="font-size:11px;margin-top:6px">${t('This figure is exactly the last count you entered — nothing changes it automatically (not invoices, not cash payments, not expenses).', 'هذا الرقم هو آخر جرد أدخلته بالضبط — لا يتغير تلقائياً (لا بالفواتير ولا بالدفعات النقدية ولا بالمصروفات).')}</div>` : (_recView ? '' : `<div class="text-mute" style="font-size:11px;margin-top:6px">${t('The figure above goes up with every cash payment a member makes and down with every cash collection by the owner. Expenses, salaries and refunds are NOT deducted — count the drawer and enter it here: the screen tells you if it is short or over.', 'الرقم أعلاه يزيد مع كل دفعة نقدية من عضو وينقص مع كل استلام نقدي للمالك. المصروفات والرواتب والمبالغ المستردة لا تُخصم — عُدّ الصندوق وأدخله هنا: ستظهر لك الشاشة إن كان هناك عجز أو زيادة.')}</div>`)}
+      ${cashFlatOn() ? `<div class="text-mute" style="font-size:11px;margin-top:6px">${t('This figure is exactly the last count you entered — nothing changes it automatically (not invoices, not cash payments, not expenses).', 'هذا الرقم هو آخر جرد أدخلته بالضبط — لا يتغير تلقائياً (لا بالفواتير ولا بالدفعات النقدية ولا بالمصروفات).')}</div>` : (_recView ? '' : `<div class="text-mute" style="font-size:11px;margin-top:6px">${t('The figure above goes up with every invoice paid in CASH and down with every cash collection by the owner (and any cash refund handed back). Cash expenses and salaries are NOT deducted — count the drawer and enter it here: the screen tells you if it is short or over.', 'الرقم أعلاه يزيد مع كل فاتورة تُدفع نقداً وينقص مع كل استلام نقدي للمالك (ومع أي استرداد نقدي). المصروفات النقدية والرواتب لا تُخصم — عُدّ الصندوق وأدخله هنا: ستظهر لك الشاشة إن كان هناك عجز أو زيادة.')}</div>`)}
     </div>
 
     ${(LD && _showMoves) ? `<div class="card" style="margin-bottom:16px"><details${LD.moves.length && LD.moves.length <= 12 ? ' open' : ''}><summary style="cursor:pointer;font-weight:700">💵 ${t('Cash payments & collections since the last count', 'المدفوعات النقدية والاستلامات منذ آخر جرد')} <span class="text-mute" style="font-weight:500">(${LD.moves.length})</span></summary>${LD.moves.length ? `<div style="overflow:auto;margin-top:8px"><table class="data-table" style="width:100%"><thead><tr><th>${t('When', 'الوقت')}</th><th>${t('Member (English · Arabic · mobile)', 'العضو (إنجليزي · عربي · موبايل)')}</th><th>${t('Invoice', 'الفاتورة')}</th><th class="text-right">${t('Current amount (before)', 'المبلغ الحالي (قبل)')}</th><th class="text-right" style="color:var(--green)">${t('Collected cash (+)', 'النقد المحصّل (+)')}</th><th class="text-right" style="color:var(--red)">${t('Decreased (−)', 'النقص (−)')}</th><th class="text-right">${t('Amount after', 'المبلغ بعد')}</th><th></th></tr></thead><tbody>${_mvRows}${_openRow}</tbody></table></div>` : `<div class="text-mute" style="font-size:13px;padding:8px 0">${t('No cash payment or collection since the last count.', 'لا مدفوعات نقدية ولا استلامات منذ آخر جرد.')}</div>`}</details></div>` : ''}

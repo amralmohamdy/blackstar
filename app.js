@@ -14,7 +14,10 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.1016.0';   // 6.1016.0 The Lamaa Stars hall-booking module is removed (screen, menu section, hall packages, hallBookings collection); the admin menu's third block is now 'Camps'.
+const APP_VERSION = '6.1019.0';   // 6.1019.0 A fix file (bs-fix/1) can now set the colour of schedule slots (collection 'schedule'), so one class name can be given one colour; nothing else changes.
+// prev:   // 6.1018.0 Cash in Hand is LIVE again: the last count + every invoice payment made in CASH − every owner cash collection (and any cash refund handed back); card / transfer payments and cash expenses / salaries never touch it. The Record cash collection box shows what the drawer holds and warns when the collection is more than that. The flat figure is now opt-in (settings.cashFlat = true).
+// prev:   // 6.1017.0 Dashboard + Reports: a 'Hidden mode' button masks every money figure (amounts, chart labels, revenue trends) so the system can be shown to a visitor; off by default and reset when the tab closes; display only (exports and other screens are unchanged).
+// prev:   // 6.1016.0 The Lamaa Stars hall-booking module is removed (screen, menu section, hall packages, hallBookings collection); the admin menu's third block is now 'Camps'.
 // prev:   // 6.1015.0 Citadel: a Football / Swimming membership counts only the classes ATTENDED, each in the month it was attended (price ÷ paid classes), from 1 Jun 2026 — not the whole package in its invoice month; rent and Mixed unchanged; temporary admin screen 'Citadel · Class Differences' (before / after, per month and per line). Private packages: reception's share is 5% from day one (every month; settings.receptionPctFrom restores the old % before a month).
 // prev:   // 6.1014.0 Citadel: a Mixed package is credited in the month each class was ATTENDED (30% of the class value, only the Football / Swimming classes), not in its invoice month; a normal invoice still follows its invoice month.
 // prev:   // 6.1013.0 The renewal reminder never promises more carried classes than are really left (1 class left → '1 class' / 'your remaining class', not 'up to 2'); the carry is capped by the classes the message itself shows as left, per sport. The renewal / welcome message lists ONE line per sport + coach (the newest period, not the old one too) and corrects a stored end date that is only days after the start of a 30-day package.
@@ -11915,6 +11918,79 @@ window._systemUnlock = function() {
 };
 
 // v6.646: every screen build runs inside a calc scope (see CALC SCOPE), so repeated pure calculations are computed once.
+// ── HIDDEN MODE (v6.1017) — Dashboard + Reports: one button masks every money figure so the system can be shown to a visitor.
+const HM_ROUTES = { dashboard: 1, reports: 1 };
+const HM_WORDS = /revenue|income|collect|paid|due\b|expense|profit|salar|commission|price|cash|bank|balance|amount|sales|share|fee|outstanding|earn|cost|refund|discount|qar|payment|rent|bonus|advance|\bnet\b|gross|deposit|owed|loss|margin|ريال|ر\.ق|إيراد|ايراد|دخل|مصروف|ربح|راتب|عمولة|سعر|نقد|رصيد|مبلغ|مبيعات|حصة|رسوم|مستحق|مدفوع|تكلفة|خصم|إيجار|سلفة|صافي|إجمالي|تحصيل/i;
+function hmOn() { try { return sessionStorage.getItem('bs-hidden-mode') === '1'; } catch (_) { return !!window._hmOn; } }
+function hmSet(v) { window._hmOn = !!v; try { sessionStorage.setItem('bs-hidden-mode', v ? '1' : '0'); } catch (_) {} }
+// Pure: mask the money numbers of one string. `ctxMoney` = the surrounding label talks about money.
+function hmMaskString(s, ctxMoney) {
+  return String(s).replace(/\d[\d,]*(?:\.\d+)?(?:[kKmM](?![A-Za-z]))?/g, (tok, at, whole) => {   // also chart labels like 98k
+    const prev = whole.charAt(at - 1), next = whole.charAt(at + tok.length);
+    if (/[A-Za-z_\/:]/.test(prev) || /[\-\/:]/.test(next) || (next === '%' && tok.indexOf('.') < 0)) return tok;   // reference numbers, dates, times, whole percentages (a "30.3%" revenue trend is masked)
+    if (prev === '-' && /\d/.test(whole.charAt(at - 2))) return tok;                          // 2026-11-10
+    if (/^20\d\d$/.test(tok)) return tok;                                                       // a year
+    const near = whole.slice(Math.max(0, at - 8), at) + whole.slice(at + tok.length, at + tok.length + 8);
+    if (ctxMoney || /[.,]/.test(tok) || /qar|ر\.ق|ريال/i.test(near)) return '•••';
+    return tok;
+  });
+}
+function hmContext(node, main) {
+  let el = node.parentElement, best = el;
+  while (el && el !== main && el.parentElement) {
+    if ((el.textContent || '').length > 140) break;
+    best = el;
+    if (/^(TR|LI)$/.test(el.tagName) || (el.classList && el.classList.contains('kpi'))) break;
+    el = el.parentElement;
+  }
+  let ctx = best ? best.textContent : '';
+  const svg = node.parentElement && node.parentElement.closest('svg');   // a chart label: the card's title says what it plots
+  if (svg) {
+    const card = svg.closest('.card') || svg.parentElement;
+    const ttl = card && card.querySelector('.card-title, .card-header, h2, h3');
+    ctx += ' ' + (ttl ? ttl.textContent : String(card ? card.textContent : '').slice(0, 120));
+  }
+  const cell = node.parentElement && node.parentElement.closest('td,th');
+  if (cell) {
+    const tbl = cell.closest('table'), idx = cell.cellIndex;
+    const head = tbl && tbl.tHead && tbl.tHead.rows[0] && tbl.tHead.rows[0].cells[idx];
+    if (head) ctx += ' ' + head.textContent;
+  }
+  return ctx;
+}
+function hmApply() {
+  if (!hmOn() || !HM_ROUTES[state.route]) return;
+  window._hmBusy = true;
+  try {
+    for (const root of [document.querySelector('.main'), document.getElementById('modal-backdrop')]) {
+      if (!root) continue;
+      const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      const nodes = [];
+      for (let n = w.nextNode(); n; n = w.nextNode()) { if (/\d/.test(n.nodeValue) && !(n.parentElement && /^(SCRIPT|STYLE|INPUT|TEXTAREA|SELECT|OPTION)$/.test(n.parentElement.tagName))) nodes.push(n); }
+      for (const n of nodes) { const m = hmMaskString(n.nodeValue, HM_WORDS.test(hmContext(n, root))); if (m !== n.nodeValue) n.nodeValue = m; }
+      root.querySelectorAll('[title]').forEach(e => { const m = hmMaskString(e.getAttribute('title'), HM_WORDS.test(e.getAttribute('title') + ' ' + (e.textContent || ''))); if (m !== e.getAttribute('title')) e.setAttribute('title', m); });
+    }
+  } finally { window._hmBusy = false; }
+}
+function hmAfterRender(main) {
+  if (!HM_ROUTES[state.route]) return;
+  const on = hmOn();
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'btn ' + (on ? 'primary' : 'ghost') + ' hm-btn';
+  btn.id = 'hm-btn';
+  btn.title = t('Hide all money figures on this screen (to show the system to a visitor)', 'إخفاء كل الأرقام المالية في هذه الشاشة (لعرض النظام على زائر)');
+  btn.innerHTML = on ? '👁 ' + t('Show amounts', 'إظهار المبالغ') : '🙈 ' + t('Hidden mode', 'وضع الإخفاء');
+  btn.addEventListener('click', () => { hmSet(!hmOn()); render(); });
+  const topbar = main.querySelector('.topbar') || main.querySelector('.page-header');
+  if (topbar) { btn.style.cssText = 'margin-inline-start:auto;flex:0 0 auto'; topbar.style.display = topbar.style.display || 'flex'; topbar.style.alignItems = topbar.style.alignItems || 'center'; topbar.appendChild(btn); }
+  else { btn.style.cssText = 'position:fixed;top:12px;inset-inline-end:70px;z-index:50'; document.body.appendChild(btn); }
+  hmApply();
+  if (!window._hmObs) {
+    window._hmObs = new MutationObserver(() => { if (window._hmBusy || !hmOn() || !HM_ROUTES[state.route]) return; if (window._hmT) clearTimeout(window._hmT); window._hmT = setTimeout(hmApply, 30); });
+    window._hmObs.observe(document.body, { childList: true, subtree: true, characterData: true });
+  }
+}
 function render() { return withCalcScope(_renderImpl); }
 function _renderImpl() {
   window.__lastRenderAt = Date.now();   // v6.646: used to rate-limit remote-triggered repaints of heavy screens
@@ -11993,6 +12069,7 @@ function _renderImpl() {
   } else {
     handler(main);
   }
+  try { hmAfterRender(main); } catch (_) {}   // v6.1017 — Hidden mode button + masking (Dashboard / Reports)
 
   // ── Global Back button ── Inject a back arrow at the start of the page's topbar
   // (every screen has a .topbar). Returns to the previous screen, scroll + filters.
