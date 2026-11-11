@@ -12678,13 +12678,15 @@ PAGES.schedule = (main) => {
             // Labels (white text with a subtle shadow so it stays readable on any chip colour)
             const cx = x + cellW / 2, cy = by + blockH / 2;
             const coach = state.coaches.find(co => co.id === c.coachId);
-            const sportTxt = (c.sport === SCHEDULE_EXTERNAL && (c.label || c.labelAr)) ? (ar ? (c.labelAr || c.label) : String(c.label || c.labelAr).toUpperCase()) : (ar ? sportNameAR(c.sport) : c.sport.toUpperCase());
+            const sportTxt = ar ? (c.labelAr || (c.label ? sportNameAR(c.label) : sportNameAR(c.sport))) : String(c.label || c.sport).toUpperCase();   // the class name, exactly as the screen shows it (was the sport name only)
             const txt = `${sportEmoji(c.sport)} ${sportTxt}`;
             ctx.save();
             ctx.shadowColor = 'rgba(0,0,0,0.35)'; ctx.shadowBlur = 3; ctx.shadowOffsetY = 1;
             ctx.fillStyle = 'white';
             ctx.textAlign = 'center';
-            ctx.font = `bold ${single ? 15 : 12}px sans-serif`;
+            let _fs = single ? 15 : 12;
+            ctx.font = `bold ${_fs}px sans-serif`;
+            while (_fs > 8 && ctx.measureText(txt).width > bw - 10) { _fs--; ctx.font = `bold ${_fs}px sans-serif`; }   // a long class name shrinks to fit its tile
             ctx.fillText(txt, cx, cy + (coach ? (single ? -2 : -4) : 4));
             if (coach) {
               ctx.font = `${single ? 12 : 9}px sans-serif`;

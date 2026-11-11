@@ -14,7 +14,9 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.1023.0';   // 6.1023.0 Add Member > Scan Qatar ID: after the scan fills the birthdate the Age box now fills too (a script-set value fired no event, so Age stayed empty); the scan message says Gender is not printed on the card and must be chosen by hand.
+const APP_VERSION = '6.1025.0';   // 6.1025.0 Reception target tiers (new + renewal subscribers, from Nov 2026): 50 → 250, 100 → 500, 150 → 1,500, 200 → 2,000 (was 50 → 500, 100 → 1,000, 150 → 1,500); the start-month setting check is fixed so a value saved in settings is honoured.
+// prev:   // 6.1024.0 Class Schedule > Week PNG (English and Arabic): each tile now carries the class name exactly as the screen shows it ('Swimming (Girls)', 'Kids U 13', 'Football (Private Yard)') instead of only the sport name; a long name shrinks to fit its tile.
+// prev:   // 6.1023.0 Add Member > Scan Qatar ID: after the scan fills the birthdate the Age box now fills too (a script-set value fired no event, so Age stayed empty); the scan message says Gender is not printed on the card and must be chosen by hand.
 // prev:   // 6.1022.0 Class Schedule: the Mixed and External coach tiles are removed from the sports palette and the sport filter, and the coach filter lists only ACTIVE coaches (no more '(inactive)' group); classes already booked for an outside coach or Mixed still show on the grid.
 // prev:   // 6.1021.0 Reception target is now a COUNT of new + renewal subscribers (club-wide, one per payment transaction, like the coaches): 50 / 100 / 150 → 500 / 1,000 / 1,500, from Nov 2026 (earlier months keep the income tiers; settings.receptionTargetCountFrom moves the start); the Targets screen is open to the reception login again (a count, no club income); admin taps the card for every transaction; the receptionist salary line says 'reception new/renew target'.
 // prev:   // 6.1020.0 Hidden mode is ON by default (Dashboard, Reports, and the Invoices totals strip — Charged / Collected / Due with the cash, card, fawran and transfer split); the invoice rows stay readable. The Show amounts button turns it off until the tab closes.
@@ -6488,8 +6490,8 @@ function refreshNotifBadge() {
 const RECEPTION_TARGETS_DEFAULT = [{ at: 50000, bonus: 500 }, { at: 60000, bonus: 1000 }, { at: 70000, bonus: 1500 }, { at: 80000, bonus: 2000 }, { at: 100000, bonus: 3000 }];   // v6.978.0 — 50k→500 · 60k→1,000 · 70k→1,500 · 80k→2,000 · 100k→3,000
 const COACH_TARGETS_DEFAULT = [{ at: 40, bonus: 500 }, { at: 50, bonus: 1000 }, { at: 60, bonus: 1500 }];
 // v6.1020 — from Nov 2026 the reception target counts NEW + RENEWAL subscribers (club-wide), like the coaches: 50 / 100 / 150 → 500 / 1,000 / 1,500. Months before keep the income tiers (settings.receptionTargetCountFrom moves the start).
-const RECEPTION_COUNT_TARGETS_DEFAULT = [{ at: 50, bonus: 500 }, { at: 100, bonus: 1000 }, { at: 150, bonus: 1500 }];
-function receptionCountFrom() { const v = state.settings && state.settings.receptionTargetCountFrom; return /^d{4}-d{2}$/.test(String(v || '')) ? String(v) : '2026-11'; }
+const RECEPTION_COUNT_TARGETS_DEFAULT = [{ at: 50, bonus: 250 }, { at: 100, bonus: 500 }, { at: 150, bonus: 1500 }, { at: 200, bonus: 2000 }];   // v6.1025 — 50→250 · 100→500 · 150→1,500 · 200→2,000 (was 50→500 · 100→1,000 · 150→1,500)
+function receptionCountFrom() { const v = state.settings && state.settings.receptionTargetCountFrom; return /^\d{4}-\d{2}$/.test(String(v || '')) ? String(v) : '2026-11'; }
 function receptionByCount(ym) { return !!ym && String(ym).slice(0, 7) >= receptionCountFrom(); }
 function receptionTargets(ym) {
   if (receptionByCount(ym)) { const k = state.settings && state.settings.targets && state.settings.targets.receptionCount; return (Array.isArray(k) && k.length) ? k.slice().sort((a, b) => a.at - b.at) : RECEPTION_COUNT_TARGETS_DEFAULT; }
