@@ -21798,6 +21798,7 @@ PAGES.salaries = (main) => {
         ${currentRole() === 'admin' ? `<button class="btn ghost" onclick="coachAttributionCheck()" title="${t('Find invoice lines credited to a coach who is no longer the current coach for that sport, and re-credit them', 'ابحث عن بنود منسوبة لمدرب لم يعد مدرب العضو لتلك الرياضة، وأعد إسنادها')}">🧭 ${t('Coach check', 'فحص المدرب')}</button>` : ''}
         ${currentRole() === 'admin' ? `<button class="btn ghost" onclick="showCloseOldMonths()" title="${t('Close the old salary months: what was paid stands, nothing is added to them again; what still differs from October goes to the next month for your approval', 'إغلاق أشهر المرتبات القديمة: ما دُفع يبقى ولا يُضاف عليها شيء؛ وما تبقى من فرق من أكتوبر يذهب للشهر التالي بموافقتك')}">🔒 ${(state.settings && state.settings.salaryClosedThrough) ? t('Closed through', 'مغلق حتى') + ' ' + escapeHtml(fmtMonth(state.settings.salaryClosedThrough)) : t('Close old months', 'إغلاق الأشهر القديمة')}</button>` : ''}
         ${currentRole() === 'admin' && (typeof _switchedUnreconciled === 'function' && _switchedUnreconciled().length) ? `<button class="btn ghost" style="border-color:var(--accent-2);color:var(--accent-2)" onclick="switchReconcileCheck()" title="${t('A sport was switched before the fix — complete the old sport, split the payment, remove the phantom pending', 'رياضة بُدّلت قبل الإصلاح — أكمل القديمة وقسّم الدفعة وأزل المعلّق الوهمي')}">🔀 ${t('Switch check', 'فحص التبديل')} · ${_switchedUnreconciled().length}</button>` : ''}
+        ${currentRole() === 'admin' ? `<button class="btn ghost" onclick="showEarnedOnDay()" title="${t('What each coach earned on one chosen day (classes attended × commission)', 'كام كسب كل مدرب في يوم تختاره (الحصص × العمولة)')}">📅 ${t('Earned on a day', 'كسب يوم')}</button>` : ''}
         ${(() => { const n = privateUnmarkedPackages(filter.month).length; return `<button class="btn ghost" onclick="openPrivateCheck(window._salMonth || '${filter.month}')" title="${t('Packages under a private coach that are not marked Private yet', 'باقات لدى مدرب خاص لم تُعلَّم كخاصة بعد')}">🔒 ${t('Private check', 'فحص الخاص')}${n ? ` <span class="badge" style="background:rgba(245,158,11,.2);color:var(--accent-2);font-size:10px">${n}</span>` : ''}</button>`; })()}
         <button class="btn primary" onclick="downloadPayrollCSV('${filter.month}', window._salCoachSet || 'active')">📥 Export payroll</button>
       </div>
@@ -22236,6 +22237,74 @@ function _salLateBadges(p) {
 // the member-by-member detail of what a frozen month's live calculation now says differently, with Accept / Dismiss
 // v6.946 — CLOSE the old months. Until a month is closed it behaves the old way (live: a late class raises what is due, so it can be paid). Closing freezes every paid month up to the chosen one: what was
 // paid stands, and from October whatever still differs (a coach paid more or less than the live figure) goes to the NEXT month as a late adjustment the owner accepts or dismisses.
+// v6.1033 — WHAT EACH COACH EARNED ON ONE DAY: the classes attended that day × the coach's per-class commission, + the private / reception bonus, + the expiry settlement of packages that ended that day.
+// Built from the SAME engine as the monthly pay (the cumulative-to-date figure minus the one of the day before), so the days of a month add up to the month. Fixed salaries are not part of a day.
+window.coachEarnedOnDay = function (iso) {
+  const mo = iso.slice(0, 7), prevIso = addDays(iso, -1), r2 = x => Math.round(x * 100) / 100;
+  const Ls = p => (p && p.attendanceLines && p.attendanceLines.lines) || [];
+  const sum = (p, k, f) => Ls(p).filter(l => l.kind === k).reduce((s, l) => s + (Number(l[f]) || 0), 0);
+  const bon = p => p ? (Number(p.privateBonus) || 0) + (Number(p.receptionBonus) || 0) : 0;
+  const rows = [];
+  for (const c of (state.coaches || [])) {
+    const a = computeMonthlyPay(c.id, mo, iso);
+    if (!a) continue;
+    const b = computeMonthlyPay(c.id, prevIso.slice(0, 7), prevIso);
+    const rate = (Number(a.commissionRate) || 0) / 100;
+    const classes = Math.round(sum(a, 'attended', 'classes') - sum(b, 'attended', 'classes'));
+    const commission = (sum(a, 'attended', 'amountBase') - sum(b, 'attended', 'amountBase')) * rate;
+    const bonus = bon(a) - bon(b);
+    const settlement = Ls(a).filter(l => l.kind === 'trueup' && String(l.end || '').slice(0, 10) === iso).reduce((s, l) => s + (Number(l.amountBase) || 0), 0) * rate;
+    const total = commission + bonus + settlement;
+    if (!classes && Math.abs(total) < 0.005) continue;
+    const key = l => [l.mid, l.sport, l.start].join('|');
+    const before = new Map();
+    Ls(b).filter(l => l.kind === 'attended').forEach(l => before.set(key(l), l));
+    const members = [];
+    Ls(a).filter(l => l.kind === 'attended').forEach(l => {
+      const p = before.get(key(l)), n = (Number(l.classes) || 0) - (p ? Number(p.classes) || 0 : 0);
+      if (n > 0) members.push({ name: l.memberName, sport: l.sport, classes: n, amount: r2(((Number(l.amountBase) || 0) - (p ? Number(p.amountBase) || 0 : 0)) * rate) });
+    });
+    rows.push({ coachId: c.id, name: c.name, active: (typeof isCoachActive === 'function') ? isCoachActive(c) : true, classes, commission: r2(commission), bonus: r2(bonus), settlement: r2(settlement), total: r2(total), members });
+  }
+  return rows.sort((x, y) => y.total - x.total);
+};
+window.showEarnedOnDay = function (startIso) {
+  if (currentRole() !== 'admin') { toast(t('Admin only', 'للأدمن فقط'), 'error'); return; }
+  const money = x => (Math.round((Number(x) || 0) * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const paint = iso => {
+    const host = document.getElementById('eod-body');
+    if (!host) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(iso || '')) { host.innerHTML = '<div class="text-mute">' + t('Pick a date', 'اختر تاريخاً') + '</div>'; return; }
+    const rows = window.coachEarnedOnDay(iso);
+    const tot = k => rows.reduce((s, r) => s + r[k], 0);
+    const body = rows.length ? rows.map(r => `<tr>
+        <td><b>${escapeHtml(r.name)}</b>${r.active ? '' : ' <span class="text-mute" style="font-size:10px">(' + t('inactive', 'غير نشط') + ')</span>'}
+          ${r.members.length ? `<details style="margin-top:3px"><summary class="text-mute" style="font-size:11px;cursor:pointer">${r.members.length} ${t('students', 'طالب')}</summary><div style="font-size:11px;line-height:1.6;margin-top:3px">${r.members.map(m => escapeHtml(m.name) + ' · ' + escapeHtml(m.sport) + (m.classes > 1 ? ' ×' + m.classes : '') + ' <span class="text-mute">' + money(m.amount) + '</span>').join('<br>')}</div></details>` : ''}</td>
+        <td class="text-right num">${r.classes}</td><td class="text-right num">${money(r.commission)}</td><td class="text-right num">${r.bonus ? money(r.bonus) : '—'}</td><td class="text-right num">${r.settlement ? money(r.settlement) : '—'}</td><td class="text-right num"><b>${money(r.total)}</b></td></tr>`).join('') : `<tr><td colspan="6" class="empty" style="padding:24px">${t('No coach earned anything on this day', 'لم يكسب أي مدرب شيئاً في هذا اليوم')}</td></tr>`;
+    host.innerHTML = `<div class="table-wrap"><table><thead><tr><th>${t('Coach', 'المدرب')}</th><th class="text-right">${t('Classes', 'الحصص')}</th><th class="text-right">${t('Commission on them', 'عمولتها')}</th><th class="text-right">${t('Bonus', 'مكافأة')}</th><th class="text-right">${t('Expiry settlement', 'تسوية الانتهاء')}</th><th class="text-right">${t('Earned that day', 'كسب اليوم')}</th></tr></thead><tbody>${body}
+      ${rows.length ? `<tr style="font-weight:700"><td>${t('Total', 'الإجمالي')}</td><td class="text-right num">${tot('classes')}</td><td class="text-right num">${money(tot('commission'))}</td><td class="text-right num">${money(tot('bonus'))}</td><td class="text-right num">${money(tot('settlement'))}</td><td class="text-right num">${money(tot('total'))}</td></tr>` : ''}</tbody></table></div>`;
+  };
+  const d0 = /^\d{4}-\d{2}-\d{2}$/.test(startIso || '') ? startIso : TODAY;
+  showModal({
+    size: 'xl',
+    title: '📅 ' + t('What each coach earned on one day', 'كام كسب كل مدرب في يوم واحد'),
+    body: `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+        <button class="btn ghost sm" id="eod-prev">◀</button><input type="date" id="eod-date" value="${d0}" style="max-width:170px" /><button class="btn ghost sm" id="eod-next">▶</button><button class="btn ghost sm" id="eod-today">${t('Today', 'اليوم')}</button>
+      </div><div id="eod-body"></div>
+      <div class="text-mute" style="font-size:11px;margin-top:10px;line-height:1.6">${t('Earned = the classes attended that day × the coach per-class commission (+ private / reception bonus). Expiry settlement = the extra paid for the classes left when a package ended that day. Fixed salaries are not part of a day. The days of a month add up to that month commission.', 'الكسب = الحصص التي حضرت في اليوم × عمولة الحصة (+ مكافأة الخاص والاستقبال). تسوية الانتهاء = ما يُدفع عن الحصص المتبقية عند انتهاء باقة في هذا اليوم. المرتب الثابت ليس جزءاً من اليوم. وأيام الشهر تجمع على عمولة الشهر.')}</div>`,
+    actions: [{ label: t('Close', 'إغلاق'), class: 'btn primary', onclick: closeModal }],
+  });
+  setTimeout(() => {
+    const di = document.getElementById('eod-date');
+    if (!di) return;
+    const go = iso => { di.value = iso; paint(iso); };
+    di.addEventListener('change', () => paint(di.value));
+    document.getElementById('eod-prev').addEventListener('click', () => go(addDays(di.value || TODAY, -1)));
+    document.getElementById('eod-next').addEventListener('click', () => go(addDays(di.value || TODAY, 1)));
+    document.getElementById('eod-today').addEventListener('click', () => go(TODAY));
+    paint(di.value);
+  }, 40);
+};
 window.showCloseOldMonths = function () {
   const S = state.settings || (state.settings = {}), cur = S.salaryClosedThrough || '';
   const from = String(commissionStartDate()).slice(0, 7), last = _salPrevMonth(currentMonth());
@@ -39731,6 +39800,10 @@ PAGES.productsales = (main) => {
       return { from: `${ly}-${mm}-01`, to: `${ly}-${mm}-${String(last).padStart(2, '0')}` };
     }
     if (preset === 'this_year') return { from: today.slice(0, 4) + '-01-01', to: today };
+    if (/^m:\d{4}-\d{2}$/.test(String(preset))) {   // v6.1033 — one chosen month from the dropdown
+      const ym = String(preset).slice(2), y = parseInt(ym.slice(0, 4)), m = parseInt(ym.slice(5, 7));
+      return { from: ym + '-01', to: ym + '-' + String(new Date(y, m, 0).getDate()).padStart(2, '0') };
+    }
     if (preset === 'custom') return { from: st.from || '', to: st.to || today };
     return { from: '', to: '' };   // all time
   }
@@ -39748,7 +39821,7 @@ PAGES.productsales = (main) => {
     // Uniform") can appear under several product records or with a missing
     // productId, and the owner expects to see ONE row per product name.
     const byProduct = {};
-    let totalUnits = 0, totalRevenue = 0, txCount = 0;
+    let totalUnits = 0, totalRevenue = 0, txCount = 0, totalCost = 0, noCostLines = 0;
     for (const sale of (state.sales || [])) {
       if (!inRange(sale)) continue;
       let saleHasItem = false;
@@ -39765,6 +39838,10 @@ PAGES.productsales = (main) => {
         const _k = (Number(sale.discount) > 0 && Number(sale.subtotal) > 0) ? Math.max(0, 1 - Number(sale.discount) / Number(sale.subtotal)) : 1;   // v6.862 — a sale discount is shared across its lines
         const _nq = (it.qty || 0) - (it.returnedQty || 0);   // v6.863 — net of returns
         const rev = _nq * (it.unitPrice || 0) * _k;
+        // v6.1033 — cost of what was sold: the cost saved on the sale line, else the product's current cost (same name); nothing known → counted as 0 and flagged
+        let unitCost = (it.unitCost != null && it.unitCost !== '') ? Number(it.unitCost) : null;
+        if (unitCost == null || isNaN(unitCost)) { const _nm = s => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim(); const _cp = prod || (state.products || []).find(p => _nm(p.name) === _nm(displayName) && Number(p.cost) > 0); unitCost = _cp && Number(_cp.cost) > 0 ? Number(_cp.cost) : null; }   // _nm: a double space in an old sale name must not hide the product
+        const cost = _nq * (unitCost || 0);
         if (!byProduct[key]) {
           // Stock = sum across ALL product records sharing this name.
           const sameName = (state.products || []).filter(p => (p.name || '').trim().toLowerCase() === displayName.trim().toLowerCase());
@@ -39772,10 +39849,13 @@ PAGES.productsales = (main) => {
           if (sameName.length) {
             stock = sameName.reduce((s, p) => s + (typeof productCurrentStock === 'function' ? productCurrentStock(p.id) : (p.stock || 0)), 0);
           }
-          byProduct[key] = { productId: (prod && prod.id) != null ? prod.id : it.productId, name: displayName, category: (prod && prod.category) || it.category || (sameName[0] && sameName[0].category) || '', units: 0, revenue: 0, txns: 0, stock, buyers: new Map() };
+          byProduct[key] = { productId: (prod && prod.id) != null ? prod.id : it.productId, name: displayName, category: (prod && prod.category) || it.category || (sameName[0] && sameName[0].category) || '', units: 0, revenue: 0, cost: 0, noCost: 0, txns: 0, stock, buyers: new Map() };
         }
         byProduct[key].units += _nq;
         byProduct[key].revenue += rev;
+        byProduct[key].cost += cost;
+        totalCost += cost;
+        if (unitCost == null) { byProduct[key].noCost++; noCostLines++; }
         byProduct[key].txns += 1;
         // Track distinct buyers of THIS product with their total qty (for sort + tooltip).
         const bkey = (buyerId != null ? 'm:' + buyerId : 'n:' + buyerName.toLowerCase());
@@ -39794,12 +39874,15 @@ PAGES.productsales = (main) => {
       name: (a, b) => String(a.name).localeCompare(String(b.name)),
       stock: (a, b) => (a.stock == null ? 1 : b.stock == null ? -1 : a.stock - b.stock),
     };
+    sorters.profit = (a, b) => (b.revenue - b.cost) - (a.revenue - a.cost);
     products.sort(sorters[st.sort] || sorters.revenue);
-    return { products, totalUnits, totalRevenue, txCount, range };
+    return { products, totalUnits, totalRevenue, txCount, range, totalCost, noCostLines };
   }
 
   function refresh() {
-    const { products, totalUnits, totalRevenue, txCount } = build();
+    const { products, totalUnits, totalRevenue, txCount, totalCost, noCostLines } = build();
+    const showProfit = currentRole() === 'admin';   // cost and profit are the owner's figures
+    const netProfit = totalRevenue - totalCost, margin = totalRevenue > 0 ? Math.round(netProfit / totalRevenue * 1000) / 10 : 0;
     const maxRev = Math.max(1, ...products.map(p => p.revenue));
     const top = products[0];
 
@@ -39807,6 +39890,7 @@ PAGES.productsales = (main) => {
       <div class="kpi"><div class="kpi-label">${t('Products sold', 'منتجات مُباعة')}</div><div class="kpi-value num">${products.length}</div></div>
       <div class="kpi blue"><div class="kpi-label">${t('Units sold', 'وحدات مُباعة')}</div><div class="kpi-value num">${totalUnits}</div></div>
       <div class="kpi green"><div class="kpi-label">${t('Revenue', 'الإيراد')}</div><div class="kpi-value num">${fmt(totalRevenue)}</div><div class="kpi-sub">QAR · ${txCount} ${t('sales', 'عملية')}</div></div>
+      ${showProfit ? `<div class="kpi ${netProfit >= 0 ? 'green' : 'red'}"><div class="kpi-label">${t('Net profit', 'صافي الربح')}</div><div class="kpi-value num">${fmt(netProfit)}</div><div class="kpi-sub">QAR · ${margin}% ${t('margin', 'هامش')} · ${t('cost', 'التكلفة')} ${fmt(totalCost)}</div>${noCostLines ? `<div class="kpi-sub" style="color:var(--accent-2)">⚠ ${noCostLines} ${t('sale line(s) have no cost — counted as 0', 'سطر بيع بلا تكلفة — محسوب صفر')}</div>` : ''}</div>` : ''}
       <div class="kpi"><div class="kpi-label">${t('Best seller', 'الأكثر مبيعاً')}</div><div class="kpi-value" style="font-size:15px">${top ? escapeHtml(top.name) : '—'}</div>${top ? `<div class="kpi-sub">${top.units} ${t('units', 'وحدة')} · ${fmt(top.revenue)} QAR</div>` : ''}</div>`;
 
     // Buyers cell: distinct buyers of this product, most units first; members get a 🎟, the rest are
@@ -39832,16 +39916,18 @@ PAGES.productsales = (main) => {
             <span class="num font-bold" style="white-space:nowrap">${fmt(p.revenue)}</span>
           </div>
         </td>
+        ${showProfit ? `<td style="padding:8px 10px;text-align:right;white-space:nowrap" class="num font-bold"><span style="color:${p.revenue - p.cost >= 0 ? 'var(--green)' : 'var(--red)'}" title="${t('Revenue', 'الإيراد')} ${fmt(p.revenue)} − ${t('cost', 'التكلفة')} ${fmt(p.cost)}">${fmt(p.revenue - p.cost)}</span>${p.noCost ? ` <span title="${p.noCost} ${t('sale line(s) without a cost', 'سطر بلا تكلفة')}" style="color:var(--accent-2)">⚠</span>` : ''}</td>` : ''}
         <td style="padding:8px 10px;font-size:12px;max-width:220px">${buyersCell(p)}</td>
         <td style="padding:8px 10px;text-align:right" class="num">${p.txns}</td>
         <td style="padding:8px 10px;text-align:right">${p.stock == null ? '<span class="text-mute">—</span>' : `<span class="${low ? 'badge' : 'num'}" style="${low ? 'background:rgba(239,68,68,.15);color:var(--red);font-weight:700' : ''}">${p.stock}${low ? ' ⚠' : ''}</span>`}</td>
       </tr>`;
-    }).join('') : `<tr><td colspan="7" class="empty"><div class="empty-icon">📦</div>${t('No product sales in this period', 'لا توجد مبيعات منتجات في هذه الفترة')}</td></tr>`;
+    }).join('') : `<tr><td colspan="${showProfit ? 8 : 7}" class="empty"><div class="empty-icon">📦</div>${t('No product sales in this period', 'لا توجد مبيعات منتجات في هذه الفترة')}</td></tr>`;
 
     $('#ps-foot').innerHTML = products.length ? `<tr style="border-top:2px solid var(--border);font-weight:800">
       <td></td><td style="padding:8px 10px">${t('Total', 'الإجمالي')}</td>
       <td style="padding:8px 10px;text-align:right" class="num">${totalUnits}</td>
       <td style="padding:8px 10px" class="num font-bold" style="color:var(--green)">${fmt(totalRevenue)} QAR</td>
+      ${showProfit ? `<td style="padding:8px 10px;text-align:right;white-space:nowrap" class="num font-bold">${fmt(netProfit)} QAR</td>` : ''}
       <td></td>
       <td style="padding:8px 10px;text-align:right" class="num">${txCount}</td><td></td>
     </tr>` : '';
@@ -39852,10 +39938,11 @@ PAGES.productsales = (main) => {
 
   window._psExportCSV = () => {
     const { products } = build();
-    const rows = [['Rank', 'Product', 'Category', 'Units', 'Revenue', 'Buyers', 'Sales', 'Stock']];
+    const _admin = currentRole() === 'admin';
+    const rows = [['Rank', 'Product', 'Category', 'Units', 'Revenue'].concat(_admin ? ['Cost', 'Net profit'] : [], ['Buyers', 'Sales', 'Stock'])];
     products.forEach((p, i) => {
       const buyers = [...(p.buyers ? p.buyers.values() : [])].sort((a, b) => b.qty - a.qty).map(b => `${b.name}${b.member ? ' (member)' : ''} x${b.qty}`).join('; ');
-      rows.push([i + 1, p.name, p.category, p.units, p.revenue, buyers, p.txns, p.stock == null ? '' : p.stock]);
+      rows.push([i + 1, p.name, p.category, p.units, p.revenue].concat(_admin ? [Math.round(p.cost * 100) / 100, Math.round((p.revenue - p.cost) * 100) / 100] : [], [buyers, p.txns, p.stock == null ? '' : p.stock]));
     });
     downloadFile(`product-sales-${TODAY}.csv`, rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n'), 'text/csv');
     toast('Exported product-sales.csv');
@@ -39863,6 +39950,8 @@ PAGES.productsales = (main) => {
 
   const presetOpt = (v, label) => `<option value="${v}" ${st.preset === v ? 'selected' : ''}>${label}</option>`;
   const sortOpt = (v, label) => `<option value="${v}" ${st.sort === v ? 'selected' : ''}>${label}</option>`;
+  // v6.1033 — every month that has a product sale (newest first, from the data start month) as a normal dropdown choice
+  const psMonths = [...new Set((state.sales || []).map(s => String(s.date || '').slice(0, 7)).filter(m => /^\d{4}-\d{2}$/.test(m) && m >= String(commissionStartDate()).slice(0, 7)))].sort().reverse();
 
   main.innerHTML = `
     <div class="topbar">
@@ -39882,6 +39971,7 @@ PAGES.productsales = (main) => {
           ${presetOpt('last_month', t('Last month', 'الشهر الماضي'))}
           ${presetOpt('this_year', t('This year', 'هذا العام'))}
           ${presetOpt('all', t('All time', 'كل الوقت'))}
+          <optgroup label="${t('Choose a month', 'اختر شهراً')}">${psMonths.map(ym => presetOpt('m:' + ym, fmtMonth(ym))).join('')}</optgroup>
           ${presetOpt('custom', t('Custom range', 'فترة مخصصة'))}
         </select>
         <div id="ps-customrange" style="display:${st.preset === 'custom' ? 'flex' : 'none'};gap:6px;align-items:center">
@@ -39891,12 +39981,13 @@ PAGES.productsales = (main) => {
         </div>
         <select id="ps-sort" class="btn ghost">
           ${sortOpt('revenue', t('Sort: Revenue', 'ترتيب: الإيراد'))}
+          ${currentRole() === 'admin' ? sortOpt('profit', t('Sort: Net profit', 'ترتيب: صافي الربح')) : ''}
           ${sortOpt('units', t('Sort: Units sold', 'ترتيب: الوحدات'))}
           ${sortOpt('stock', t('Sort: Stock (low first)', 'ترتيب: المخزون'))}
           ${sortOpt('name', t('Sort: Name', 'ترتيب: الاسم'))}
         </select>
       </div>
-      <div class="kpi-grid" id="ps-kpis" style="grid-template-columns:repeat(4,1fr);gap:12px;margin:0 0 14px"></div>
+      <div class="kpi-grid" id="ps-kpis" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:0 0 14px"></div>
       <div class="table-wrap">
         <table>
           <thead><tr>
@@ -39904,6 +39995,7 @@ PAGES.productsales = (main) => {
             <th>${t('Product', 'المنتج')}</th>
             <th class="text-right">${t('Units', 'الوحدات')}</th>
             <th>${t('Revenue', 'الإيراد')}</th>
+            ${currentRole() === 'admin' ? `<th class="text-right">${t('Net profit', 'صافي الربح')}</th>` : ''}
             <th>${t('Buyers', 'المشترون')}</th>
             <th class="text-right">${t('Sales', 'العمليات')}</th>
             <th class="text-right">${t('Stock', 'المخزون')}</th>
