@@ -3868,10 +3868,38 @@ function autoExpiryFromRows() {
   return ends.length ? ends[ends.length - 1] : '';
 }
 
+// v6.1034 — Edit Member: every sport PERIOD of the member (newest first), read-only, each with its own ✎ (price · classes · coach · status).
+function memberSportPeriodsReadonlyHtml(m, rows) {
+  const subs = (m.subscriptions || []).filter(s => s && s.activity).slice().sort((a, b) => String(b.start || '').localeCompare(String(a.start || '')));
+  const priceOut = new Map();
+  let paidMap = new Map();
+  try { if (typeof memberSubPaidMap === 'function') paidMap = memberSubPaidMap(m, subs, priceOut); } catch (_) {}
+  const canEdit = currentRole() === 'admin' || currentRole() === 'receptionist';
+  const cell = 'padding:6px 8px;border-top:1px solid var(--border);font-size:12px;vertical-align:top';
+  const trs = subs.map(s => {
+    const sid = s._sid || s._rid || '';
+    let att = 0;
+    try { const win = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, s) : { from: s.start || null, to: s.end || null }; const lv = subLiveAttendance(m, s, win); att = lv.total > 0 ? lv.y : (s.attendedClasses || 0); } catch (_) {}
+    const total = (typeof subClassLimit === 'function') ? subClassLimit(s) : (s.totalClasses || 0);
+    const paid = paidMap.has(s) ? paidMap.get(s) : (Number(s.amountPaid) || 0);
+    const price = priceOut.has(s) ? priceOut.get(s) : null;
+    const st = s.switchedAwayTo ? t('switched', 'محوّل') : (s.end && s.end < TODAY ? t('past', 'منتهية') : t('current', 'حالية'));
+    const btn = (canEdit && sid) ? `<button type="button" class="btn ghost sm" onclick="closeModal();editSubscription(${m.id}, '${escapeHtml(String(sid))}')" title="${t('Edit this period: price · classes · coach · status', 'تعديل هذه الفترة: السعر · الحصص · المدرب · الحالة')}" style="padding:2px 8px;color:var(--blue)">✎</button>` : '';
+    return `<tr><td style="${cell};font-weight:600">${escapeHtml(s.activity)}</td><td style="${cell}">${escapeHtml(s.coach || ((s.coachId != null && typeof coachName === 'function') ? coachName(s.coachId) : '') || '—')}</td><td style="${cell}">${s.start ? fmtDate(s.start) : '—'} → ${s.end ? fmtDate(s.end) : '—'}</td><td style="${cell}">${att}/${total || 0}</td><td style="${cell};text-align:right">${price != null ? fmt(price) : '—'} / ${paid ? fmt(paid) : '—'}</td><td style="${cell}"><span class="badge">${st}</span></td><td style="${cell};text-align:right">${btn}</td></tr>`;
+  }).join('');
+  const noSub = (rows || []).filter(r => r && r._ro && !subs.some(s => (s.activity || '') === r.sport));
+  const extra = noSub.map(r => `<tr><td style="${cell};font-weight:600">${escapeHtml(r.sport)}</td><td style="${cell}">${escapeHtml(coachName(r.coachId) || '—')}</td><td style="${cell}">${r.start ? fmtDate(r.start) : '—'}</td><td style="${cell}">—/${parseInt(r.classes) || 0}</td><td style="${cell};text-align:right">${fmt(parseFloat(r.price) || 0)} / —</td><td style="${cell}"><span class="badge">${t('no package record', 'بدون سجل باقة')}</span></td><td style="${cell}"></td></tr>`).join('');
+  if (!trs && !extra) return '';
+  return `<div style="margin-bottom:10px;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+    <div class="text-mute" style="font-size:11px;padding:8px 10px;line-height:1.5">${t('All sports and periods of this member (read-only). Edit one period with its ✎ — price · classes · coach · status. Use + Add sport for a new sport.', 'كل رياضات وفترات العضو (للعرض فقط). عدّل كل فترة من ✎ — السعر · الحصص · المدرب · الحالة. استخدم + Add sport لإضافة رياضة جديدة.')}</div>
+    <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse"><thead><tr class="text-mute" style="font-size:10px;text-transform:uppercase"><th style="padding:4px 8px;text-align:left">${t('Sport', 'الرياضة')}</th><th style="padding:4px 8px;text-align:left">${t('Coach', 'المدرب')}</th><th style="padding:4px 8px;text-align:left">${t('Period', 'الفترة')}</th><th style="padding:4px 8px;text-align:left">${t('Classes', 'الحصص')}</th><th style="padding:4px 8px;text-align:right">${t('Price / Paid', 'السعر / المدفوع')}</th><th style="padding:4px 8px;text-align:left">${t('State', 'الحالة')}</th><th></th></tr></thead><tbody>${trs}${extra}</tbody></table></div></div>`;
+}
 function renderEnrollRows() {
   const wrap = document.getElementById('enroll-rows');
   if (!wrap) return;
   wrap.innerHTML = window._enrollRows.map((r, i) => enrollRowHtml(r, i)).join('');
+  // v6.1034 — Edit Member: the member's EXISTING sports are read-only here (listed in #enroll-readonly; each period is edited with its own ✎). Their rows stay in the data so Save keeps them as they are; only newly added rows are shown.
+  wrap.querySelectorAll('.enroll-block').forEach(b => { const r = window._enrollRows[parseInt(b.getAttribute('data-enroll-idx'), 10)]; if (r && r._ro) b.style.display = 'none'; });
   const totalEl = document.getElementById('enroll-total');
   if (totalEl) {
     const total = window._enrollRows.reduce((s, r) => s + (parseFloat(r.price) || 0), 0);
@@ -4307,6 +4335,7 @@ function showMemberForm(m) {
           <div style="font-size:11px;color:var(--blue);text-transform:uppercase;letter-spacing:.6px;font-weight:600">🥋 Sport enrollments <span style="color:var(--accent)">*</span></div>
           <button type="button" class="btn ghost sm" id="enroll-add" style="padding:5px 12px;color:var(--blue);font-weight:600">+ Add sport</button>
         </div>
+        <div id="enroll-readonly"></div>
         <div id="enroll-rows"></div>
         <div style="display:flex;justify-content:flex-end;margin-top:4px"><span id="enroll-total" class="text-dim" style="font-size:11px;font-weight:600"></span></div>
         <div class="text-mute" style="font-size:10px;margin-top:4px">A member can register into multiple sports at once. Each row needs <b>sport, coach, classes, and price</b>.</div>
@@ -5103,6 +5132,12 @@ function showMemberForm(m) {
   });
 
   // Post-render: populate enrollment rows and wire the "+ Add sport" button
+  if (!isNew) {
+    // v6.1034 — lock the existing complete rows and list EVERY sport period read-only (with a ✎ per period)
+    (window._enrollRows || []).forEach(r => { if (r && r.sport && (parseInt(r.classes) || 0) > 0 && (parseFloat(r.price) || 0) > 0) r._ro = true; });
+    const _roBox = document.getElementById('enroll-readonly');
+    if (_roBox) _roBox.innerHTML = memberSportPeriodsReadonlyHtml(m, window._enrollRows || []);
+  }
   renderEnrollRows();
   const addBtn = document.getElementById('enroll-add');
   if (addBtn) addBtn.addEventListener('click', addEnrollRow);
@@ -14387,6 +14422,14 @@ PAGES.invoices = (main) => {
             lineItems,
             mergedFrom: refs,
           };
+          // v6.1036 — the merged invoice CARRIES every payment row of the invoices it replaces (date, method, who). Before, it was built
+          // with no ledger, so it read as "paid in full, undated" even when a source was unpaid, and the real payment dates were lost.
+          merged.payments = [];
+          for (const iv of invs) {
+            if (Array.isArray(iv.payments)) iv.payments.forEach(p => merged.payments.push(Object.assign({}, p)));
+            else { const _lp = (typeof invoicePaid === 'function') ? Math.round(invoicePaid(iv) * 100) / 100 : 0; if (_lp > 0) merged.payments.push({ date: iv.date, month: String(iv.date || '').slice(0, 7), amount: _lp, method: iv.method || 'cash', pid: 'recon:' + iv.id, _recon: true }); }
+          }
+          merged.amountPaid = Math.round(merged.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0) * 100) / 100;
           const _mnow = new Date().toISOString();
           for (const i of state.invoices) { if (selected.has(i.id)) { i.deleted = true; i.deletedAt = _mnow; i.mergedInto = merged.id; } }
           state.invoices.push(merged);
