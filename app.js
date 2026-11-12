@@ -14,7 +14,9 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.1030.0';   // 6.1030.0 Member status: a finished Summer Camp no longer makes a member 'Completed' while another sport of his has a RUNNING package — even when that sport has no enrollment row on the card (the only one affected today read Completed with an active Taekwondo).
+const APP_VERSION = '6.1032.0';   // 6.1032.0 Restore guard: a backup file that holds more than 20% fewer members or invoices than the app has now, or whose name says PARTIAL, is REFUSED (it would delete the difference) — only typing RESTORE overrides it; an old file or one with far fewer expenses / salaries / rentals / sales only warns. The same guard protects the on-device snapshot restore.
+// prev:   // 6.1031.0 Backup buttons: the lazy audit log is loaded before the file is written, so a backup is always complete (about 8 MB, no longer sometimes 3); if the audit log cannot be loaded you are asked and the file is named -no-audit; a coach / student login (which only sees part of the data) is warned and its file is named -PARTIAL-<role> so it is never mistaken for a full backup. The silent safety copies taken before bulk operations are unchanged.
+// prev:   // 6.1030.0 Member status: a finished Summer Camp no longer makes a member 'Completed' while another sport of his has a RUNNING package — even when that sport has no enrollment row on the card (the only one affected today read Completed with an active Taekwondo).
 // prev:   // 6.1029.0 (1) Attendance > Import CSV is admin only — neither reception nor the coach sees it. (2) Reception target counts NEW members + RENEWALS only, with tiers 75 → 250, 125 → 500, 150 → 1,000, 200 → 1,500.
 // prev:   // 6.1028.0 (1) Attendance never renews by itself: a used-up / expired member marked present by admin or reception is OFFERED the renewal in a popup and nothing is created until they press Renew (as Due); a coach only marks. (2) Popups anchored to a field (the searchable select, the country-code picker, the schedule hover card) no longer slide off the screen when the text size is 115% or more.
 // prev:   // 6.1027.0 Reception: the ⬇ PDF button on each student's row of the Attendance screen (a student's attendance PDF) and the 📄 button next to 🗓 in Subscription History (the invoice of one package) now show for the receptionist too; the whole-sheet attendance exports and the package ✎ edit stay admin only.
@@ -1488,7 +1490,7 @@ function storageToast(msg, type) {
     el.style.cursor = 'pointer';
     el.title = 'Click to export a backup now';
     el.addEventListener('click', () => {
-      if (typeof window.downloadBackup === 'function') window.downloadBackup();
+      if (typeof window.downloadFullBackup === 'function') window.downloadFullBackup(); else if (typeof window.downloadBackup === 'function') window.downloadBackup();   // v6.1031
     });
   }
 }
@@ -12303,7 +12305,7 @@ function maybeShowBackupReminder() {
 
   window.__hideBackupReminder = () => { document.getElementById('backup-reminder')?.remove(); };
   bar.querySelector('#backup-reminder-now').addEventListener('click', () => {
-    if (typeof window.downloadBackup === 'function') window.downloadBackup();
+    if (typeof window.downloadFullBackup === 'function') window.downloadFullBackup(); else if (typeof window.downloadBackup === 'function') window.downloadBackup();   // v6.1031
     window.__hideBackupReminder();
   });
   bar.querySelector('#backup-reminder-later').addEventListener('click', () => {
@@ -12623,7 +12625,7 @@ function renderSidebar() {
   footer.querySelector('#logout-btn').addEventListener('click', logout);
   const _bk = footer.querySelector('#sidebar-backup');
   if (_bk) _bk.addEventListener('click', () => {
-    if (typeof window.downloadBackup === 'function') window.downloadBackup();
+    if (typeof window.downloadFullBackup === 'function') window.downloadFullBackup(); else if (typeof window.downloadBackup === 'function') window.downloadBackup();   // v6.1031
     else toast('Backup function not loaded yet', 'error');
   });
   const _ck = footer.querySelector('#sidebar-cmdk');

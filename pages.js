@@ -993,7 +993,7 @@ PAGES.dashboard = (main) => {
   $('#refresh-btn').addEventListener('click', () => { render(); toast('Refreshed'); });
   $('#export-btn').addEventListener('click', exportDashboardCSV);
   const dashBackupTop = $('#dash-backup-top');
-  if (dashBackupTop) dashBackupTop.addEventListener('click', () => window.downloadBackup());
+  if (dashBackupTop) dashBackupTop.addEventListener('click', () => window.downloadFullBackup());
   const dashCloudStorage = $('#dash-cloud-storage');
   if (dashCloudStorage) dashCloudStorage.addEventListener('click', () => window.showCloudStorageUI());
   if (window._dashMenuOpen) { const _pl = $('#dash-period-list'); if (_pl && window._dashMenuScroll) _pl.scrollTop = window._dashMenuScroll; }   // v6.713 — the period panel stays open while ticking months
@@ -1195,7 +1195,7 @@ function downloadFile(filename, content, mime = 'text/plain') {
 
 // Download a full JSON backup of all data. Defined at top level so it is ALWAYS
 // available (e.g. from the Dashboard topbar), not only after visiting Settings.
-window.downloadBackup = function() {
+window.downloadBackup = function(opts) {   // opts.suffix → file name suffix (used by downloadFullBackup)
   try {
     const { user, route, session, ...rest } = state;
     const payload = { appVersion: APP_VERSION, schemaVersion: SCHEMA_VERSION, exported: new Date().toISOString(), ...rest };
@@ -1210,14 +1210,58 @@ window.downloadBackup = function() {
         return v;
       }, 2);
     }
-    downloadFile(`blackstars-backup-${TODAY}.json`, data, 'application/json');
+    downloadFile(`blackstars-backup-${TODAY}${(opts && opts.suffix) || ''}.json`, data, 'application/json');
     try { localStorage.setItem('bs-last-backup', String(Date.now())); } catch (_) {}
     if (window.__hideBackupReminder) window.__hideBackupReminder();
-    toast(`✓ Backup saved · ${state.members.length} members · ${state.invoices.length} invoices`);
+    toast(`✓ Backup saved · ${state.members.length} members · ${state.invoices.length} invoices · ${(state.auditLog || []).length} audit rows`);
   } catch (err) {
     console.error('Backup failed', err);
     toast('Backup failed: ' + (err && err.message ? err.message : 'unknown error'), 'error');
   }
+};
+
+// v6.1031 — the Backup BUTTONS: the audit log is lazy (fetched ~6 s after boot, and refused to coach / student logins), so a plain backup was ~3 MB without it or ~8 MB with it, and a coach login saved only its own students.
+// This one loads the audit log first (so every backup is complete), warns when the audit log cannot be loaded, and warns + marks the file name when the login only sees part of the data. The silent "safety copy first" calls keep using downloadBackup (they must snapshot at once).
+window.downloadFullBackup = async function () {
+  try {
+    const role = (typeof currentRole === 'function') ? currentRole() : '';
+    const limited = !['admin', 'receptionist'].includes(role);
+    if (limited && !confirm(t('This login only sees part of the data (' + (state.members || []).length + ' members). A backup made here is NOT complete and must never be used to Restore.\n\nDownload it anyway?', 'هذا الحساب يرى جزءاً من البيانات فقط (' + (state.members || []).length + ' عضو). النسخة من هنا غير كاملة ولا يجوز استخدامها للاسترجاع.\n\nتحميلها رغم ذلك؟'))) return;
+    let suffix = limited ? '-PARTIAL-' + (role || 'login') : '';
+    const cloud = !!(window.Storage && window.Storage.isCloud && window.Storage.isCloud());
+    if (!limited && cloud && !window._auditLogLoaded && typeof window.ensureAuditLog === 'function') {
+      toast(t('Preparing the backup — loading the audit log…', 'تجهيز النسخة — تحميل سجل التدقيق…'), 'info');
+      try { await Promise.race([window.ensureAuditLog(), new Promise(r => setTimeout(r, 40000))]); } catch (_) {}
+      if (!window._auditLogLoaded) {
+        if (!confirm(t('The audit log could not be loaded, so this backup will NOT contain it (the members, invoices and payments are complete).\n\nDownload it without the audit log?', 'تعذّر تحميل سجل التدقيق، فالنسخة لن تحتويه (الأعضاء والفواتير والدفعات كاملة).\n\nتحميلها بدون سجل التدقيق؟'))) return;
+        suffix = '-no-audit';
+      }
+    }
+    window.downloadBackup({ suffix });
+  } catch (err) {
+    console.error('Full backup failed', err);
+    toast('Backup failed: ' + (err && err.message ? err.message : 'unknown error'), 'error');
+  }
+};
+
+// v6.1032 — RESTORE GUARD. Restoring REPLACES members / invoices outright, so a file that holds far fewer of them than the app has now (a coach-limited export, an old snapshot) would silently DELETE the difference.
+// Pure: returns what to REFUSE (block) and what only to flag (warn). Blocks: a file named PARTIAL; members or invoices more than 20% fewer than now (when the app holds 20+).
+window.backupRestoreCheck = function (data, fileName, cur) {
+  const n = a => Array.isArray(a) ? a.length : 0;
+  const block = [], warn = [];
+  const label = { members: ['members', 'عضو'], invoices: ['invoices', 'فاتورة'] };
+  for (const k of ['members', 'invoices']) {
+    const file = n(data && data[k]), now = n(cur && cur[k]);
+    if (now >= 20 && file < now * 0.8) block.push({ key: k, file, now, en: 'The file has ' + file + ' ' + label[k][0] + ', the app has ' + now + ' — restoring would DELETE ' + (now - file) + '.', ar: 'الملف فيه ' + file + ' ' + label[k][1] + ' والتطبيق فيه ' + now + ' — الاسترجاع سيحذف ' + (now - file) + '.' });
+  }
+  if (/PARTIAL/i.test(String(fileName || ''))) block.push({ key: 'name', en: 'The file name says PARTIAL — it was saved by a login that only sees part of the data.', ar: 'اسم الملف يقول PARTIAL — تم حفظه من حساب يرى جزءاً من البيانات فقط.' });
+  for (const k of ['expenses', 'salaries', 'rentals', 'sales']) {
+    const file = n(data && data[k]), now = n(cur && cur[k]);
+    if (now >= 20 && file < now * 0.8) warn.push({ key: k, file, now, en: k + ': the file has ' + file + ', the app has ' + now + '.', ar: k + ': الملف فيه ' + file + ' والتطبيق فيه ' + now + '.' });
+  }
+  const days = (data && data.exported) ? (Date.now() - new Date(data.exported).getTime()) / 86400000 : null;
+  if (days != null && days > 3) warn.push({ key: 'old', en: 'The file is ' + Math.round(days) + ' days old — anything entered since is lost.', ar: 'عمر الملف ' + Math.round(days) + ' يوم — أي شيء أُدخل بعدها سيضيع.' });
+  return { block, warn };
 };
 
 // ─── LOCAL AUTO-BACKUPS (recovery from the on-device snapshot ring) ────────────
@@ -1257,6 +1301,10 @@ window.restoreLocalBackup = async function (ts) {
   if (!Array.isArray(data.members)) { toast('Backup is not valid', 'error'); return; }
   const when = (() => { try { return new Date(snap.at).toLocaleString(); } catch (_) { return snap.at; } })();
   const summary = `${(data.members || []).length} members · ${(data.invoices || []).length} invoices · ${(data.expenses || []).length} expenses`;
+  { // v6.1032 — restore guard: a snapshot holding far fewer members / invoices than the app has now would delete the difference
+    const chk = window.backupRestoreCheck(data, '', state);
+    if (chk.block.length && (prompt(t('This snapshot is incomplete:', 'هذه النسخة غير كاملة:') + '\n\n' + chk.block.map(b => '• ' + t(b.en, b.ar)).join('\n') + '\n\n' + t('Type RESTORE to restore it anyway, or leave empty to cancel.', 'اكتب RESTORE للاسترجاع رغم ذلك، أو اتركه فارغاً للإلغاء.'), '') || '').trim() !== 'RESTORE') return;
+  }
   if (!confirm(`${t('Restore the snapshot from', 'استرجاع النسخة من')} ${when}?\n\n${summary}\n\n${t('This replaces ALL current data. A safety copy of your current data downloads first.', 'سيستبدل كل البيانات الحالية. سيتم تنزيل نسخة أمان أولاً.')}`)) return;
   try { const safety = JSON.stringify({ appVersion: APP_VERSION, schemaVersion: SCHEMA_VERSION, exported: new Date().toISOString(), ...state, user: undefined, route: undefined }, null, 2); downloadFile(`blackstars-PRE-RESTORE-${TODAY}.json`, safety, 'application/json'); } catch (_) {}
   const incoming = { ...data }; delete incoming.user; delete incoming.route; delete incoming.session; delete incoming.__appVersion;
@@ -25882,7 +25930,7 @@ PAGES.settings = (main, section) => {
     });
   });
 
-  $('#backup-btn').addEventListener('click', () => window.downloadBackup());
+  $('#backup-btn').addEventListener('click', () => window.downloadFullBackup());
   $('#autobackup-btn')?.addEventListener('click', () => window.showLocalBackupsUI());
   $('#synccheck-btn')?.addEventListener('click', () => window.runSyncCheck());
   $('#fixnames-btn')?.addEventListener('click', () => window.fixNameCapitalization());
@@ -25976,7 +26024,9 @@ PAGES.settings = (main, section) => {
       const exportedOn = data.exported ? new Date(data.exported).toLocaleString() : 'unknown date';
       const summary = `${(data.members || []).length} members · ${(data.invoices || []).length} invoices · ${(data.coaches || []).length} coaches · ${(data.products || []).length} products`;
       const cur = `${state.members.length} members · ${state.invoices.length} invoices`;
-      showModal({
+      const chk = window.backupRestoreCheck(data, file.name, state);   // v6.1032 — restore guard
+      const warnHtml = chk.warn.length ? '<div style="margin:8px 0;padding:8px 12px;border:1px solid var(--accent-2);border-radius:8px;font-size:12px"><b>⚠ ' + t('Check before you continue', 'راجع قبل المتابعة') + '</b>' + chk.warn.map(w => '<div>• ' + escapeHtml(t(w.en, w.ar)) + '</div>').join('') + '</div>' : '';
+      const showRestoreModal = () => showModal({
         title: '📂 Restore from backup?',
         body: `<div style="font-size:13px;line-height:1.7">
             <p>This will <b style="color:var(--red)">replace ALL current data</b> with the contents of this backup file. This cannot be undone.</p>
@@ -25986,6 +26036,7 @@ PAGES.settings = (main, section) => {
               <div><b>Contains:</b> ${summary}</div>
             </div>
             <p class="text-mute">Current data right now: ${cur}.</p>
+            ${warnHtml}
             <p style="color:var(--green)">✓ A safety copy of your <b>current</b> data will be downloaded first, so you can undo this if needed.</p>
           </div>`,
         actions: [
@@ -26009,6 +26060,22 @@ PAGES.settings = (main, section) => {
               window.__allowEmptySave = true;   // explicit restore — honor even if the backup is small
               Promise.resolve(confirmSaved(`✓ Restored · ${state.members.length} members · ${state.invoices.length} invoices`))
                 .finally(() => { window.__allowEmptySave = false; });
+            } },
+        ],
+      });
+      if (!chk.block.length) { showRestoreModal(); return; }
+      // v6.1032 — the file would delete data: refuse; a deliberate override needs the word RESTORE typed
+      showModal({
+        title: '⛔ ' + t('This backup is incomplete — restore refused', 'هذه النسخة غير كاملة — تم رفض الاسترجاع'),
+        body: '<div style="font-size:13px;line-height:1.7"><p><b>' + escapeHtml(file.name) + '</b></p>' + chk.block.map(b => '<p style="color:var(--red)">• ' + escapeHtml(t(b.en, b.ar)) + '</p>').join('') +
+          '<p class="text-mute">' + t('This usually means the file was saved from a login that only sees part of the data. Restore from a full backup made by the admin login instead.', 'غالباً الملف محفوظ من حساب يرى جزءاً من البيانات. استرجع من نسخة كاملة حفظها حساب المدير.') + '</p>' +
+          '<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)"><div class="text-mute" style="font-size:12px">' + t('Only if you really want this (it deletes the records above), type RESTORE:', 'فقط إن كنت تريد ذلك فعلاً (سيحذف السجلات أعلاه)، اكتب RESTORE:') + '</div><input id="rs-confirm" type="text" autocomplete="off" style="margin-top:6px;max-width:200px" /></div></div>',
+        actions: [
+          { label: t('Cancel', 'إلغاء'), class: 'btn primary', onclick: () => { closeModal(); e.target.value = ''; } },
+          { label: t('Restore anyway', 'استرجاع رغم ذلك'), class: 'btn ghost', onclick: () => {
+              const v = ((document.getElementById('rs-confirm') || {}).value || '').trim();
+              if (v !== 'RESTORE') { toast(t('Type RESTORE to continue', 'اكتب RESTORE للمتابعة'), 'error'); return; }
+              closeModal(); showRestoreModal();
             } },
         ],
       });
@@ -38200,7 +38267,7 @@ PAGES.campclosure = (main) => {
         <div class="subtitle" style="font-size:13px;margin-top:4px">${t('Active camp members with unused paid days. Switch their balance to another activity, or refund it.', 'أعضاء المعسكر النشطون ولديهم أيام مدفوعة غير مستخدمة. حوّل رصيدهم إلى نشاط آخر أو استرجعه.')}</div>
       </div>
       <div class="topbar-actions">
-        <button class="btn ghost" onclick="window.downloadBackup && window.downloadBackup()">⬇ ${t('Backup now', 'نسخة احتياطية')}</button>
+        <button class="btn ghost" onclick="window.downloadFullBackup && window.downloadFullBackup()">⬇ ${t('Backup now', 'نسخة احتياطية')}</button>
         <button class="btn ghost" id="cc-csv">📥 ${t('Export CSV', 'تصدير CSV')}</button>
       </div>
     </div>
