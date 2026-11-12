@@ -2892,7 +2892,7 @@ function viewMember(id) {
         <td>${s.start ? fmtDate(s.start) : '—'}</td>
         <td>${s.end ? fmtDate(s.end) : '—'}</td>
         <td>${attCell}</td>
-        ${isViewerRole() ? '' : (() => { const rp = _rowPaid.has(s) ? _rowPaid.get(s) : (Number(s.amountPaid) || 0); const pr = _rowPrice.has(s) ? _rowPrice.get(s) : null; const gap = (pr != null) ? Math.round((pr - rp) * 100) / 100 : 0; return `<td class="text-right num">${rp ? fmt(rp) : '—'}${Math.abs(gap) > 0.5 ? `<div style="font-size:9px;font-weight:700;color:${gap > 0 ? 'var(--accent-2)' : 'var(--red)'}" title="${t('Price on the invoice line vs money actually paid', 'سعر بند الفاتورة مقابل المدفوع فعلاً')}">${t('of', 'من')} ${fmt(pr)} · ${gap > 0 ? fmt(gap) + ' ' + t('due', 'متبقي') : fmt(-gap) + ' ' + t('overpaid', 'زيادة')}</div>` : ''}</td>`; })()}
+        ${(() => { const rp = _rowPaid.has(s) ? _rowPaid.get(s) : (Number(s.amountPaid) || 0); const pr = _rowPrice.has(s) ? _rowPrice.get(s) : null; const gap = (pr != null) ? Math.round((pr - rp) * 100) / 100 : 0; return `<td class="text-right num">${rp ? fmt(rp) : '—'}${Math.abs(gap) > 0.5 ? `<div style="font-size:9px;font-weight:700;color:${gap > 0 ? 'var(--accent-2)' : 'var(--red)'}" title="${t('Price on the invoice line vs money actually paid', 'سعر بند الفاتورة مقابل المدفوع فعلاً')}">${t('of', 'من')} ${fmt(pr)} · ${gap > 0 ? fmt(gap) + ' ' + t('due', 'متبقي') : fmt(-gap) + ' ' + t('overpaid', 'زيادة')}</div>` : ''}</td>`; })()}
         <td>${(() => {
           // Derive this subscription's own status from its END date + attendance,
           // rather than a stored 'status' that was set once and never updated. So
@@ -2946,7 +2946,7 @@ function viewMember(id) {
           // Admin ✎ EDIT — change this sport's class count, price and status directly (v6.441). Handy
           // for a switched sport: set the old sport Completed at what was attended, the new sport to the
           // remaining classes/price. Saving also syncs the linked invoice line so commission follows.
-          const editBtn = (isAdmin && sid)
+          const editBtn = ((isAdmin || currentRole() === 'receptionist') && sid)
             ? ` <button onclick="event.stopPropagation();editSubscription(${m.id}, '${sid}')" title="Edit classes / price / status" style="background:transparent;border:0;color:var(--blue);opacity:.85;cursor:pointer;padding:0 3px;font-size:12px">✎</button>`
             : '';
           // v6.521 — export an invoice for JUST this sport/period (vs "Get Invoice" for the whole membership).
@@ -2993,7 +2993,7 @@ function viewMember(id) {
           <div style="height:4px;background:var(--surface-2);border-radius:2px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${pct >= 75 ? 'var(--green)' : pct >= 40 ? 'var(--accent-2)' : 'var(--red)'};border-radius:2px"></div></div>
           <div style="${small};margin-top:3px">${fa.att}/${fa.tot} + ${fb.att}/${fb.tot}</div>
         </div></td>
-        ${isViewerRole() ? '' : `<td class="text-right num">${(pa + pb) ? fmt(pa + pb) : '—'}<div style="${small}">${fmt(pa)} + ${fmt(pb)}</div></td>`}
+        ${`<td class="text-right num">${(pa + pb) ? fmt(pa + pb) : '—'}<div style="${small}">${fmt(pa)} + ${fmt(pb)}</div></td>`}
         <td>${sb.badge}${(sa.badge && sa.badge !== sb.badge) ? `<div style="margin-top:3px">${sa.badge}</div>` : ''}${line(`<span style="${small}">${escapeHtml(src.activity || '')}</span> ${sa.acts}`, `<span style="${small}">${escapeHtml(s.activity || '')}</span> ${sb.acts}`)}</td>
       </tr>
     `;
@@ -3158,8 +3158,8 @@ function viewMember(id) {
       <h3 style="font-size:13px;font-weight:600;margin-bottom:8px">Subscription History (${_shownRows})</h3>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Month</th><th>Activity</th><th>Coach</th><th>Start</th><th>End</th><th>Attendance</th>${isViewerRole() ? '' : '<th class="text-right">Paid</th>'}<th>Status</th></tr></thead>
-          <tbody>${subs || `<tr><td colspan="${isViewerRole() ? 7 : 8}" class="text-mute" style="padding:16px">No subscription records</td></tr>`}</tbody>
+          <thead><tr><th>Month</th><th>Activity</th><th>Coach</th><th>Start</th><th>End</th><th>Attendance</th><th class="text-right">${t('Paid', 'المدفوع')}</th><th>Status</th></tr></thead>
+          <tbody>${subs || `<tr><td colspan="8" class="text-mute" style="padding:16px">No subscription records</td></tr>`}</tbody>
         </table>
       </div>
       ${isViewerRole() ? '' : _paymentListHtml(m, false)}
@@ -30910,7 +30910,7 @@ window.addRenewal = function(memberId, opts) {   // opts.start / opts.sport (v6.
 // the sport still has an un-voided switch-credit invoice, it warns to run 🔀 Switch check for the full
 // (double-free) fix. (v6.441)
 window.editSubscription = function(memberId, sid) {
-  if (currentRole() !== 'admin') { toast(t('Admins only', 'للمسؤولين فقط'), 'error'); return; }
+  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast(t('Admins only', 'للمسؤولين فقط'), 'error'); return; }
   const m = state.members.find(x => x.id === memberId);
   if (!m || !Array.isArray(m.subscriptions)) return;
   const sub = m.subscriptions.find(s => (s._sid || s._rid) === sid);
