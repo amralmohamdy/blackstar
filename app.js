@@ -14,7 +14,9 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.1026.0';   // 6.1026.0 Rental / court booking form: the Total amount box is now typed directly (1.5 h for 200 QAR) and the hourly rate follows it (133.33, kept exact so changing the hours re-prices without rounding drift); quick duration buttons 1h / 1.5h / 2h / 3h under Hours.
+const APP_VERSION = '6.1028.0';   // 6.1028.0 (1) Attendance never renews by itself: a used-up / expired member marked present by admin or reception is OFFERED the renewal in a popup and nothing is created until they press Renew (as Due); a coach only marks. (2) Popups anchored to a field (the searchable select, the country-code picker, the schedule hover card) no longer slide off the screen when the text size is 115% or more.
+// prev:   // 6.1027.0 Reception: the ⬇ PDF button on each student's row of the Attendance screen (a student's attendance PDF) and the 📄 button next to 🗓 in Subscription History (the invoice of one package) now show for the receptionist too; the whole-sheet attendance exports and the package ✎ edit stay admin only.
+// prev:   // 6.1026.0 Rental / court booking form: the Total amount box is now typed directly (1.5 h for 200 QAR) and the hourly rate follows it (133.33, kept exact so changing the hours re-prices without rounding drift); quick duration buttons 1h / 1.5h / 2h / 3h under Hours.
 // prev:   // 6.1025.0 Reception target tiers (new + renewal subscribers, from Nov 2026): 50 → 250, 100 → 500, 150 → 1,500, 200 → 2,000 (was 50 → 500, 100 → 1,000, 150 → 1,500); the start-month setting check is fixed so a value saved in settings is honoured.
 // prev:   // 6.1024.0 Class Schedule > Week PNG (English and Arabic): each tile now carries the class name exactly as the screen shows it ('Swimming (Girls)', 'Kids U 13', 'Football (Private Yard)') instead of only the sport name; a long name shrinks to fit its tile.
 // prev:   // 6.1023.0 Add Member > Scan Qatar ID: after the scan fills the birthdate the Age box now fills too (a script-set value fired no event, so Age stayed empty); the scan message says Gender is not printed on the card and must be chosen by hand.
@@ -3975,14 +3977,20 @@ function pickCountryCode(sel, code) {
 }
 let _ccPop = null;
 function closeCountryPicker() { if (_ccPop && _ccPop.parentNode) _ccPop.parentNode.removeChild(_ccPop); _ccPop = null; }
+// v6.1028 — the text-size setting zooms the whole page (CSS zoom). getBoundingClientRect is in zoomed px but a position:fixed popup is placed in unzoomed ones, so a popup
+// anchored to an element landed at (zoom × its place) and slid off the screen. Returns the factor (1 when the engine reports unzoomed rects).
+function uiZoomFor(el) { try { const r = el.getBoundingClientRect(), w = el.offsetWidth, z = (w > 0 && r.width > 0) ? r.width / w : 1; return (z > 0.5 && z < 3) ? z : 1; } catch (_) { return 1; } }
+if (typeof window !== 'undefined') window.uiZoomFor = uiZoomFor;
 function openCountryPicker(sel) {
   closeCountryPicker();
-  const r = sel.getBoundingClientRect();
+  const r0 = sel.getBoundingClientRect(), z = uiZoomFor(sel);
+  const r = { left: r0.left / z, right: r0.right / z, top: r0.top / z, bottom: r0.bottom / z, width: r0.width / z };
+  const IW = (window.innerWidth || 1200) / z, IH = (window.innerHeight || 700) / z;
   const pop = document.createElement('div');
   pop.className = 'cc-pop';
-  const w = Math.max(r.width, 250), below = (window.innerHeight || 700) - r.bottom;
-  pop.style.cssText = 'position:fixed;z-index:100000;left:' + Math.max(8, Math.min(r.left, (window.innerWidth || 1200) - w - 8)) + 'px;width:' + w + 'px;'
-    + (below > 250 ? 'top:' + (r.bottom + 4) + 'px;' : 'bottom:' + ((window.innerHeight || 700) - r.top + 4) + 'px;')
+  const w = Math.max(r.width, 250), below = IH - r.bottom;
+  pop.style.cssText = 'position:fixed;z-index:100000;left:' + Math.max(8, Math.min(r.left, IW - w - 8)) + 'px;width:' + w + 'px;'
+    + (below > 250 ? 'top:' + (r.bottom + 4) + 'px;' : 'bottom:' + (IH - r.top + 4) + 'px;')
     + 'background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.28);padding:8px';
   pop.innerHTML = '<input class="cc-q" type="text" autocomplete="off" placeholder="' + escapeHtml(t('Search country or code…', 'ابحث بالدولة أو الرمز…')) + '" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);color:var(--text);margin-bottom:6px" />'
     + '<div class="cc-list" style="max-height:min(280px,50vh);overflow:auto"></div>';
@@ -7991,7 +7999,9 @@ if (typeof window !== 'undefined') window.searchableSelectGroups = searchableSel
   function open(s) {
     close(); curSel = s;
     const groups = searchableSelectGroups(s);
-    const rect = s.getBoundingClientRect();
+    const rect0 = s.getBoundingClientRect(), z = uiZoomFor(s);   // v6.1028 — the text size zooms the page: a fixed popup is placed in unzoomed px, so the rect is divided by the zoom
+    const rect = { left: rect0.left / z, right: rect0.right / z, top: rect0.top / z, bottom: rect0.bottom / z, width: rect0.width / z };
+    const IW = window.innerWidth / z, IH = window.innerHeight / z;
     const rtl = (getComputedStyle(s).direction === 'rtl');
     pop = document.createElement('div');
     pop.className = 'ss-pop';
@@ -8013,9 +8023,9 @@ if (typeof window !== 'undefined') window.searchableSelectGroups = searchableSel
     pop.innerHTML = html;
     document.body.appendChild(pop);
     // position (below, or above when there is no room)
-    const ph = pop.offsetHeight || 300, below = window.innerHeight - rect.bottom, top = (below < ph + 12 && rect.top > below) ? Math.max(6, rect.top - ph - 4) : rect.bottom + 4;
+    const ph = pop.offsetHeight || 300, below = IH - rect.bottom, top = (below < ph + 12 && rect.top > below) ? Math.max(6, rect.top - ph - 4) : rect.bottom + 4;
     pop.style.top = top + 'px';
-    pop.style.left = Math.max(6, Math.min(window.innerWidth - w - 6, rtl ? rect.right - w : rect.left)) + 'px';
+    pop.style.left = Math.max(6, Math.min(IW - w - 6, rtl ? rect.right - w : rect.left)) + 'px';
     const search = pop.querySelector('.ss-search'), list = pop.querySelector('.ss-list');
     const items = () => Array.prototype.slice.call(pop.querySelectorAll('.ss-item'));
     const visible = () => items().filter(e => e.style.display !== 'none' && e.getAttribute('data-dis') !== '1');

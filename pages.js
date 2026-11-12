@@ -2892,7 +2892,7 @@ function viewMember(id) {
             ? ` <button onclick="event.stopPropagation();editSubscription(${m.id}, '${sid}')" title="Edit classes / price / status" style="background:transparent;border:0;color:var(--blue);opacity:.85;cursor:pointer;padding:0 3px;font-size:12px">✎</button>`
             : '';
           // v6.521 — export an invoice for JUST this sport/period (vs "Get Invoice" for the whole membership).
-          const invBtn = (!isViewerRole() && sid)
+          const invBtn = sid   // v6.1027 — reception also prints the invoice of one package
             ? ` <button onclick="event.stopPropagation();printMemberSubInvoicePDF(${m.id}, '${sid}')" title="${t('Export an invoice for this sport only', 'تصدير فاتورة لهذه الرياضة فقط')}" style="background:transparent;border:0;color:var(--green);opacity:.85;cursor:pointer;padding:0 3px;font-size:12px">📄</button>`
             : '';
           // v6.929 — print the attendance of JUST this package (its dates, its classes)
@@ -12242,11 +12242,12 @@ PAGES.schedule = (main) => {
         ? top.map((m, i) => `<div style="display:flex;justify-content:space-between;gap:10px;padding:2px 0"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${i + 1}. ${escapeHtml(m.name)}</span><span style="font-family:monospace;color:var(--text-dim);flex-shrink:0">${m.attended}</span></div>`).join('')
         : '<div style="color:var(--text-mute)">No enrolled members yet</div>');
     pop.style.display = 'block';
-    const r = block.getBoundingClientRect();
+    const r0 = block.getBoundingClientRect(), z = (typeof uiZoomFor === 'function') ? uiZoomFor(block) : 1;   // v6.1028 — placed in unzoomed px under the text-size zoom
+    const r = { left: r0.left / z, right: r0.right / z, top: r0.top / z }, IW = window.innerWidth / z, IH = window.innerHeight / z;
     const pw = pop.offsetWidth, ph = pop.offsetHeight;
     let left = r.right + 8, top2 = r.top;
-    if (left + pw > window.innerWidth - 8) left = Math.max(8, r.left - pw - 8);
-    if (top2 + ph > window.innerHeight - 8) top2 = Math.max(8, window.innerHeight - ph - 8);
+    if (left + pw > IW - 8) left = Math.max(8, r.left - pw - 8);
+    if (top2 + ph > IH - 8) top2 = Math.max(8, IH - ph - 8);
     pop.style.left = left + 'px';
     pop.style.top = top2 + 'px';
   }
@@ -26254,6 +26255,7 @@ PAGES.attendance = (main) => {
   }
   // v6.702 — a coach's Sports filter lists only the sports HE teaches (his profile sports + every sport of his members' enrollments / packages / Mixed classes he taught);
   // admin / reception keep the full list. Falls back to the full list if nothing is found, so the menu is never empty.
+  const _canStudentPdf = ['admin', 'receptionist'].includes(currentRole());   // v6.1027 — reception also downloads a student's attendance PDF (the row button); the whole-sheet exports stay admin only
   const _canExportAtt = currentRole() === 'admin';   // v6.903 — only the admin exports attendance (a coach or reception sees no Export / PDF / Image buttons)
   const _attSportList = (() => {
     if (myCoachId == null) return SPORTS;
@@ -26640,13 +26642,19 @@ PAGES.attendance = (main) => {
         }
       } catch (e) { console.error('auto-renew reconcile failed', e); }
     }
-    if (next === 'Y' && typeof autoRenewOnExtraAttendance === 'function' && ['admin', 'receptionist'].includes(currentRole())) {
-      try { _auto = autoRenewOnExtraAttendance(m, sport, `${mo}-${String(day).padStart(2, '0')}`); } catch (e) { _auto = null; console.error('auto-renew failed', e); }
-      if (_auto && _auto.ok) {
-        toast(t(`🔁 ${String(sport).replace(/ \d+$/, '')} renewed automatically — ${fmt(_auto.price)} QAR due (invoice ${_auto.ref})`, `🔁 تم تجديد ${String(sport).replace(/ \d+$/, '')} تلقائياً — ${fmt(_auto.price)} ر.ق مستحق (فاتورة ${_auto.ref})`), 'info');
-        audit('subscription.auto-renew', `member:${m.id}`, `Auto-renewed ${_auto.activity} for ${m.name} after an extra class on ${_auto.start} — ${fmt(_auto.price)} due`, { memberId: m.id, name: m.name, sport: _auto.activity, start: _auto.start, amount: _auto.price, invoiceRef: _auto.ref, fromSid: _auto.fromSid });
-      } else if (_auto && !_auto.ok) toast(t('Automatic renewal was not created: ' + _auto.error, 'لم يتم إنشاء التجديد التلقائي: ' + _auto.error), 'error');
+    // v6.1027 — attendance NEVER renews by itself. A used-up / expired member marked present is only RECORDED (a coach just marks); admin and reception are then ASKED
+    // whether to renew (the offer shows once the "Attendance saved" popup is closed) — nothing is created until they approve. It also stays on the Unrenewed attendance list.
+    _renewApprove = null;
+    if (next === 'Y' && typeof unrenewedExtraFor === 'function' && ['admin', 'receptionist'].includes(currentRole())) {
+      try {
+        const _act = String(sport).replace(/ \d+$/, ''), _kc = (sport !== _act) ? String(sport).slice(_act.length + 1) : null, _iso = `${mo}-${String(day).padStart(2, '0')}`;
+        const _ux = (_iso <= TODAY) ? unrenewedExtraFor(m, _act, _kc) : null;
+        if (_ux && !(m.subscriptions || []).some(s => s && s.createdVia === 'auto-renew' && (s.activity || '') === _act && String(s.coachId) === String(_ux.last.coachId) && s.autoRenewMark === _ux.extra[0])) {
+          _renewApprove = { memberId: m.id, name: m.name, sport, activity: _act, iso: _iso, start: _ux.extra[0], classes: _ux.limit, price: autoRenewPriceFor(m, _ux.last), coach: coachName(_ux.last.coachId) || '' };
+        }
+      } catch (e) { _renewApprove = null; console.error('renew offer failed', e); }
     }
+    window._attRenewPending = _renewApprove;   // what the approval popup will offer (also read by the tests)
     // Stamp + audit the attendance change (req #5 last-updated, #8 audit trail —
     // attendance was previously NOT logged).
     const _markISO = `${mo}-${String(day).padStart(2, '0')}`;
@@ -26847,8 +26855,34 @@ PAGES.attendance = (main) => {
   const _attendanceModal = (o) => window.showLockedModal(o);
   // v6.915 — a mark on a day no package covers: admin / reception are offered the renewal (start = that day) once the "Attendance saved" confirmation is closed
   let _renewOffer = null;
+  let _renewApprove = null;   // v6.1027 — an expired / used-up member was marked present: admin / reception are asked before anything is renewed
+  window._attRenewApprove = function (memberId, sport, activity, iso) {
+    closeModal();
+    const m = (state.members || []).find(x => x.id === memberId); if (!m) return;
+    const key = String(sport), kc = (key !== activity) ? key.slice(activity.length + 1) : null;
+    if (!unrenewedExtraFor(m, activity, kc)) { toast(t('Nothing to renew any more', 'لا يوجد ما يُجدَّد'), 'info'); return; }
+    const r = autoRenewOnExtraAttendance(m, key, iso);
+    if (r && r.ok) {
+      audit('subscription.auto-renew', `member:${m.id}`, `Renewed ${r.activity} for ${m.name} after an extra class on ${r.start} (approved by ${currentUserName()}) — ${fmt(r.price)} due`, { memberId: m.id, name: m.name, sport: r.activity, start: r.start, amount: r.price, invoiceRef: r.ref, fromSid: r.fromSid, approved: true });
+      render();
+      if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'members', id: m.id }], okMsg: t(`${activity} renewed — ${fmt(r.price)} QAR due (${r.ref})`, `تم تجديد ${activity} — ${fmt(r.price)} ر.ق مستحق (${r.ref})`) }); else { save(); toast(t(`${activity} renewed — ${fmt(r.price)} QAR due`, `تم تجديد ${activity}`)); }
+    } else toast(t('Not renewed' + (r && r.error ? ': ' + r.error : ''), 'لم يُجدَّد' + (r && r.error ? ': ' + r.error : '')), 'error');
+  };
   window._attRenewNow = function (memberId, sport, iso) { _renewOffer = null; closeModal(); if (typeof addRenewal === 'function') addRenewal(memberId, iso ? { start: iso, sport } : { sport }); };   // v6.918
   function _showRenewOffer() {
+    const ap = _renewApprove; _renewApprove = null;
+    if (ap) {
+      _renewOffer = null;
+      showModal({
+        title: t('Renew this member?', 'تجديد هذا العضو؟'),
+        body: '<div style="font-size:13px;line-height:1.8"><p><b>' + escapeHtml(ap.name) + '</b> · ' + escapeHtml(ap.activity) + (ap.coach ? ' · ' + escapeHtml(ap.coach) : '') + '</p><p style="margin-top:8px">' + t('The class on ' + fmtDate(ap.iso) + ' is saved. The package is finished — nothing was renewed. If you renew now, a new ' + ap.classes + '-class package starts on ' + fmtDate(ap.start) + ' and ' + fmt(ap.price) + ' QAR is recorded as DUE (nothing is marked paid).', 'تم تسجيل حصة ' + fmtDate(ap.iso) + '. الباقة منتهية — ولم يتم تجديد شيء. لو جدّدت الآن تبدأ باقة جديدة (' + ap.classes + ' حصة) يوم ' + fmtDate(ap.start) + ' ويُسجَّل ' + fmt(ap.price) + ' ر.ق مستحق (لا شيء يُعتبر مدفوعاً).') + '</p></div>',
+        actions: [
+          { label: t('Not now', 'ليس الآن'), class: 'btn ghost', onclick: closeModal },
+          { label: '🔁 ' + t('Renew (as Due)', 'جدّد (مستحق)'), class: 'btn primary', onclick: () => window._attRenewApprove(ap.memberId, ap.sport, ap.activity, ap.iso) },
+        ],
+      });
+      return;
+    }
     const o = _renewOffer; _renewOffer = null;
     if (!o) return;
     showModal({
@@ -27205,12 +27239,12 @@ PAGES.attendance = (main) => {
             </td>
             ${cells}
             <td class="att-total"><span style="color:var(--green);font-weight:700">${grandY}</span></td>
-            <td class="att-export-cell" style="text-align:center;white-space:nowrap">${needsRenewal2 ? `<button class="btn sm" style="background:var(--accent-2);border-color:var(--accent-2);color:#fff;margin-right:4px" onclick="window.addRenewal(${m.id})" title="Renew ${escapeHtml(m.name)}'s membership">🔄 ${t('Renew', 'تجديد')}</button>` : ''}${_canExportAtt ? `<button class="btn ghost sm" onclick="window._attPdf(${m.id}, null, '${sportEsc}')" title="Export ${escapeHtml(m.name)} attendance">⬇ PDF</button>` : ''}</td>
+            <td class="att-export-cell" style="text-align:center;white-space:nowrap">${needsRenewal2 ? `<button class="btn sm" style="background:var(--accent-2);border-color:var(--accent-2);color:#fff;margin-right:4px" onclick="window.addRenewal(${m.id})" title="Renew ${escapeHtml(m.name)}'s membership">🔄 ${t('Renew', 'تجديد')}</button>` : ''}${_canStudentPdf ? `<button class="btn ghost sm" onclick="window._attPdf(${m.id}, null, '${sportEsc}')" title="Export ${escapeHtml(m.name)} attendance">⬇ PDF</button>` : ''}</td>
           </tr>`;
       }).join('');
       $('#att-table-wrap').innerHTML = `
         <table class="att-table">
-          <thead><tr><th class="att-name-h">${t('Student', 'الطالب')}</th>${monthHeaders}<th class="att-total-h">${t('Total Y', 'إجمالي Y')}</th><th class="text-right">${_canExportAtt ? t('Export', 'تصدير') : ''}</th></tr></thead>
+          <thead><tr><th class="att-name-h">${t('Student', 'الطالب')}</th>${monthHeaders}<th class="att-total-h">${t('Total Y', 'إجمالي Y')}</th><th class="text-right">${_canStudentPdf ? t('Export', 'تصدير') : ''}</th></tr></thead>
           <tbody>${body || `<tr><td colspan="${months.length + 3}" class="empty">No attendance recorded yet.</td></tr>`}</tbody>
         </table>`;
       const distinctMembers = new Set(rows.map(r => r.m.id)).size;
@@ -27374,7 +27408,7 @@ PAGES.attendance = (main) => {
           ${cells}
           <td class="att-total"><span style="color:var(--green);font-weight:600">${y}</span><span class="text-mute"> / ${total || '—'}</span></td>
           <td class="text-right" style="color:${rate >= 75 ? 'var(--green)' : rate >= 40 ? 'var(--accent-2)' : rate > 0 ? 'var(--red)' : 'var(--text-mute)'};font-weight:600">${total ? rate + '%' : '—'}</td>
-          <td class="att-export-cell" style="text-align:center;white-space:nowrap">${needsRenewal ? `<button class="btn sm" style="background:var(--accent-2);border-color:var(--accent-2);color:#fff;margin-right:4px" onclick="window.addRenewal(${m.id})" title="Renew ${escapeHtml(m.name)}'s membership">🔄 ${t('Renew', 'تجديد')}</button>` : ''}${_canExportAtt ? `<button class="btn ghost sm" onclick="window._attPdf(${m.id}, null, '${sportEsc}')" title="Export ${escapeHtml(m.name)} · ${escapeHtml(sport)} attendance">⬇ PDF</button>` : ''}</td>
+          <td class="att-export-cell" style="text-align:center;white-space:nowrap">${needsRenewal ? `<button class="btn sm" style="background:var(--accent-2);border-color:var(--accent-2);color:#fff;margin-right:4px" onclick="window.addRenewal(${m.id})" title="Renew ${escapeHtml(m.name)}'s membership">🔄 ${t('Renew', 'تجديد')}</button>` : ''}${_canStudentPdf ? `<button class="btn ghost sm" onclick="window._attPdf(${m.id}, null, '${sportEsc}')" title="Export ${escapeHtml(m.name)} · ${escapeHtml(sport)} attendance">⬇ PDF</button>` : ''}</td>
         </tr>`;
     }).join('');
 
@@ -27386,7 +27420,7 @@ PAGES.attendance = (main) => {
             ${dayHeaders}
             <th class="att-total-h">${t('Total', 'الإجمالي')}</th>
             <th class="text-right">${t('Rate', 'النسبة')}</th>
-            <th class="text-right">${_canExportAtt ? t('Export', 'تصدير') : ''}</th>
+            <th class="text-right">${_canStudentPdf ? t('Export', 'تصدير') : ''}</th>
           </tr>
         </thead>
         <tbody>${body || `<tr><td colspan="${dayList.length+4}" class="empty">No members match the current filters.</td></tr>`}</tbody>
