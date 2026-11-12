@@ -436,7 +436,7 @@ PAGES.targets = (main) => {
     const _byCnt = receptionByCount(ym);   // v6.1020 — from Nov 2026 the reception target counts new + renewal subscribers (no income shown)
     const income = receptionMetric(ym);
     const _rTiers = receptionTargets(ym);
-    const _cntCard = `<div ${role === 'admin' ? `style="cursor:pointer" onclick="coachTargetDetail('*', '${ym}')" title="${t('Show every new / renew transaction this month', 'عرض كل عمليات الجديد/التجديد هذا الشهر')}"` : ''}>${_targetCard('🧾', t('Reception — New / Renew Target', 'الاستقبال — هدف الجديد والتجديد'), t('New + renewal subscribers this month (all packages)', 'المشتركون الجدد + التجديد هذا الشهر (كل الباقات)'), income, _rTiers, 'count')}</div>`;
+    const _cntCard = `<div ${role === 'admin' ? `style="cursor:pointer" onclick="coachTargetDetail('*', '${ym}')" title="${t('Show every new / renew transaction this month', 'عرض كل عمليات الجديد/التجديد هذا الشهر')}"` : ''}>${_targetCard('🧾', t('Reception — New / Renew Target', 'الاستقبال — هدف الجديد والتجديد'), t('New members + renewals this month (same as the Dashboard)', 'الأعضاء الجدد + التجديدات هذا الشهر (نفس الداشبورد)'), income, _rTiers, 'count')}</div>`;
     const receptionCard = `<div style="max-width:420px;margin:0 auto 6px">${_byCnt ? _cntCard : role === 'admin' ? _targetCard('🧾', t('Reception — Income Target', 'الاستقبال — هدف الدخل'), t('Income this month (membership + rentals + shop)', 'الدخل هذا الشهر (اشتراكات + إيجارات + متجر)'), income, _rTiers, 'QAR') : _targetCardNoIncome('🧾', t('Reception — Income Target', 'الاستقبال — هدف الدخل'), t('Progress this month', 'التقدم هذا الشهر'), income, _rTiers)}</div>`;
     const _recTT = targetTier(income, _rTiers);
     const _recAll = (state.coaches || []).filter(c => _coachActive(c) && isReceptionStaff(c));
@@ -491,7 +491,7 @@ PAGES.targets = (main) => {
       </div>
     </div>
     ${bodyHtml}
-    <div class="text-mute" style="font-size:11px;margin-top:14px;text-align:center">${t('Coaches are notified automatically when they reach a target. ' + (receptionByCount(ym) ? 'Reception target = new + renewal subscribers this month (one per payment transaction).' : 'Reception income = total invoiced this month (membership + rentals + shop, incl. amounts still due).'), 'يُخطَر المدربون تلقائياً عند بلوغ الهدف. ' + (receptionByCount(ym) ? 'هدف الاستقبال = المشتركون الجدد + التجديد هذا الشهر (واحد لكل عملية دفع).' : 'دخل الاستقبال = إجمالي المفوتر هذا الشهر (اشتراكات + إيجارات + متجر، شاملاً المستحق).'))}</div>
+    <div class="text-mute" style="font-size:11px;margin-top:14px;text-align:center">${t('Coaches are notified automatically when they reach a target. ' + (receptionByCount(ym) ? 'Reception target = new members + renewals this month (the Dashboard figure).' : 'Reception income = total invoiced this month (membership + rentals + shop, incl. amounts still due).'), 'يُخطَر المدربون تلقائياً عند بلوغ الهدف. ' + (receptionByCount(ym) ? 'هدف الاستقبال = الأعضاء الجدد + التجديدات هذا الشهر (نفس رقم الداشبورد).' : 'دخل الاستقبال = إجمالي المفوتر هذا الشهر (اشتراكات + إيجارات + متجر، شاملاً المستحق).'))}</div>
   `;
   const msel = $('#tgt-month');
   if (msel) msel.addEventListener('change', () => { window._targetMonth = msel.value; PAGES.targets(main); });
@@ -500,6 +500,16 @@ PAGES.targets = (main) => {
 // v6.639 — drill-down PROOF for a coach card: every new/renew transaction (sub cycle started this month
 // under the coach), with member, sport, cycle window, status and value. The row count = the target count.
 window.coachTargetDetail = function(coachId, ym) {
+  if (coachId === '*' && typeof receptionByCount === 'function' && receptionByCount(ym)) {   // v6.1029 — the reception count: new members + renewals (the Dashboard figure)
+    const subs = receptionSubscribers(ym), nNew = subs.filter(x => x.kind === 'new').length;
+    showModal({
+      title: `🧾 ${t('Reception', 'الاستقبال')} · ${escapeHtml((typeof fmtMonth === 'function') ? fmtMonth(ym) : ym)} · ${subs.length} ${t('new + renewals', 'جديد + تجديد')}`,
+      size: 'xl',
+      body: subs.length ? `<div class="text-mute" style="font-size:12px;margin-bottom:8px">${nNew} ${t('new members', 'عضو جديد')} + ${subs.length - nNew} ${t('renewals', 'تجديد')}</div><div class="table-wrap"><table style="width:100%;font-size:12.5px"><thead><tr><th style="text-align:left">#</th><th style="text-align:left">${t('Member', 'العضو')}</th><th>${t('Type', 'النوع')}</th><th>${t('Date', 'التاريخ')}</th></tr></thead><tbody>${subs.map((r, i) => `<tr><td class="text-mute">${i + 1}</td><td><div class="font-bold">${escapeHtml(r.memberName)}</div>${r.nameArabic ? `<div class="text-mute" dir="rtl" style="font-size:11px">${escapeHtml(r.nameArabic)}</div>` : ''}</td><td style="text-align:center"><span class="badge">${r.kind === 'new' ? t('New', 'جديد') : t('Renewal', 'تجديد')}</span></td><td style="text-align:center;white-space:nowrap">${r.date ? fmtDate(r.date) : '—'}</td></tr>`).join('')}</tbody></table></div>` : `<div class="text-mute" style="text-align:center;padding:20px">${t('No new members or renewals this month.', 'لا يوجد أعضاء جدد أو تجديدات هذا الشهر.')}</div>`,
+      actions: [{ label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal }],
+    });
+    return;
+  }
   const rows = (typeof coachNewRenewRows === 'function') ? coachNewRenewRows(coachId, ym) : [];
   // v6.640 — resolve the coach by string-compare (the id arrives as a string from the click handler, and
   // coachName uses a strict === so it would miss a numeric id).
@@ -27545,7 +27555,7 @@ PAGES.attendance = (main) => {
           <span id="att-grand-label" style="font-size:9px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px">${t('Attended', 'إجمالي الحضور')}</span>
         </div>
         <button class="btn ghost" id="att-today">📍 ${t('Today', 'اليوم')}</button>
-        ${currentRole() === 'coach' ? '' : `<button class="btn ghost" id="att-import">📂 ${t('Import CSV', 'استيراد CSV')}</button>`}
+        ${/* v6.1029 — Import CSV is admin only */ currentRole() !== 'admin' ? '' : `<button class="btn ghost" id="att-import">📂 ${t('Import CSV', 'استيراد CSV')}</button>`}
         ${_canExportAtt ? `
         <button class="btn ghost" id="att-export">📥 ${t('Export CSV', 'تصدير CSV')}</button>
         <button class="btn ghost" id="att-export-pdf">📄 ${t('Export PDF', 'تصدير PDF')}</button>

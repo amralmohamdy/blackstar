@@ -14,7 +14,9 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.1028.0';   // 6.1028.0 (1) Attendance never renews by itself: a used-up / expired member marked present by admin or reception is OFFERED the renewal in a popup and nothing is created until they press Renew (as Due); a coach only marks. (2) Popups anchored to a field (the searchable select, the country-code picker, the schedule hover card) no longer slide off the screen when the text size is 115% or more.
+const APP_VERSION = '6.1030.0';   // 6.1030.0 Member status: a finished Summer Camp no longer makes a member 'Completed' while another sport of his has a RUNNING package — even when that sport has no enrollment row on the card (the only one affected today read Completed with an active Taekwondo).
+// prev:   // 6.1029.0 (1) Attendance > Import CSV is admin only — neither reception nor the coach sees it. (2) Reception target counts NEW members + RENEWALS only, with tiers 75 → 250, 125 → 500, 150 → 1,000, 200 → 1,500.
+// prev:   // 6.1028.0 (1) Attendance never renews by itself: a used-up / expired member marked present by admin or reception is OFFERED the renewal in a popup and nothing is created until they press Renew (as Due); a coach only marks. (2) Popups anchored to a field (the searchable select, the country-code picker, the schedule hover card) no longer slide off the screen when the text size is 115% or more.
 // prev:   // 6.1027.0 Reception: the ⬇ PDF button on each student's row of the Attendance screen (a student's attendance PDF) and the 📄 button next to 🗓 in Subscription History (the invoice of one package) now show for the receptionist too; the whole-sheet attendance exports and the package ✎ edit stay admin only.
 // prev:   // 6.1026.0 Rental / court booking form: the Total amount box is now typed directly (1.5 h for 200 QAR) and the hourly rate follows it (133.33, kept exact so changing the hours re-prices without rounding drift); quick duration buttons 1h / 1.5h / 2h / 3h under Hours.
 // prev:   // 6.1025.0 Reception target tiers (new + renewal subscribers, from Nov 2026): 50 → 250, 100 → 500, 150 → 1,500, 200 → 2,000 (was 50 → 500, 100 → 1,000, 150 → 1,500); the start-month setting check is fixed so a value saved in settings is honoured.
@@ -6499,14 +6501,29 @@ function refreshNotifBadge() {
 const RECEPTION_TARGETS_DEFAULT = [{ at: 50000, bonus: 500 }, { at: 60000, bonus: 1000 }, { at: 70000, bonus: 1500 }, { at: 80000, bonus: 2000 }, { at: 100000, bonus: 3000 }];   // v6.978.0 — 50k→500 · 60k→1,000 · 70k→1,500 · 80k→2,000 · 100k→3,000
 const COACH_TARGETS_DEFAULT = [{ at: 40, bonus: 500 }, { at: 50, bonus: 1000 }, { at: 60, bonus: 1500 }];
 // v6.1020 — from Nov 2026 the reception target counts NEW + RENEWAL subscribers (club-wide), like the coaches: 50 / 100 / 150 → 500 / 1,000 / 1,500. Months before keep the income tiers (settings.receptionTargetCountFrom moves the start).
-const RECEPTION_COUNT_TARGETS_DEFAULT = [{ at: 50, bonus: 250 }, { at: 100, bonus: 500 }, { at: 150, bonus: 1500 }, { at: 200, bonus: 2000 }];   // v6.1025 — 50→250 · 100→500 · 150→1,500 · 200→2,000 (was 50→500 · 100→1,000 · 150→1,500)
+const RECEPTION_COUNT_TARGETS_DEFAULT = [{ at: 75, bonus: 250 }, { at: 125, bonus: 500 }, { at: 150, bonus: 1000 }, { at: 200, bonus: 1500 }];   // v6.1029 — 75→250 · 125→500 · 150→1,000 · 200→1,500 (was 50→250 · 100→500 · 150→1,500 · 200→2,000)
 function receptionCountFrom() { const v = state.settings && state.settings.receptionTargetCountFrom; return /^\d{4}-\d{2}$/.test(String(v || '')) ? String(v) : '2026-11'; }
 function receptionByCount(ym) { return !!ym && String(ym).slice(0, 7) >= receptionCountFrom(); }
 function receptionTargets(ym) {
   if (receptionByCount(ym)) { const k = state.settings && state.settings.targets && state.settings.targets.receptionCount; return (Array.isArray(k) && k.length) ? k.slice().sort((a, b) => a.at - b.at) : RECEPTION_COUNT_TARGETS_DEFAULT; }
   const c = state.settings && state.settings.targets && state.settings.targets.reception; return (Array.isArray(c) && c.length) ? c.slice().sort((a, b) => a.at - b.at) : RECEPTION_TARGETS_DEFAULT;
 }
-function receptionNewRenewCount(ym) { return coachNewRenewRows('*', ym).length; }
+// v6.1029 — the reception target counts SUBSCRIBERS exactly like the Dashboard: NEW members registered in the month + RENEWALS started in the month (a package an existing member adds without renewing is not counted).
+function receptionSubscribers(ym) {
+  const rows = [];
+  for (const m of (state.members || [])) {
+    if (!m || m.deleted) continue;
+    const fr = String(m.firstRegistration || m.joinDate || '').slice(0, 7);
+    if (fr === ym) rows.push({ memberId: m.id, memberName: m.name || '—', nameArabic: m.nameArabic || '', kind: 'new', date: String(m.firstRegistration || m.joinDate || '').slice(0, 10) });
+    for (const r of (m.renewals || [])) {
+      const d = String(r.start || r.createdAt || '').slice(0, 10);
+      if (d.slice(0, 7) === ym) rows.push({ memberId: m.id, memberName: m.name || '—', nameArabic: m.nameArabic || '', kind: 'renewal', date: d });
+    }
+  }
+  rows.sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.memberName).localeCompare(String(b.memberName)));
+  return rows;
+}
+function receptionNewRenewCount(ym) { return receptionSubscribers(ym).length; }
 function receptionMetric(ym) { return receptionByCount(ym) ? receptionNewRenewCount(ym) : receptionIncome(ym); }
 function coachTargets() { const c = state.settings && state.settings.targets && state.settings.targets.coach; return (Array.isArray(c) && c.length) ? c.slice().sort((a, b) => a.at - b.at) : COACH_TARGETS_DEFAULT; }
 // The highest tier whose threshold is met, plus the next unmet tier.
@@ -8307,7 +8324,9 @@ function campLimitReached(m) {
   const campSubs = m.subscriptions.filter(s => isCampSport((s.activity || '')) && s.status !== 'Withdrawn');
   if (!campSubs.length) return false;
   // A non-camp member (has other active sports) is not expired by camp alone.
-  const hasOtherSport = (m.enrollments || []).some(e => e.sport && !isCampSport(e.sport));
+  // v6.1030 — also a RUNNING non-camp package counts: some members have a live Taekwondo package but no Taekwondo enrollment row (only the old camp one), and read 'Completed' while their sport was active
+  const hasOtherSport = (m.enrollments || []).some(e => e.sport && !isCampSport(e.sport))
+    || (m.subscriptions || []).some(s => s && s.activity && !isCampSport(s.activity) && String(s.status || '').toLowerCase() !== 'withdrawn' && (!s.end || String(s.end).slice(0, 10) >= TODAY));
   if (hasOtherSport) return false;
   // Use the most recent camp subscription as the current one.
   const sorted = campSubs.slice().sort((a, b) => (a.start || '').localeCompare(b.start || ''));
