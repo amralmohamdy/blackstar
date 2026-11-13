@@ -993,7 +993,8 @@ PAGES.dashboard = (main) => {
   $('#refresh-btn').addEventListener('click', () => { render(); toast('Refreshed'); });
   $('#export-btn').addEventListener('click', exportDashboardCSV);
   const dashBackupTop = $('#dash-backup-top');
-  if (dashBackupTop) dashBackupTop.addEventListener('click', () => window.downloadFullBackup());
+  if (dashBackupTop && !window._backupAllowed()) dashBackupTop.remove();   // v6.1036 — backup is admin only
+  else if (dashBackupTop) dashBackupTop.addEventListener('click', () => window.downloadFullBackup());
   const dashCloudStorage = $('#dash-cloud-storage');
   if (dashCloudStorage) dashCloudStorage.addEventListener('click', () => window.showCloudStorageUI());
   if (window._dashMenuOpen) { const _pl = $('#dash-period-list'); if (_pl && window._dashMenuScroll) _pl.scrollTop = window._dashMenuScroll; }   // v6.713 — the period panel stays open while ticking months
@@ -1195,7 +1196,10 @@ function downloadFile(filename, content, mime = 'text/plain') {
 
 // Download a full JSON backup of all data. Defined at top level so it is ALWAYS
 // available (e.g. from the Dashboard topbar), not only after visiting Settings.
+// v6.1036 — ONLY a real admin account may download a backup (reception / coach / student never; the silent safety copies too). A backup holds every member, invoice and payment.
+window._backupAllowed = function() { try { return (typeof accountRole === 'function' ? accountRole() : 'admin') === 'admin'; } catch (_) { return false; } };
 window.downloadBackup = function(opts) {   // opts.suffix → file name suffix (used by downloadFullBackup)
+  if (!window._backupAllowed()) { try { toast(t('Only the admin can download a backup', 'النسخة الاحتياطية للمسؤول فقط'), 'error'); } catch (_) {} return; }
   try {
     const { user, route, session, ...rest } = state;
     const payload = { appVersion: APP_VERSION, schemaVersion: SCHEMA_VERSION, exported: new Date().toISOString(), ...rest };
@@ -1223,6 +1227,7 @@ window.downloadBackup = function(opts) {   // opts.suffix → file name suffix (
 // v6.1031 — the Backup BUTTONS: the audit log is lazy (fetched ~6 s after boot, and refused to coach / student logins), so a plain backup was ~3 MB without it or ~8 MB with it, and a coach login saved only its own students.
 // This one loads the audit log first (so every backup is complete), warns when the audit log cannot be loaded, and warns + marks the file name when the login only sees part of the data. The silent "safety copy first" calls keep using downloadBackup (they must snapshot at once).
 window.downloadFullBackup = async function () {
+  if (!window._backupAllowed()) { try { toast(t('Only the admin can download a backup', 'النسخة الاحتياطية للمسؤول فقط'), 'error'); } catch (_) {} return; }
   try {
     const role = (typeof currentRole === 'function') ? currentRole() : '';
     const limited = !['admin', 'receptionist'].includes(role);
@@ -3884,15 +3889,15 @@ function memberSportPeriodsReadonlyHtml(m, rows) {
     const paid = paidMap.has(s) ? paidMap.get(s) : (Number(s.amountPaid) || 0);
     const price = priceOut.has(s) ? priceOut.get(s) : null;
     const st = s.switchedAwayTo ? t('switched', 'محوّل') : (s.end && s.end < TODAY ? t('past', 'منتهية') : t('current', 'حالية'));
-    const btn = (canEdit && sid) ? `<button type="button" class="btn ghost sm" onclick="closeModal();editSubscription(${m.id}, '${escapeHtml(String(sid))}')" title="${t('Edit this period: price · classes · coach · status', 'تعديل هذه الفترة: السعر · الحصص · المدرب · الحالة')}" style="padding:2px 8px;color:var(--blue)">✎</button>` : '';
-    return `<tr><td style="${cell};font-weight:600">${escapeHtml(s.activity)}</td><td style="${cell}">${escapeHtml(s.coach || ((s.coachId != null && typeof coachName === 'function') ? coachName(s.coachId) : '') || '—')}</td><td style="${cell}">${s.start ? fmtDate(s.start) : '—'} → ${s.end ? fmtDate(s.end) : '—'}</td><td style="${cell}">${att}/${total || 0}</td><td style="${cell};text-align:right">${price != null ? fmt(price) : '—'} / ${paid ? fmt(paid) : '—'}</td><td style="${cell}"><span class="badge">${st}</span></td><td style="${cell};text-align:right">${btn}</td></tr>`;
+    const btn = (canEdit && sid) ? `<button type="button" class="btn ghost sm" onclick="closeModal();editSubscription(${m.id}, '${escapeHtml(String(sid))}')" title="${t('Edit this period: price · classes · coach · status', 'تعديل هذه الفترة: السعر · الحصص · المدرب · الحالة')}" style="padding:1px 7px;color:var(--blue);margin-left:6px">✎</button>` : '';
+    return `<tr><td style="${cell};font-weight:600">${escapeHtml(s.activity)} ${btn}</td><td style="${cell}">${escapeHtml(s.coach || ((s.coachId != null && typeof coachName === 'function') ? coachName(s.coachId) : '') || '—')}</td><td style="${cell}">${s.start ? fmtDate(s.start) : '—'} → ${s.end ? fmtDate(s.end) : '—'}</td><td style="${cell}">${att}/${total || 0}</td><td style="${cell};text-align:right">${price != null ? fmt(price) : '—'} / ${paid ? fmt(paid) : '—'}</td><td style="${cell}"><span class="badge">${st}</span></td></tr>`;
   }).join('');
   const noSub = (rows || []).filter(r => r && r._ro && !subs.some(s => (s.activity || '') === r.sport));
-  const extra = noSub.map(r => `<tr><td style="${cell};font-weight:600">${escapeHtml(r.sport)}</td><td style="${cell}">${escapeHtml(coachName(r.coachId) || '—')}</td><td style="${cell}">${r.start ? fmtDate(r.start) : '—'}</td><td style="${cell}">—/${parseInt(r.classes) || 0}</td><td style="${cell};text-align:right">${fmt(parseFloat(r.price) || 0)} / —</td><td style="${cell}"><span class="badge">${t('no package record', 'بدون سجل باقة')}</span></td><td style="${cell}"></td></tr>`).join('');
+  const extra = noSub.map(r => `<tr><td style="${cell};font-weight:600">${escapeHtml(r.sport)}</td><td style="${cell}">${escapeHtml(coachName(r.coachId) || '—')}</td><td style="${cell}">${r.start ? fmtDate(r.start) : '—'}</td><td style="${cell}">—/${parseInt(r.classes) || 0}</td><td style="${cell};text-align:right">${fmt(parseFloat(r.price) || 0)} / —</td><td style="${cell}"><span class="badge">${t('no package record', 'بدون سجل باقة')}</span></td></tr>`).join('');
   if (!trs && !extra) return '';
   return `<div style="margin-bottom:10px;border:1px solid var(--border);border-radius:8px;overflow:hidden">
     <div class="text-mute" style="font-size:11px;padding:8px 10px;line-height:1.5">${t('All sports and periods of this member (read-only). Edit one period with its ✎ — price · classes · coach · status. Use + Add sport for a new sport.', 'كل رياضات وفترات العضو (للعرض فقط). عدّل كل فترة من ✎ — السعر · الحصص · المدرب · الحالة. استخدم + Add sport لإضافة رياضة جديدة.')}</div>
-    <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse"><thead><tr class="text-mute" style="font-size:10px;text-transform:uppercase"><th style="padding:4px 8px;text-align:left">${t('Sport', 'الرياضة')}</th><th style="padding:4px 8px;text-align:left">${t('Coach', 'المدرب')}</th><th style="padding:4px 8px;text-align:left">${t('Period', 'الفترة')}</th><th style="padding:4px 8px;text-align:left">${t('Classes', 'الحصص')}</th><th style="padding:4px 8px;text-align:right">${t('Price / Paid', 'السعر / المدفوع')}</th><th style="padding:4px 8px;text-align:left">${t('State', 'الحالة')}</th><th></th></tr></thead><tbody>${trs}${extra}</tbody></table></div></div>`;
+    <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse"><thead><tr class="text-mute" style="font-size:10px;text-transform:uppercase"><th style="padding:4px 8px;text-align:left">${t('Sport', 'الرياضة')}</th><th style="padding:4px 8px;text-align:left">${t('Coach', 'المدرب')}</th><th style="padding:4px 8px;text-align:left">${t('Period', 'الفترة')}</th><th style="padding:4px 8px;text-align:left">${t('Classes', 'الحصص')}</th><th style="padding:4px 8px;text-align:right">${t('Price / Paid', 'السعر / المدفوع')}</th><th style="padding:4px 8px;text-align:left">${t('State', 'الحالة')}</th></tr></thead><tbody>${trs}${extra}</tbody></table></div></div>`;
 }
 function renderEnrollRows() {
   const wrap = document.getElementById('enroll-rows');
@@ -26042,7 +26047,8 @@ PAGES.settings = (main, section) => {
     });
   });
 
-  $('#backup-btn').addEventListener('click', () => window.downloadFullBackup());
+  if (!window._backupAllowed()) $('#backup-btn').remove();   // v6.1036 — backup is admin only
+  else $('#backup-btn').addEventListener('click', () => window.downloadFullBackup());
   $('#autobackup-btn')?.addEventListener('click', () => window.showLocalBackupsUI());
   $('#synccheck-btn')?.addEventListener('click', () => window.runSyncCheck());
   $('#fixnames-btn')?.addEventListener('click', () => window.fixNameCapitalization());
@@ -38379,7 +38385,7 @@ PAGES.campclosure = (main) => {
         <div class="subtitle" style="font-size:13px;margin-top:4px">${t('Active camp members with unused paid days. Switch their balance to another activity, or refund it.', 'أعضاء المعسكر النشطون ولديهم أيام مدفوعة غير مستخدمة. حوّل رصيدهم إلى نشاط آخر أو استرجعه.')}</div>
       </div>
       <div class="topbar-actions">
-        <button class="btn ghost" onclick="window.downloadFullBackup && window.downloadFullBackup()">⬇ ${t('Backup now', 'نسخة احتياطية')}</button>
+        ${window._backupAllowed() ? `<button class="btn ghost" onclick="window.downloadFullBackup && window.downloadFullBackup()">⬇ ${t('Backup now', 'نسخة احتياطية')}</button>` : ''}
         <button class="btn ghost" id="cc-csv">📥 ${t('Export CSV', 'تصدير CSV')}</button>
       </div>
     </div>
