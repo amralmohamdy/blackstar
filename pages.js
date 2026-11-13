@@ -1933,7 +1933,7 @@ PAGES.members = (main) => {
     }).join('') : `<tr><td colspan="${cols.length + 3}" class="empty"><div class="empty-icon">👥</div>${t('No members match your filters','لا يوجد أعضاء مطابقون')}</td></tr>`;
 
     { const _active = activeMembers().length, _total = (state.members || []).length, _arch = _total - _active;
-      $('#members-count').textContent = _arch > 0
+      $('#members-count').textContent = isViewerRole() ? '' : _arch > 0   // v6.1037 — reception does not see the member / archived counts
         ? `${allRows.length} ${t('of', 'من')} ${_active} · ${_total} ${t('incl.', 'منهم')} ${_arch} ${t('archived', 'مؤرشف')}`
         : `${allRows.length} ${t('of', 'من')} ${_active}`; }
 
@@ -2016,7 +2016,7 @@ PAGES.members = (main) => {
     <div class="topbar">
       <div>
         <h1>${t('Members', 'الأعضاء')}</h1>
-        <div class="subtitle" style="margin-top:6px"><span id="members-count" style="font-size:13px;font-weight:600;color:var(--text)">${activeMembers().length} ${t('of', 'من')} ${activeMembers().length}${(state.members || []).length > activeMembers().length ? ` · ${(state.members || []).length} ${t('incl.', 'منهم')} ${(state.members || []).length - activeMembers().length} ${t('archived', 'مؤرشف')}` : ''}</span></div>
+        <div class="subtitle" style="margin-top:6px"><span id="members-count" style="font-size:13px;font-weight:600;color:var(--text)">${isViewerRole() ? '' : `${activeMembers().length} ${t('of', 'من')} ${activeMembers().length}`}${!isViewerRole() && (state.members || []).length > activeMembers().length ? ` · ${(state.members || []).length} ${t('incl.', 'منهم')} ${(state.members || []).length - activeMembers().length} ${t('archived', 'مؤرشف')}` : ''}</span></div>
         <div class="member-stat-chips" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">
           ${(() => {
           const mc = memberCounts();
