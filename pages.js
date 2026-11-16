@@ -36815,7 +36815,7 @@ PAGES.courtbookings = (main) => {
         ...(money && due > 0.5 ? [{ label: '💵 ' + t('Collect', 'تحصيل') + ' ' + fmt(due), class: 'btn primary', onclick: () => { closeModal(); collectRental(r.id); } }] : []),
         ...(r.customerPhone ? [{ label: '💬 ' + t('Send WhatsApp', 'إرسال واتساب'), class: 'btn ghost', style: 'color:#128C7E;border-color:#25D366', onclick: () => sendRentalBookingWhatsApp(r.id) }] : []),   // v6.821
         ...(money && inv ? [{ label: '📄 ' + t('Invoice', 'الفاتورة'), class: 'btn ghost', onclick: () => { closeModal(); printInvoicePDF(inv.id); } }] : []),
-        ...(money ? [{ label: '🗑 ' + t('Cancel booking', 'إلغاء الحجز'), class: 'btn ghost', onclick: () => { closeModal(); deleteRental(r.id); } }] : []),
+        ...((money || currentRole() === 'receptionist') ? [{ label: '🗑 ' + t('Cancel booking', 'إلغاء الحجز'), class: 'btn ghost', onclick: () => { closeModal(); deleteRental(r.id); } }] : []),
         { label: '✏️ ' + t('Edit', 'تعديل'), class: 'btn primary', onclick: () => { closeModal(); editRental(r.id); } },
       ],
     });
@@ -37583,7 +37583,7 @@ window.viewRentalCustomerHistory = function(rcustId) {
 };
 
 window.deleteRental = function(id) {
-  if (currentRole() !== 'admin') { toast('Only admins can delete rentals', 'error'); return; }
+  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast('Only admins or reception can cancel a booking', 'error'); return; }   // v6.1038 — reception may cancel a booking
   const r = (state.rentals || []).find(x => x.id === id);
   if (!r) return;
   // v6.828 — say WHICH invoice goes with the booking (number, amount, what was collected) instead of "if any"
@@ -37595,6 +37595,7 @@ window.deleteRental = function(id) {
   // Archive ITS invoice (v6.783 — never a different invoice the link happens to point at; archived, not erased, so an admin can restore it)
   { const _ri = rentalInvoiceFor(r); if (_ri) { _ri.deleted = true; _ri.deletedAt = new Date().toISOString(); _ri.deletedBy = (typeof currentUserName === 'function' ? currentUserName() : 'admin'); if (typeof stampUpdate === 'function') stampUpdate(_ri); } }
   state.rentals = state.rentals.filter(x => x.id !== id);
+  if (typeof audit === 'function') audit('rental.delete', 'rental:' + id, 'Cancelled the ' + r.facility + ' booking of ' + (r.customerName || '—') + ' on ' + r.date + (r.startTime ? ' ' + r.startTime : ''), { rentalId: id });
   withCloudConfirm({ verify: [{ collection: 'rentals', id, absent: true, snapshot: r }], okMsg: 'Booking deleted', afterOk: () => render() });
 };
 
