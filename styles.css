@@ -1959,3 +1959,9 @@ body.modal-open #bs-notif-float { z-index: 60 !important; }   /* v6.776 — belo
 .att-filter-bar.att-bar-coach .member-picker input[type="text"] { height: 42px; border-radius: 10px; background: var(--surface); }
 .att-filter-bar.att-bar-coach > div[style*="min-width:260px"] { flex: 1 1 300px; max-width: 420px; }
 .att-filter-bar.att-bar-coach > .text-mute { flex: 1 0 100%; margin: 2px 0 0 !important; align-self: auto !important; text-align: end; }
+
+/* Members list: on wide screens the text, avatars, badges and buttons grow with the screen so the width is used (13px up to ~1600px wide, 17px from ~2100px) */
+#members-table-wrap table { font-size: clamp(13px, 0.8vw, 17px); }
+#members-table-wrap thead th { font-size: max(11px, 0.8em); }
+#members-table-wrap tbody td { padding-top: 0.85em; padding-bottom: 0.85em; }
+#members-table-wrap .badge { font-size: 0.85em; padding: 0.35em 0.95em; }

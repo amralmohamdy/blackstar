@@ -1567,7 +1567,7 @@ PAGES.members = (main) => {
         sortVal: m => (m.name || '').toLowerCase(),
         getVal: m => m.name || '',
         cell: m => `<div style="display:flex;align-items:center;gap:10px">
-            ${memberAvatarHtml(m, 32)}
+            ${memberAvatarHtml(m, 32, 'width:2.8em;height:2.8em;font-size:1em')}
             <div style="font-weight:600">${escapeHtml(m.name)}</div>
           </div>` },
       { key: 'arabicName', label: 'Arabic Name', def: true, filter: 'fuzzy',
@@ -1925,10 +1925,10 @@ PAGES.members = (main) => {
           <td></td>
           <td style="text-align:center;white-space:nowrap;padding-left:6px;padding-right:6px">${isViewerRole() ? '' : `<button class="btn ghost sm" onclick="event.stopPropagation();permanentlyDeleteMember(${m.id})" title="Permanently delete — cannot be undone" style="color:var(--red)">🗑 ${t('Delete forever', 'حذف نهائي')}</button>`}</td>
         ` : `
-          <td style="text-align:center;white-space:nowrap;padding-left:6px;padding-right:6px"><button class="btn ghost sm" onclick="event.stopPropagation();addRenewal(${m.id})" title="${t('Record renewal', 'تسجيل تجديد')}" style="font-size:15px;padding:5px 10px">🔄</button></td>
-          <td style="text-align:center;white-space:nowrap;padding-left:6px;padding-right:6px"><button class="btn ghost sm" onclick="event.stopPropagation();switchSport(${m.id})" title="${t('Switch sport / change coach', 'تبديل الرياضة / المدرب')}" style="font-size:15px;padding:5px 10px">🔀</button></td>
-          <td style="text-align:center;white-space:nowrap;padding-left:6px;padding-right:6px"><button class="btn ghost sm" onclick="event.stopPropagation();editMember(${m.id})" title="${t('Edit member', 'تعديل العضو')}" style="font-size:15px;padding:5px 10px">✏️</button></td>
-          <td style="text-align:center;white-space:nowrap;padding-left:6px;padding-right:6px"><button class="btn ghost sm" onclick="event.stopPropagation();deleteMember(${m.id})" title="${t('Archive (soft delete — recoverable by an admin)', 'أرشفة (مسح مؤقت — يستطيع المشرف استرجاعه)')}" style="font-size:15px;padding:5px 10px;color:var(--red)">🗑</button></td>
+          <td style="text-align:center;white-space:nowrap;padding-left:6px;padding-right:6px"><button class="btn ghost sm" onclick="event.stopPropagation();addRenewal(${m.id})" title="${t('Record renewal', 'تسجيل تجديد')}" style="font-size:1.2em;padding:.3em .6em">🔄</button></td>
+          <td style="text-align:center;white-space:nowrap;padding-left:6px;padding-right:6px"><button class="btn ghost sm" onclick="event.stopPropagation();switchSport(${m.id})" title="${t('Switch sport / change coach', 'تبديل الرياضة / المدرب')}" style="font-size:1.2em;padding:.3em .6em">🔀</button></td>
+          <td style="text-align:center;white-space:nowrap;padding-left:6px;padding-right:6px"><button class="btn ghost sm" onclick="event.stopPropagation();editMember(${m.id})" title="${t('Edit member', 'تعديل العضو')}" style="font-size:1.2em;padding:.3em .6em">✏️</button></td>
+          <td style="text-align:center;white-space:nowrap;padding-left:6px;padding-right:6px"><button class="btn ghost sm" onclick="event.stopPropagation();deleteMember(${m.id})" title="${t('Archive (soft delete — recoverable by an admin)', 'أرشفة (مسح مؤقت — يستطيع المشرف استرجاعه)')}" style="font-size:1.2em;padding:.3em .6em;color:var(--red)">🗑</button></td>
         `}
       </tr>`;
     }).join('') : `<tr><td colspan="${cols.length + 6}" class="empty"><div class="empty-icon">👥</div>${t('No members match your filters','لا يوجد أعضاء مطابقون')}</td></tr>`;
