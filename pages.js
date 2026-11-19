@@ -505,7 +505,7 @@ window.coachTargetDetail = function(coachId, ym) {
     showModal({
       title: `🧾 ${t('Reception', 'الاستقبال')} · ${escapeHtml((typeof fmtMonth === 'function') ? fmtMonth(ym) : ym)} · ${subs.length} ${t('new + renewals', 'جديد + تجديد')}`,
       size: 'xl',
-      body: subs.length ? `<div class="text-mute" style="font-size:12px;margin-bottom:8px">${nNew} ${t('new members', 'عضو جديد')} + ${subs.length - nNew} ${t('renewals', 'تجديد')}</div><div class="table-wrap"><table style="width:100%;font-size:12.5px"><thead><tr><th style="text-align:left">#</th><th style="text-align:left">${t('Member', 'العضو')}</th><th>${t('Type', 'النوع')}</th><th>${t('Date', 'التاريخ')}</th></tr></thead><tbody>${subs.map((r, i) => `<tr><td class="text-mute">${i + 1}</td><td><div class="font-bold">${escapeHtml(r.memberName)}</div>${r.nameArabic ? `<div class="text-mute" dir="rtl" style="font-size:11px">${escapeHtml(r.nameArabic)}</div>` : ''}</td><td style="text-align:center"><span class="badge">${r.kind === 'new' ? t('New', 'جديد') : t('Renewal', 'تجديد')}</span></td><td style="text-align:center;white-space:nowrap">${r.date ? fmtDate(r.date) : '—'}</td></tr>`).join('')}</tbody></table></div>` : `<div class="text-mute" style="text-align:center;padding:20px">${t('No new members or renewals this month.', 'لا يوجد أعضاء جدد أو تجديدات هذا الشهر.')}</div>`,
+      body: subs.length ? `<div class="text-mute" style="font-size:12px;margin-bottom:8px">${nNew} ${t('new members', 'عضو جديد')} + ${subs.length - nNew} ${t('renewals', 'تجديد')}</div><div class="table-wrap"><table style="width:100%;font-size:12.5px"><thead><tr><th style="text-align:left">#</th><th style="text-align:left">${t('Member', 'العضو')}</th><th>${t('Type', 'النوع')}</th><th>${t('Date', 'التاريخ')}</th></tr></thead><tbody>${subs.map((r, i) => `<tr><td class="text-mute">${i + 1}</td><td><div class="font-bold">${escapeHtml(r.memberName)}</div>${r.nameArabic ? `<div class="text-mute" dir="rtl" style="font-size:11px">${escapeHtml(r.nameArabic)}</div>` : ''}</td><td style="text-align:center"><span class="badge">${r.kind === 'new' ? t('New', 'جديد') : t('Renewal', 'تجديد')}</span></td><td style="text-align:center;white-space:nowrap;padding-left:6px;padding-right:6px">${r.date ? fmtDate(r.date) : '—'}</td></tr>`).join('')}</tbody></table></div>` : `<div class="text-mute" style="text-align:center;padding:20px">${t('No new members or renewals this month.', 'لا يوجد أعضاء جدد أو تجديدات هذا الشهر.')}</div>`,
       actions: [{ label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal }],
     });
     return;
@@ -528,8 +528,8 @@ window.coachTargetDetail = function(coachId, ym) {
         <td class="text-mute">${i + 1}</td>
         <td><div class="font-bold">${escapeHtml(r.memberName)}</div>${r.nameArabic ? `<div class="text-mute" dir="rtl" style="font-size:11px">${escapeHtml(r.nameArabic)}</div>` : ''}</td>
         <td>${escapeHtml(r.sport)}</td>
-        <td style="text-align:center;white-space:nowrap">${r.start ? fmtDate(r.start) : '—'}</td>
-        <td style="text-align:center;white-space:nowrap">${r.end ? fmtDate(r.end) : '—'}</td>
+        <td style="text-align:center;white-space:nowrap;padding-left:6px;padding-right:6px">${r.start ? fmtDate(r.start) : '—'}</td>
+        <td style="text-align:center;white-space:nowrap;padding-left:6px;padding-right:6px">${r.end ? fmtDate(r.end) : '—'}</td>
         <td style="text-align:center"><span class="badge">${escapeHtml(r.status)}</span></td>
         <td class="text-right num">${fmt(r.amount)}</td>
       </tr>`).join('')}</tbody>
@@ -1575,7 +1575,7 @@ PAGES.members = (main) => {
         cell: m => m.nameArabic ? `<span dir="rtl">${escapeHtml(m.nameArabic)}</span>` : dash },
       { key: 'phone', label: 'Mobile', def: true, filter: 'text',
         sortVal: m => (m.phone || ''), getVal: m => m.phone || '',
-        cell: m => isRealPhone(m.phone) ? phoneCell(m.phone) : dash },
+        cell: m => isRealPhone(m.phone) ? phoneCell(m.phone, { link: true }) : dash },   // the number itself opens WhatsApp
       { key: 'qid', label: 'QID', def: false, filter: 'text',
         sortVal: m => (m.qid || ''), getVal: m => m.qid || '',
         cell: m => m.qid ? escapeHtml(m.qid) : dash },
@@ -1919,20 +1919,19 @@ PAGES.members = (main) => {
         <td style="text-align:center" onclick="event.stopPropagation()"><input type="checkbox" class="member-cb" value="${m.id}" ${selected.has(m.id) ? 'checked' : ''} style="cursor:pointer"></td>
         <td class="text-mute" style="text-align:center;font-size:12px">${_n + 1}</td>
         ${cols.map(c => `<td>${c.cell(m)}</td>`).join('')}
-        <td class="text-right" style="white-space:nowrap">
-          ${m.deleted ? `
-            ${isViewerRole() ? '<span class="text-mute" style="font-size:11px">archived</span>' : `<button class="btn primary sm" onclick="event.stopPropagation();restoreMember(${m.id})" title="Restore this archived member">↩ Restore</button>
-            <button class="btn ghost sm" onclick="event.stopPropagation();permanentlyDeleteMember(${m.id})" title="Permanently delete — cannot be undone" style="color:var(--red)">🗑 Delete forever</button>`}
-          ` : `
-            <button class="btn ghost sm" onclick="event.stopPropagation();addRenewal(${m.id})" title="Record renewal">🔄</button>
-            <button class="btn ghost sm" onclick="event.stopPropagation();switchSport(${m.id})" title="Switch sport / change coach">🔀</button>
-            <button class="btn ghost sm" onclick="event.stopPropagation();duplicateMember(${m.id})" title="Add sibling — copy ALL details to a new member">⧉</button>
-            <button class="btn ghost sm" onclick="event.stopPropagation();editMember(${m.id})">✏️</button>
-            <button class="btn ghost sm" onclick="event.stopPropagation();deleteMember(${m.id})" title="Archive (soft delete — recoverable by an admin)">🗑</button>
-          `}
-        </td>
+        ${m.deleted ? `
+          <td style="text-align:center;white-space:nowrap;padding-left:6px;padding-right:6px">${isViewerRole() ? '<span class="text-mute" style="font-size:11px">archived</span>' : `<button class="btn primary sm" onclick="event.stopPropagation();restoreMember(${m.id})" title="Restore this archived member">↩ ${t('Restore', 'استرجاع')}</button>`}</td>
+          <td></td>
+          <td></td>
+          <td style="text-align:center;white-space:nowrap;padding-left:6px;padding-right:6px">${isViewerRole() ? '' : `<button class="btn ghost sm" onclick="event.stopPropagation();permanentlyDeleteMember(${m.id})" title="Permanently delete — cannot be undone" style="color:var(--red)">🗑 ${t('Delete forever', 'حذف نهائي')}</button>`}</td>
+        ` : `
+          <td style="text-align:center;white-space:nowrap;padding-left:6px;padding-right:6px"><button class="btn ghost sm" onclick="event.stopPropagation();addRenewal(${m.id})" title="${t('Record renewal', 'تسجيل تجديد')}" style="font-size:15px;padding:5px 10px">🔄</button></td>
+          <td style="text-align:center;white-space:nowrap;padding-left:6px;padding-right:6px"><button class="btn ghost sm" onclick="event.stopPropagation();switchSport(${m.id})" title="${t('Switch sport / change coach', 'تبديل الرياضة / المدرب')}" style="font-size:15px;padding:5px 10px">🔀</button></td>
+          <td style="text-align:center;white-space:nowrap;padding-left:6px;padding-right:6px"><button class="btn ghost sm" onclick="event.stopPropagation();editMember(${m.id})" title="${t('Edit member', 'تعديل العضو')}" style="font-size:15px;padding:5px 10px">✏️</button></td>
+          <td style="text-align:center;white-space:nowrap;padding-left:6px;padding-right:6px"><button class="btn ghost sm" onclick="event.stopPropagation();deleteMember(${m.id})" title="${t('Archive (soft delete — recoverable by an admin)', 'أرشفة (مسح مؤقت — يستطيع المشرف استرجاعه)')}" style="font-size:15px;padding:5px 10px;color:var(--red)">🗑</button></td>
+        `}
       </tr>`;
-    }).join('') : `<tr><td colspan="${cols.length + 3}" class="empty"><div class="empty-icon">👥</div>${t('No members match your filters','لا يوجد أعضاء مطابقون')}</td></tr>`;
+    }).join('') : `<tr><td colspan="${cols.length + 6}" class="empty"><div class="empty-icon">👥</div>${t('No members match your filters','لا يوجد أعضاء مطابقون')}</td></tr>`;
 
     { const _active = activeMembers().length, _total = (state.members || []).length, _arch = _total - _active;
       $('#members-count').textContent = isViewerRole() ? '' : _arch > 0   // v6.1037 — reception does not see the member / archived counts
@@ -2190,7 +2189,10 @@ PAGES.members = (main) => {
                 <th data-sortkey="${c.key}" style="cursor:pointer;user-select:none" title="${t('Sort by','ترتيب حسب')} ${escapeHtml(colLabel(c))}">
                   <div style="display:flex;align-items:center;gap:4px;white-space:nowrap">${escapeHtml(colLabel(c))} <span class="sort-ind" data-k="${c.key}" style="opacity:.35;font-size:10px">⇅</span></div>
                 </th>`).join('')}
-              <th class="text-right">Actions</th>
+              <th data-sortable="0" style="text-align:center;width:1%;white-space:nowrap;padding-left:8px;padding-right:8px">${t('Renew', 'تجديد')}</th>
+              <th data-sortable="0" style="text-align:center;width:1%;white-space:nowrap;padding-left:8px;padding-right:8px">${t('Switch', 'تبديل')}</th>
+              <th data-sortable="0" style="text-align:center;width:1%;white-space:nowrap;padding-left:8px;padding-right:8px">${t('Edit', 'تعديل')}</th>
+              <th data-sortable="0" style="text-align:center;width:1%;white-space:nowrap;padding-left:8px;padding-right:8px">${t('Delete', 'مسح')}</th>
             </tr>
           </thead>
           <tbody id="members-tbody"></tbody>

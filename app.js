@@ -14,7 +14,7 @@ const LS_VERSION_KEY = 'blackstars-crm-dataver';
 //                a required field that needs back-filling on existing data).
 //                A bump here triggers the runMigrations() pipeline which
 //                MUTATES existing data in place rather than wiping it.
-const APP_VERSION = '6.1043.0';   // 6.1043.0 Members table: Mobile is its own column; default columns are Member (name EN), Arabic Name, Mobile, Sport, Status, Actions — Nationality, Birthdate, Coach, Attendance, Last Renewal, Expiry, Invoice show only when ticked in Columns (old saved picks are ignored once; new picks save under memberColsV3). // 6.1042.0 'Export expired' is now also shown to reception (admin + reception only; coach / student never). // 6.1041.0 Members: new 'Export expired' button — expired members with Name EN, Name AR, Mobile, Expired date, every activity and Nationality, newest expiry first (CSV with BOM so Arabic opens right in Excel). // 6.1040.0 Reception can cancel a court booking (Cancel booking button shows for reception, deleteRental allows admin + reception, and the cancel is written to the audit log). // 6.1039.0 The 'Another device also edited…' notice shows to the ADMIN only, and now says what really happens (both edits merged; a same-field clash keeps this device's value). // 6.1038.0 Members page: the 'N of N · N incl. N archived' count line is hidden for reception (still shown to the admin). // 6.1037.0 Backup download is ADMIN ONLY (a real admin account): the Backup buttons (Dashboard, Data & Backup, Backup now) are removed for reception / coach / student, and downloadBackup / downloadFullBackup refuse for them — the silent safety copies and the reminder too. // 6.1036.0 Merge invoices: the merged invoice now carries every payment row (date + method) of the invoices it replaces — it was built with no ledger, so it read as paid-in-full with no Paid on date, even when a source was unpaid. // 6.1035.0 Edit Member: the member's sports are read-only there — EVERY sport period is listed (sport, coach, dates, classes, price/paid, state) with its own ✎ to edit that period; existing rows are kept untouched on Save and + Add sport still adds a new sport. // 6.1034.0 (1) Reception: the package ✎ edit button is open and the Paid column shows what each sport has paid (other money stays hidden). (2) Destructive actions (delete sport / package / member, restore, reset, fix-file apply, auto-renew…) are always written to the audit log even when it is switched off. // 6.1033.0 (1) Product Sales: a Net profit card, column, sort and CSV columns (revenue minus the cost of what was sold — the cost saved on the sale line, else the product's current cost; lines with no known cost are flagged and counted as 0; admin only), and a normal month dropdown (every month with a sale, newest first). (2) Salaries: what each coach earned on one day (classes attended that day x the per-class commission, plus bonus and the expiry settlement of packages that ended that day).
+const APP_VERSION = '6.1045.0';   // 6.1045.0 Members table: Renew, Switch, Edit and Delete are four separate columns (icon buttons under their own headers, not sortable); the sibling-copy (duplicate) button is removed from the rows (it stays in the member card); the Mobile number itself opens WhatsApp in a new tab. // 6.1044.0 Mobile country-code picker: fixed the plain dropdown covering the country list (only one popup now, with names + search), and the list is the whole world (188 countries, English + Arabic names, search by name or code; Canada = +1). Numbers without a '+' are still guessed only against the original 35, so no existing phone changes. // 6.1043.0 Members table: Mobile is its own column; default columns are Member (name EN), Arabic Name, Mobile, Sport, Status, Actions — Nationality, Birthdate, Coach, Attendance, Last Renewal, Expiry, Invoice show only when ticked in Columns (old saved picks are ignored once; new picks save under memberColsV3). // 6.1042.0 'Export expired' is now also shown to reception (admin + reception only; coach / student never). // 6.1041.0 Members: new 'Export expired' button — expired members with Name EN, Name AR, Mobile, Expired date, every activity and Nationality, newest expiry first (CSV with BOM so Arabic opens right in Excel). // 6.1040.0 Reception can cancel a court booking (Cancel booking button shows for reception, deleteRental allows admin + reception, and the cancel is written to the audit log). // 6.1039.0 The 'Another device also edited…' notice shows to the ADMIN only, and now says what really happens (both edits merged; a same-field clash keeps this device's value). // 6.1038.0 Members page: the 'N of N · N incl. N archived' count line is hidden for reception (still shown to the admin). // 6.1037.0 Backup download is ADMIN ONLY (a real admin account): the Backup buttons (Dashboard, Data & Backup, Backup now) are removed for reception / coach / student, and downloadBackup / downloadFullBackup refuse for them — the silent safety copies and the reminder too. // 6.1036.0 Merge invoices: the merged invoice now carries every payment row (date + method) of the invoices it replaces — it was built with no ledger, so it read as paid-in-full with no Paid on date, even when a source was unpaid. // 6.1035.0 Edit Member: the member's sports are read-only there — EVERY sport period is listed (sport, coach, dates, classes, price/paid, state) with its own ✎ to edit that period; existing rows are kept untouched on Save and + Add sport still adds a new sport. // 6.1034.0 (1) Reception: the package ✎ edit button is open and the Paid column shows what each sport has paid (other money stays hidden). (2) Destructive actions (delete sport / package / member, restore, reset, fix-file apply, auto-renew…) are always written to the audit log even when it is switched off. // 6.1033.0 (1) Product Sales: a Net profit card, column, sort and CSV columns (revenue minus the cost of what was sold — the cost saved on the sale line, else the product's current cost; lines with no known cost are flagged and counted as 0; admin only), and a normal month dropdown (every month with a sale, newest first). (2) Salaries: what each coach earned on one day (classes attended that day x the per-class commission, plus bonus and the expiry settlement of packages that ended that day).
 // prev:   // 6.1032.0 Restore guard: a backup file that holds more than 20% fewer members or invoices than the app has now, or whose name says PARTIAL, is REFUSED (it would delete the difference) — only typing RESTORE overrides it; an old file or one with far fewer expenses / salaries / rentals / sales only warns. The same guard protects the on-device snapshot restore.
 // prev:   // 6.1031.0 Backup buttons: the lazy audit log is loaded before the file is written, so a backup is always complete (about 8 MB, no longer sometimes 3); if the audit log cannot be loaded you are asked and the file is named -no-audit; a coach / student login (which only sees part of the data) is warned and its file is named -PARTIAL-<role> so it is never mistaken for a full backup. The silent safety copies taken before bulk operations are unchanged.
 // prev:   // 6.1030.0 Member status: a finished Summer Camp no longer makes a member 'Completed' while another sport of his has a RUNNING package — even when that sport has no enrollment row on the card (the only one affected today read Completed with an active Taekwondo).
@@ -3858,6 +3858,62 @@ const COUNTRY_CODES = [
   { code: '+33',  flag: '🇫🇷', name: 'France' },
   { code: '+54',  flag: '🇦🇷', name: 'Argentina' },
 ];
+const CORE_COUNTRY_CODES = new Set(COUNTRY_CODES.map(c => c.code));   // the original 35 — only these are guessed from a number that has no '+'
+// v6.1044 — the rest of the world: the 35 above stay first and in their order, then the other Arab states, then A→Z. [ISO, code, name]; the flag is built from the ISO letters
+const _countryFlag = iso => String.fromCodePoint(...[...iso].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
+[
+  ['MR', '+222', 'Mauritania'], ['SO', '+252', 'Somalia'], ['DJ', '+253', 'Djibouti'],
+  ['KM', '+269', 'Comoros'], ['AF', '+93', 'Afghanistan'], ['AL', '+355', 'Albania'],
+  ['AD', '+376', 'Andorra'], ['AO', '+244', 'Angola'], ['AM', '+374', 'Armenia'],
+  ['AW', '+297', 'Aruba'], ['AU', '+61', 'Australia'], ['AT', '+43', 'Austria'],
+  ['AZ', '+994', 'Azerbaijan'], ['BS', '+1242', 'Bahamas'], ['BB', '+1246', 'Barbados'],
+  ['BY', '+375', 'Belarus'], ['BE', '+32', 'Belgium'], ['BZ', '+501', 'Belize'],
+  ['BJ', '+229', 'Benin'], ['BT', '+975', 'Bhutan'], ['BO', '+591', 'Bolivia'],
+  ['BA', '+387', 'Bosnia and Herzegovina'], ['BW', '+267', 'Botswana'], ['BR', '+55', 'Brazil'],
+  ['BN', '+673', 'Brunei'], ['BG', '+359', 'Bulgaria'], ['BF', '+226', 'Burkina Faso'],
+  ['BI', '+257', 'Burundi'], ['KH', '+855', 'Cambodia'], ['CM', '+237', 'Cameroon'],
+  ['CV', '+238', 'Cape Verde'], ['CF', '+236', 'Central African Republic'], ['TD', '+235', 'Chad'],
+  ['CL', '+56', 'Chile'], ['CN', '+86', 'China'], ['CO', '+57', 'Colombia'],
+  ['CG', '+242', 'Congo'], ['CD', '+243', 'DR Congo'], ['CR', '+506', 'Costa Rica'],
+  ['CI', '+225', 'Ivory Coast'], ['HR', '+385', 'Croatia'], ['CU', '+53', 'Cuba'],
+  ['CW', '+599', 'Curacao'], ['CY', '+357', 'Cyprus'], ['CZ', '+420', 'Czechia'],
+  ['DK', '+45', 'Denmark'], ['DO', '+1809', 'Dominican Republic'], ['EC', '+593', 'Ecuador'],
+  ['SV', '+503', 'El Salvador'], ['GQ', '+240', 'Equatorial Guinea'], ['ER', '+291', 'Eritrea'],
+  ['EE', '+372', 'Estonia'], ['SZ', '+268', 'Eswatini'], ['ET', '+251', 'Ethiopia'],
+  ['FJ', '+679', 'Fiji'], ['FI', '+358', 'Finland'], ['GA', '+241', 'Gabon'],
+  ['GM', '+220', 'Gambia'], ['GE', '+995', 'Georgia'], ['GH', '+233', 'Ghana'],
+  ['GI', '+350', 'Gibraltar'], ['GR', '+30', 'Greece'], ['GL', '+299', 'Greenland'],
+  ['GT', '+502', 'Guatemala'], ['GN', '+224', 'Guinea'], ['GW', '+245', 'Guinea-Bissau'],
+  ['GY', '+592', 'Guyana'], ['HT', '+509', 'Haiti'], ['HN', '+504', 'Honduras'],
+  ['HK', '+852', 'Hong Kong'], ['HU', '+36', 'Hungary'], ['IS', '+354', 'Iceland'],
+  ['IE', '+353', 'Ireland'], ['IT', '+39', 'Italy'], ['JM', '+1876', 'Jamaica'],
+  ['JP', '+81', 'Japan'], ['KR', '+82', 'South Korea'], ['KP', '+850', 'North Korea'],
+  ['XK', '+383', 'Kosovo'], ['KG', '+996', 'Kyrgyzstan'], ['LA', '+856', 'Laos'],
+  ['LV', '+371', 'Latvia'], ['LS', '+266', 'Lesotho'], ['LR', '+231', 'Liberia'],
+  ['LI', '+423', 'Liechtenstein'], ['LT', '+370', 'Lithuania'], ['LU', '+352', 'Luxembourg'],
+  ['MO', '+853', 'Macau'], ['MG', '+261', 'Madagascar'], ['MW', '+265', 'Malawi'],
+  ['MV', '+960', 'Maldives'], ['ML', '+223', 'Mali'], ['MT', '+356', 'Malta'],
+  ['MU', '+230', 'Mauritius'], ['MX', '+52', 'Mexico'], ['MD', '+373', 'Moldova'],
+  ['MC', '+377', 'Monaco'], ['MN', '+976', 'Mongolia'], ['ME', '+382', 'Montenegro'],
+  ['MZ', '+258', 'Mozambique'], ['MM', '+95', 'Myanmar'], ['NA', '+264', 'Namibia'],
+  ['NL', '+31', 'Netherlands'], ['NZ', '+64', 'New Zealand'], ['NI', '+505', 'Nicaragua'],
+  ['NE', '+227', 'Niger'], ['NG', '+234', 'Nigeria'], ['MK', '+389', 'North Macedonia'],
+  ['NO', '+47', 'Norway'], ['PA', '+507', 'Panama'], ['PG', '+675', 'Papua New Guinea'],
+  ['PY', '+595', 'Paraguay'], ['PE', '+51', 'Peru'], ['PL', '+48', 'Poland'],
+  ['PT', '+351', 'Portugal'], ['PR', '+1787', 'Puerto Rico'], ['RO', '+40', 'Romania'],
+  ['RU', '+7', 'Russia / Kazakhstan'], ['RW', '+250', 'Rwanda'], ['WS', '+685', 'Samoa'],
+  ['SM', '+378', 'San Marino'], ['ST', '+239', 'Sao Tome and Principe'], ['SN', '+221', 'Senegal'],
+  ['RS', '+381', 'Serbia'], ['SC', '+248', 'Seychelles'], ['SL', '+232', 'Sierra Leone'],
+  ['SG', '+65', 'Singapore'], ['SK', '+421', 'Slovakia'], ['SI', '+386', 'Slovenia'],
+  ['SB', '+677', 'Solomon Islands'], ['SS', '+211', 'South Sudan'], ['ES', '+34', 'Spain'],
+  ['SR', '+597', 'Suriname'], ['SE', '+46', 'Sweden'], ['CH', '+41', 'Switzerland'],
+  ['TW', '+886', 'Taiwan'], ['TJ', '+992', 'Tajikistan'], ['TZ', '+255', 'Tanzania'],
+  ['TH', '+66', 'Thailand'], ['TL', '+670', 'Timor-Leste'], ['TG', '+228', 'Togo'],
+  ['TO', '+676', 'Tonga'], ['TT', '+1868', 'Trinidad and Tobago'], ['TM', '+993', 'Turkmenistan'],
+  ['UG', '+256', 'Uganda'], ['UA', '+380', 'Ukraine'], ['UY', '+598', 'Uruguay'],
+  ['UZ', '+998', 'Uzbekistan'], ['VU', '+678', 'Vanuatu'], ['VE', '+58', 'Venezuela'],
+  ['VN', '+84', 'Vietnam'], ['ZM', '+260', 'Zambia'], ['ZW', '+263', 'Zimbabwe'],
+].forEach(r => COUNTRY_CODES.push({ code: r[1], flag: _countryFlag(r[0]), name: r[2] }));
 const DEFAULT_COUNTRY_CODE = '+974';
 const MIN_MEMBER_AGE = 2;   // youngest member the club takes (was 3)
 const MIN_PHONE_DIGITS = 8;  // National-number portion (excluding country code)
@@ -3888,6 +3944,7 @@ function parseStoredPhone(stored) {
   // This catches CSV imports / legacy data where the leading '+' was missing.
   // Example: "97450012345" → +974 + 50012345
   for (const c of codesSorted) {
+    if (!CORE_COUNTRY_CODES.has(c.code)) continue;   // v6.1044 — the new codes need an explicit '+' (a bare local number must not turn into Brazil / Spain …)
     const digitsOfCode = c.code.replace('+', '');
     if (cleaned.startsWith(digitsOfCode) &&
         cleaned.length - digitsOfCode.length >= MIN_PHONE_DIGITS) {
@@ -3963,6 +4020,162 @@ const COUNTRY_EXTRA = {
   '+1': { ar: 'أمريكا كندا', alt: 'united states america canada us' }, '+49': { ar: 'ألمانيا', alt: '' }, '+33': { ar: 'فرنسا', alt: '' },
   '+54': { ar: 'الأرجنتين', alt: 'argentine' },
 };
+// v6.1044 — Arabic names + aliases for the rest of the world (search by Arabic or English name, or by code)
+Object.assign(COUNTRY_EXTRA, {
+  '+222': { ar: 'موريتانيا', alt: '' },
+  '+252': { ar: 'الصومال', alt: '' },
+  '+253': { ar: 'جيبوتي', alt: '' },
+  '+269': { ar: 'جزر القمر', alt: '' },
+  '+93': { ar: 'أفغانستان', alt: '' },
+  '+355': { ar: 'ألبانيا', alt: '' },
+  '+376': { ar: 'أندورا', alt: '' },
+  '+244': { ar: 'أنغولا', alt: '' },
+  '+374': { ar: 'أرمينيا', alt: '' },
+  '+297': { ar: 'أروبا', alt: '' },
+  '+61': { ar: 'أستراليا', alt: '' },
+  '+43': { ar: 'النمسا', alt: '' },
+  '+994': { ar: 'أذربيجان', alt: '' },
+  '+1242': { ar: 'جزر الباهاما', alt: '' },
+  '+1246': { ar: 'بربادوس', alt: '' },
+  '+375': { ar: 'بيلاروسيا', alt: '' },
+  '+32': { ar: 'بلجيكا', alt: '' },
+  '+501': { ar: 'بليز', alt: '' },
+  '+229': { ar: 'بنين', alt: '' },
+  '+975': { ar: 'بوتان', alt: '' },
+  '+591': { ar: 'بوليفيا', alt: '' },
+  '+387': { ar: 'البوسنة والهرسك', alt: 'bosnia' },
+  '+267': { ar: 'بوتسوانا', alt: '' },
+  '+55': { ar: 'البرازيل', alt: 'brasil' },
+  '+673': { ar: 'بروناي', alt: '' },
+  '+359': { ar: 'بلغاريا', alt: '' },
+  '+226': { ar: 'بوركينا فاسو', alt: '' },
+  '+257': { ar: 'بوروندي', alt: '' },
+  '+855': { ar: 'كمبوديا', alt: '' },
+  '+237': { ar: 'الكاميرون', alt: '' },
+  '+238': { ar: 'الرأس الأخضر', alt: 'cabo verde' },
+  '+236': { ar: 'أفريقيا الوسطى', alt: '' },
+  '+235': { ar: 'تشاد', alt: '' },
+  '+56': { ar: 'تشيلي', alt: '' },
+  '+86': { ar: 'الصين', alt: '' },
+  '+57': { ar: 'كولومبيا', alt: '' },
+  '+242': { ar: 'الكونغو', alt: 'brazzaville' },
+  '+243': { ar: 'الكونغو الديمقراطية', alt: 'kinshasa democratic republic' },
+  '+506': { ar: 'كوستاريكا', alt: '' },
+  '+225': { ar: 'ساحل العاج', alt: 'cote d ivoire' },
+  '+385': { ar: 'كرواتيا', alt: '' },
+  '+53': { ar: 'كوبا', alt: '' },
+  '+599': { ar: 'كوراساو', alt: '' },
+  '+357': { ar: 'قبرص', alt: '' },
+  '+420': { ar: 'التشيك', alt: 'czech republic' },
+  '+45': { ar: 'الدنمارك', alt: '' },
+  '+1809': { ar: 'الدومينيكان', alt: '' },
+  '+593': { ar: 'الإكوادور', alt: '' },
+  '+503': { ar: 'السلفادور', alt: '' },
+  '+240': { ar: 'غينيا الاستوائية', alt: '' },
+  '+291': { ar: 'إريتريا', alt: '' },
+  '+372': { ar: 'إستونيا', alt: '' },
+  '+268': { ar: 'إسواتيني', alt: 'swaziland' },
+  '+251': { ar: 'إثيوبيا', alt: '' },
+  '+679': { ar: 'فيجي', alt: '' },
+  '+358': { ar: 'فنلندا', alt: '' },
+  '+241': { ar: 'الغابون', alt: '' },
+  '+220': { ar: 'غامبيا', alt: '' },
+  '+995': { ar: 'جورجيا', alt: '' },
+  '+233': { ar: 'غانا', alt: '' },
+  '+350': { ar: 'جبل طارق', alt: '' },
+  '+30': { ar: 'اليونان', alt: '' },
+  '+299': { ar: 'غرينلاند', alt: '' },
+  '+502': { ar: 'غواتيمالا', alt: '' },
+  '+224': { ar: 'غينيا', alt: '' },
+  '+245': { ar: 'غينيا بيساو', alt: '' },
+  '+592': { ar: 'غيانا', alt: '' },
+  '+509': { ar: 'هايتي', alt: '' },
+  '+504': { ar: 'هندوراس', alt: '' },
+  '+852': { ar: 'هونغ كونغ', alt: '' },
+  '+36': { ar: 'المجر', alt: 'hungarian' },
+  '+354': { ar: 'آيسلندا', alt: '' },
+  '+353': { ar: 'أيرلندا', alt: '' },
+  '+39': { ar: 'إيطاليا', alt: '' },
+  '+1876': { ar: 'جامايكا', alt: '' },
+  '+81': { ar: 'اليابان', alt: '' },
+  '+82': { ar: 'كوريا الجنوبية', alt: 'korea' },
+  '+850': { ar: 'كوريا الشمالية', alt: 'korea' },
+  '+383': { ar: 'كوسوفو', alt: '' },
+  '+996': { ar: 'قيرغيزستان', alt: '' },
+  '+856': { ar: 'لاوس', alt: '' },
+  '+371': { ar: 'لاتفيا', alt: '' },
+  '+266': { ar: 'ليسوتو', alt: '' },
+  '+231': { ar: 'ليبيريا', alt: '' },
+  '+423': { ar: 'ليختنشتاين', alt: '' },
+  '+370': { ar: 'ليتوانيا', alt: '' },
+  '+352': { ar: 'لوكسمبورغ', alt: '' },
+  '+853': { ar: 'ماكاو', alt: 'macao' },
+  '+261': { ar: 'مدغشقر', alt: '' },
+  '+265': { ar: 'مالاوي', alt: '' },
+  '+960': { ar: 'جزر المالديف', alt: '' },
+  '+223': { ar: 'مالي', alt: '' },
+  '+356': { ar: 'مالطا', alt: '' },
+  '+230': { ar: 'موريشيوس', alt: '' },
+  '+52': { ar: 'المكسيك', alt: '' },
+  '+373': { ar: 'مولدوفا', alt: '' },
+  '+377': { ar: 'موناكو', alt: '' },
+  '+976': { ar: 'منغوليا', alt: '' },
+  '+382': { ar: 'الجبل الأسود', alt: '' },
+  '+258': { ar: 'موزمبيق', alt: '' },
+  '+95': { ar: 'ميانمار', alt: 'burma' },
+  '+264': { ar: 'ناميبيا', alt: '' },
+  '+31': { ar: 'هولندا', alt: 'holland' },
+  '+64': { ar: 'نيوزيلندا', alt: '' },
+  '+505': { ar: 'نيكاراغوا', alt: '' },
+  '+227': { ar: 'النيجر', alt: '' },
+  '+234': { ar: 'نيجيريا', alt: '' },
+  '+389': { ar: 'مقدونيا الشمالية', alt: 'macedonia' },
+  '+47': { ar: 'النرويج', alt: '' },
+  '+507': { ar: 'بنما', alt: '' },
+  '+675': { ar: 'بابوا غينيا الجديدة', alt: '' },
+  '+595': { ar: 'باراغواي', alt: '' },
+  '+51': { ar: 'بيرو', alt: '' },
+  '+48': { ar: 'بولندا', alt: '' },
+  '+351': { ar: 'البرتغال', alt: '' },
+  '+1787': { ar: 'بورتوريكو', alt: '' },
+  '+40': { ar: 'رومانيا', alt: '' },
+  '+7': { ar: 'روسيا كازاخستان', alt: 'russian kazakh' },
+  '+250': { ar: 'رواندا', alt: '' },
+  '+685': { ar: 'ساموا', alt: '' },
+  '+378': { ar: 'سان مارينو', alt: '' },
+  '+239': { ar: 'ساو تومي وبرينسيبي', alt: '' },
+  '+221': { ar: 'السنغال', alt: '' },
+  '+381': { ar: 'صربيا', alt: '' },
+  '+248': { ar: 'سيشل', alt: '' },
+  '+232': { ar: 'سيراليون', alt: '' },
+  '+65': { ar: 'سنغافورة', alt: '' },
+  '+421': { ar: 'سلوفاكيا', alt: '' },
+  '+386': { ar: 'سلوفينيا', alt: '' },
+  '+677': { ar: 'جزر سليمان', alt: '' },
+  '+211': { ar: 'جنوب السودان', alt: '' },
+  '+34': { ar: 'إسبانيا', alt: '' },
+  '+597': { ar: 'سورينام', alt: '' },
+  '+46': { ar: 'السويد', alt: '' },
+  '+41': { ar: 'سويسرا', alt: '' },
+  '+886': { ar: 'تايوان', alt: '' },
+  '+992': { ar: 'طاجيكستان', alt: '' },
+  '+255': { ar: 'تنزانيا', alt: '' },
+  '+66': { ar: 'تايلاند', alt: '' },
+  '+670': { ar: 'تيمور الشرقية', alt: 'east timor' },
+  '+228': { ar: 'توغو', alt: '' },
+  '+676': { ar: 'تونغا', alt: '' },
+  '+1868': { ar: 'ترينيداد وتوباغو', alt: '' },
+  '+993': { ar: 'تركمانستان', alt: '' },
+  '+256': { ar: 'أوغندا', alt: '' },
+  '+380': { ar: 'أوكرانيا', alt: '' },
+  '+598': { ar: 'أوروغواي', alt: '' },
+  '+998': { ar: 'أوزبكستان', alt: '' },
+  '+678': { ar: 'فانواتو', alt: '' },
+  '+58': { ar: 'فنزويلا', alt: '' },
+  '+84': { ar: 'فيتنام', alt: '' },
+  '+260': { ar: 'زامبيا', alt: '' },
+  '+263': { ar: 'زيمبابوي', alt: '' },
+});
 // Countries matching a query: by name (EN / AR / aliases) or by code. '' → all. Code digits match from the start ("97" → 974, 971, 966…).
 function countrySearch(q) {
   const s = String(q || '').trim().toLowerCase().replace(/^\+/, '').replace(/^00/, '');
@@ -7282,6 +7495,7 @@ function phoneCell(phone, opts = {}) {
   // Real WhatsApp glyph in WhatsApp green. The 💬 emoji used to render on Windows as a plain
   // speech balloon that reads as "…", so nobody could tell it opened WhatsApp. (v6.370)
   const icon = (typeof waIconSvg === 'function') ? waIconSvg(13) : '💬';
+  if (opts.link) return `<a href="${url}" target="_blank" rel="noopener" onclick="${stop}" title="Open WhatsApp" style="color:inherit;text-decoration:none;white-space:nowrap">${escapeHtml(phone)} <span style="color:#25D366;vertical-align:middle;margin-left:3px">${icon}</span></a>`;   // v6.1045 — the whole number is the WhatsApp link
   return `<span style="white-space:nowrap">${escapeHtml(phone)} <a href="${url}" target="_blank" onclick="${stop}" title="Open WhatsApp" style="color:#25D366;text-decoration:none;vertical-align:middle;margin-left:3px">${icon}</a></span>`;
 }
 
@@ -8000,6 +8214,7 @@ if (typeof window !== 'undefined') window.searchableSelectGroups = searchableSel
     if (!s || String(s.tagName).toUpperCase() !== 'SELECT' || s.multiple || s.disabled || (s.size && s.size > 1)) return false;
     if (isTouchUI()) return false;   // v6.802 — native picker on touch screens
     if (s.dataset && s.dataset.native != null) return false;
+    if (s.dataset && s.dataset.cc != null) return false;   // v6.1044 — the country-code select has its own picker (names + codes); both popups opened and the plain one hid it
     if (s.closest && s.closest('.ss-pop')) return false;
     return (s.options ? s.options.length : 0) >= SEARCHABLE_SELECT_MIN;
   }
