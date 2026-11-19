@@ -1554,7 +1554,7 @@ PAGES.members = (main) => {
   // filter: 'fuzzy' | 'text' | 'select' | 'date' | null. opts() supplies <select> values.
   // v6.449 — Arabic column headers; French comes through t() via the English label.
   const MEMBER_COL_AR = {
-    name:'العضو', arabicName:'الاسم بالعربي', qid:'الرقم الشخصي', nationality:'الجنسية',
+    name:'العضو', arabicName:'الاسم بالعربي', phone:'الجوال', qid:'الرقم الشخصي', nationality:'الجنسية',
     email:'البريد الإلكتروني', phone2:'هاتف 2', joinDate:'تاريخ الانضمام', created:'تاريخ الإنشاء',
     level:'المستوى', birthdate:'تاريخ الميلاد', outstanding:'المستحقات', sport:'الرياضة',
     coach:'المدرب', attendance:'الحضور', lastRenewal:'آخر تجديد', expiry:'الانتهاء',
@@ -1568,12 +1568,14 @@ PAGES.members = (main) => {
         getVal: m => m.name || '',
         cell: m => `<div style="display:flex;align-items:center;gap:10px">
             ${memberAvatarHtml(m, 32)}
-            <div><div style="font-weight:600">${escapeHtml(m.name)}</div>
-            <div class="text-mute" style="font-size:11px">${isRealPhone(m.phone) ? phoneCell(m.phone) : (m.email ? escapeHtml(m.email) : '')}</div></div>
+            <div style="font-weight:600">${escapeHtml(m.name)}</div>
           </div>` },
       { key: 'arabicName', label: 'Arabic Name', def: true, filter: 'fuzzy',
         sortVal: m => (m.nameArabic || ''), getVal: m => m.nameArabic || '',
         cell: m => m.nameArabic ? `<span dir="rtl">${escapeHtml(m.nameArabic)}</span>` : dash },
+      { key: 'phone', label: 'Mobile', def: true, filter: 'text',
+        sortVal: m => (m.phone || ''), getVal: m => m.phone || '',
+        cell: m => isRealPhone(m.phone) ? phoneCell(m.phone) : dash },
       { key: 'qid', label: 'QID', def: false, filter: 'text',
         sortVal: m => (m.qid || ''), getVal: m => m.qid || '',
         cell: m => m.qid ? escapeHtml(m.qid) : dash },
@@ -1615,7 +1617,7 @@ PAGES.members = (main) => {
       // Show EVERY coach the member trains with, not just the headline one — a member whose
       // coach sits on an enrollment (or a camp member with no headline coach) used to read "—"
       // even though the coach filter right below correctly returned them.
-      { key: 'coach', label: 'Coach', def: true, filter: 'select',
+      { key: 'coach', label: 'Coach', def: false, filter: 'select',
         opts: () => distinct(state.coaches.map(c => c.name)),
         sortVal: m => (memberCoachNames(m)[0] || '').toLowerCase(),
         getVal: m => memberCoachNames(m).join(', '),
@@ -1625,12 +1627,12 @@ PAGES.members = (main) => {
           return escapeHtml(names[0]) + (names.length > 1
             ? ` <span class="badge blue" style="font-size:9px;padding:1px 5px" title="${escapeHtml(names.join(', '))}">+${names.length - 1}</span>` : '');
         } },
-      { key: 'attendance', label: 'Attendance', def: true, filter: null, num: true,
+      { key: 'attendance', label: 'Attendance', def: false, filter: null, num: true,
         sortVal: m => attPctVal(m), getVal: m => '', cell: m => attCellHtml(m) },
-      { key: 'lastRenewal', label: 'Last Renewal', def: true, filter: 'date',
+      { key: 'lastRenewal', label: 'Last Renewal', def: false, filter: 'date',
         sortVal: m => (lastRenewalDate(m) || ''), getVal: m => lastRenewalDate(m) || '',
         cell: m => { const lr = lastRenewalDate(m); return lr ? fmtDate(lr) : dash; } },
-      { key: 'expiry', label: 'Expiry', def: true, filter: 'date',
+      { key: 'expiry', label: 'Expiry', def: false, filter: 'date',
         sortVal: m => (m.expiryDate || ''), getVal: m => m.expiryDate || '',
         cell: m => expiryCellHtml(m) },
       { key: 'status', label: 'Status', def: true, filter: 'select',
@@ -1640,7 +1642,7 @@ PAGES.members = (main) => {
       // Invoice-health light (v6.304.0) — read-only; June-kick-off scoped. Sort brings
       // 🔴 conflicts to the top so reception can work through them. getVal feeds search
       // (type "conflict" to surface them) + CSV export; never throws (health is guarded).
-      { key: 'invoiceHealth', label: 'Invoice', def: true, filter: null,
+      { key: 'invoiceHealth', label: 'Invoice', def: false, filter: null,
         sortVal: m => { const s = (window.memberInvoiceHealth ? window.memberInvoiceHealth(m) : {}).status; return s === 'red' ? 0 : s === 'noinv' ? 1 : s === 'green' ? 2 : 3; },
         getVal: m => { const s = (window.memberInvoiceHealth ? window.memberInvoiceHealth(m) : {}).status; return s === 'red' ? 'invoice conflict' : s === 'noinv' ? 'no invoice' : s === 'green' ? 'invoice ok' : ''; },
         cell: m => {
@@ -1655,7 +1657,7 @@ PAGES.members = (main) => {
   }
   function isColVisible(c) {
     if (c.always) return true;
-    const saved = state.settings && Array.isArray(state.settings.memberColsV2) ? state.settings.memberColsV2 : null;
+    const saved = state.settings && Array.isArray(state.settings.memberColsV3) ? state.settings.memberColsV3 : null;   // V3: the old saved picks (V2) are ignored once, new default = Name EN, Name AR, Mobile, Sport, Status
     return saved ? saved.includes(c.key) : c.def;
   }
   function visibleColumns() { return allColumns().filter(isColVisible); }
@@ -1665,7 +1667,7 @@ PAGES.members = (main) => {
     showModal({
       title: '🧩 ' + t('Columns', 'الأعمدة'),
       body: `<div style="font-size:13px;line-height:1.6">
-        <p class="text-mute">${t('Tick the columns to show. Only <b>Member</b> (English name + mobile) is always shown.', 'حدّد الأعمدة التي تريد عرضها. يظهر عمود <b>العضو</b> (الاسم بالإنجليزية + الجوال) دائماً.')}</p>
+        <p class="text-mute">${t('Tick the columns to show. Only <b>Member</b> (the English name) is always shown.', 'حدّد الأعمدة التي تريد عرضها. يظهر عمود <b>العضو</b> (الاسم بالإنجليزية) دائماً.')}</p>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px">
           ${cols.map(c => `<label style="display:flex;align-items:center;gap:8px;cursor:${c.always ? 'not-allowed' : 'pointer'};opacity:${c.always ? '.6' : '1'}">
             <input type="checkbox" class="mcol-cb" value="${c.key}" ${isColVisible(c) ? 'checked' : ''} ${c.always ? 'disabled checked' : ''}> ${escapeHtml(colLabel(c))}${c.always ? ` <span class="text-mute" style="font-size:10px">(${t('always', 'دائماً')})</span>` : ''}
@@ -1673,12 +1675,12 @@ PAGES.members = (main) => {
         </div>
       </div>`,
       actions: [
-        { label: t('Reset to default', 'إعادة للوضع الافتراضي'), class: 'btn ghost', onclick: () => { if (state.settings) delete state.settings.memberColsV2; save(); closeModal(); render(); } },
+        { label: t('Reset to default', 'إعادة للوضع الافتراضي'), class: 'btn ghost', onclick: () => { if (state.settings) delete state.settings.memberColsV3; save(); closeModal(); render(); } },
         { label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal },
         { label: t('Apply', 'تطبيق'), class: 'btn primary', onclick: () => {
             const chosen = $$('.mcol-cb').filter(cb => cb.checked && !cb.disabled).map(cb => cb.value);
             if (!state.settings) state.settings = {};
-            state.settings.memberColsV2 = chosen; save(); closeModal(); render();
+            state.settings.memberColsV3 = chosen; save(); closeModal(); render();
           } },
       ],
     });
@@ -2049,6 +2051,7 @@ PAGES.members = (main) => {
         <button class="btn ghost" id="find-duplicates" title="${t('Scan all members for duplicate phone numbers', 'فحص جميع الأعضاء بحثاً عن أرقام هواتف مكررة')}">🔍 ${t('Find Duplicates', 'بحث عن مكررات')}</button>
         <button class="btn ghost" id="member-columns" title="${t('Show / hide table columns', 'إظهار / إخفاء أعمدة الجدول')}">🧩 ${t('Columns', 'الأعمدة')}</button>
         ${isViewerRole() ? '' : `<button class="btn ghost" id="export-members">📥 ${t('Export CSV', 'تصدير CSV')}</button>`}
+        ${['admin', 'receptionist'].includes(currentRole()) ? `<button class="btn ghost" id="export-expired"title="${t('Expired members: name, Arabic name, mobile, expiry date, activities, nationality', 'الأعضاء المنتهية: الاسم، الاسم العربي، الموبايل، تاريخ الانتهاء، الأنشطة، الجنسية')}">📥 ${t('Export expired', 'تصدير المنتهية')}</button>` : ''}
         <button class="btn primary" id="add-member">+ ${t('Add Member', 'إضافة عضو')}</button>
       </div>
     </div>
@@ -2272,6 +2275,7 @@ PAGES.members = (main) => {
   });
   $('#add-member').addEventListener('click', () => addMember());
   $('#export-members')?.addEventListener('click', () => exportMembersChoice());   // hidden for viewer/reception role
+  $('#export-expired')?.addEventListener('click', () => exportExpiredMembersCSV());   // admin + reception
   const colBtn = $('#member-columns'); if (colBtn) colBtn.addEventListener('click', () => openMemberColumns());
   $('#find-duplicates').addEventListener('click', showDuplicatesModal);
 
@@ -5231,6 +5235,21 @@ function exportMembersCSV(list) {
   const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
   downloadFile('members.csv', csv, 'text/csv');
   toast(`Exported ${members.length} member${members.length === 1 ? '' : 's'}`);
+}
+
+// Expired members only: Name, Arabic name, mobile, expiry, every sport he had, nationality
+function exportExpiredMembersCSV() {
+  if (!['admin', 'receptionist'].includes(currentRole())) { toast(t('Not available for your role', 'غير متاح لصلاحيتك'), 'error'); return; }
+  const list = state.members.filter(m => m && !m.deleted && memberStatus(m) === 'Expired').sort((a, b) => String(b.expiryDate || '').localeCompare(String(a.expiryDate || '')));
+  if (!list.length) { toast(t('No expired members', 'لا يوجد أعضاء منتهية'), 'error'); return; }
+  const rows = [['Name (EN)', 'Name (AR)', 'Mobile', 'Expired date', 'Activities', 'Nationality']];
+  for (const m of list) {
+    const acts = [...new Set([].concat((m.subscriptions || []).filter(s => s && !s.deleted).map(s => s.activity), (m.enrollments || []).map(e => e.sport), [m.sport]).filter(Boolean))].join(' / ');
+    rows.push([m.name || '', m.nameArabic || '', m.phone || m.phone2 || '', m.expiryDate || '', acts, m.nationality || '']);
+  }
+  const csv = '﻿' + rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\r\n');   // BOM so Excel reads the Arabic
+  downloadFile('expired-members-' + TODAY + '.csv', csv, 'text/csv;charset=utf-8');
+  toast(t('Exported ' + list.length + ' expired members', 'تم تصدير ' + list.length + ' عضو منتهي'));
 }
 
 // ─── COACHES ──────────────────────────────────────────────────
