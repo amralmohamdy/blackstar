@@ -694,7 +694,8 @@
         // deletes still propagate. This makes "disappearance ≠ silent mass wipe".
         var _stateHas = state && (name in state) && state[name] != null;
         var _allowWipe = (typeof window !== 'undefined' && window.__allowEmptySave);
-        if (_stateHas || _allowWipe) {
+        // loginLogs is append-only on the server (rules: no delete). A Restore that drops a newer login row used to become a DELETE, the server refused it and the whole atomic save was blocked.
+        if ((_stateHas || _allowWipe) && name !== 'loginLogs') {
           var delIds = []; baseMap.forEach(function (_v, id) { if (!curIdx.has(id)) delIds.push(id); });
           var baseN = baseMap.size, massDrop = baseN >= 8 && curIdx.size < baseN * 0.5;
           if (delIds.length && massDrop && !_allowWipe) {

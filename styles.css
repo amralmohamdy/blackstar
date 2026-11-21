@@ -1965,3 +1965,4 @@ body.modal-open #bs-notif-float { z-index: 60 !important; }   /* v6.776 — belo
 #members-table-wrap thead th { font-size: max(11px, 0.8em); }
 #members-table-wrap tbody td { padding-top: 0.85em; padding-bottom: 0.85em; }
 #members-table-wrap .badge { font-size: 0.85em; padding: 0.35em 0.95em; }
+#members-table-wrap th, #members-table-wrap td { padding-left: 0.75em; padding-right: 0.75em; }

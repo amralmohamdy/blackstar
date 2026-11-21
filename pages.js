@@ -1627,7 +1627,7 @@ PAGES.members = (main) => {
           return escapeHtml(names[0]) + (names.length > 1
             ? ` <span class="badge blue" style="font-size:9px;padding:1px 5px" title="${escapeHtml(names.join(', '))}">+${names.length - 1}</span>` : '');
         } },
-      { key: 'attendance', label: 'Attendance', def: false, filter: null, num: true,
+      { key: 'attendance', label: 'Attendance', def: true, filter: null, num: true,
         sortVal: m => attPctVal(m), getVal: m => '', cell: m => attCellHtml(m) },
       { key: 'lastRenewal', label: 'Last Renewal', def: false, filter: 'date',
         sortVal: m => (lastRenewalDate(m) || ''), getVal: m => lastRenewalDate(m) || '',
@@ -4163,14 +4163,14 @@ function payChoiceHtml(p, hint) {
     + '<div style="font-size:11px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">💳 ' + t('Payment', 'الدفع') + (hint ? ' <span class="text-mute" style="font-weight:400;text-transform:none">' + hint + '</span>' : '') + '</div>'
     + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
     + '<select id="' + p + '-mode" onchange="document.getElementById(\'' + p + '-amt\').style.display=this.value===\'part\'?\'\':\'none\';document.getElementById(\'' + p + '-method\').style.display=this.value===\'due\'?\'none\':\'\'">'
-    + '<option value="full">' + t('Paid in full', 'مدفوع بالكامل') + '</option><option value="part">' + t('Part paid…', 'دفع جزئي…') + '</option><option value="due">' + t('Leave due (pay later)', 'اتركه مستحقاً (يُدفع لاحقاً)') + '</option></select>'
-    + '<select id="' + p + '-method"><option value="cash">' + t('Cash', 'نقدي') + '</option><option value="card">' + t('Card', 'بطاقة') + '</option><option value="fawran">Fawran</option><option value="transfer">' + t('Transfer', 'تحويل') + '</option></select>'
+    + '<option value="due">' + t('Leave due (pay later)', 'اتركه مستحقاً (يُدفع لاحقاً)') + '</option><option value="full">' + t('Paid in full', 'مدفوع بالكامل') + '</option><option value="part">' + t('Part paid…', 'دفع جزئي…') + '</option></select>'
+    + '<select id="' + p + '-method" style="display:none"><option value="cash">' + t('Cash', 'نقدي') + '</option><option value="card">' + t('Card', 'بطاقة') + '</option><option value="fawran">Fawran</option><option value="transfer">' + t('Transfer', 'تحويل') + '</option></select>'
     + '<input id="' + p + '-amt" type="number" min="0" step="1" inputmode="numeric" placeholder="' + t('paid now', 'المدفوع الآن') + '" style="display:none;width:120px" />'
     + '</div></div>';
 }
 function readPayChoice(p, total) {
   const el = id => document.getElementById(p + '-' + id);
-  const mode = (el('mode') || {}).value || 'full', method = (el('method') || {}).value || 'cash';
+  const mode = (el('mode') || {}).value || 'due', method = (el('method') || {}).value || 'cash';
   if (mode === 'due') return { ok: true, mode, method, amount: 0 };
   if (mode === 'part') {
     const amt = Math.round((parseFloat((el('amt') || {}).value) || 0) * 100) / 100;
@@ -14709,7 +14709,7 @@ function addInvoice() {
       </div>
       <div class="form-row">
         <div class="field"><label>Date</label><input id="f-date" type="date" value="${TODAY}" /></div>
-        <div class="field"><label>Paid now (QAR) <span class="text-mute" style="font-size:10px;font-weight:400">(blank = full)</span></label><input id="f-paid" type="number" min="0" step="0.01" placeholder="full amount" /></div>
+        <div class="field"><label>Paid now (QAR) <span class="text-mute" style="font-size:10px;font-weight:400">(blank = due)</span></label><input id="f-paid" type="number" min="0" step="0.01" placeholder="0 = due" /></div>
       </div>
       <div class="field"><label>Match member (optional)</label>${memberPickerHtml('f-cust', { placeholder: '— none —' })}</div>
       <div class="field" style="margin-top:8px"><label>${t('Walk-in name', 'اسم زائر')} <span class="text-mute" style="font-size:10px">(${t('optional — remembered for next time', 'اختياري — يُحفظ للمرة القادمة')})</span></label><input id="f-wname" placeholder="${t('Type to pick a previous walk-in', 'اكتب لاختيار زائر سابق')}" /></div>
@@ -14745,7 +14745,7 @@ function addInvoice() {
     const sport = $('#f-sport').value || null;
     // Partial payment: "Paid now" defaults to the full amount.
     const paidRaw = $('#f-paid')?.value;
-    const paidNow = (paidRaw === '' || paidRaw == null) ? amt : Math.max(0, Math.min(parseFloat(paidRaw) || 0, amt));
+    const paidNow = (paidRaw === '' || paidRaw == null) ? 0 : Math.max(0, Math.min(parseFloat(paidRaw) || 0, amt));
     // Block accidental duplicates: same member + sport + month + amount.
     if (category === 'Membership' && custId) {
       const dup = findDuplicateInvoiceOf(custId, sport, mth, amt, null);
@@ -21643,6 +21643,16 @@ window.markPackagePrivate = function (idx, approach) {
   openPrivateCheck(mk);
   try { if (state.route === 'salaries') render(); } catch (_) {}
 };
+// v6.1050 — who is listed on Salaries for a month: every ACTIVE person; a person who LEFT only while that month holds money for them (pay, advance, owed, pending, carried, a late adjustment, or anything paid); nobody else. 'inactive' = the full archive list.
+function salaryHasMoney(p) {
+  const z = v => Math.abs(Number(v) || 0) > 0.005;
+  return !!p && (z(p.gross) || z(p.net) || z(p.advance) || z(p.commissionPending) || z(p.privateBonusPending) || z(p.receptionBonusPending) || z(p.carriedIn) || z(p.carriedOut) || z(p.lateIn) || z(p.paidTotal) || z(p.paidExtra) || z(p.expensePaid));
+}
+function salaryRowShown(c, p, set) {
+  if (!c || !p) return false;
+  if (set === 'inactive') return !isCoachActive(c);
+  return isCoachActive(c) || salaryHasMoney(p);
+}
 PAGES.salaries = (main) => {
   if (currentRole() === 'admin' && typeof salaryBaselineBackfill === 'function') setTimeout(() => { try { if (salaryBaselineBackfill() > 0) save(); } catch (_) {} }, 2500);   // v6.924 — settled months get today's lines as their baseline
   // Persist the chosen month + settle date on `window` so paying someone (which triggers a global
@@ -21650,7 +21660,6 @@ PAGES.salaries = (main) => {
   // the latest/current month. (v6.363)
   // v6.645: 'active' (default) | 'inactive' (deactivated coaches — so their salaries can be viewed/printed) | 'all'
   let filter = { month: window._salMonth || latestDataMonth() || currentMonth(), settleDate: window._salSettleDate || null, coachSet: window._salCoachSet || 'active' };
-  const _coachInSet = (c, set) => set === 'all' ? true : (set === 'inactive' ? !isCoachActive(c) : isCoachActive(c));
 
   // v6.646: runs inside a calc scope (repeated pure calculations are computed once per call)
   function refresh() { return withCalcScope(_refreshScoped); }
@@ -21667,9 +21676,10 @@ PAGES.salaries = (main) => {
       return upto ? (String(jd) <= String(upto)) : (String(jd).slice(0, 7) <= filter.month);
     };
     const people = (state.coaches || [])
-      .filter(c => _coachInSet(c, filter.coachSet) && joinedBy(c))
-      .map(c => upto ? computeMonthlyPay(c.id, null, upto) : computeMonthlyPay(c.id, filter.month))
-      .filter(p => p) // skip any null
+      .filter(c => joinedBy(c))
+      .map(c => ({ c, p: upto ? computeMonthlyPay(c.id, null, upto) : computeMonthlyPay(c.id, filter.month) }))
+      .filter(x => salaryRowShown(x.c, x.p, filter.coachSet))   // v6.1050 — a person who left shows only while there is money for them
+      .map(x => x.p)
       // Sort: unpaid (pending, then partial) first, then paid; each by amount desc
       .sort((a, b) => {
         const rank = s => (s === 'pending' ? 0 : s === 'partial' ? 1 : 2);
@@ -23848,9 +23858,9 @@ window.downloadPayrollCSV = function(monthKey, coachSet) {
   if (currentRole() !== 'admin') { toast(t('Admins only', 'للمسؤولين فقط'), 'error'); return; }   // v6.872
   const set = coachSet || 'active';   // v6.645: follows the Salaries coach filter (active / inactive / all)
   const people = (state.coaches || [])
-    .filter(c => set === 'all' ? true : (set === 'inactive' ? !isCoachActive(c) : isCoachActive(c)))
-    .map(c => computeMonthlyPay(c.id, monthKey))
-    .filter(p => p);
+    .map(c => ({ c, p: computeMonthlyPay(c.id, monthKey) }))
+    .filter(x => salaryRowShown(x.c, x.p, set))   // v6.1050 — same rule as the screen
+    .map(x => x.p);
   const rows = [
     ['Name','Role','Month','Fixed','Commission Base','Commission Rate %','Commission Amount','Gross','Advance','Net','Status','Paid Date'],
     ...people.map(p => [
@@ -24471,7 +24481,7 @@ function posBodyHtml() {
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px">
           ${SALE_METHODS.map(([k, ic, en, ar]) => `<div class="field" style="margin:0"><label style="display:flex;justify-content:space-between;align-items:center;font-size:12px">${ic} ${t(en, ar)}<button type="button" class="sale-pay-fill" data-method="${k}" style="border:none;background:none;color:var(--green);font-size:11px;font-weight:700;cursor:pointer;padding:0" title="${t('Pay the whole balance with this method', 'سدّد كامل المتبقي بهذه الطريقة')}">${t('Full', 'الكل')}</button></label><input type="number" min="0" step="0.01" class="sale-pay-m" data-method="${k}" placeholder="0" style="text-align:right" /></div>`).join('')}
         </div>
-        <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;cursor:pointer"><input type="checkbox" id="sale-paylater" /> ⏳ ${t('Pay later — nothing paid now', 'الدفع لاحقاً — لا شيء الآن')}</label>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;cursor:pointer"><input type="checkbox" id="sale-paylater" checked /> ⏳ ${t('Pay later — nothing paid now', 'الدفع لاحقاً — لا شيء الآن')}</label>
         <div id="sale-pay-hint" style="margin-top:8px;font-size:12px;font-weight:600"></div>
         <div class="text-mute" style="font-size:11px;margin-top:4px">${t('Leave every box empty = paid in full in cash. Split it across methods and the rest stays due.', 'اترك كل الخانات فارغة = مدفوع بالكامل نقداً. وزّع على عدة طرق والباقي يبقى مستحقاً.')}</div>
       </div>
@@ -24630,7 +24640,7 @@ function wireSaleModal() {
   });
   // Discount + paid recalc
   $('#sale-discount').addEventListener('input', recalcSaleTotals);
-  document.querySelectorAll('.sale-pay-m').forEach(i => i.addEventListener('input', recalcSaleTotals));   // v6.829 — pay by method(s)
+  document.querySelectorAll('.sale-pay-m').forEach(i => i.addEventListener('input', () => { const lt = $('#sale-paylater'); if (lt && i.value !== '') lt.checked = false; recalcSaleTotals(); }));   // v6.829 — pay by method(s)
   document.querySelectorAll('.sale-pay-fill').forEach(b => b.addEventListener('click', () => {   // "Full": this method takes everything still unpaid
     const total = Math.max(0, window._saleLines.reduce((s, l) => s + (l.qty || 0) * (l.unitPrice || 0), 0) - (parseFloat($('#sale-discount')?.value) || 0));
     const others = [...document.querySelectorAll('.sale-pay-m')].filter(i => i.dataset.method !== b.dataset.method).reduce((s, i) => s + (parseFloat(i.value) || 0), 0);
@@ -36621,6 +36631,16 @@ function courtClash(date, startTime, hours, exceptId) {
 }
 function courtBookingsOn(date) { return (state.rentals || []).filter(r => r && r.facility === COURT && r.date === date).concat(courtScheduleOn(date)); }
 function courtBookingDue(r) { const inv = (typeof rentalInvoiceFor === 'function') ? rentalInvoiceFor(r) : null; return inv && typeof invoiceBalance === 'function' ? Math.round(invoiceBalance(inv) * 100) / 100 : 0; }
+// v6.1049 — one customer's court bookings from `from` (today) up to their LAST booking, by phone. Digits only; the last 8 digits decide, so +974 / 00974 / no code all match. Returns null until at least 6 digits are typed.
+function courtCustomerBookings(phoneText, from) {
+  const d = String(phoneText || '').replace(/[٠-٩]/g, c => String(c.charCodeAt(0) - 1632)).replace(/\D/g, '');   // Arabic digits too
+  if (d.length < 6) return null;
+  const key = d.length > 8 ? d.slice(-8) : d;
+  const mine = (state.rentals || []).filter(r => r && !r.deleted && r.facility === COURT && String(r.customerPhone || '').replace(/\D/g, '').slice(-8).endsWith(key));
+  const sorted = list => list.sort((a, b) => String(a.date).localeCompare(String(b.date)) || (cbMin(a.startTime) ?? 9999) - (cbMin(b.startTime) ?? 9999));
+  const upcoming = sorted(mine.filter(r => r.date >= from)), past = sorted(mine.filter(r => r.date < from));
+  return { upcoming, past, name: (mine[0] && mine[0].customerName) || '', from, last: upcoming.length ? upcoming[upcoming.length - 1].date : '' };
+}
 // side-by-side lanes for bookings that overlap (older records can)
 function courtLanes(list) {
   const sorted = list.slice().sort((x, y) => cbMin(x.startTime) - cbMin(y.startTime)), laneEnd = [], out = [];
@@ -36858,6 +36878,31 @@ PAGES.courtbookings = (main) => {
     });
   }
 
+  // v6.1049 — Customer view: type a phone → every court booking of that customer from today to the last one
+  function custHtml() {
+    const res = courtCustomerBookings(S.cphone, TODAY);
+    if (!res) return `<div class="card"><div class="empty">${t('Type the customer phone number (at least 6 digits) to see all their bookings from today to their last booking.', 'اكتب رقم هاتف العميل (6 أرقام على الأقل) لعرض كل حجوزاته من اليوم لحد آخر حجز.')}</div></div>`;
+    const up = res.upcoming, tot = sum(up);
+    if (!up.length) {
+      const lastPast = res.past.length ? res.past[res.past.length - 1] : null;
+      return `<div class="card"><div class="empty">${t('No upcoming bookings for this number.', 'لا توجد حجوزات قادمة لهذا الرقم.')}${lastPast ? ' ' + t('Last booking was on', 'آخر حجز كان بتاريخ') + ' <b>' + fmtDate(lastPast.date) + '</b> (' + escapeHtml(lastPast.customerName || '') + ').' : ' ' + t('No bookings at all for this number.', 'لا توجد حجوزات إطلاقاً لهذا الرقم.')}</div></div>`;
+    }
+    const kpi = (label, value, sub, color) => `<div class="kpi${color ? ' ' + color : ''}"><div class="kpi-label">${label}</div><div class="kpi-value num">${value}</div>${sub ? `<div class="kpi-sub">${sub}</div>` : ''}</div>`;
+    const rows = up.map(r => {
+      const due = courtBookingDue(r), s = cbMin(r.startTime), e = s != null ? s + Math.round((r.hours || 1) * 60) : null;
+      const st = r.academy ? '<span class="badge blue">' + t('Academy · free', 'الأكاديمية · مجاني') + '</span>' : (due > 0.5 ? '<span class="badge red">⏳ ' + fmt(due) + ' ' + t('due', 'متبقي') + '</span>' : '<span class="badge green">✓ ' + t('paid', 'مدفوع') + '</span>');
+      return `<tr class="cb-crow" data-id="${r.id}" data-date="${r.date}" style="cursor:pointer"><td style="white-space:nowrap"><b>${dayName(r.date)}</b> ${fmtDate(r.date)}</td><td style="white-space:nowrap">${s != null ? cbClock(s) + '–' + cbClock(e) : '—'}</td><td class="num">${r.hours || 1}h</td>${money ? `<td class="text-right num">${fmt(r.amount || 0)}</td>` : ''}<td>${(money || r.academy) ? st : ''}</td><td class="text-mute">${escapeHtml(r.notes || '')}</td></tr>`;
+    }).join('');
+    return `<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:14px">
+        ${kpi('👤 ' + t('Customer', 'العميل'), escapeHtml(res.name || '—'), '', 'blue')}
+        ${kpi('⚽ ' + t('Bookings', 'الحجوزات'), tot.n, t('to', 'حتى') + ' ' + fmtDate(res.last), 'green')}
+        ${kpi('⏱ ' + t('Hours booked', 'ساعات محجوزة'), tot.hours + 'h', '', 'blue')}
+        ${money ? kpi('💰 ' + t('Billed', 'المفوتر'), fmt(tot.amount), 'QAR', '') : ''}
+        ${money ? kpi('⏳ ' + t('Due', 'متبقي'), fmt(tot.due), tot.due > 0.5 ? t('to collect', 'للتحصيل') : '✓', tot.due > 0.5 ? 'orange' : '') : ''}
+      </div>
+      <div class="card"><div class="table-wrap"><table><thead><tr><th>${t('Date', 'التاريخ')}</th><th>${t('Time', 'الوقت')}</th><th>${t('Hours', 'الساعات')}</th>${money ? `<th class="text-right">${t('Amount', 'المبلغ')}</th>` : ''}<th>${t('Status', 'الحالة')}</th><th>${t('Notes', 'ملاحظات')}</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  }
+
   let _quiet = false;   // a filter repaint must not scroll the board
   function paint() {
     const date = S.date, step = S.view === 'week' ? 7 : 1;
@@ -36873,21 +36918,26 @@ PAGES.courtbookings = (main) => {
         </div>
       </div>
       <div class="card" style="margin-bottom:14px;padding:10px 12px"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <button class="btn ghost sm" id="cb-prev">◀</button><button class="btn ghost sm" id="cb-today">${t('Today', 'اليوم')}</button><button class="btn ghost sm" id="cb-next">▶</button>
+        ${S.view === 'cust' ? `<input type="search" id="cb-cphone" value="${escapeHtml(S.cphone || '')}" placeholder="${t('Customer phone number', 'رقم هاتف العميل')}" inputmode="tel" style="max-width:240px" /><b style="margin:0 8px">${t('Bookings from today to the last one', 'الحجوزات من اليوم لحد آخر حجز')}</b>` : `<button class="btn ghost sm" id="cb-prev">◀</button><button class="btn ghost sm" id="cb-today">${t('Today', 'اليوم')}</button><button class="btn ghost sm" id="cb-next">▶</button>
         <input type="date" id="cb-date" value="${date}" style="max-width:160px" />
-        <b style="margin:0 8px">${label}</b>
-        <select id="cb-hour" title="${t('Filter by hour', 'تصفية بالساعة')}" style="max-width:130px"><option value="">${t('All hours', 'كل الساعات')}</option>${Array.from({ length: Math.max(1, Math.round((cbMin(courtHours().close) - cbMin(courtHours().open)) / 60)) }, (_, i) => { const m = cbMin(courtHours().open) + i * 60; return `<option value="${m / 60}"${String(m / 60) === String(S.hour) ? ' selected' : ''}>${cbClock(m)}</option>`; }).join('')}</select>
+        <b style="margin:0 8px">${label}</b>`}
+        ${S.view === 'cust' ? '' : `<select id="cb-hour" title="${t('Filter by hour', 'تصفية بالساعة')}" style="max-width:130px"><option value="">${t('All hours', 'كل الساعات')}</option>${Array.from({ length: Math.max(1, Math.round((cbMin(courtHours().close) - cbMin(courtHours().open)) / 60)) }, (_, i) => { const m = cbMin(courtHours().open) + i * 60; return `<option value="${m / 60}"${String(m / 60) === String(S.hour) ? ' selected' : ''}>${cbClock(m)}</option>`; }).join('')}</select>
         <input type="search" id="cb-q" value="${escapeHtml(S.q || '')}" placeholder="${t('Customer name or phone', 'اسم العميل أو رقم الهاتف')}" style="max-width:210px" />
-        ${(S.hour || S.q) ? `<button class="btn ghost sm" id="cb-fclear">✕ ${t('Clear', 'مسح')}</button>` : ''}
-        <span style="margin-inline-start:auto;display:flex;gap:6px"><button class="btn sm ${S.view === 'day' ? 'primary' : 'ghost'}" id="cb-vday">${t('Day', 'يوم')}</button><button class="btn sm ${S.view === 'week' ? 'primary' : 'ghost'}" id="cb-vweek">${t('Week', 'أسبوع')}</button></span>
+        ${(S.hour || S.q) ? `<button class="btn ghost sm" id="cb-fclear">✕ ${t('Clear', 'مسح')}</button>` : ''}`}
+        <span style="margin-inline-start:auto;display:flex;gap:6px"><button class="btn sm ${S.view === 'day' ? 'primary' : 'ghost'}" id="cb-vday">${t('Day', 'يوم')}</button><button class="btn sm ${S.view === 'week' ? 'primary' : 'ghost'}" id="cb-vweek">${t('Week', 'أسبوع')}</button><button class="btn sm ${S.view === 'cust' ? 'primary' : 'ghost'}" id="cb-vcust">👤 ${t('Customer', 'عميل')}</button></span>
       </div></div>
-      ${S.view === 'week' ? weekHtml() : dayHtml()}`;
+      ${S.view === 'cust' ? custHtml() : (S.view === 'week' ? weekHtml() : dayHtml())}`;
     const go = d => { S.date = d; paint(); };
+    $('#cb-vcust').onclick = () => { S.view = 'cust'; paint(); const i = $('#cb-cphone'); if (i) i.focus(); };
+    { const ci = $('#cb-cphone'); if (ci) ci.oninput = e => { S.cphone = e.target.value; const p = ci.selectionStart; _quiet = true; paint(); const n = $('#cb-cphone'); if (n) { n.focus(); try { n.setSelectionRange(p, p); } catch (_) {} } }; }
+    main.querySelectorAll('.cb-crow').forEach(el => el.addEventListener('click', () => { S.date = el.dataset.date; openBooking(+el.dataset.id); }));
+    if (S.view !== 'cust') {
     $('#cb-hour').onchange = e => { S.hour = e.target.value; _quiet = true; paint(); };
     { const qi = $('#cb-q'); qi.oninput = e => { S.q = e.target.value; const p = qi.selectionStart; _quiet = true; paint(); const n = $('#cb-q'); if (n) { n.focus(); try { n.setSelectionRange(p, p); } catch (_) {} } }; }
     { const fc = $('#cb-fclear'); if (fc) fc.onclick = () => { S.hour = ''; S.q = ''; paint(); }; }
     $('#cb-prev').onclick = () => go(addDays_(S.date, -step)); $('#cb-next').onclick = () => go(addDays_(S.date, step)); $('#cb-today').onclick = () => go(TODAY);
     $('#cb-date').onchange = e => { if (e.target.value) go(e.target.value); };
+    }
     $('#cb-vday').onclick = () => { S.view = 'day'; paint(); }; $('#cb-vweek').onclick = () => { S.view = 'week'; paint(); };
     $('#cb-new').onclick = () => addRental(() => render(), { facility: COURT, date: S.date, hours: 1 });
     { const _sb = $('#cb-sched-rent'); if (_sb) _sb.onclick = () => scheduleRentalsDialog(); }
@@ -37095,10 +37145,10 @@ function rentalFormHtml(r) {
     <div class="form-row">
       <div class="field"><label>Method</label><select id="r-method"><option value="cash" ${r.method==='cash'?'selected':''}>Cash</option><option value="card" ${r.method==='card'?'selected':''}>Card</option><option value="fawran" ${r.method==='fawran'?'selected':''}>Fawran</option></select></div>
       ${!r.id ? `<div class="field"><label>Payment</label><select id="r-paystatus">
+        <option value="due" selected>⏳ Pay later (mark as due)</option>
         <option value="paid">💵 Paid in full now</option>
-        <option value="due">⏳ Pay later (mark as due)</option>
       </select></div>
-      <div class="field" id="r-paydate-wrap"><label>${t('Payment date', 'تاريخ الدفع')} <span class="text-mute" style="font-size:10px">(${t('when the money was received', 'متى استُلم المبلغ')})</span></label><input type="date" id="r-paydate" value="${(r.date && r.date <= TODAY) ? r.date : TODAY}" max="${TODAY}" /></div>` : ''}
+      <div class="field" id="r-paydate-wrap" style="display:none"><label>${t('Payment date', 'تاريخ الدفع')} <span class="text-mute" style="font-size:10px">(${t('when the money was received', 'متى استُلم المبلغ')})</span></label><input type="date" id="r-paydate" value="${(r.date && r.date <= TODAY) ? r.date : TODAY}" max="${TODAY}" /></div>` : ''}
       <div class="field" style="flex:2"><label>Notes</label><input type="text" id="r-notes" value="${escapeHtml(r.notes || '')}" placeholder="e.g. Birthday party, weekly booking, etc." /></div>
     </div>
     ${!r.id ? `<div id="r-split-wrap" style="margin-top:6px;padding:10px 12px;border:1px solid var(--border);border-radius:8px">
@@ -37713,6 +37763,11 @@ function saveRental(existingId, onDone) {
       memberId: matchedMember ? matchedMember.id : (old.memberId ?? null),
       method, notes,
     };
+    {   // the booking edit is logged: what changed, before → after
+      const _cur = state.rentals[idx], _ch = {};
+      for (const f of ['facility', 'date', 'startTime', 'hours', 'hourlyRate', 'amount', 'customerName', 'customerPhone', 'method', 'notes']) if ((old[f] ?? null) !== (_cur[f] ?? null)) _ch[f] = { from: old[f] ?? null, to: _cur[f] ?? null };
+      if (Object.keys(_ch).length && typeof audit === 'function') audit('rental.edit', 'rental:' + existingId, 'Edited the ' + facility + ' booking of ' + name + ' on ' + date + ': ' + Object.keys(_ch).map(f => f + ' ' + _ch[f].from + ' → ' + _ch[f].to).join(' · '), { recordName: name, changes: _ch });
+    }
     // Update linked invoice (v6.783 — only the invoice that really belongs to this rental)
     {
       const inv = rentalInvoiceFor(old);
@@ -37739,7 +37794,7 @@ function saveRental(existingId, onDone) {
   // v6.635 — "Pay later (due)": create the rental invoice UNPAID (amountPaid 0, no ledger) so it carries a
   // balance and shows up in Due Payment (member renter) / the Rentals due list (walk-in). Default = paid in
   // full (a real payment row, so it never relies on the "legacy = fully paid" convention).
-  const payStatus = ($('#r-paystatus') || {}).value || 'paid';
+  const payStatus = ($('#r-paystatus') || {}).value || 'due';
   // v6.766 — SPLIT: one payment row per method (cash / card / fawran / transfer); less than the total leaves the rest due
   const splitOn = !!(($('#r-split') || {}).checked);
   const splitParts = splitOn ? [...document.querySelectorAll('.r-sp')].map(i => ({ method: i.dataset.m, amount: Math.round((parseFloat(i.value) || 0) * 100) / 100 })).filter(p => p.amount > 0) : [];
@@ -37779,6 +37834,7 @@ function saveRental(existingId, onDone) {
     invoiceId: newInv.id,
     createdAt: new Date().toISOString(),
   });
+  if (typeof audit === 'function') audit('rental.create', 'rental:' + rentalId, 'Booked the ' + facility + ' for ' + name + ' on ' + date + (startTime ? ' ' + startTime : '') + ' · ' + hours + 'h · ' + fmt(amount) + ' QAR' + (paidNow > 0 ? '' : ' · due'), { recordName: name, amount, invoiceId: newInv.id });
 
   closeModal();
   if (onDone) onDone(); else render();
