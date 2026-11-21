@@ -95,12 +95,30 @@ function expPaidFor(kind, ym) {
   for (const e of (state.expenses || [])) { if (e && !e.deleted && e.payFor === kind && (e.month || String(e.date || '').slice(0, 7)) === ym) s += Number(e.amount) || 0; }
   return Math.round(s * 100) / 100;
 }
+// v6.1054 — salaries still to pay for a month: every person listed on Salaries who is not fully paid yet (what is left of an unfinished payment, or the whole net). Read-only; the Pay button opens the Salaries screen.
+function _salariesOwedFor(cm) {
+  const calc = () => {
+    let amount = 0, n = 0;
+    for (const c of (state.coaches || [])) {
+      const p = computeMonthlyPay(c.id, cm);
+      if (!p || !salaryRowShown(c, p, 'active')) continue;
+      const rem = p.salaryRecord ? (Number(p.paidRemaining) || 0) : (Number(p.net) || 0);
+      if (rem > 0.5) { amount += rem; n++; }
+    }
+    return { amount: Math.round(amount * 100) / 100, n };
+  };
+  return (typeof withCalcScope === 'function') ? withCalcScope(calc) : calc();
+}
 function _expPendingFor(cm) {
   const u = _unpaidAccrualOne(cm), out = [];
   const raw = Number(state.settings && state.settings.citadelRate), rate = (isNaN(raw) || raw < 0) ? 30 : raw;
   if (u.rent > 0.004) out.push({ kind: 'rent', month: cm, amount: u.rent, category: 'Rent', label: t('Monthly rent', 'إيجار الشهر') + ' — ' + fmtMonth(cm), note: t('not paid yet · not in the total', 'غير مدفوع · غير محسوب في الإجمالي') });
   if (u.citadel > 0.004) out.push({ kind: 'citadel', month: cm, amount: u.citadel, category: CITADEL_SHARE_CATEGORY, label: t('Citadel company share', 'حصة شركة سيتادل') + ' (' + rate + '%) — ' + fmtMonth(cm), note: t('not paid yet · not in the total', 'غير مدفوع · غير محسوب في الإجمالي') });
   if (u.advertising > 0.004) { const cfg = adShareSettings(); out.push({ kind: 'advertising', month: cm, amount: u.advertising, category: ADVERTISING_CATEGORY, label: t('Advertising', 'دعاية وإعلان') + ' (' + cfg.rate + '% ' + t('of income above', 'من الدخل فوق') + ' ' + Number(cfg.threshold).toLocaleString('en-US') + ') — ' + fmtMonth(cm), note: t('due on the last day of the month · income so far ' + Math.round(billedInMonth(cm) || 0).toLocaleString('en-US') + ' · not paid yet · not in the total', 'مستحق آخر الشهر · الدخل حتى الآن ' + Math.round(billedInMonth(cm) || 0).toLocaleString('en-US') + ' · غير مدفوع · غير محسوب في الإجمالي') }); }
+  if (cm === String(TODAY || '').slice(0, 7)) {   // v6.1054 — this month's salaries, as a pending row like the rent (not in the total); Pay → the Salaries screen
+    const so = _salariesOwedFor(cm);
+    if (so.amount > 0.004) out.push({ kind: 'salaries', month: cm, amount: so.amount, category: 'Salary', label: t('Salaries', 'المرتبات') + ' — ' + fmtMonth(cm), note: so.n + ' ' + t('people · not paid yet · not in the total', 'أشخاص · غير مدفوع · غير محسوب في الإجمالي') });
+  }
   return out;
 }
 // v6.916 — rent / Citadel share / advertising still owed for EVERY month from the accrual start up to this one (it was this month only, so on the 1st the month just closed lost them)
@@ -111,6 +129,7 @@ function expPendingList() {
 }
 window.expPay = function (kind) {
   if (currentRole() !== 'admin') { toast(t('Only an admin can record a payment', 'للمسؤول فقط'), 'error'); return; }
+  if (kind === 'salaries') { window._salMonth = String(TODAY || '').slice(0, 7); window._salSettleDate = null; navigate('salaries'); return; }   // v6.1054 — salaries are paid person by person on the Salaries screen
   const it = expPendingList().find(x => x.kind === kind);
   if (!it) { toast(t('Nothing is pending', 'لا يوجد مستحق'), 'info'); return; }
   showModal({
@@ -21643,7 +21662,7 @@ window.markPackagePrivate = function (idx, approach) {
   openPrivateCheck(mk);
   try { if (state.route === 'salaries') render(); } catch (_) {}
 };
-// v6.1050 — who is listed on Salaries for a month: every ACTIVE person; a person who LEFT only while that month holds money for them (pay, advance, owed, pending, carried, a late adjustment, or anything paid); nobody else. 'inactive' = the full archive list.
+// v6.1050 — who is listed on Salaries for a month: every ACTIVE person; a person who LEFT is listed up to and including his LAST month worked (coach.leftOn), and after that only while a month holds money for him (pay, advance, owed, pending, carried, a late adjustment, or anything paid). 'inactive' = the full archive list.
 function salaryHasMoney(p) {
   const z = v => Math.abs(Number(v) || 0) > 0.005;
   return !!p && (z(p.gross) || z(p.net) || z(p.advance) || z(p.commissionPending) || z(p.privateBonusPending) || z(p.receptionBonusPending) || z(p.carriedIn) || z(p.carriedOut) || z(p.lateIn) || z(p.paidTotal) || z(p.paidExtra) || z(p.expensePaid));
@@ -21651,7 +21670,9 @@ function salaryHasMoney(p) {
 function salaryRowShown(c, p, set) {
   if (!c || !p) return false;
   if (set === 'inactive') return !isCoachActive(c);
-  return isCoachActive(c) || salaryHasMoney(p);
+  if (isCoachActive(c)) return true;
+  if (c.leftOn && p.month && String(p.month) <= String(c.leftOn).slice(0, 7)) return true;   // up to his last month worked
+  return salaryHasMoney(p);
 }
 PAGES.salaries = (main) => {
   if (currentRole() === 'admin' && typeof salaryBaselineBackfill === 'function') setTimeout(() => { try { if (salaryBaselineBackfill() > 0) save(); } catch (_) {} }, 2500);   // v6.924 — settled months get today's lines as their baseline
@@ -36639,7 +36660,7 @@ function courtCustomerBookings(phoneText, from) {
   const mine = (state.rentals || []).filter(r => r && !r.deleted && r.facility === COURT && String(r.customerPhone || '').replace(/\D/g, '').slice(-8).endsWith(key));
   const sorted = list => list.sort((a, b) => String(a.date).localeCompare(String(b.date)) || (cbMin(a.startTime) ?? 9999) - (cbMin(b.startTime) ?? 9999));
   const upcoming = sorted(mine.filter(r => r.date >= from)), past = sorted(mine.filter(r => r.date < from));
-  return { upcoming, past, name: (mine[0] && mine[0].customerName) || '', from, last: upcoming.length ? upcoming[upcoming.length - 1].date : '' };
+  return { upcoming, past, name: (mine[0] && mine[0].customerName) || '', phone: (mine.find(r => r.customerPhone) || {}).customerPhone || '', from, last: upcoming.length ? upcoming[upcoming.length - 1].date : '' };
 }
 // side-by-side lanes for bookings that overlap (older records can)
 function courtLanes(list) {
@@ -36891,16 +36912,17 @@ PAGES.courtbookings = (main) => {
     const rows = up.map(r => {
       const due = courtBookingDue(r), s = cbMin(r.startTime), e = s != null ? s + Math.round((r.hours || 1) * 60) : null;
       const st = r.academy ? '<span class="badge blue">' + t('Academy · free', 'الأكاديمية · مجاني') + '</span>' : (due > 0.5 ? '<span class="badge red">⏳ ' + fmt(due) + ' ' + t('due', 'متبقي') + '</span>' : '<span class="badge green">✓ ' + t('paid', 'مدفوع') + '</span>');
-      return `<tr class="cb-crow" data-id="${r.id}" data-date="${r.date}" style="cursor:pointer"><td style="white-space:nowrap"><b>${dayName(r.date)}</b> ${fmtDate(r.date)}</td><td style="white-space:nowrap">${s != null ? cbClock(s) + '–' + cbClock(e) : '—'}</td><td class="num">${r.hours || 1}h</td>${money ? `<td class="text-right num">${fmt(r.amount || 0)}</td>` : ''}<td>${(money || r.academy) ? st : ''}</td><td class="text-mute">${escapeHtml(r.notes || '')}</td></tr>`;
+      return `<tr class="cb-crow" data-id="${r.id}" data-date="${r.date}" style="cursor:pointer"><td style="white-space:nowrap"><b>${dayName(r.date)}</b> ${fmtDate(r.date)}</td><td style="white-space:nowrap">${s != null ? cbClock(s) + '–' + cbClock(e) : '—'}</td><td class="num">${r.hours || 1}h</td>${money ? `<td class="text-right num">${fmt(r.amount || 0)}</td>` : ''}<td>${(money || r.academy) ? st : ''}</td><td class="text-mute">${escapeHtml(r.notes || '')}</td><td style="white-space:nowrap">${(res.phone && !r.academy) ? `<button class="btn ghost sm cb-wa-one" data-id="${r.id}" title="${t('Send this booking on WhatsApp', 'إرسال هذا الحجز على واتساب')}" style="color:#128C7E;border-color:#25D366">💬</button>` : ''}</td></tr>`;
     }).join('');
     return `<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:14px">
-        ${kpi('👤 ' + t('Customer', 'العميل'), escapeHtml(res.name || '—'), '', 'blue')}
+        ${kpi('👤 ' + t('Customer', 'العميل'), escapeHtml(res.name || '—'), res.phone ? '📱 ' + phoneCell(res.phone, { link: true }) : '', 'blue')}
         ${kpi('⚽ ' + t('Bookings', 'الحجوزات'), tot.n, t('to', 'حتى') + ' ' + fmtDate(res.last), 'green')}
         ${kpi('⏱ ' + t('Hours booked', 'ساعات محجوزة'), tot.hours + 'h', '', 'blue')}
         ${money ? kpi('💰 ' + t('Billed', 'المفوتر'), fmt(tot.amount), 'QAR', '') : ''}
         ${money ? kpi('⏳ ' + t('Due', 'متبقي'), fmt(tot.due), tot.due > 0.5 ? t('to collect', 'للتحصيل') : '✓', tot.due > 0.5 ? 'orange' : '') : ''}
       </div>
-      <div class="card"><div class="table-wrap"><table><thead><tr><th>${t('Date', 'التاريخ')}</th><th>${t('Time', 'الوقت')}</th><th>${t('Hours', 'الساعات')}</th>${money ? `<th class="text-right">${t('Amount', 'المبلغ')}</th>` : ''}<th>${t('Status', 'الحالة')}</th><th>${t('Notes', 'ملاحظات')}</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+      ${(res.phone && up.some(r => !r.academy)) ? `<div style="margin-bottom:10px"><button class="btn ghost" id="cb-wa-all" style="color:#128C7E;border-color:#25D366">💬 ${t('Send all', 'إرسال الكل')} ${up.filter(r => !r.academy).length} ${t('bookings on WhatsApp (one message)', 'حجز على واتساب (رسالة واحدة)')}</button></div>` : ''}
+      <div class="card"><div class="table-wrap"><table><thead><tr><th>${t('Date', 'التاريخ')}</th><th>${t('Time', 'الوقت')}</th><th>${t('Hours', 'الساعات')}</th>${money ? `<th class="text-right">${t('Amount', 'المبلغ')}</th>` : ''}<th>${t('Status', 'الحالة')}</th><th>${t('Notes', 'ملاحظات')}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
   }
 
   let _quiet = false;   // a filter repaint must not scroll the board
@@ -36930,7 +36952,9 @@ PAGES.courtbookings = (main) => {
     const go = d => { S.date = d; paint(); };
     $('#cb-vcust').onclick = () => { S.view = 'cust'; paint(); const i = $('#cb-cphone'); if (i) i.focus(); };
     { const ci = $('#cb-cphone'); if (ci) ci.oninput = e => { S.cphone = e.target.value; const p = ci.selectionStart; _quiet = true; paint(); const n = $('#cb-cphone'); if (n) { n.focus(); try { n.setSelectionRange(p, p); } catch (_) {} } }; }
-    main.querySelectorAll('.cb-crow').forEach(el => el.addEventListener('click', () => { S.date = el.dataset.date; openBooking(+el.dataset.id); }));
+    main.querySelectorAll('.cb-crow').forEach(el => el.addEventListener('click', e => { if (e.target.closest('.cb-wa-one')) return; S.date = el.dataset.date; openBooking(+el.dataset.id); }));
+    main.querySelectorAll('.cb-wa-one').forEach(el => el.addEventListener('click', e => { e.stopPropagation(); sendRentalBookingWhatsApp(+el.dataset.id); }));
+    { const wa = $('#cb-wa-all'); if (wa) wa.onclick = () => { const res = courtCustomerBookings(S.cphone, TODAY); if (res) sendRentalBookingsWhatsApp(res.upcoming.filter(r => !r.academy).map(r => r.id)); }; }
     if (S.view !== 'cust') {
     $('#cb-hour').onchange = e => { S.hour = e.target.value; _quiet = true; paint(); };
     { const qi = $('#cb-q'); qi.oninput = e => { S.q = e.target.value; const p = qi.selectionStart; _quiet = true; paint(); const n = $('#cb-q'); if (n) { n.focus(); try { n.setSelectionRange(p, p); } catch (_) {} } }; }
@@ -37508,6 +37532,39 @@ window.rentalBookingMessage = function(r) {
   const en = ['Hi ' + first + '! 👋', 'Your booking at Black Stars Sports Club is confirmed:', '🏟 ' + facEn, '📅 ' + dayEn, range ? '🕒 ' + range : '', '⏱ ' + hrs + (hrs === 1 ? ' hour' : ' hours'),
     '💰 Total: ' + fmt(total) + ' QAR', payEn, ref ? '🧾 Invoice ' + ref : '', '📍 Waab, Doha: ' + CLUB_MAP_URL, '📞 Club number: ' + CLUB_PHONE];
   return ar.filter(Boolean).join('\n') + '\n\n———\n\n' + en.filter(Boolean).join('\n');
+};
+// v6.1053 — ONE WhatsApp that confirms several bookings of the same customer (Customer view → "Send all"): a line per booking, then the totals.
+window.rentalBookingsMessage = function(list) {
+  const first = String((list[0] && list[0].customerName) || '').split(' ')[0];
+  const DAYS_AR = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'], DAYS_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const pad = n => String(n).padStart(2, '0');
+  let tot = 0, due = 0, hrsAll = 0; const lAr = [], lEn = [];
+  list.forEach((r, i) => {
+    const inv = (typeof rentalInvoiceFor === 'function') ? rentalInvoiceFor(r) : null;
+    const total = inv ? ((typeof invoiceTotal === 'function') ? invoiceTotal(inv) : Number(inv.amount) || 0) : (Number(r.amount) || 0);
+    const d = inv ? Math.max(0, Math.round(((typeof invoiceBalance === 'function') ? invoiceBalance(inv) : 0) * 100) / 100) : 0;
+    const hrs = Number(r.hours) || 0; tot += total; due += d; hrsAll += hrs;
+    const dow = r.date ? new Date(r.date + 'T00:00:00').getDay() : null;
+    let range = '';
+    if (r.startTime && /^\d{1,2}:\d{2}/.test(r.startTime)) { const [h, mi] = r.startTime.split(':').map(Number), e = h * 60 + mi + Math.round(hrs * 60); range = r.startTime.slice(0, 5) + '–' + pad(Math.floor(e / 60) % 24) + ':' + pad(e % 60); }
+    lAr.push((i + 1) + '. ' + (dow != null ? DAYS_AR[dow] + ' ' : '') + fmtDate(r.date) + (range ? ' · ' + range : '') + ' · ' + hrs + ' س · ' + fmt(total) + ' ريال' + (d > 0.009 ? ' (متبقي ' + fmt(d) + ')' : ' ✅'));
+    lEn.push((i + 1) + '. ' + (dow != null ? DAYS_EN[dow] + ' ' : '') + fmtDate(r.date) + (range ? ' · ' + range : '') + ' · ' + hrs + 'h · ' + fmt(total) + ' QAR' + (d > 0.009 ? ' (due ' + fmt(d) + ')' : ' ✅'));
+  });
+  const paid = Math.round((tot - due) * 100) / 100, n = list.length;
+  const payAr = due > 0.009 ? (paid > 0.009 ? 'المدفوع: ' + fmt(paid) + ' ريال · المتبقي: ' + fmt(due) + ' ريال' : 'المبلغ المستحق: ' + fmt(due) + ' ريال') : 'مدفوع بالكامل ✅';
+  const payEn = due > 0.009 ? (paid > 0.009 ? 'Paid: ' + fmt(paid) + ' QAR · Remaining: ' + fmt(due) + ' QAR' : 'Amount due: ' + fmt(due) + ' QAR') : 'Paid in full ✅';
+  const ar = ['أهلاً ' + first + '! 👋', 'تم تأكيد حجوزاتك (' + n + ') في نادي بلاك ستارز الرياضي — ملعب كرة القدم 🏟:', ...lAr, '⏱ إجمالي الساعات: ' + hrsAll, '💰 الإجمالي: ' + fmt(tot) + ' ريال', payAr, '📍 الوعب، الدوحة: ' + CLUB_MAP_URL, '📞 رقم النادي: ' + CLUB_PHONE];
+  const en = ['Hi ' + first + '! 👋', 'Your ' + n + ' bookings at Black Stars Sports Club are confirmed — Football Court 🏟:', ...lEn, '⏱ Total hours: ' + hrsAll, '💰 Total: ' + fmt(tot) + ' QAR', payEn, '📍 Waab, Doha: ' + CLUB_MAP_URL, '📞 Club number: ' + CLUB_PHONE];
+  return ar.join('\n') + '\n\n———\n\n' + en.join('\n');
+};
+window.sendRentalBookingsWhatsApp = function(ids) {
+  const list = (ids || []).map(id => (state.rentals || []).find(x => x && x.id === id)).filter(Boolean);
+  if (!list.length) { toast(t('No bookings to send', 'لا توجد حجوزات للإرسال'), 'error'); return; }
+  let digits = String((list.find(r => r.customerPhone) || {}).customerPhone || '').replace(/\D/g, '');
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  if (digits.length === 8) digits = '974' + digits;
+  if (digits.length < 8) { toast(t('No valid mobile for this customer', 'لا يوجد جوال صالح لهذا الزبون'), 'error'); return; }
+  try { window.open('https://wa.me/' + digits + '?text=' + encodeURIComponent(window.rentalBookingsMessage(list)), '_blank'); } catch (_) {}
 };
 window.sendRentalBookingWhatsApp = function(rentalId) {
   const r = (state.rentals || []).find(x => x.id === rentalId);
