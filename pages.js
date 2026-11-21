@@ -129,7 +129,7 @@ function expPendingList() {
 }
 window.expPay = function (kind) {
   if (currentRole() !== 'admin') { toast(t('Only an admin can record a payment', 'للمسؤول فقط'), 'error'); return; }
-  if (kind === 'salaries') { window._salMonth = String(TODAY || '').slice(0, 7); window._salSettleDate = null; navigate('salaries'); return; }   // v6.1054 — salaries are paid person by person on the Salaries screen
+  if (kind === 'salaries') { openSalariesFor(String(TODAY || '').slice(0, 7)); return; }   // v6.1054 — salaries are paid person by person on the Salaries screen
   const it = expPendingList().find(x => x.kind === kind);
   if (!it) { toast(t('Nothing is pending', 'لا يوجد مستحق'), 'info'); return; }
   showModal({
@@ -21048,6 +21048,15 @@ function bankCardPaymentsForMonth(ym) {
   return rows;
 }
 // Open the report behind an automatic expense row.
+// v6.1055 — a Salary expense (or the pending Salaries row) opens the Salaries screen on its month (admin only)
+window.openSalariesFor = function (ym) {
+  if (currentRole() !== 'admin') return;
+  window._salMonth = String(ym || TODAY || '').slice(0, 7); window._salSettleDate = null; navigate('salaries');
+};
+window.openCitadelFor = function (ym) {   // v6.1056 — the pending Citadel row opens the Citadel screen on its month (admin only)
+  if (currentRole() !== 'admin') return;
+  window._citMonths = [String(ym || TODAY || '').slice(0, 7)]; navigate('citadel');
+};
 window.openExpenseReport = function (kind, ym) { window._expRep = { kind, ym }; navigate('expensereport'); };
 PAGES.expensereport = (main) => {
   if (currentRole() !== 'admin') { main.innerHTML = `<div class="card"><div class="empty">${t('Admins only.', 'المسؤولون فقط.')}</div></div>`; return; }
@@ -21208,11 +21217,12 @@ PAGES.expenses = (main) => {
     const _cmStart = String(TODAY || '').slice(0, 7) + '-01', _cmEnd = _monthEndIso(String(TODAY || '').slice(0, 7));
     const _pend = (currentRole() === 'admin' && (true) && !filter.search && !(filter.methods || []).length)
       ? expPendingList().filter(x => (!filter.categories.length || filter.categories.includes(x.category)) && (filter.from || filter.to ? ((!filter.from || filter.from <= _monthEndIso(x.month)) && (!filter.to || filter.to >= x.month + '-01')) : (!filter.months.length || filter.months.includes(x.month)))) : [];
+    const _pendGo = x => x.baseKind === 'salaries' ? `openSalariesFor('${x.month}')` : (x.baseKind === 'citadel' ? `openCitadelFor('${x.month}')` : '');   // v6.1056 — rows that have their own screen
     const _pendHtml = _pend.map(x => `
-      <tr style="background:rgba(242,163,60,.07)">
+      <tr style="background:rgba(242,163,60,.07)${_pendGo(x) ? ';cursor:pointer' : ''}"${_pendGo(x) ? ` onclick="if(!event.target.closest('button,a'))${_pendGo(x)}" title="${t('Open the page behind this amount', 'افتح الصفحة الخاصة بهذا المبلغ')}"` : ''}>
         <td class="text-mute" style="text-align:center;font-size:14px">⏳</td>
         <td class="text-dim" style="white-space:nowrap;font-size:12px">${t('due', 'مستحق')} ${fmtMonth(x.month)}</td>
-        <td><div class="font-bold">${escapeHtml(x.label)}</div><div class="text-mute" style="font-size:11px">${escapeHtml(x.note)}</div></td>
+        <td><div class="font-bold">${_pendGo(x) ? `<a href="javascript:void(0)" onclick="${_pendGo(x)}" style="color:inherit;text-decoration:underline dotted" title="${x.baseKind === 'salaries' ? t('Open the Salaries screen for this month', 'افتح شاشة المرتبات لهذا الشهر') : t('Open the Citadel screen for this month', 'افتح شاشة سيتادل لهذا الشهر')}">${escapeHtml(x.label)} ${x.baseKind === 'salaries' ? '💰' : '🏛'}</a>` : escapeHtml(x.label)}</div><div class="text-mute" style="font-size:11px">${escapeHtml(x.note)}</div></td>
         <td><span class="badge">${escapeHtml(x.category)}</span></td>
         <td class="text-mute">—</td>
         <td class="text-right num" style="color:var(--accent-2);font-weight:700">${fmt(x.amount)}<div style="font-size:10px;font-weight:400">${t('pending', 'معلّق')}</div></td>
@@ -21222,7 +21232,7 @@ PAGES.expenses = (main) => {
       <tr ${e.autoBankCommission ? 'style="background:rgba(91,141,239,.05)"' : ''}>
         <td class="text-mute" style="text-align:center;font-size:12px">${i + 1}</td>
         <td class="text-dim" style="white-space:nowrap">${fmtDate(e.date)}</td>
-        <td>${(e.autoBankCommission || e.autoCitadelShare) ? `<a href="javascript:void(0)" onclick="openExpenseReport('${e.autoBankCommission ? 'bank' : 'citadel'}', '${e.month || String(e.date || '').slice(0, 7)}')" style="color:inherit;text-decoration:underline dotted" title="${t('Open the report behind this amount', 'افتح التقرير وراء هذا المبلغ')}">${escapeHtml(e.description)} 🔎</a>` : escapeHtml(e.description)}${e.autoCitadelShare ? ` <span class="badge blue" style="font-size:9px" title="Auto-calculated from Football + Swimming revenue.">${e.edited ? '✏️ overridden' : '⚙️ auto'}</span>` : ''}${e.autoBankCommission ? ` <span class="badge blue" style="font-size:9px" title="Auto-calculated from card payments × ${BANK_COMMISSION_RATE}%. Edit to override.">${e.edited ? '✏️ overridden' : '⚙️ auto'}</span>${e.cardBase ? `<div class="text-mute" style="font-size:10px">${fmt(e.cardBase)} card × ${BANK_COMMISSION_RATE}%</div>` : ''}` : ''}${e.notes ? `<div class="text-mute" style="font-size:10px" title="${escapeHtml(e.notes)}">💬 ${escapeHtml(e.notes)}</div>` : ''}</td>
+        <td>${(e.autoBankCommission || e.autoCitadelShare) ? `<a href="javascript:void(0)" onclick="openExpenseReport('${e.autoBankCommission ? 'bank' : 'citadel'}', '${e.month || String(e.date || '').slice(0, 7)}')" style="color:inherit;text-decoration:underline dotted" title="${t('Open the report behind this amount', 'افتح التقرير وراء هذا المبلغ')}">${escapeHtml(e.description)} 🔎</a>` : ((e.category === 'Salary' && currentRole() === 'admin') ? `<a href="javascript:void(0)" onclick="openSalariesFor('${e.month || String(e.date || '').slice(0, 7)}')" style="color:inherit;text-decoration:underline dotted" title="${t('Open the Salaries screen for this month', 'افتح شاشة المرتبات لهذا الشهر')}">${escapeHtml(e.description)} 💰</a>` : escapeHtml(e.description))}${e.autoCitadelShare ? ` <span class="badge blue" style="font-size:9px" title="Auto-calculated from Football + Swimming revenue.">${e.edited ? '✏️ overridden' : '⚙️ auto'}</span>` : ''}${e.autoBankCommission ? ` <span class="badge blue" style="font-size:9px" title="Auto-calculated from card payments × ${BANK_COMMISSION_RATE}%. Edit to override.">${e.edited ? '✏️ overridden' : '⚙️ auto'}</span>${e.cardBase ? `<div class="text-mute" style="font-size:10px">${fmt(e.cardBase)} card × ${BANK_COMMISSION_RATE}%</div>` : ''}` : ''}${e.notes ? `<div class="text-mute" style="font-size:10px" title="${escapeHtml(e.notes)}">💬 ${escapeHtml(e.notes)}</div>` : ''}</td>
         <td><span class="badge">${escapeHtml(e.category || 'Others')}</span></td>
         <td><span class="badge ${e.method === 'card' ? 'blue' : e.method === 'transfer' ? 'cyan' : ''}">${escapeHtml(e.method === 'fawran' ? 'Fawran' : (e.method || '—'))}</span>${e.payMobile ? `<div class="text-mute" style="font-size:10px" dir="ltr">📱 ${escapeHtml(e.payMobile)}</div>` : ''}</td>
         <td class="text-right num font-bold">${fmt(e.amount)}</td>
