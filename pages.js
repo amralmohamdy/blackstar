@@ -2583,7 +2583,9 @@ window.printSubAttendance = function (memberId, sid) {
     '<div class="head"><div><div class="brand">Black <span>Stars</span> Sports Club</div><div class="sub">Waab, Doha · Package attendance · حضور الباقة</div></div><div style="text-align:right;font-size:11px;color:#777">Generated · تاريخ الإصدار<br><b>' + fmtDate(TODAY) + '</b></div></div>' +
     '<h1>' + escapeHtml(m.name || '') + '</h1>' + nameAr +
     '<div style="font-size:13px"><b>' + escapeHtml(sport) + '</b>' + ((isCampSport(sport) || sport === MIXED) ? '' : ' · Coach · المدرب <b>' + escapeHtml(coachName(sub.coachId) || '—') + '</b>') + '</div>' +
-    '<div style="font-size:12px;color:#555;margin-top:2px">Package · الباقة: <b>' + (sub.start ? fmtDate(sub.start) : '…') + ' → ' + (end ? fmtDate(end) : '…') + '</b></div>' +
+    '<div class="box" style="margin-bottom:6px"><div class="k" style="border:2px solid #2563eb"><div class="l">Subscription start · بداية الاشتراك</div><div class="v" style="font-size:20px;color:#1d4ed8">' + (sub.start ? fmtDate(sub.start) : '…') + '</div>' + (sub.start ? '<div style="font-size:11px;color:#666">' + dayEn[wd(sub.start)] + ' · ' + dayAr[wd(sub.start)] + '</div>' : '') + '</div>' +
+    '<div class="k" style="border:2px solid #dc2626"><div class="l">Subscription end · نهاية الاشتراك</div><div class="v" style="font-size:20px;color:#b91c1c">' + (end ? fmtDate(end) : '…') + '</div>' + (end ? '<div style="font-size:11px;color:#666">' + dayEn[wd(end)] + ' · ' + dayAr[wd(end)] + '</div>' : '') + '</div>' +
+    ((sub.start && end) ? '<div class="k"><div class="l">Duration · المدة</div><div class="v" style="font-size:20px">' + (Math.round((new Date(end + 'T00:00:00Z') - new Date(sub.start + 'T00:00:00Z')) / 86400000) + 1) + ' <span style="font-size:12px;font-weight:400;color:#666">days · يوم</span></div></div>' : '') + '</div>' +
     '<div class="box"><div class="k"><div class="l">Attended · حضر</div><div class="v" style="color:#059669">' + attended + '</div></div>' +
     '<div class="k"><div class="l">Package classes · حصص الباقة</div><div class="v">' + (total || '—') + '</div></div>' +
     '<div class="k"><div class="l">Remaining · المتبقي</div><div class="v">' + (left == null ? '—' : left) + '</div></div>' +
@@ -9203,27 +9205,14 @@ PAGES.citadel = (main) => {
     ? (window._citMonths.length === 1 ? fmtMonth(window._citMonths[0]) : `${window._citMonths.length} ${t('months', 'أشهر')}`)
     : t('All months', 'كل الأشهر');
 
-  const kpi = (label, value, color, sub) => `<div class="kpi"${color ? ` style="border-color:${color};background:${color.replace('var(--', 'rgba(').replace(')', ',.06)')}"` : ''}>
-    <div class="kpi-label"${color ? ` style="color:${color}"` : ''}>${label}</div>
-    <div class="kpi-value num"${color ? ` style="color:${color}"` : ''}>${fmt(value)}</div>
-    <div class="kpi-sub">${sub}</div></div>`;
-
-  const summaryRows = GROUPS.map(g => `<tr>
-    <td class="font-bold">${g.icon} ${escapeHtml(g.label)}</td>
-    <td class="text-right num">${fmt(agg[g.key].membership)}</td>
-    <td class="text-right num">${fmt(agg[g.key].rent)}</td>
-    <td class="text-right num font-bold">${fmt(groupTotal(g.key))}</td>
-    <td class="text-right num" style="color:var(--red);font-weight:700">${fmt(groupTotal(g.key) * RATE / 100)}</td>
-  </tr>`).join('');
-
-  // v6.581 — the owner's 3-way categorisation: Rental · Swimming membership · Football membership.
-  const cats = citadelCategories({ GROUPS, agg });
-  const catTotal = cats.reduce((s, c) => s + c.amount, 0);
-  const categoryRows = cats.map(c => `<tr>
-    <td class="font-bold">${c.icon} ${escapeHtml(c.label)}</td>
-    <td class="text-right num">${fmt(c.amount)}</td>
-    <td class="text-right num" style="color:var(--red);font-weight:700">${fmt(c.amount * RATE / 100)}</td>
-  </tr>`).join('');
+  // v6.1057 — ONE income table: per activity, memberships (classes attended in the month, incl. Mixed classes played there) and rent; a sub-total per activity
+  const incomeRows = GROUPS.map(g => {
+    const m = agg[g.key].membership, r = agg[g.key].rent;
+    const line = (icon, label, what, amt) => `<tr><td>${icon} ${label}</td><td class="text-mute" style="font-size:12px">${what}</td><td class="text-right num">${fmt(amt)}</td><td class="text-right num" style="color:var(--red)">${fmt(amt * RATE / 100)}</td></tr>`;
+    return `<tr style="background:var(--surface-2)"><td colspan="2" class="font-bold">${g.icon} ${escapeHtml(g.label)}</td><td class="text-right num font-bold">${fmt(m + r)}</td><td class="text-right num font-bold" style="color:var(--red)">${fmt((m + r) * RATE / 100)}</td></tr>`
+      + line('🎟', t('Memberships', 'الاشتراكات'), t('classes attended in the month (+ Mixed classes played here)', 'حصص اتحضرت في الشهر (+ حصص المكس اللي اتلعبت هنا)'), m)
+      + (r > 0.004 || g.key === 'football' ? line('🏟', t('Rent', 'الإيجار'), g.key === 'football' ? t('court bookings', 'حجوزات الملعب') : t('pool bookings', 'حجوزات المسبح'), r) : '');
+  }).join('');
 
   // v6.981.0 — the Contributing invoices list can be narrowed: Rent / Membership and Football / Swimming (the totals above stay as they are)
   const _fType = window._citType || 'all', _fAct = window._citAct || 'all';
@@ -9259,72 +9248,42 @@ PAGES.citadel = (main) => {
       </div>
     </div>
 
-    <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
-      ${kpi('⚽ ' + t('Football total', 'إجمالي كرة القدم'), groupTotal('football'), '', t('membership + rent', 'اشتراك + إيجار'))}
-      ${kpi('🏊 ' + t('Swimming total', 'إجمالي السباحة'), groupTotal('swimming'), '', t('membership + rent', 'اشتراك + إيجار'))}
-      ${kpi(t('Total revenue', 'إجمالي الإيراد'), grand, 'var(--accent-2)', escapeHtml(scopeLabel))}
-      ${kpi('🏛 ' + t('Company share', 'حصة الشركة') + ` (${RATE}%)`, share, 'var(--red)', t('to pay the company', 'مستحق للشركة'))}
+    <div class="card" style="margin-bottom:16px;border:2px solid var(--red)">
+      <div class="card-header"><div>
+        <div class="card-title">🏛 ${t('What we owe Citadel', 'المستحق لسيتاديل')} — ${escapeHtml(scopeLabel)}</div>
+        <div class="card-subtitle">${t('Citadel gets', 'تحصل سيتاديل على')} ${RATE}% ${t('of the Football + Swimming income below (memberships + rent)', 'من دخل كرة القدم والسباحة أدناه (اشتراكات + إيجار)')}</div>
+      </div></div>
+      <div style="display:flex;flex-wrap:wrap;align-items:stretch;gap:10px;padding:4px 4px 12px">
+        <div class="kpi" style="flex:1;min-width:150px;margin:0"><div class="kpi-label">${t('Income', 'الدخل')}</div><div class="kpi-value num">${fmt(grand)}</div><div class="kpi-sub">${t('Football + Swimming', 'كرة القدم + السباحة')}</div></div>
+        <div style="align-self:center;font-weight:800;font-size:20px;color:var(--text-mute)">× ${RATE}% =</div>
+        <div class="kpi" style="flex:1;min-width:150px;margin:0;border-color:var(--red)"><div class="kpi-label" style="color:var(--red)">${t('Citadel share', 'حصة سيتاديل')}</div><div class="kpi-value num" style="color:var(--red)">${fmt(share)}</div><div class="kpi-sub">${t('total owed', 'إجمالي المستحق')}</div></div>
+        <div style="align-self:center;font-weight:800;font-size:20px;color:var(--text-mute)">−</div>
+        <div class="kpi" style="flex:1;min-width:150px;margin:0"><div class="kpi-label" style="color:var(--green)">${t('Already paid', 'اللي اتدفع')}</div><div class="kpi-value num" style="color:var(--green)">${fmt(paidToCompany)}</div><div class="kpi-sub">${t('expenses “Citadel Company Share”', 'مصروفات «حصة شركة سيتادل»')}</div></div>
+        <div style="align-self:center;font-weight:800;font-size:20px;color:var(--text-mute)">=</div>
+        <div class="kpi" style="flex:1;min-width:150px;margin:0;border-color:${balanceDue > 0.5 ? 'var(--red)' : 'var(--green)'};background:${balanceDue > 0.5 ? 'rgba(239,68,68,.07)' : 'rgba(16,185,129,.07)'}"><div class="kpi-label" style="color:${balanceDue > 0.5 ? 'var(--red)' : 'var(--green)'}">${t('Still to pay', 'المتبقي للدفع')}</div><div class="kpi-value num" style="color:${balanceDue > 0.5 ? 'var(--red)' : 'var(--green)'}">${fmt(balanceDue)}</div><div class="kpi-sub">${balanceDue > 0.5 ? t('to pay Citadel', 'يُدفع لسيتاديل') : '✓ ' + t('settled', 'مسدّد')}</div></div>
+      </div>
+      <div class="text-mute" style="font-size:12px;padding:0 4px 4px">💵 ${t('Members have paid', 'الأعضاء دفعوا')} <b>${fmt(collected)}</b> ${t('of the', 'من')} ${fmt(grand)} ${t('income. The share is NOT posted automatically: when you pay Citadel, add it as an expense with the category “Citadel Company Share”.', 'دخل. الحصة لا تُسجَّل تلقائياً: عند الدفع لسيتاديل سجّله كمصروف بفئة «حصة شركة سيتادل».')}</div>
     </div>
 
     <div class="card">
       <div class="card-header"><div>
-        <div class="card-title">${t('Summary by category', 'ملخص حسب الفئة')}</div>
-        <div class="card-subtitle">${escapeHtml(scopeLabel)} · ${t('Rental · Swimming membership · Football membership', 'إيجار · اشتراك سباحة · اشتراك كرة قدم')} · ${t('share', 'الحصة')} = ${RATE}%</div>
+        <div class="card-title">${t('Where the income comes from', 'من أين جاء الدخل')}</div>
+        <div class="card-subtitle">${escapeHtml(scopeLabel)} · ${t('each line × ', 'كل بند × ')}${RATE}% ${t('= Citadel share', '= حصة سيتاديل')}</div>
       </div></div>
       <div class="table-wrap"><table>
         <thead><tr>
-          <th>${t('Category', 'الفئة')}</th>
+          <th>${t('Income', 'الدخل')}</th>
+          <th>${t('What it is', 'ما هو')}</th>
           <th class="text-right">${t('Amount', 'المبلغ')}</th>
-          <th class="text-right">🏛 ${t('Company', 'الشركة')} (${RATE}%)</th>
+          <th class="text-right">🏛 ${t('Citadel', 'سيتاديل')} (${RATE}%)</th>
         </tr></thead>
-        <tbody>${categoryRows}</tbody>
+        <tbody>${incomeRows}</tbody>
         <tfoot><tr style="border-top:2px solid var(--border);font-weight:800">
-          <td>${t('TOTAL', 'الإجمالي')}</td>
-          <td class="text-right num" style="font-size:15px">${fmt(catTotal)}</td>
-          <td class="text-right num" style="color:var(--red);font-size:15px">${fmt(catTotal * RATE / 100)}</td>
-        </tr></tfoot>
-      </table></div>
-    </div>
-
-    <div class="card" style="margin-top:16px">
-      <div class="card-header"><div>
-        <div class="card-title">${t('Summary by activity', 'ملخص حسب النشاط')}</div>
-        <div class="card-subtitle">${escapeHtml(scopeLabel)} · ${t('share', 'الحصة')} = ${RATE}%</div>
-      </div></div>
-      <div class="table-wrap"><table>
-        <thead><tr>
-          <th>${t('Activity', 'النشاط')}</th>
-          <th class="text-right">🎟 ${t('Membership', 'اشتراك')}</th>
-          <th class="text-right">🏟 ${t('Rent', 'إيجار')}</th>
-          <th class="text-right">${t('Total', 'الإجمالي')}</th>
-          <th class="text-right">🏛 ${t('Company', 'الشركة')} (${RATE}%)</th>
-        </tr></thead>
-        <tbody>${summaryRows}</tbody>
-        <tfoot><tr style="border-top:2px solid var(--border);font-weight:800">
-          <td>${t('TOTAL', 'الإجمالي')}</td>
-          <td class="text-right num">${fmt(GROUPS.reduce((s, g) => s + agg[g.key].membership, 0))}</td>
-          <td class="text-right num">${fmt(GROUPS.reduce((s, g) => s + agg[g.key].rent, 0))}</td>
+          <td colspan="2">${t('TOTAL', 'الإجمالي')}</td>
           <td class="text-right num" style="font-size:15px">${fmt(grand)}</td>
           <td class="text-right num" style="color:var(--red);font-size:15px">${fmt(share)}</td>
         </tr></tfoot>
       </table></div>
-    </div>
-
-    <div class="card" style="margin-top:16px">
-      <div class="card-header"><div>
-        <div class="card-title">${t('Company settlement', 'تسوية الشركة')}</div>
-        <div class="card-subtitle">${escapeHtml(scopeLabel)} · ${t('billed vs collected vs paid to the company', 'مفوتر مقابل محصّل مقابل مدفوع للشركة')}</div>
-      </div></div>
-      <div class="table-wrap"><table>
-        <tbody>
-          <tr><td>${t('Total revenue (billed)', 'إجمالي الإيراد (مفوتر)')}</td><td class="text-right num">${fmt(grand)}</td></tr>
-          <tr><td>💵 ${t('Collected from members', 'المحصّل من الأعضاء')}</td><td class="text-right num" style="color:var(--green);font-weight:700">${fmt(collected)}</td></tr>
-          <tr><td>🏛 ${t('Company share', 'حصة الشركة')} (${RATE}%)</td><td class="text-right num" style="color:var(--red);font-weight:700">${fmt(share)}</td></tr>
-          <tr><td>✅ ${t('Paid to company', 'المدفوع للشركة')}</td><td class="text-right num" style="color:var(--green);font-weight:700">${fmt(paidToCompany)}</td></tr>
-          <tr style="border-top:2px solid var(--border);font-weight:800"><td>${t('Balance due to company', 'المتبقي للشركة')}</td><td class="text-right num" style="color:${balanceDue > 0.5 ? 'var(--red)' : 'var(--green)'};font-size:15px">${fmt(balanceDue)}</td></tr>
-        </tbody>
-      </table></div>
-      <div class="text-mute" style="font-size:11px;padding:8px 4px 0">${t('The company share is NOT posted automatically: add what you pay Citadel as an expense with the category “Citadel Company Share”; “Paid to company” is the sum of those expenses.', 'حصة الشركة لا تُسجَّل تلقائياً: أضف ما تدفعه لسيتاديل كمصروف بفئة «حصة شركة سيتاديل»؛ «المدفوع للشركة» هو مجموع تلك المصروفات.')}</div>
     </div>
 
     <div class="card" style="margin-top:16px">
