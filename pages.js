@@ -3185,6 +3185,7 @@ function viewMember(id) {
           <button onclick="event.stopPropagation();exportMemberAttendance(${m.id})" title="Export attendance history (CSV)" style="position:absolute;top:6px;right:6px;background:transparent;border:none;cursor:pointer;font-size:13px;opacity:.7;padding:2px">⬇</button>
         </div>
       </div>
+      ${(typeof memberGroupsHtml === 'function') ? memberGroupsHtml(m) : ''}
       ${_dupBanner}
       ${_extraBanner}
       <h3 style="font-size:13px;font-weight:600;margin-bottom:8px">Subscription History (${_shownRows})</h3>
@@ -11606,7 +11607,11 @@ function _buildClasses() {
       coach: c.coachId == null ? '' : coachName(c.coachId),   // v6.684: no coach → blank, the class shows the sport only
       // v6.401: slot-aware — a student assigned to specific times shows only in those classes;
       // an unassigned student still shows in every class of that sport+coach (as before).
-      roster: (typeof classRoster === 'function') ? classRoster(c.sport, c.coachId, c.day, c.slot) : [],
+      roster: (() => {   // v6.1059 — a slot linked to a Group takes the group's members; no group → as before
+        const gs = groupsForSlot(c.id).filter(g => _grpSportOf(g) === c.sport);
+        if (gs.length) { const ids = new Set(); gs.forEach(g => (g.memberIds || []).forEach(id => ids.add(id))); return (state.members || []).filter(m => m && !m.deleted && ids.has(m.id)).sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))); }
+        return (typeof classRoster === 'function') ? classRoster(c.sport, c.coachId, c.day, c.slot) : [];
+      })(),
     }))
     .sort((a, b) => (_classDayIdx(a.day) - _classDayIdx(b.day)) || ((a.slot || 0) - (b.slot || 0)) ||
       String(a.sport || '').localeCompare(String(b.sport || '')));
@@ -11874,16 +11879,68 @@ window._classXlsx = function (id) {
   } catch (err) { toast(t('Excel export failed', 'فشل تصدير Excel') + ': ' + ((err && err.message) || err), 'error'); }
 };
 
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// GROUPS (v6.1059) — every subscriber belongs to a GROUP for each sport he takes. One screen for all sports (it grew out of Swimming Groups, whose
+// records are kept: state.swimGroups, a record with no `sport` is a Swimming group). A group = { id, sport, name, coachId, slotIds:[schedule ids], memberIds:[], days?, timeFrom?, timeTo? }.
+// A group linked to schedule slots (slotIds) drives the class roster of those slots (Classes screen) and shows on the Schedule cell; the member profile shows his group per sport,
+// or "no group". Mixed and camps are not grouped (no fixed class).
+// ═══════════════════════════════════════════════════════════════════════════════════════
+const GRP_EMOJI = { 'Swimming': '🏊', 'Football': '⚽', 'Kick Boxing': '🥊', 'Boxing': '🥊', 'MMA': '🥊', 'Karate': '🥋', 'Taekwondo': '🥋', 'Gymnastic': '🤸', 'Baby Gym': '👶' };
+function _grpEmoji(sport) { return GRP_EMOJI[sport] || '🏅'; }
+function _grpSportOf(g) { return (g && g.sport) || 'Swimming'; }
+function _grpGroupable(sport) { return !!sport && sport !== MIXED && !(typeof isCampSport === 'function' && isCampSport(sport)); }
+// is the member a CURRENT subscriber of this sport? a package that has not ended, or an enrolment with no package at all
+function memberTakesSportNow(m, sport) {
+  if (!m || m.deleted || !_grpGroupable(sport)) return false;
+  const subs = (m.subscriptions || []).filter(s => s && !s.deleted && (s.activity || '') === sport);
+  if (subs.length) return subs.some(s => !s.end || String(s.end) >= TODAY);
+  return [m.sport, ...((m.enrollments || []).map(e => e && e.sport))].filter(Boolean).includes(sport);
+}
+function memberSportsNow(m) {
+  const set = new Set([m && m.sport, ...(((m && m.enrollments) || []).map(e => e && e.sport)), ...(((m && m.subscriptions) || []).map(s => s && s.activity))].filter(Boolean));
+  return [...set].filter(sp => memberTakesSportNow(m, sp));
+}
+function groupSubscribers(sport) { return (state.members || []).filter(m => memberTakesSportNow(m, sport)); }
+// the sports that have subscribers, with how many are still without a group
+function groupSportsSummary() {
+  const bySport = {};
+  for (const m of (state.members || [])) for (const sp of memberSportsNow(m)) { (bySport[sp] = bySport[sp] || { sport: sp, total: 0, noGroup: 0 }).total++; }
+  const grouped = {};
+  for (const g of (state.swimGroups || [])) { const sp = _grpSportOf(g); const set = grouped[sp] = grouped[sp] || new Set(); (g.memberIds || []).forEach(id => set.add(id)); }
+  for (const sp of Object.keys(bySport)) bySport[sp].noGroup = groupSubscribers(sp).filter(m => !(grouped[sp] && grouped[sp].has(m.id))).length;
+  return Object.values(bySport).sort((a, b) => b.total - a.total);
+}
+// one row per sport he takes now: his group there, or none
+function memberGroupsFor(m) {
+  return memberSportsNow(m).map(sp => ({ sport: sp, group: (state.swimGroups || []).find(g => _grpSportOf(g) === sp && (g.memberIds || []).includes(m.id)) || null }));
+}
+function groupsForSlot(slotId) { return (state.swimGroups || []).filter(g => (g.slotIds || []).some(id => String(id) === String(slotId))); }
+const GRP_DAY_SHORT = { sun: 'Sun', mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat' };
+function _grpSlotLabel(c) { return (GRP_DAY_SHORT[c.day] || c.day || '') + ' ' + String(c.slot).padStart(2, '0') + ':00'; }
+window.openGroupsFor = function (sport) { if (sport) window._grpSport = sport; if (typeof closeModal === 'function') closeModal(); navigate('swimgroups'); };
+// the strip on the member profile: his group per sport (or "no group")
+window.memberGroupsHtml = function (m) {
+  const rows = memberGroupsFor(m);
+  if (!rows.length) return '';
+  const chip = r => {
+    const slots = r.group ? (r.group.slotIds || []).map(id => (state.schedule || []).find(c => c && String(c.id) === String(id))).filter(Boolean).map(_grpSlotLabel).join(' · ') : '';
+    return r.group
+      ? `<span class="badge" style="cursor:pointer;background:rgba(16,185,129,.14);color:var(--green);font-weight:700" onclick="openGroupsFor('${r.sport}')" title="${t('Open the Groups screen', 'افتح شاشة المجموعات')}">${_grpEmoji(r.sport)} ${escapeHtml(r.sport)} → ${escapeHtml(r.group.name || '')}${slots ? ' · ' + escapeHtml(slots) : ''}</span>`
+      : `<span class="badge" style="cursor:pointer;background:rgba(239,68,68,.12);color:var(--red);font-weight:700" onclick="openGroupsFor('${r.sport}')" title="${t('Put him in a group', 'ضعه في مجموعة')}">⚠ ${_grpEmoji(r.sport)} ${escapeHtml(r.sport)} — ${t('no group', 'بدون مجموعة')}</span>`;
+  };
+  return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 10px"><span class="text-mute" style="font-size:11px;text-transform:uppercase">👥 ${t('Groups', 'المجموعات')}</span>${rows.map(chip).join('')}</div>`;
+};
+
 PAGES.swimgroups = (main) => {
-  const SWIM = 'Swimming';
-  const GROUP_MIN = 3, GROUP_MAX = 7;
+  const SWIM = window._grpSport || 'Swimming';   // v6.1059 — the sport being grouped (any sport; the name is from when only swimming had groups)
+  const GROUP_MIN = SWIM === 'Swimming' ? 3 : 0, GROUP_MAX = SWIM === 'Swimming' ? 7 : 999;   // the 3–7 size guide is swimming's
   if (!Array.isArray(state.swimGroups)) state.swimGroups = [];
 
   // All members currently enrolled in Swimming (active records).
-  const swimmers = (state.members || []).filter(m => !m.deleted &&
-    ([m.sport, ...((m.enrollments || []).map(e => e.sport))].filter(Boolean).includes(SWIM)));
+  const swimmers = groupSubscribers(SWIM);
   const swimmerById = new Map(swimmers.map(m => [m.id, m]));
-  const groups = state.swimGroups.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const groups = state.swimGroups.filter(g => _grpSportOf(g) === SWIM).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const sportsSum = groupSportsSummary(); if (!sportsSum.some(x => x.sport === SWIM)) sportsSum.unshift({ sport: SWIM, total: 0, noGroup: 0 });
 
   // Which swimmers are already in a group?
   const assigned = new Set();
@@ -11912,7 +11969,7 @@ PAGES.swimgroups = (main) => {
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:8px">
         <div style="flex:1;min-width:0">
           <div style="display:flex;align-items:center;gap:6px">
-            <span style="font-size:16px">🏊</span>
+            <span style="font-size:16px">${_grpEmoji(SWIM)}</span>
             <input value="${escapeHtml(g.name || '')}" onchange="window._swimRename('${g.id}', this.value)" placeholder="${t('Group name', 'اسم المجموعة')}"
               style="font-weight:800;font-size:15px;background:transparent;border:0;border-bottom:1px dashed transparent;color:var(--text);min-width:0;flex:1" onfocus="this.style.borderBottomColor='var(--border)'" onblur="this.style.borderBottomColor='transparent'" />
           </div>
@@ -11927,6 +11984,12 @@ PAGES.swimgroups = (main) => {
         </div>
       </div>
       <div style="margin-bottom:8px;padding:8px;background:var(--surface-2);border-radius:8px">
+        <div style="font-size:10px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">${t('Coach', 'المدرب')}</div>
+        <select onchange="window._grpSetCoach('${g.id}', this.value)" style="width:100%;padding:5px 6px;margin-bottom:8px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px"><option value="">—</option>${coachOptionsHtml(state.coaches || [], SWIM, g.coachId)}</select>
+        <div style="font-size:10px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">🗓 ${t('Schedule', 'الجدول')}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center">${(g.slotIds || []).map(id => (state.schedule || []).find(c => c && String(c.id) === String(id))).filter(Boolean).map(c => `<span class="badge blue">${_grpSlotLabel(c)}</span>`).join('')}<button class="btn ghost sm" onclick="window._grpLinkSlots('${g.id}')">${(g.slotIds || []).length ? '✏️' : '+ ' + t('Link schedule', 'ربط الجدول')}</button></div>
+      </div>
+      ${(g.slotIds || []).length ? '' : `<div style="margin-bottom:8px;padding:8px;background:var(--surface-2);border-radius:8px">
         <div style="font-size:10px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">${t('Days', 'الأيام')}</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">
           ${SWIM_DAYS.map((d, i) => {
@@ -11940,7 +12003,7 @@ PAGES.swimgroups = (main) => {
           <span style="color:var(--text-mute)">${t('to', 'إلى')}</span>
           <input type="time" value="${g.timeTo || ''}" onchange="window._swimSetTime('${g.id}','to',this.value)" style="padding:4px 6px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px" />
         </div>
-      </div>
+      </div>`}
       <div class="swim-dropzone" data-gid="${g.id}" style="flex:1;display:flex;flex-direction:column;gap:6px;min-height:48px;padding:6px;border:2px dashed var(--border);border-radius:8px;transition:background .1s">
         ${mems.length ? mems.map(m => memberChip(m, g.id)).join('') : `<div class="text-mute" style="font-size:11px;text-align:center;padding:10px">${t('Drag swimmers here, or select & assign', 'اسحب السبّاحين هنا، أو حدّد وأسند')}</div>`}
       </div>
@@ -11949,13 +12012,15 @@ PAGES.swimgroups = (main) => {
 
   main.innerHTML = `
     <div class="topbar">
-      <div><h1>🏊 ${t('Swimming Groups', 'مجموعات السباحة')}</h1>
-        <div class="subtitle">${t('Organise swimmers into groups of', 'نظّم السبّاحين في مجموعات من')} ${GROUP_MIN}–${GROUP_MAX} · ${swimmers.length} ${t('swimmers', 'سبّاح')} · ${groups.length} ${t('groups', 'مجموعة')}</div></div>
+      <div><h1>👥 ${t('Groups', 'المجموعات')} — ${_grpEmoji(SWIM)} ${escapeHtml(SWIM)}</h1>
+        <div class="subtitle">${t('Every subscriber belongs to a group for each sport', 'كل مشترك في مجموعة لكل رياضة')} · ${swimmers.length} ${t('subscribers', 'مشترك')} · ${groups.length} ${t('groups', 'مجموعة')} · <b style="color:${unassigned.length ? 'var(--red)' : 'var(--green)'}">${unassigned.length} ${t('without a group', 'بدون مجموعة')}</b>${GROUP_MAX < 999 ? ' · ' + t('guide', 'المقترح') + ' ' + GROUP_MIN + '–' + GROUP_MAX + ' ' + t('per group', 'للمجموعة') : ''}</div></div>
       <div class="topbar-actions">
         <button class="btn ghost" id="swim-auto" title="${t('Auto-split unassigned swimmers into groups', 'توزيع تلقائي للسبّاحين')}">✨ ${t('Auto-group', 'توزيع تلقائي')}</button>
         <button class="btn primary" id="swim-add">+ ${t('New group', 'مجموعة جديدة')}</button>
       </div>
     </div>
+
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">${sportsSum.map(x => `<button class="btn sm ${x.sport === SWIM ? 'primary' : 'ghost'}" onclick="window._grpPick('${x.sport}')">${_grpEmoji(x.sport)} ${escapeHtml(x.sport)} <span class="badge" style="background:${x.sport === SWIM ? '#fff' : (x.noGroup ? 'rgba(239,68,68,.15)' : 'rgba(16,185,129,.15)')};color:${x.noGroup ? 'var(--red)' : 'var(--green)'}" title="${t('subscribers without a group / total', 'بدون مجموعة / الإجمالي')}">${x.noGroup}/${x.total}</span></button>`).join('')}</div>
 
     <div id="swim-selbar" style="display:none;position:sticky;top:0;z-index:5;background:var(--accent);color:#fff;border-radius:10px;padding:10px 14px;margin-bottom:12px;align-items:center;gap:12px;box-shadow:0 4px 16px rgba(0,0,0,.15)">
       <span id="swim-selcount" style="font-weight:700"></span>
@@ -11967,10 +12032,10 @@ PAGES.swimgroups = (main) => {
 
     <div style="display:grid;grid-template-columns:280px 1fr;gap:16px;align-items:start">
       <div class="card" style="position:sticky;top:12px">
-        <div style="font-weight:800;font-size:14px;margin-bottom:8px">🏊 ${t('Unassigned', 'غير مُسند')} <span class="badge" style="background:rgba(245,158,11,.15);color:var(--accent-2)">${unassigned.length}</span></div>
-        <input id="swim-search" type="search" placeholder="🔍 ${t('Search swimmer…', 'ابحث عن سبّاح…')}" style="width:100%;padding:8px 10px;margin-bottom:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px" />
+        <div style="font-weight:800;font-size:14px;margin-bottom:8px">${_grpEmoji(SWIM)} ${t('No group', 'بدون مجموعة')} <span class="badge" style="background:rgba(245,158,11,.15);color:var(--accent-2)">${unassigned.length}</span></div>
+        <input id="swim-search" type="search" placeholder="🔍 ${t('Search subscriber…', 'ابحث عن مشترك…')}" style="width:100%;padding:8px 10px;margin-bottom:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px" />
         <div class="swim-dropzone" data-gid="__pool__" id="swim-pool" style="display:flex;flex-direction:column;gap:6px;min-height:80px;padding:6px;border:2px dashed var(--border);border-radius:8px">
-          ${unassigned.length ? unassigned.map(m => memberChip(m, '')).join('') : `<div class="text-mute" style="font-size:11px;text-align:center;padding:14px">${swimmers.length ? t('All swimmers are grouped 🎉', 'كل السبّاحين في مجموعات 🎉') : t('No swimming members yet', 'لا يوجد أعضاء سباحة بعد')}</div>`}
+          ${unassigned.length ? unassigned.map(m => memberChip(m, '')).join('') : `<div class="text-mute" style="font-size:11px;text-align:center;padding:14px">${swimmers.length ? t('Everyone has a group 🎉', 'الكل في مجموعات 🎉') : t('No subscribers in this sport', 'لا يوجد مشتركون في هذه الرياضة')}</div>`}
         </div>
       </div>
 
@@ -12045,8 +12110,9 @@ function _swimRerender() { if (state.route === 'swimgroups') navigate('swimgroup
 window._swimAddGroup = function() {
   if (!Array.isArray(state.swimGroups)) state.swimGroups = [];
   const n = state.swimGroups.length + 1;
-  state.swimGroups.push({ id: 'sg' + Date.now() + '_' + Math.floor(Math.random() * 999), name: `Group ${n}`, coachId: null, memberIds: [], order: n, createdAt: new Date().toISOString() });
-  if (typeof audit === 'function') audit('swim.group.add', 'swimgroup', `Created swimming group ${n}`);
+  const _sp = window._grpSport || 'Swimming', _mine = state.swimGroups.filter(x => _grpSportOf(x) === _sp).length + 1;
+  state.swimGroups.push({ id: 'sg' + Date.now() + '_' + Math.floor(Math.random() * 999), sport: _sp, name: `Group ${_mine}`, coachId: null, slotIds: [], memberIds: [], order: n, createdAt: new Date().toISOString() });
+  if (typeof audit === 'function') audit('swim.group.add', 'swimgroup', `Created ${_sp} group ${_mine}`);
   save(); _swimRerender();
 };
 
@@ -12110,13 +12176,46 @@ window._swimAssign = function(gid, ids) {
   const g = (state.swimGroups || []).find(x => x.id === gid);
   if (!g) return;
   g.memberIds = g.memberIds || [];
-  // Remove these ids from any OTHER group first (a swimmer is in one group).
+  // Remove these ids from any OTHER group OF THE SAME SPORT first (one group per sport).
   (state.swimGroups || []).forEach(other => {
-    if (other.id !== gid) other.memberIds = (other.memberIds || []).filter(id => !ids.includes(id));
+    if (other.id !== gid && _grpSportOf(other) === _grpSportOf(g)) other.memberIds = (other.memberIds || []).filter(id => !ids.includes(id));
   });
   ids.forEach(id => { if (!g.memberIds.includes(id)) g.memberIds.push(id); });
   _swimRerender();
   confirmSaved(`${ids.length} ${t('assigned to', 'أُسند إلى')} ${escapeHtml(g.name || '')}`);
+};
+
+// v6.1059 — Groups: pick the sport, set the coach, link the schedule slots
+window._grpPick = function (sport) { window._grpSport = sport; navigate('swimgroups'); };
+window._grpSetCoach = function (gid, cid) {
+  const g = (state.swimGroups || []).find(x => x.id === gid); if (!g) return;
+  g.coachId = cid === '' || cid == null ? null : parseInt(cid);
+  if (typeof audit === 'function') audit('group.coach', 'swimgroup', `Group ${g.name}: coach ${g.coachId == null ? 'none' : coachName(g.coachId)}`);
+  save(); _swimRerender();
+};
+window._grpLinkSlots = function (gid) {
+  const g = (state.swimGroups || []).find(x => x.id === gid); if (!g) return;
+  const sport = _grpSportOf(g), linked = new Set((g.slotIds || []).map(String));
+  const DAY_ORDER = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  const slots = (state.schedule || []).filter(c => c && c.sport === sport).sort((a, b) => (DAY_ORDER.indexOf(a.day) - DAY_ORDER.indexOf(b.day)) || ((a.slot || 0) - (b.slot || 0)));
+  const rows = slots.map(c => {
+    const others = groupsForSlot(c.id).filter(x => x.id !== g.id).map(x => x.name).join(', ');
+    return `<label style="display:flex;align-items:center;gap:8px;padding:6px 4px;cursor:pointer"><input type="checkbox" class="grp-slot-cb" value="${c.id}" ${linked.has(String(c.id)) ? 'checked' : ''} /> <b>${_grpSlotLabel(c)}</b> <span class="text-mute">${c.coachId != null ? escapeHtml(coachName(c.coachId)) : ''}</span>${others ? ` <span class="text-mute" style="font-size:11px">· ${t('also', 'أيضاً')}: ${escapeHtml(others)}</span>` : ''}</label>`;
+  }).join('');
+  showModal({
+    title: '🗓 ' + t('Schedule slots of', 'مواعيد') + ' ' + escapeHtml(g.name || ''),
+    body: `<div class="text-mute" style="font-size:12px;margin-bottom:8px">${t('Tick the weekly classes this group attends. Each one shows the group on the Schedule, and its class roster becomes the group members.', 'حدّد الحصص الأسبوعية لهذه المجموعة. كل حصة تعرض المجموعة في الجدول، وقائمة الحصة تصبح أعضاء المجموعة.')}</div>`
+      + (rows ? `<div style="max-height:320px;overflow:auto">${rows}</div>` : `<div class="text-mute">${t('No ' + sport + ' classes on the Schedule yet — add them there first.', 'لا توجد حصص ' + sport + ' في الجدول بعد — أضفها هناك أولاً.')}</div>`),
+    actions: [
+      { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
+      { label: '✓ ' + t('Save', 'حفظ'), class: 'btn primary', onclick: () => {
+        g.slotIds = [...document.querySelectorAll('.grp-slot-cb:checked')].map(cb => parseInt(cb.value));
+        if (!g.coachId && g.slotIds.length) { const first = (state.schedule || []).find(c => c && String(c.id) === String(g.slotIds[0])); if (first && first.coachId != null) g.coachId = first.coachId; }
+        if (typeof audit === 'function') audit('group.slots', 'swimgroup', `Group ${g.name}: ${g.slotIds.length} schedule slot(s)`);
+        closeModal(); save(); _swimRerender();
+      } },
+    ],
+  });
 };
 
 window._swimRemove = function(gid, mid) {
@@ -12128,20 +12227,19 @@ window._swimRemove = function(gid, mid) {
 
 // Auto-split unassigned swimmers into balanced groups of ~5 (within 3–7).
 window._swimAuto = function() {
-  const SWIM = 'Swimming';
+  const SWIM = window._grpSport || 'Swimming';
   if (!Array.isArray(state.swimGroups)) state.swimGroups = [];
-  const swimmers = (state.members || []).filter(m => !m.deleted &&
-    ([m.sport, ...((m.enrollments || []).map(e => e.sport))].filter(Boolean).includes(SWIM)));
+  const swimmers = groupSubscribers(SWIM);
   const assigned = new Set();
-  state.swimGroups.forEach(g => (g.memberIds || []).forEach(id => assigned.add(id)));
+  state.swimGroups.filter(g => _grpSportOf(g) === SWIM).forEach(g => (g.memberIds || []).forEach(id => assigned.add(id)));
   const pool = swimmers.filter(m => !assigned.has(m.id)).map(m => m.id);
   if (!pool.length) { toast(t('No unassigned swimmers', 'لا يوجد سبّاحون غير مُسندين'), 'info'); return; }
   const TARGET = 5;
   const numGroups = Math.max(1, Math.ceil(pool.length / TARGET));
   if (!confirm(`${t('Auto-group swimmers?', 'توزيع تلقائي؟')}\n\n${pool.length} ${t('unassigned swimmers will be split into', 'سبّاح سيُوزّعون على')} ${numGroups} ${t('new groups of about 5.', 'مجموعات بحوالي 5 لكل منها.')}`)) return;
-  const base = state.swimGroups.length;
+  const base = state.swimGroups.length, baseSport = state.swimGroups.filter(x => _grpSportOf(x) === SWIM).length;
   for (let i = 0; i < numGroups; i++) {
-    state.swimGroups.push({ id: 'sg' + Date.now() + '_' + i, name: `Group ${base + i + 1}`, coachId: null, memberIds: [], order: base + i + 1, createdAt: new Date().toISOString() });
+    state.swimGroups.push({ id: 'sg' + Date.now() + '_' + i, sport: SWIM, name: `Group ${baseSport + i + 1}`, coachId: null, slotIds: [], memberIds: [], order: base + i + 1, createdAt: new Date().toISOString() });
   }
   const newGroups = state.swimGroups.slice(base);
   pool.forEach((mid, idx) => { newGroups[idx % numGroups].memberIds.push(mid); });
@@ -12167,7 +12265,7 @@ function _swimGroupText(g) {
   const lines = mems.map((m, i) => `${i + 1}. ${m.name}${m.nameArabic ? ' \u00b7 ' + m.nameArabic : ''}`);
   const sched = _swimScheduleText(g, true);
   const schedLine = sched ? `\ud83d\uddd3 ${sched}\n` : '';
-  return `\ud83c\udfca ${g.name || 'Swimming Group'} \u2014 Black Stars Sports Club\n${schedLine}${t('Members', '\u0627\u0644\u0623\u0639\u0636\u0627\u0621')} (${mems.length}):\n${lines.join('\n')}`;
+  return `${_grpEmoji(_grpSportOf(g))} ${g.name || _grpSportOf(g) + ' Group'} \u2014 Black Stars Sports Club\n${schedLine}${t('Members', '\u0627\u0644\u0623\u0639\u0636\u0627\u0621')} (${mems.length}):\n${lines.join('\n')}`;
 }
 
 window._swimShare = function(gid) {
@@ -12198,13 +12296,13 @@ window._swimPrint = function(gid) {
       <div style="font-size:18px;font-weight:800;color:#1a4d8f;margin-top:3px">🗓 ${escapeHtml(schedEn || schedAr)}</div>
       ${schedEn && schedAr && schedEn !== schedAr ? `<div style="font-size:14px;color:#555;direction:rtl;margin-top:2px">${escapeHtml(schedAr)}</div>` : ''}
     </div>` : '';
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(g.name || 'Swimming Group')}</title>
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(g.name || _grpSportOf(g) + ' Group')}</title>
     <style>body{font-family:-apple-system,'Segoe UI',Arial,sans-serif;color:#1a1a1a;padding:28px;max-width:720px;margin:auto}
       h1{font-size:24px;margin:0 0 4px} .sub{color:#777;font-size:13px;border-bottom:3px solid #f26060;padding-bottom:10px;margin-bottom:16px}
       table{border-collapse:collapse;width:100%} th{background:#fafafa;border:1px solid #ddd;padding:9px 12px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#777}
       .foot{margin-top:18px;color:#aaa;font-size:11px;text-align:center}</style></head>
     <body>
-      <h1>🏊 ${escapeHtml(g.name || 'Swimming Group')}</h1>
+      <h1>${_grpEmoji(_grpSportOf(g))} ${escapeHtml(g.name || _grpSportOf(g) + ' Group')}</h1>
       <div class="sub">Black Stars Sports Club · Waab, Doha · ${mems.length} members · ${fmtDate(TODAY)}</div>
       ${schedHtml}
       <table><thead><tr><th style="width:44px">#</th><th>Name</th><th style="text-align:right">الاسم</th></tr></thead><tbody>${rows || '<tr><td colspan="3" style="padding:14px;text-align:center;color:#999">No members</td></tr>'}</tbody></table>
@@ -12384,6 +12482,7 @@ PAGES.schedule = (main) => {
             <div style="flex:1;min-width:0;overflow:hidden">
               <div style="display:flex;align-items:center;gap:4px"><span>${sportEmoji(c.sport)}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(t(c.label || c.sport, c.labelAr || c.label || sportNameAR(c.sport)))}</span></div>
               <div style="font-size:9px;font-weight:500;opacity:.95;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(coach ? coach.name : (c.sport === SCHEDULE_EXTERNAL ? t('External booking', 'حجز خارجي') : ''))}${coach && !isCoachActive(coach) ? ' · inactive' : ''}</div>
+              ${(() => { const gs = groupsForSlot(c.id).filter(g => _grpSportOf(g) === c.sport); if (!gs.length) return ''; const n = new Set(gs.flatMap(g => g.memberIds || [])).size; return `<div style="font-size:9px;font-weight:600;opacity:.95;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(gs.map(g => g.name).join(', '))}">👥 ${escapeHtml(gs.map(g => g.name).join(', '))} · ${n}</div>`; })()}
             </div>
             ${warn}
             ${canEdit ? `<div style="display:flex;flex-direction:column;gap:1px;flex-shrink:0">
@@ -36759,7 +36858,8 @@ window.scheduleRentalsDialog = function () {
 window._cb = window._cb || { date: null, view: 'day', hour: '', q: '' };
 PAGES.courtbookings = (main) => {
   const S = window._cb; if (!S.date) S.date = TODAY;
-  const money = !isViewerRole();   // reception sees the board and books, not the money
+  const money = true;   // v6.1059 — reception sees the numbers too (amounts, billed, due); only collecting and the invoice stay with the admin
+  const moneyActs = !isViewerRole();
   const addDays_ = (d, n) => addDays(d, n);
   const dow = d => new Date(d + 'T12:00:00').getDay();
   const weekStart = d => addDays_(d, -dow(d));   // Sunday
@@ -36843,9 +36943,9 @@ PAGES.courtbookings = (main) => {
         ${r.notes ? `<div class="text-mute">📝 ${escapeHtml(r.notes)}</div>` : ''}</div>`,
       actions: [
         { label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal },
-        ...(money && due > 0.5 ? [{ label: '💵 ' + t('Collect', 'تحصيل') + ' ' + fmt(due), class: 'btn primary', onclick: () => { closeModal(); collectRental(r.id); } }] : []),
+        ...(moneyActs && due > 0.5 ? [{ label: '💵 ' + t('Collect', 'تحصيل') + ' ' + fmt(due), class: 'btn primary', onclick: () => { closeModal(); collectRental(r.id); } }] : []),
         ...(r.customerPhone ? [{ label: '💬 ' + t('Send WhatsApp', 'إرسال واتساب'), class: 'btn ghost', style: 'color:#128C7E;border-color:#25D366', onclick: () => sendRentalBookingWhatsApp(r.id) }] : []),   // v6.821
-        ...(money && inv ? [{ label: '📄 ' + t('Invoice', 'الفاتورة'), class: 'btn ghost', onclick: () => { closeModal(); printInvoicePDF(inv.id); } }] : []),
+        ...(moneyActs && inv ? [{ label: '📄 ' + t('Invoice', 'الفاتورة'), class: 'btn ghost', onclick: () => { closeModal(); printInvoicePDF(inv.id); } }] : []),
         ...((money || currentRole() === 'receptionist') ? [{ label: '🗑 ' + t('Cancel booking', 'إلغاء الحجز'), class: 'btn ghost', onclick: () => { closeModal(); deleteRental(r.id); } }] : []),
         { label: '✏️ ' + t('Edit', 'تعديل'), class: 'btn primary', onclick: () => { closeModal(); editRental(r.id); } },
       ],
