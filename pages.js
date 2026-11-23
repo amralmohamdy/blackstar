@@ -9064,89 +9064,6 @@ function citadelCompute(selMonths, _oldBasis) {
   return { GROUPS, agg, details, grand, paid };
 }
 
-// ── TEMPORARY screen (v6.1015) — Citadel class differences: the old basis (whole package in its invoice month) vs the attended classes.
-// To remove: this block + the `citadeldiff` route and its Arabic label in app.js. Nothing else uses it.
-PAGES.citadeldiff = (main) => {
-  if (currentRole() !== 'admin') { main.innerHTML = `<div class="card"><div class="empty">${t('Admins only.', 'المسؤولون فقط.')}</div></div>`; return; }
-  const rawRate = Number(state.settings && state.settings.citadelRate);
-  const RATE = (isNaN(rawRate) || rawRate < 0) ? 30 : rawRate;
-  const from = String(commissionStartDate()).slice(0, 7), last = (TODAY || '').slice(0, 7);
-  const months = [];
-  for (let m = from; m <= last; m = _salNextMonth(m)) months.push(m);
-  const mem = new Map((state.members || []).map(x => [x.id, x]));
-  const byMonth = {}; months.forEach(m => { byMonth[m] = { old: 0, nw: 0 }; });
-  const rows = [];
-  for (const inv of (state.invoices || [])) {
-    if (inv.deleted) continue;
-    for (const li of (inv.lineItems || [])) {
-      if (li.sport !== 'Football' && li.sport !== 'Swimming') continue;
-      const price = Number(li.price) || 0;
-      if (!price) continue;
-      const mk = inv.month || String(inv.date || '').slice(0, 7);
-      const m = inv.customerId ? mem.get(inv.customerId) : null;
-      const sl = citadelAttendedSlices(inv, li);
-      if (byMonth[mk]) byMonth[mk].old += price;
-      const row = { ref: inv.ref || ('#' + inv.id), name: (m && (m.name || m.nameArabic)) || inv.customerName || '—', sport: li.sport, mk, price, tot: 0, counted: 0, pre: 0, left: 0, val: 0, per: {}, status: '' };
-      if (!sl) {
-        if (byMonth[mk]) byMonth[mk].nw += price;
-        row.status = 'plan';
-        rows.push(row);
-        continue;
-      }
-      const sub = findSubForLine(m, inv, li);
-      row.tot = parseFloat(sub.totalClasses) || 0;
-      const perC = price / row.tot;
-      for (const s of sl) { row.per[s.month] = (row.per[s.month] || 0) + s.amt; if (byMonth[s.month]) byMonth[s.month].nw += s.amt; }
-      row.counted = Math.round(sl.reduce((a, s) => a + s.amt, 0) / perC);
-      const att = Math.min(row.tot, attendedYForSub(m, sub));
-      row.pre = Math.max(0, att - row.counted);
-      row.left = Math.max(0, row.tot - att);
-      row.val = row.left * perC;
-      row.status = row.left <= 0 ? 'done' : (sub.end && sub.end < TODAY ? 'expired' : 'active');
-      rows.push(row);
-    }
-  }
-  const ba = months.map(k => {
-    const o = citadelCompute([k], true), n = citadelCompute([k]), paidCo = citadelPaidToCompany([k]);
-    const memb = r => r.agg.football.membership + r.agg.swimming.membership, rent = r => r.agg.football.rent + r.agg.swimming.rent;
-    return { k, mo: memb(o), mn: memb(n), rent: rent(n), go: o.grand, gn: n.grand, so: o.grand * RATE / 100, sn: n.grand * RATE / 100, paidCo };
-  });
-  const sum = (a, f) => a.reduce((s, x) => s + f(x), 0);
-  const oldT = sum(months, k => byMonth[k].old), newT = sum(months, k => byMonth[k].nw);
-  const expired = rows.filter(r => r.status === 'expired'), active = rows.filter(r => r.status === 'active');
-  const flt = window._cdFilter || 'all';
-  const shown = rows.filter(r => flt === 'all' ? (r.status !== 'plan' || true) : r.status === flt).sort((a, b) => b.val - a.val || a.name.localeCompare(b.name));
-  const lbl = { plan: t('No class plan · invoice month', 'بدون خطة حصص · شهر الفاتورة'), done: t('All attended', 'كلها اتحضرت'), expired: t('Expired · unattended', 'انتهت · لم تُحضر'), active: t('Active · remaining', 'سارية · متبقية') };
-  const sh = x => fmt(x * RATE / 100);
-  const kpi = (label, value, sub) => `<div class="kpi"><div class="kpi-label">${label}</div><div class="kpi-value num">${fmt(value)}</div>${sub ? `<div class="text-mute" style="font-size:11px">${sub}</div>` : ''}</div>`;
-  const monthRows = months.map(k => { const d = byMonth[k].nw - byMonth[k].old; return `<tr><td>${escapeHtml(fmtMonth(k))}</td><td class="text-right num">${fmt(byMonth[k].old)}</td><td class="text-right num">${fmt(byMonth[k].nw)}</td><td class="text-right num" style="color:${d < 0 ? 'var(--red)' : 'var(--green)'}">${d > 0 ? '+' : ''}${fmt(d)}</td><td class="text-right num" style="color:${d < 0 ? 'var(--red)' : 'var(--green)'}">${d > 0 ? '+' : ''}${sh(d)}</td></tr>`; }).join('');
-  const lineRows = shown.map(r => `<tr>
-    <td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.ref)}</td><td>${escapeHtml(r.sport)}</td><td>${escapeHtml(fmtMonth(r.mk))}</td>
-    <td class="text-right num">${fmt(r.price)}</td><td class="text-right num">${r.tot || '—'}</td><td class="text-right num">${r.counted}</td><td class="text-right num">${r.pre || ''}</td><td class="text-right num">${r.left || ''}</td>
-    <td>${Object.keys(r.per).sort().map(k => escapeHtml(fmtMonth(k)) + ' ' + fmt(r.per[k])).join(' · ') || '—'}</td>
-    <td class="text-right num">${r.val ? fmt(r.val) : ''}</td><td>${lbl[r.status]}</td></tr>`).join('');
-  main.innerHTML = `
-    <div class="page-header"><div><div class="page-title">🏛 ${t('Citadel · class differences', 'سيتاديل · فرق الحصص')}</div>
-      <div class="subtitle">${t('Temporary screen — Football + Swimming memberships only: the whole package in its invoice month (old) vs only the classes attended, each in its own month (new), from', 'شاشة مؤقتة — اشتراكات الكرة والسباحة فقط: الباقة كلها في شهر فاتورتها (القديم) مقابل الحصص المتحضرة فقط كل حصة في شهرها (الجديد)، من')} ${escapeHtml(fmtMonth(from))}. ${t('Rent and Mixed are unchanged.', 'الإيجارات والـ Mixed لم تتغير.')}</div></div></div>
-    <div class="kpi-row" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-bottom:14px">
-      ${kpi(t('Old basis', 'الأساس القديم'), oldT, t('company share', 'حصة الشركة') + ' ' + sh(oldT))}
-      ${kpi(t('Attended classes', 'الحصص المتحضرة'), newT, t('company share', 'حصة الشركة') + ' ' + sh(newT))}
-      ${kpi(t('Difference', 'الفرق'), newT - oldT, t('share', 'الحصة') + ' ' + sh(newT - oldT))}
-      ${kpi(t('Expired, never attended', 'انتهت بدون حضور'), sum(expired, r => r.val), expired.length + ' ' + t('lines · share', 'سطر · الحصة') + ' ' + sh(sum(expired, r => r.val)))}
-      ${kpi(t('Active, still to attend', 'سارية ولسه متبقي'), sum(active, r => r.val), active.length + ' ' + t('lines · share', 'سطر · الحصة') + ' ' + sh(sum(active, r => r.val)))}
-    </div>
-    <div class="card" style="margin-bottom:14px"><div class="card-header"><div class="card-title">${t('Citadel share · before and after', 'حصة سيتاديل · قبل وبعد')} · ${RATE}%</div><div class="card-subtitle">${t('Whole Citadel figure per month (membership + rent + Mixed). Before = whole package in the invoice month; after = attended classes only.', 'رقم سيتاديل كامل لكل شهر (اشتراكات + إيجار + Mixed). قبل = الباقة كلها في شهر الفاتورة؛ بعد = الحصص المتحضرة فقط.')}</div></div>
-      <div class="table-wrap"><table><thead><tr><th>${t('Month', 'الشهر')}</th><th class="text-right">${t('Membership before', 'الاشتراكات قبل')}</th><th class="text-right">${t('Membership after', 'الاشتراكات بعد')}</th><th class="text-right">${t('Rent', 'الإيجار')}</th><th class="text-right">${t('Total before', 'الإجمالي قبل')}</th><th class="text-right">${t('Total after', 'الإجمالي بعد')}</th><th class="text-right">${t('Share before', 'الحصة قبل')}</th><th class="text-right">${t('Share after', 'الحصة بعد')}</th><th class="text-right">${t('Share difference', 'فرق الحصة')}</th><th class="text-right">${t('Already posted', 'المسجّل كمدفوع')}</th><th class="text-right">${t('Balance after', 'المتبقي بعد')}</th></tr></thead><tbody>${ba.map(r => `<tr><td>${escapeHtml(fmtMonth(r.k))}</td><td class="text-right num">${fmt(r.mo)}</td><td class="text-right num">${fmt(r.mn)}</td><td class="text-right num">${fmt(r.rent)}</td><td class="text-right num">${fmt(r.go)}</td><td class="text-right num">${fmt(r.gn)}</td><td class="text-right num">${fmt(r.so)}</td><td class="text-right num"><b>${fmt(r.sn)}</b></td><td class="text-right num" style="color:${r.sn - r.so < 0 ? 'var(--red)' : 'var(--green)'}">${r.sn - r.so > 0 ? '+' : ''}${fmt(r.sn - r.so)}</td><td class="text-right num">${fmt(r.paidCo)}</td><td class="text-right num">${fmt(r.sn - r.paidCo)}</td></tr>`).join('')}
-      <tr style="font-weight:700"><td>${t('Total', 'الإجمالي')}</td><td class="text-right num">${fmt(sum(ba, r => r.mo))}</td><td class="text-right num">${fmt(sum(ba, r => r.mn))}</td><td class="text-right num">${fmt(sum(ba, r => r.rent))}</td><td class="text-right num">${fmt(sum(ba, r => r.go))}</td><td class="text-right num">${fmt(sum(ba, r => r.gn))}</td><td class="text-right num">${fmt(sum(ba, r => r.so))}</td><td class="text-right num">${fmt(sum(ba, r => r.sn))}</td><td class="text-right num">${fmt(sum(ba, r => r.sn - r.so))}</td><td class="text-right num">${fmt(sum(ba, r => r.paidCo))}</td><td class="text-right num">${fmt(sum(ba, r => r.sn - r.paidCo))}</td></tr></tbody></table></div></div>
-    <div class="card"><div class="card-header"><div class="card-title">${t('By month', 'حسب الشهر')} · ${RATE}%</div></div>
-      <div class="table-wrap"><table><thead><tr><th>${t('Month', 'الشهر')}</th><th class="text-right">${t('Old basis', 'القديم')}</th><th class="text-right">${t('Attended', 'المتحضر')}</th><th class="text-right">${t('Difference', 'الفرق')}</th><th class="text-right">${t('Share difference', 'فرق الحصة')}</th></tr></thead><tbody>${monthRows}
-      <tr style="font-weight:700"><td>${t('Total', 'الإجمالي')}</td><td class="text-right num">${fmt(oldT)}</td><td class="text-right num">${fmt(newT)}</td><td class="text-right num">${fmt(newT - oldT)}</td><td class="text-right num">${sh(newT - oldT)}</td></tr></tbody></table></div></div>
-    <div class="card" style="margin-top:14px"><div class="card-header"><div class="card-title">${t('Lines', 'السطور')} (${shown.length})</div>
-      <select id="cd-flt"><option value="all"${flt === 'all' ? ' selected' : ''}>${t('All lines', 'كل السطور')}</option><option value="expired"${flt === 'expired' ? ' selected' : ''}>${lbl.expired}</option><option value="active"${flt === 'active' ? ' selected' : ''}>${lbl.active}</option><option value="done"${flt === 'done' ? ' selected' : ''}>${lbl.done}</option><option value="plan"${flt === 'plan' ? ' selected' : ''}>${lbl.plan}</option></select></div>
-      <div class="table-wrap"><table><thead><tr><th>${t('Member', 'العضو')}</th><th>${t('Invoice', 'الفاتورة')}</th><th>${t('Sport', 'الرياضة')}</th><th>${t('Invoice month', 'شهر الفاتورة')}</th><th class="text-right">${t('Price', 'السعر')}</th><th class="text-right">${t('Classes', 'الحصص')}</th><th class="text-right">${t('Attended (counted)', 'متحضرة (محسوبة)')}</th><th class="text-right">${t('Attended before start', 'متحضرة قبل البداية')}</th><th class="text-right">${t('Unattended', 'لم تُحضر')}</th><th>${t('Counted per month', 'المحسوب لكل شهر')}</th><th class="text-right">${t('Unattended value', 'قيمة غير المتحضر')}</th><th>${t('Status', 'الحالة')}</th></tr></thead><tbody>${lineRows}</tbody></table></div></div>`;
-  $('#cd-flt')?.addEventListener('change', e => { window._cdFilter = e.target.value; PAGES.citadeldiff(main); });
-};
-
 // Sum of Citadel Company Share expenses actually posted (paid to the facility company) within the
 // selected month scope ([] = all months). Includes the auto rows and any manual ones. (v6.577)
 function citadelPaidToCompany(selMonths) {
@@ -36858,8 +36775,8 @@ window.scheduleRentalsDialog = function () {
 window._cb = window._cb || { date: null, view: 'day', hour: '', q: '' };
 PAGES.courtbookings = (main) => {
   const S = window._cb; if (!S.date) S.date = TODAY;
-  const money = true;   // v6.1059 — reception sees the numbers too (amounts, billed, due); only collecting and the invoice stay with the admin
-  const moneyActs = !isViewerRole();
+  const money = true;   // v6.1059 — reception sees the numbers too (amounts, billed, due)
+  const moneyActs = !isViewerRole();   // the invoice PDF stays with the admin; v6.1060 — collecting is for reception too
   const addDays_ = (d, n) => addDays(d, n);
   const dow = d => new Date(d + 'T12:00:00').getDay();
   const weekStart = d => addDays_(d, -dow(d));   // Sunday
@@ -36943,7 +36860,7 @@ PAGES.courtbookings = (main) => {
         ${r.notes ? `<div class="text-mute">📝 ${escapeHtml(r.notes)}</div>` : ''}</div>`,
       actions: [
         { label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal },
-        ...(moneyActs && due > 0.5 ? [{ label: '💵 ' + t('Collect', 'تحصيل') + ' ' + fmt(due), class: 'btn primary', onclick: () => { closeModal(); collectRental(r.id); } }] : []),
+        ...(due > 0.5 ? [{ label: '💵 ' + t('Collect', 'تحصيل') + ' ' + fmt(due), class: 'btn primary', onclick: () => { closeModal(); collectRental(r.id); } }] : []),
         ...(r.customerPhone ? [{ label: '💬 ' + t('Send WhatsApp', 'إرسال واتساب'), class: 'btn ghost', style: 'color:#128C7E;border-color:#25D366', onclick: () => sendRentalBookingWhatsApp(r.id) }] : []),   // v6.821
         ...(moneyActs && inv ? [{ label: '📄 ' + t('Invoice', 'الفاتورة'), class: 'btn ghost', onclick: () => { closeModal(); printInvoicePDF(inv.id); } }] : []),
         ...((money || currentRole() === 'receptionist') ? [{ label: '🗑 ' + t('Cancel booking', 'إلغاء الحجز'), class: 'btn ghost', onclick: () => { closeModal(); deleteRental(r.id); } }] : []),
