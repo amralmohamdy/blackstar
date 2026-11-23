@@ -11653,7 +11653,11 @@ PAGES.classes = (main) => {
   `;
 
   const rerender = () => PAGES.classes(main);
-  $('#cls-search')?.addEventListener('input', e => { f.search = e.target.value; rerender(); });
+  $('#cls-search')?.addEventListener('input', e => {   // v6.1068 — the page is rebuilt on every letter: put the cursor back in the box, or the second letter is typed into nothing
+    f.search = e.target.value; const p = e.target.selectionStart;
+    rerender();
+    const n = $('#cls-search'); if (n) { n.focus(); try { n.setSelectionRange(p, p); } catch (_) {} }
+  });
   $('#cls-coach')?.addEventListener('change', e => { f.coach = e.target.value; rerender(); });
   $('#cls-sport')?.addEventListener('change', e => { f.sport = e.target.value; rerender(); });
   $('#cls-day')?.addEventListener('change', e => { f.day = e.target.value; rerender(); });
@@ -31280,7 +31284,6 @@ window.editSubscription = function(memberId, sid) {
           <span id="es-paid-hint" class="text-mute" style="font-size:11px;font-weight:600"></span></label>` : `<div class="text-mute" style="font-size:11px">${t('This invoice has several sports (or its line is shared), so what is paid is changed per payment: use 💳 Installments.', 'هذه الفاتورة تضم عدة رياضات (أو بندها مشترك) لذا يُعدَّل المدفوع من 💳 الأقساط.')}</div>`}
         <label style="display:grid;gap:4px">${t('Coach', 'المدرب')} <span class="text-mute" style="font-size:10px">${t('commission for this sport follows the coach', 'عمولة هذه الرياضة تتبع المدرب')}</span>
           <select id="es-coach" onchange="window._esCoachChanged && window._esCoachChanged()" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)">${coachOpts}</select></label>
-        ${_grpGroupable(sub.activity) ? (() => { const gs = (state.swimGroups || []).filter(g => _grpSportOf(g) === sub.activity).sort((a, b) => (a.order ?? 0) - (b.order ?? 0)); const cur = gs.find(g => (g.memberIds || []).includes(m.id)); return `<label style="display:grid;gap:4px">👥 ${t('Group / class (optional)', 'المجموعة / الحصة (اختياري)')} <span class="text-mute" style="font-size:10px">${t('which group he trains with in this sport', 'يتدرب مع أنهي مجموعة في هذه الرياضة')}</span><select id="es-group" data-was="${cur ? cur.id : ''}" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)"><option value="">${t('— no group —', '— بدون مجموعة —')}</option>${gs.map(g => `<option value="${g.id}" ${cur && cur.id === g.id ? 'selected' : ''}>${escapeHtml(g.name || '')}${(g.slotIds || []).length ? ' · ' + (g.slotIds || []).map(id => (state.schedule || []).find(c => c && String(c.id) === String(id))).filter(Boolean).map(_grpSlotLabel).join(' · ') : ''} (${(g.memberIds || []).length})</option>`).join('')}</select></label>`; })() : ''}
         ${_hoAtt > 0 ? `<div id="es-ho-box" style="display:none;gap:8px;padding:10px 12px;border:1px solid rgba(245,158,11,.5);background:rgba(245,158,11,.09);border-radius:8px;font-size:12px;line-height:1.55">
           <div style="font-weight:700">⚠ ${_hoAtt} ${t('of', 'من')} ${_hoTotal} ${t('classes were already attended with', 'حصة حضرها العضو مع')} ${escapeHtml(_hoOld)}</div>
           ${_hoRem > 0 ? `<label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer"><input type="radio" name="es-ho-mode" id="es-ho-handover" checked style="margin-top:3px"> <span><b>${t('Hand over', 'تسليم')}</b> — ${escapeHtml(_hoOld)} ${t('keeps those', 'يحتفظ بالـ')} ${_hoAtt} ${t('classes and their commission; the new coach takes the remaining', 'حصة وعمولتها؛ والمدرب الجديد يتسلّم الـ')} ${_hoRem}. ${t('Last day with', 'آخر يوم مع')} ${escapeHtml(_hoOld)}: <input type="date" id="es-ho-date" value="${TODAY}" style="padding:3px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface-2);color:var(--text)"></span></label>` : `<label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer"><input type="radio" name="es-ho-mode" id="es-ho-keep" checked style="margin-top:3px"> <span><b>${t('Keep', 'إبقاء')}</b> — ${t('every class is already attended, so this package stays with', 'كل الحصص حُضرت، فتبقى هذه الباقة مع')} ${escapeHtml(_hoOld)} (${t('only future renewals go to the new coach', 'والتجديدات القادمة فقط للمدرب الجديد')})</span></label>`}
@@ -31454,7 +31457,6 @@ window.editSubscription = function(memberId, sid) {
         }
         if (typeof stampUpdate === 'function') stampUpdate(m);
         if (typeof audit === 'function') audit('subscription.edit', 'member:' + m.id, `Edited ${sub.activity}: ${cls} classes · ${fmt(isNaN(price) ? linePrice : price)} · ${st}${newCoachId !== undefined ? ' · coach ' + (coachName(newCoachId) || '—') : ''} (profile+invoice synced)`, { memberId: m.id, sport: sub.activity });
-        { const _ge = $('#es-group'); if (_ge && _ge.dataset && _ge.value !== _ge.dataset.was) window.setMemberGroup(m.id, sub.activity, _ge.value); }   // v6.1064 — his group for this sport (optional)
         closeModal();
         // v6.890 — classes raised but the end date stayed in the past: tell the desk (a message only — no mark is touched)
         if (cls > _clsWas && sub.end && String(sub.end).slice(0, 10) < TODAY && !isCampSport(sub.activity || '')) toast(t(`⚠ Classes raised to ${cls}, but this package still ends on ${fmtDate(sub.end)} — classes after that date do not count in it. Change the Validity if the member should keep training.`, `⚠ رفعت الحصص إلى ${cls} لكن الباقة لسه بتنتهي يوم ${fmtDate(sub.end)} — الحصص بعد التاريخ ده مش بتتحسب فيها. غيّر المدة (Validity) لو العضو هيكمّل تدريب.`), 'info');
