@@ -11835,17 +11835,42 @@ function groupsForSlot(slotId) { return (state.swimGroups || []).filter(g => (g.
 const GRP_DAY_SHORT = { sun: 'Sun', mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat' };
 function _grpSlotLabel(c) { return (GRP_DAY_SHORT[c.day] || c.day || '') + ' ' + String(c.slot).padStart(2, '0') + ':00'; }
 window.openGroupsFor = function (sport) { if (sport) window._grpSport = sport; if (typeof closeModal === 'function') closeModal(); navigate('swimgroups'); };
-// the strip on the member profile: his group per sport (or "no group")
+// the strip on the member profile: his group per sport — a select to put him in a group (optional), or "no group"
+window.setMemberGroup = function (mid, sport, gid, el) {
+  mid = parseInt(mid);
+  const m = (state.members || []).find(x => x.id === mid); if (!m) return;
+  (state.swimGroups || []).forEach(g => { if (_grpSportOf(g) === sport) g.memberIds = (g.memberIds || []).filter(id => id !== mid); });
+  const g = gid ? (state.swimGroups || []).find(x => x.id === gid) : null;
+  if (g) { g.memberIds = g.memberIds || []; if (!g.memberIds.includes(mid)) g.memberIds.push(mid); }
+  if (el) el.classList.toggle('none', !g);
+  if (typeof audit === 'function') audit('group.member', 'member:' + mid, `${m.name}: ${sport} → ${g ? g.name : 'no group'}`);
+  save(); toast(g ? t('Group set: ', 'تم: ') + (g.name || '') : t('Removed from the group', 'اتشال من المجموعة'), 'success');
+};
+// put a schedule slot in ONE group of its sport (or none / a new one) — the other groups of the sport lose that slot
+window.setSlotGroup = function (slotId, sport, coachId, gid) {
+  if (slotId == null) return;
+  (state.swimGroups || []).forEach(g => { if (_grpSportOf(g) === sport) g.slotIds = (g.slotIds || []).filter(id => String(id) !== String(slotId)); });
+  let g = null;
+  if (gid === '__new__') {
+    const n = (state.swimGroups || []).filter(x => _grpSportOf(x) === sport).length + 1;
+    g = { id: 'sg' + Date.now() + '_' + Math.floor(Math.random() * 999), sport, name: 'Group ' + n, coachId: coachId == null ? null : coachId, slotIds: [], memberIds: [], order: (state.swimGroups || []).length + 1, createdAt: new Date().toISOString() };
+    if (!Array.isArray(state.swimGroups)) state.swimGroups = [];
+    state.swimGroups.push(g);
+  } else if (gid) g = (state.swimGroups || []).find(x => x.id === gid) || null;
+  if (g) { g.slotIds = g.slotIds || []; g.slotIds.push(slotId); if (g.coachId == null && coachId != null) g.coachId = coachId; }
+  if (typeof audit === 'function') audit('group.slots', 'swimgroup', `Schedule slot ${slotId} (${sport}) → ${g ? g.name : 'no group'}`);
+};
 window.memberGroupsHtml = function (m) {
   const rows = memberGroupsFor(m);
   if (!rows.length) return '';
-  const chip = r => {
-    const slots = r.group ? (r.group.slotIds || []).map(id => (state.schedule || []).find(c => c && String(c.id) === String(id))).filter(Boolean).map(_grpSlotLabel).join(' · ') : '';
-    return r.group
-      ? `<span class="badge" style="cursor:pointer;background:rgba(16,185,129,.14);color:var(--green);font-weight:700" onclick="openGroupsFor('${r.sport}')" title="${t('Open the Groups screen', 'افتح شاشة المجموعات')}">${_grpEmoji(r.sport)} ${escapeHtml(r.sport)} → ${escapeHtml(r.group.name || '')}${slots ? ' · ' + escapeHtml(slots) : ''}</span>`
-      : `<span class="badge" style="cursor:pointer;background:rgba(239,68,68,.12);color:var(--red);font-weight:700" onclick="openGroupsFor('${r.sport}')" title="${t('Put him in a group', 'ضعه في مجموعة')}">⚠ ${_grpEmoji(r.sport)} ${escapeHtml(r.sport)} — ${t('no group', 'بدون مجموعة')}</span>`;
+  const canSet = ['admin', 'receptionist'].includes(currentRole());
+  const label = g => (g.name || '') + ((g.slotIds || []).length ? ' · ' + (g.slotIds || []).map(id => (state.schedule || []).find(c => c && String(c.id) === String(id))).filter(Boolean).map(_grpSlotLabel).join(' · ') : '') + ' (' + (g.memberIds || []).length + ')';
+  const one = r => {
+    const groups = (state.swimGroups || []).filter(g => _grpSportOf(g) === r.sport).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    if (!canSet) return `<span class="badge" style="background:${r.group ? 'rgba(16,185,129,.14);color:var(--green)' : 'rgba(239,68,68,.12);color:var(--red)'};font-weight:700">${_grpEmoji(r.sport)} ${escapeHtml(r.sport)} → ${r.group ? escapeHtml(r.group.name || '') : t('no group', 'بدون مجموعة')}</span>`;
+    return `<span style="display:inline-flex;align-items:center;gap:6px"><span style="font-size:12px;font-weight:700">${_grpEmoji(r.sport)} ${escapeHtml(r.sport)}</span><select class="grp-member-sel ${r.group ? '' : 'none'}" data-sport="${escapeHtml(r.sport)}" onchange="window.setMemberGroup(${m.id}, this.dataset.sport, this.value, this)" title="${t('Choose his group (optional)', 'اختر مجموعته (اختياري)')}"><option value="">${t('— no group —', '— بدون مجموعة —')}</option>${groups.map(g => `<option value="${g.id}" ${r.group && r.group.id === g.id ? 'selected' : ''}>${escapeHtml(label(g))}</option>`).join('')}</select></span>`;
   };
-  return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 10px"><span class="text-mute" style="font-size:11px;text-transform:uppercase">👥 ${t('Groups', 'المجموعات')}</span>${rows.map(chip).join('')}</div>`;
+  return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 10px;padding:8px 10px;background:var(--surface-2);border-radius:10px"><span class="text-mute" style="font-size:11px;text-transform:uppercase;font-weight:700">👥 ${t('Groups', 'المجموعات')}</span>${rows.map(one).join('')}${canSet ? `<a href="javascript:void(0)" style="font-size:11px;margin-inline-start:auto" onclick="openGroupsFor('${rows[0].sport}')">${t('Open the Groups screen', 'افتح شاشة المجموعات')} ›</a>` : ''}</div>`;
 };
 
 PAGES.swimgroups = (main) => {
@@ -11867,10 +11892,10 @@ PAGES.swimgroups = (main) => {
   const memberChip = (m, groupId) => {
     const ar = m.nameArabic ? `<div style="font-size:10px;color:var(--text-mute);direction:rtl">${escapeHtml(m.nameArabic)}</div>` : '';
     return `<div class="swim-chip" draggable="true" data-mid="${m.id}" data-from="${groupId || ''}"
-        style="display:flex;align-items:center;gap:8px;padding:7px 9px;background:var(--surface);border:1px solid var(--border);border-radius:8px;cursor:grab;user-select:none">
+        style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:10px;cursor:grab;user-select:none">
       <input type="checkbox" class="swim-cb" data-mid="${m.id}" onclick="event.stopPropagation()" style="cursor:pointer" />
       <div style="flex:1;min-width:0">
-        <div style="font-weight:600;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(m.name)}</div>
+        <div style="font-weight:700;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(m.name)}">${escapeHtml(m.name)}</div>
         ${ar}
       </div>
       ${groupId ? `<button onclick="event.stopPropagation();window._swimRemove('${groupId}',${m.id})" title="Remove from group" style="background:transparent;border:0;color:var(--red);opacity:.6;cursor:pointer;font-size:13px">✕</button>` : ''}
@@ -11881,37 +11906,31 @@ PAGES.swimgroups = (main) => {
     const mems = (g.memberIds || []).map(id => swimmerById.get(id)).filter(Boolean);
     const n = mems.length;
     const sizeColor = n < GROUP_MIN ? 'var(--accent-2)' : n > GROUP_MAX ? 'var(--red)' : 'var(--green)';
-    const sizeNote = n < GROUP_MIN ? `${t('needs', 'يحتاج')} ${GROUP_MIN - n} ${t('more', 'أكثر')}` : n > GROUP_MAX ? `${t('over by', 'زائد')} ${n - GROUP_MAX}` : t('good size', 'حجم مناسب');
-    return `<div class="swim-group card" data-gid="${g.id}" style="margin:0;display:flex;flex-direction:column;min-height:120px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:8px">
-        <div style="flex:1;min-width:0">
-          <div style="display:flex;align-items:center;gap:6px">
-            <span style="font-size:16px">${_grpEmoji(SWIM)}</span>
-            <input value="${escapeHtml(g.name || '')}" onchange="window._swimRename('${g.id}', this.value)" placeholder="${t('Group name', 'اسم المجموعة')}"
-              style="font-weight:800;font-size:15px;background:transparent;border:0;border-bottom:1px dashed transparent;color:var(--text);min-width:0;flex:1" onfocus="this.style.borderBottomColor='var(--border)'" onblur="this.style.borderBottomColor='transparent'" />
-          </div>
-          <div style="display:flex;align-items:center;gap:8px;margin-top:4px">
-            <span style="font-size:11px;font-weight:700;color:${sizeColor}">${n} ${t('members', 'عضو')} · ${sizeNote}</span>
-          </div>
-        </div>
-        <div style="display:flex;gap:4px;flex-shrink:0">
+    const sizeNote = GROUP_MAX >= 999 ? '' : (n < GROUP_MIN ? `${t('needs', 'يحتاج')} ${GROUP_MIN - n} ${t('more', 'أكثر')}` : n > GROUP_MAX ? `${t('over by', 'زائد')} ${n - GROUP_MAX}` : t('good size', 'حجم مناسب'));
+    const slots = (g.slotIds || []).map(id => (state.schedule || []).find(c => c && String(c.id) === String(id))).filter(Boolean);
+    return `<div class="swim-group grp-card" data-gid="${g.id}">
+      <div class="grp-head">
+        <span class="grp-emoji">${_grpEmoji(SWIM)}</span>
+        <input class="grp-name" value="${escapeHtml(g.name || '')}" onchange="window._swimRename('${g.id}', this.value)" placeholder="${t('Group name', 'اسم المجموعة')}" />
+        <div class="grp-actions">
           <button class="btn ghost sm" onclick="window._swimShare('${g.id}')" title="${t('Share this group on WhatsApp', 'مشاركة المجموعة عبر واتساب')}">💬</button>
           <button class="btn ghost sm" onclick="window._swimPrint('${g.id}')" title="${t('Print this group', 'طباعة المجموعة')}">🖨</button>
           <button class="btn ghost sm" style="color:var(--red)" onclick="window._swimDeleteGroup('${g.id}')" title="${t('Delete group', 'حذف المجموعة')}">🗑</button>
         </div>
       </div>
-      <div style="margin-bottom:8px;padding:8px;background:var(--surface-2);border-radius:8px">
-        <div style="font-size:10px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">${t('Coach', 'المدرب')}</div>
-        <select onchange="window._grpSetCoach('${g.id}', this.value)" style="width:100%;padding:5px 6px;margin-bottom:8px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px"><option value="">—</option>${coachOptionsHtml(state.coaches || [], SWIM, g.coachId)}</select>
-        <div style="font-size:10px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">🗓 ${t('Schedule', 'الجدول')}</div>
-        <div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center">${(g.slotIds || []).map(id => (state.schedule || []).find(c => c && String(c.id) === String(id))).filter(Boolean).map(c => `<span class="badge blue">${_grpSlotLabel(c)}</span>`).join('')}<button class="btn ghost sm" onclick="window._grpLinkSlots('${g.id}')">${(g.slotIds || []).length ? '✏️' : '+ ' + t('Link schedule', 'ربط الجدول')}</button></div>
+      <div class="grp-count" style="color:${sizeColor}"><b>${n}</b> ${t('members', 'عضو')}${sizeNote ? ` <span>· ${sizeNote}</span>` : ''}</div>
+      <div class="grp-info">
+        <div class="grp-row"><span class="grp-lbl">👤 ${t('Coach', 'المدرب')}</span>
+          <select onchange="window._grpSetCoach('${g.id}', this.value)"><option value="">${t('— not set —', '— غير محدد —')}</option>${coachOptionsHtml(state.coaches || [], SWIM, g.coachId)}</select></div>
+        <div class="grp-row"><span class="grp-lbl">🗓 ${t('Classes', 'الحصص')}</span>
+          <div class="grp-slots">${slots.length ? slots.map(c => `<span class="badge blue">${_grpSlotLabel(c)}</span>`).join('') : `<span class="text-mute" style="font-size:12px">${t('not linked to the schedule', 'غير مربوطة بالجدول')}</span>`}
+            <button class="btn ghost sm" onclick="window._grpLinkSlots('${g.id}')">${slots.length ? '✏️ ' + t('Change', 'تغيير') : '＋ ' + t('Link to schedule', 'ربط بالجدول')}</button></div></div>
       </div>
-      ${(g.slotIds || []).length ? '' : `<div style="margin-bottom:8px;padding:8px;background:var(--surface-2);border-radius:8px">
-        <div style="font-size:10px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">${t('Days', 'الأيام')}</div>
-        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">
+      ${slots.length ? '' : `<details class="grp-custom"><summary>${t('Or set days & time by hand', 'أو حدّد الأيام والوقت يدوياً')}</summary>
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin:8px 0">
           ${SWIM_DAYS.map((d, i) => {
             const on = (g.days || []).includes(i);
-            return `<button onclick="window._swimToggleDay('${g.id}',${i})" style="font-size:11px;font-weight:600;padding:4px 8px;border-radius:6px;cursor:pointer;border:1px solid ${on ? 'var(--accent)' : 'var(--border)'};background:${on ? 'var(--accent)' : 'transparent'};color:${on ? '#fff' : 'var(--text-mute)'}">${t(d.en, d.ar)}</button>`;
+            return `<button onclick="window._swimToggleDay('${g.id}',${i})" style="font-size:11px;font-weight:600;padding:4px 8px;border-radius:6px;cursor:pointer;border:1px solid ${on ? 'var(--accent)' : 'var(--border)'};background:${on ? 'var(--accent)' : 'var(--surface)'};color:${on ? '#fff' : 'var(--text)'}">${t(d.en, d.ar)}</button>`;
           }).join('')}
         </div>
         <div style="display:flex;align-items:center;gap:6px;font-size:12px">
@@ -11919,25 +11938,33 @@ PAGES.swimgroups = (main) => {
           <input type="time" value="${g.timeFrom || ''}" onchange="window._swimSetTime('${g.id}','from',this.value)" style="padding:4px 6px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px" />
           <span style="color:var(--text-mute)">${t('to', 'إلى')}</span>
           <input type="time" value="${g.timeTo || ''}" onchange="window._swimSetTime('${g.id}','to',this.value)" style="padding:4px 6px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px" />
-        </div>
-      </div>`}
-      <div class="swim-dropzone" data-gid="${g.id}" style="flex:1;display:flex;flex-direction:column;gap:6px;min-height:48px;padding:6px;border:2px dashed var(--border);border-radius:8px;transition:background .1s">
-        ${mems.length ? mems.map(m => memberChip(m, g.id)).join('') : `<div class="text-mute" style="font-size:11px;text-align:center;padding:10px">${t('Drag swimmers here, or select & assign', 'اسحب السبّاحين هنا، أو حدّد وأسند')}</div>`}
+        </div></details>`}
+      <div class="swim-dropzone grp-drop" data-gid="${g.id}">
+        ${mems.length ? mems.map(m => memberChip(m, g.id)).join('') : `<div class="grp-empty">${t('Drag subscribers here, or tick them on the left and press Assign', 'اسحب المشتركين هنا، أو علّم عليهم من اليسار واضغط إسناد')}</div>`}
       </div>
     </div>`;
   };
 
+  const inGroup = swimmers.length - unassigned.length, pct = swimmers.length ? Math.round(inGroup / swimmers.length * 100) : 0;
   main.innerHTML = `
     <div class="topbar">
-      <div><h1>👥 ${t('Groups', 'المجموعات')} — ${_grpEmoji(SWIM)} ${escapeHtml(SWIM)}</h1>
-        <div class="subtitle">${t('Every subscriber belongs to a group for each sport', 'كل مشترك في مجموعة لكل رياضة')} · ${swimmers.length} ${t('subscribers', 'مشترك')} · ${groups.length} ${t('groups', 'مجموعة')} · <b style="color:${unassigned.length ? 'var(--red)' : 'var(--green)'}">${unassigned.length} ${t('without a group', 'بدون مجموعة')}</b>${GROUP_MAX < 999 ? ' · ' + t('guide', 'المقترح') + ' ' + GROUP_MIN + '–' + GROUP_MAX + ' ' + t('per group', 'للمجموعة') : ''}</div></div>
+      <div><h1>👥 ${t('Groups', 'المجموعات')}</h1>
+        <div class="subtitle">${t('Every subscriber belongs to a group for each sport he takes. Pick a sport, make groups, drag subscribers in, link the group to its classes.', 'كل مشترك في مجموعة لكل رياضة بياخدها. اختر الرياضة، اعمل مجموعات، اسحب المشتركين، واربط المجموعة بحصصها.')}</div></div>
       <div class="topbar-actions">
-        <button class="btn ghost" id="swim-auto" title="${t('Auto-split unassigned swimmers into groups', 'توزيع تلقائي للسبّاحين')}">✨ ${t('Auto-group', 'توزيع تلقائي')}</button>
-        <button class="btn primary" id="swim-add">+ ${t('New group', 'مجموعة جديدة')}</button>
+        <button class="btn ghost" id="swim-auto" title="${t('Split the subscribers without a group into new groups', 'وزّع المشتركين اللي بدون مجموعة على مجموعات جديدة')}">✨ ${t('Auto-group', 'توزيع تلقائي')}</button>
+        <button class="btn primary" id="swim-add">＋ ${t('New group', 'مجموعة جديدة')}</button>
       </div>
     </div>
 
-    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">${sportsSum.map(x => `<button class="btn sm ${x.sport === SWIM ? 'primary' : 'ghost'}" onclick="window._grpPick('${x.sport}')">${_grpEmoji(x.sport)} ${escapeHtml(x.sport)} <span class="badge" style="background:${x.sport === SWIM ? '#fff' : (x.noGroup ? 'rgba(239,68,68,.15)' : 'rgba(16,185,129,.15)')};color:${x.noGroup ? 'var(--red)' : 'var(--green)'}" title="${t('subscribers without a group / total', 'بدون مجموعة / الإجمالي')}">${x.noGroup}/${x.total}</span></button>`).join('')}</div>
+    <div class="grp-tabs">${sportsSum.map(x => `<button class="grp-tab ${x.sport === SWIM ? 'on' : ''}" onclick="window._grpPick('${x.sport}')"><span class="grp-tab-emoji">${_grpEmoji(x.sport)}</span><span class="grp-tab-name">${escapeHtml(x.sport)}</span><span class="grp-tab-n ${x.noGroup ? 'bad' : 'ok'}" title="${t('without a group / subscribers', 'بدون مجموعة / المشتركين')}">${x.noGroup ? '⚠ ' + x.noGroup : '✓'}<small> / ${x.total}</small></span></button>`).join('')}</div>
+
+    <div class="grp-summary">
+      <div class="grp-stat"><div class="n">${swimmers.length}</div><div class="l">${_grpEmoji(SWIM)} ${t('subscribers in', 'مشترك في')} ${escapeHtml(SWIM)}</div></div>
+      <div class="grp-stat ok"><div class="n">${inGroup}</div><div class="l">${t('in a group', 'في مجموعة')}</div></div>
+      <div class="grp-stat ${unassigned.length ? 'bad' : 'ok'}"><div class="n">${unassigned.length}</div><div class="l">${unassigned.length ? '⚠ ' : '✓ '}${t('without a group', 'بدون مجموعة')}</div></div>
+      <div class="grp-stat"><div class="n">${groups.length}</div><div class="l">${t('groups', 'مجموعة')}</div></div>
+      <div class="grp-bar" title="${pct}%"><i style="width:${pct}%"></i></div>
+    </div>
 
     <div id="swim-selbar" style="display:none;position:sticky;top:0;z-index:5;background:var(--accent);color:#fff;border-radius:10px;padding:10px 14px;margin-bottom:12px;align-items:center;gap:12px;box-shadow:0 4px 16px rgba(0,0,0,.15)">
       <span id="swim-selcount" style="font-weight:700"></span>
@@ -11947,17 +11974,17 @@ PAGES.swimgroups = (main) => {
       <button class="btn ghost sm" id="swim-clearsel" style="color:#fff;border-color:rgba(255,255,255,.4);margin-left:auto">${t('Clear', 'إلغاء')}</button>
     </div>
 
-    <div style="display:grid;grid-template-columns:280px 1fr;gap:16px;align-items:start">
-      <div class="card" style="position:sticky;top:12px">
-        <div style="font-weight:800;font-size:14px;margin-bottom:8px">${_grpEmoji(SWIM)} ${t('No group', 'بدون مجموعة')} <span class="badge" style="background:rgba(245,158,11,.15);color:var(--accent-2)">${unassigned.length}</span></div>
-        <input id="swim-search" type="search" placeholder="🔍 ${t('Search subscriber…', 'ابحث عن مشترك…')}" style="width:100%;padding:8px 10px;margin-bottom:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px" />
-        <div class="swim-dropzone" data-gid="__pool__" id="swim-pool" style="display:flex;flex-direction:column;gap:6px;min-height:80px;padding:6px;border:2px dashed var(--border);border-radius:8px">
-          ${unassigned.length ? unassigned.map(m => memberChip(m, '')).join('') : `<div class="text-mute" style="font-size:11px;text-align:center;padding:14px">${swimmers.length ? t('Everyone has a group 🎉', 'الكل في مجموعات 🎉') : t('No subscribers in this sport', 'لا يوجد مشتركون في هذه الرياضة')}</div>`}
+    <div class="grp-layout">
+      <div class="card grp-pool-card">
+        <div class="grp-pool-title">${unassigned.length ? '⚠' : '✓'} ${t('No group yet', 'بدون مجموعة')} <span class="badge" style="background:${unassigned.length ? 'rgba(239,68,68,.15);color:var(--red)' : 'rgba(16,185,129,.15);color:var(--green)'}">${unassigned.length}</span></div>
+        <input id="swim-search" type="search" class="grp-search" placeholder="🔍 ${t('Search subscriber…', 'ابحث عن مشترك…')}" />
+        <div class="swim-dropzone grp-pool" data-gid="__pool__" id="swim-pool">
+          ${unassigned.length ? unassigned.map(m => memberChip(m, '')).join('') : `<div class="grp-empty">${swimmers.length ? t('Everyone has a group 🎉', 'الكل في مجموعات 🎉') : t('No subscribers in this sport', 'لا يوجد مشتركون في هذه الرياضة')}</div>`}
         </div>
       </div>
 
-      <div id="swim-groups-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px">
-        ${groups.length ? groups.map(groupCard).join('') : `<div class="card text-mute" style="text-align:center;padding:30px;grid-column:1/-1">${t('No groups yet — click "New group" to start.', 'لا توجد مجموعات — اضغط "مجموعة جديدة" للبدء.')}</div>`}
+      <div id="swim-groups-grid" class="grp-grid">
+        ${groups.length ? groups.map(groupCard).join('') : `<div class="card text-mute grp-none">${t('No groups for this sport yet.', 'لا توجد مجموعات لهذه الرياضة بعد.')}<br><button class="btn primary" style="margin-top:10px" onclick="window._swimAddGroup()">＋ ${t('Create the first group', 'أنشئ أول مجموعة')}</button></div>`}
       </div>
     </div>`;
 
@@ -12594,6 +12621,7 @@ PAGES.schedule = (main) => {
           <select id="sch-coach" style="width:100%">${opts}${noCoachOpt}</select>
           ${noneNote}
         </div>
+        ${_grpGroupable(sport) ? (() => { const gs = (state.swimGroups || []).filter(g => _grpSportOf(g) === sport).sort((a, b) => (a.order ?? 0) - (b.order ?? 0)); const cur = existing ? gs.find(g => (g.slotIds || []).some(id => String(id) === String(existing.id))) : null; return `<div class="field" style="margin-top:12px"><label>👥 ${t('Group (optional)', 'المجموعة (اختياري)')}</label><select id="sch-group" style="width:100%"><option value="">${t('— none —', '— بدون —')}</option>${gs.map(g => `<option value="${g.id}" ${cur && cur.id === g.id ? 'selected' : ''}>${escapeHtml(g.name || '')}${g.coachId != null ? ' · ' + escapeHtml(coachName(g.coachId)) : ''} (${(g.memberIds || []).length})</option>`).join('')}<option value="__new__">＋ ${t('New group for this class', 'مجموعة جديدة لهذه الحصة')}</option></select><div class="text-mute" style="font-size:11px;margin-top:4px">${t('The class roster becomes the members of this group.', 'قائمة الحصة تصبح أعضاء هذه المجموعة.')}</div></div>`; })() : ''}
         <div class="field" style="margin-top:12px">
           <label>${t('Class name — English (optional)', 'اسم الحصة — إنجليزي (اختياري)')}</label>
           <input id="sch-label" style="width:100%" maxlength="40" value="${escapeHtml((existing && existing.label) || '')}" placeholder="${escapeHtml(sport)}" />
@@ -12639,6 +12667,7 @@ PAGES.schedule = (main) => {
           const _labelArRaw = (($('#sch-label-ar') || {}).value || '').trim();
           const _labelAr = (_labelArRaw && _labelArRaw !== sportNameAR(sport)) ? _labelArRaw : '';
           const _color = (($('#sch-color') || {}).value || '').trim();   // v6.732 — '' = automatic
+          let _sid = existing ? existing.id : null;   // v6.1061 — the id of the class saved, to set its group
           if (existing) {
             existing.coachId = coachId;
             if (_label) existing.label = _label; else delete existing.label;
@@ -12649,8 +12678,9 @@ PAGES.schedule = (main) => {
             if (_label) _rec.label = _label;
             if (_labelAr) _rec.labelAr = _labelAr;
             if (_color) _rec.color = _color;
-            state.schedule.push(_rec);
+            state.schedule.push(_rec); _sid = _rec.id;
           }
+          if (_grpGroupable(sport)) setSlotGroup(_sid, sport, coachId, (($('#sch-group') || {}).value || ''));
           closeModal(); refresh();
           confirmSaved(existing ? 'Class updated' : 'Class added');
         }},
