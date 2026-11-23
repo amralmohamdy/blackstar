@@ -11524,11 +11524,7 @@ function _buildClasses() {
       coach: c.coachId == null ? '' : coachName(c.coachId),   // v6.684: no coach → blank, the class shows the sport only
       // v6.401: slot-aware — a student assigned to specific times shows only in those classes;
       // an unassigned student still shows in every class of that sport+coach (as before).
-      roster: (() => {   // v6.1059 — a slot linked to a Group takes the group's members; no group → as before
-        const gs = groupsForSlot(c.id).filter(g => _grpSportOf(g) === c.sport);
-        if (gs.length) { const ids = new Set(); gs.forEach(g => (g.memberIds || []).forEach(id => ids.add(id))); return (state.members || []).filter(m => m && !m.deleted && ids.has(m.id)).sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))); }
-        return (typeof classRoster === 'function') ? classRoster(c.sport, c.coachId, c.day, c.slot) : [];
-      })(),
+      ...(() => { const info = classRosterInfo(c); return { roster: info.list, groups: info.groups, linked: info.linked, mixedIds: info.mixed }; })(),   // v6.1067 — a class linked to a group = its members + Mixed guests; no group → the coach's students as before
     }))
     .sort((a, b) => (_classDayIdx(a.day) - _classDayIdx(b.day)) || ((a.slot || 0) - (b.slot || 0)) ||
       String(a.sport || '').localeCompare(String(b.sport || '')));
@@ -11536,8 +11532,9 @@ function _buildClasses() {
 
 PAGES.classes = (main) => {
   if (!Array.isArray(state.schedule)) state.schedule = [];
-  if (!window._classFilter) window._classFilter = { coach: 'all', sport: 'all', day: 'all', slot: 'all', search: '' };
+  if (!window._classFilter) window._classFilter = { coach: 'all', sport: 'all', day: 'all', slot: 'all', group: 'all', search: '' };
   const f = window._classFilter;
+  if (f.group === undefined) f.group = 'all';   // v6.1067
   if (f.slot === undefined) f.slot = 'all';   // carry an older saved filter forward
 
   const all = _buildClasses();
@@ -11551,6 +11548,8 @@ PAGES.classes = (main) => {
   if (f.sport !== 'all') classes = classes.filter(c => c.sport === f.sport);
   if (f.day !== 'all') classes = classes.filter(c => c.day === f.day);
   if (f.slot !== 'all') classes = classes.filter(c => String(c.slot) === String(f.slot));
+  if (f.group === '__none__') classes = classes.filter(c => !c.linked && _grpGroupable(c.sport));
+  else if (f.group !== 'all') classes = classes.filter(c => (c.groups || []).some(g => g.id === f.group));
   if (f.search && f.search.trim()) {
     const q = f.search.trim();
     classes = classes.filter(c => (c.roster || []).some(m =>
@@ -11561,6 +11560,8 @@ PAGES.classes = (main) => {
 
   const totalStudents = classes.reduce((s, c) => s + c.roster.length, 0);
   const emptyClasses = classes.filter(c => c.roster.length === 0).length;
+  const noGroupClasses = classes.filter(c => !c.linked && _grpGroupable(c.sport)).length;   // v6.1067
+  const allGroups = (state.swimGroups || []).filter(g => _grpGroupable(_grpSportOf(g))).sort((a, b) => _grpSportOf(a).localeCompare(_grpSportOf(b)) || (a.order ?? 0) - (b.order ?? 0));
 
   const opt = (val, lab, sel) => `<option value="${escapeHtml(String(val))}" ${String(sel) === String(val) ? 'selected' : ''}>${escapeHtml(String(lab))}</option>`;
 
@@ -11572,7 +11573,7 @@ PAGES.classes = (main) => {
           const stColor = st === 'Active' ? 'var(--green)' : st === 'Expired' ? 'var(--red)' : st === 'Frozen' ? 'var(--blue)' : 'var(--text-mute)';
           return `<tr>
             <td style="padding:6px 8px;color:var(--text-mute);font-size:11px">${i + 1}</td>
-            <td style="padding:6px 8px"><div style="font-weight:600">${escapeHtml(m.name || '—')}</div>${m.nameArabic ? `<div class="text-mute" style="font-size:11px">${escapeHtml(m.nameArabic)}</div>` : ''}</td>
+            <td style="padding:6px 8px"><div style="font-weight:600">${escapeHtml(m.name || '—')}${(c.mixedIds && c.mixedIds.has(m.id)) ? ` <span class="badge" style="font-size:9px;background:rgba(139,92,246,.15);color:#7c3aed">🎯 ${t('Mixed', 'ميكس')}</span>` : ''}</div>${m.nameArabic ? `<div class="text-mute" style="font-size:11px">${escapeHtml(m.nameArabic)}</div>` : ''}</td>
             <td style="padding:6px 8px;white-space:nowrap">${escapeHtml(m.phone || '')}</td>
             <td style="padding:6px 8px"><span style="font-size:11px;font-weight:700;color:${stColor}">${escapeHtml(st)}</span></td>
           </tr>`;
@@ -11586,7 +11587,7 @@ PAGES.classes = (main) => {
             <span class="cls-chev" style="display:inline-block;transition:transform .15s;transform:rotate(${isCollapsed ? '-90' : '0'}deg);color:var(--text-mute);font-size:13px">▾</span>
             <div>
               <div style="font-weight:800;font-size:15px">${dot}${escapeHtml(c.sport)}${c.coach ? ` · <span style="color:var(--blue)">${escapeHtml(c.coach)}</span>` : ''}</div>
-              <div class="text-mute" style="font-size:12px;margin-top:2px">🗓 ${escapeHtml(_classDayLabel(c.day))} · ⏰ ${escapeHtml(_classSlotLabel(c.slot))} · 👥 <b>${c.roster.length}</b> ${t('students', 'طالب')}${isCollapsed ? ' · ' + t('collapsed', 'مطوية') : ''}</div>
+              <div class="text-mute" style="font-size:12px;margin-top:2px">🗓 ${escapeHtml(_classDayLabel(c.day))} · ⏰ ${escapeHtml(_classSlotLabel(c.slot))} · 👥 <b>${c.roster.length}</b> ${t('students', 'طالب')}${c.linked ? ` · <span class="badge blue">${escapeHtml(c.groups.map(g => g.name).join(', '))}</span>` : (_grpGroupable(c.sport) ? ` · <span class="badge" style="background:rgba(245,158,11,.15);color:var(--accent-2)" title="${t('No group is linked to this class: the list is every student of this coach in this sport. Press Assign students to fix it.', 'لا توجد مجموعة مربوطة بهذه الحصة: القائمة هي كل طلاب هذا المدرب في الرياضة. اضغط إسناد الطلاب للتحديد.')}">⚠ ${t('no group', 'بدون مجموعة')}</span>` : '')}${isCollapsed ? ' · ' + t('collapsed', 'مطوية') : ''}</div>
             </div>
           </div>
           <div style="display:flex;gap:6px">
@@ -11625,7 +11626,8 @@ PAGES.classes = (main) => {
       </div>
     </div>
 
-    <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
+    <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
+      <div class="kpi" style="${noGroupClasses ? 'border-color:var(--red);background:rgba(239,68,68,.05);cursor:pointer' : ''}" onclick="window._classFilter.group='__none__';PAGES.classes(document.getElementById('main'))" title="${t('Show only the classes without a group', 'اعرض الحصص بدون مجموعة فقط')}"><div class="kpi-label" style="${noGroupClasses ? 'color:var(--red)' : ''}">⚠ ${t('Classes without a group', 'حصص بدون مجموعة')}</div><div class="kpi-value num">${noGroupClasses}</div><div class="kpi-sub">${t('link them on the Schedule', 'اربطها من الجدول')}</div></div>
       <div class="kpi"><div class="kpi-label">📋 ${t('Classes', 'الحصص')}</div><div class="kpi-value num">${classes.length}</div><div class="kpi-sub">${t('from the weekly schedule', 'من الجدول الأسبوعي')}</div></div>
       <div class="kpi"><div class="kpi-label">👥 ${t('Student places', 'مقاعد الطلاب')}</div><div class="kpi-value num">${totalStudents}</div><div class="kpi-sub">${t('across all shown classes', 'عبر كل الحصص المعروضة')}</div></div>
       <div class="kpi" style="${emptyClasses ? 'border-color:var(--accent-2);background:rgba(245,158,11,.06)' : ''}"><div class="kpi-label" style="${emptyClasses ? 'color:var(--accent-2)' : ''}">🈳 ${t('Empty classes', 'حصص فارغة')}</div><div class="kpi-value num" style="${emptyClasses ? 'color:var(--accent-2)' : ''}">${emptyClasses}</div><div class="kpi-sub">${t('scheduled, no students', 'مجدولة بلا طلاب')}</div></div>
@@ -11637,6 +11639,7 @@ PAGES.classes = (main) => {
       <select id="cls-sport" class="btn ghost">${opt('all', t('All sports', 'كل الرياضات'), f.sport)}${sports.map(s => opt(s, s, f.sport)).join('')}</select>
       <select id="cls-day" class="btn ghost">${opt('all', t('All days', 'كل الأيام'), f.day)}${_CLASS_DAYS.map(d => opt(d.key, t(d.en, d.ar), f.day)).join('')}</select>
       <select id="cls-slot" class="btn ghost">${opt('all', t('All hours', 'كل الأوقات'), f.slot)}${slots.map(s => opt(s, _classSlotLabel(s), f.slot)).join('')}</select>
+      <select id="cls-group" class="btn ghost" title="${t('Filter by group', 'تصفية بالمجموعة')}">${opt('all', t('All groups', 'كل المجموعات'), f.group)}${opt('__none__', '⚠ ' + t('Without a group', 'بدون مجموعة'), f.group)}${allGroups.map(g => opt(g.id, g.name + ' · ' + _grpSportOf(g), f.group)).join('')}</select>
       <button id="cls-clear" class="btn ghost">✕ ${t('Clear', 'مسح')}</button>
       <button id="cls-collapse-all" class="btn ghost" title="${t('Collapse every class', 'طيّ كل الحصص')}">⊟ ${t('Collapse all', 'طيّ الكل')}</button>
       <button id="cls-expand-all" class="btn ghost" title="${t('Expand every class', 'توسيع كل الحصص')}">⊞ ${t('Expand all', 'توسيع الكل')}</button>
@@ -11655,7 +11658,8 @@ PAGES.classes = (main) => {
   $('#cls-sport')?.addEventListener('change', e => { f.sport = e.target.value; rerender(); });
   $('#cls-day')?.addEventListener('change', e => { f.day = e.target.value; rerender(); });
   $('#cls-slot')?.addEventListener('change', e => { f.slot = e.target.value; rerender(); });
-  $('#cls-clear')?.addEventListener('click', () => { window._classFilter = { coach: 'all', sport: 'all', day: 'all', slot: 'all', search: '' }; rerender(); });
+  $('#cls-group')?.addEventListener('change', e => { f.group = e.target.value; rerender(); });
+  $('#cls-clear')?.addEventListener('click', () => { window._classFilter = { coach: 'all', sport: 'all', day: 'all', slot: 'all', group: 'all', search: '' }; rerender(); });
   $('#cls-collapse-all')?.addEventListener('click', () => { window._clsCollapsed = new Set(classes.map(c => c.id)); rerender(); });
   $('#cls-expand-all')?.addEventListener('click', () => { window._clsCollapsed = new Set(); rerender(); });
 };
@@ -11665,7 +11669,8 @@ function _classById(id) {
   const c = (state.schedule || []).find(x => String(x.id) === String(id));
   if (!c) return null;
   // v6.401: slot-aware, so a printed/exported register matches exactly what the screen shows.
-  return { ...c, coach: c.coachId == null ? '' : coachName(c.coachId), roster: (typeof classRoster === 'function') ? classRoster(c.sport, c.coachId, c.day, c.slot) : [] };
+  const info = classRosterInfo(c);
+  return { ...c, coach: c.coachId == null ? '' : coachName(c.coachId), roster: info.list, groups: info.groups, linked: info.linked, mixedIds: info.mixed };
 }
 function _classTitle(c) {
   return `${c.sport}${c.coach ? ' · ' + c.coach : ''} · ${_classDayLabel(c.day)} ${_classSlotLabel(c.slot)}`;
@@ -11677,7 +11682,7 @@ window._classPrint = function (id) {
   if (!c) { toast(t('Class not found', 'الحصة غير موجودة'), 'error'); return; }
   const rows = c.roster.map((m, i) => `<tr>
       <td style="text-align:center">${i + 1}</td>
-      <td>${escapeHtml(m.name || '')}${m.nameArabic ? ` <span style="color:#666">${escapeHtml(m.nameArabic)}</span>` : ''}</td>
+      <td>${escapeHtml(m.name || '')}${m.nameArabic ? ` <span style="color:#666">${escapeHtml(m.nameArabic)}</span>` : ''}${(c.mixedIds && c.mixedIds.has(m.id)) ? ' <b>(Mixed)</b>' : ''}</td>
       <td>${escapeHtml(m.phone || '')}</td>
       <td style="width:90px"></td>
     </tr>`).join('') || `<tr><td colspan="4" style="text-align:center;color:#888;padding:16px">No students</td></tr>`;
@@ -11689,7 +11694,7 @@ window._classPrint = function (id) {
       th{background:#f0f0f0}</style></head>
     <body onload="window.print()">
       <h1>📋 ${escapeHtml(c.sport)}${c.coach ? ' — ' + escapeHtml(c.coach) : ''}</h1>
-      <div class="sub">${escapeHtml(_classDayLabel(c.day))} · ${escapeHtml(_classSlotLabel(c.slot))} · ${c.roster.length} students · Black Stars Sports Club</div>
+      <div class="sub">${escapeHtml(_classDayLabel(c.day))} · ${escapeHtml(_classSlotLabel(c.slot))}${c.linked ? ' · ' + escapeHtml(c.groups.map(g => g.name).join(', ')) : ''} · ${c.roster.length} students · Black Stars Sports Club</div>
       <table><thead><tr><th style="width:36px">#</th><th>Student</th><th style="width:130px">Mobile</th><th style="width:90px">Attendance</th></tr></thead>
         <tbody>${rows}</tbody></table>
     </body></html>`;
@@ -11791,8 +11796,8 @@ function _clsGroupOf(c) { return groupsForSlot(c.id).filter(g => _grpSportOf(g) 
 function classStudentsOf(c) {
   const gs = groupsForSlot(c.id).filter(g => _grpSportOf(g) === c.sport);
   if (!gs.length) return null;
-  const ids = new Set(); gs.forEach(g => (g.memberIds || []).forEach(id => ids.add(id)));
-  return (state.members || []).filter(m => m && !m.deleted && ids.has(m.id)).map(m => ({ m, current: memberTakesSportNow(m, c.sport) }))
+  const ids = new Set(), guests = new Set(); gs.forEach(g => { (g.memberIds || []).forEach(id => ids.add(id)); (g.mixedIds || []).forEach(id => guests.add(id)); });
+  return (state.members || []).filter(m => m && !m.deleted && (ids.has(m.id) || guests.has(m.id))).map(m => ({ m, mixed: !ids.has(m.id), current: ids.has(m.id) ? memberTakesSportNow(m, c.sport) : memberHasMixedNow(m) }))
     .sort((a, b) => (a.current === b.current ? 0 : a.current ? -1 : 1) || String(a.m.name || '').localeCompare(String(b.m.name || '')));
 }
 // make sure the class has a group: reuse the linked one, else create "Sport · Sat 17:00" with the coach, seeded with the students the old per-slot list already put in THIS class
@@ -11817,6 +11822,7 @@ window._clsStudentsAdd = function (cid) {
 window._clsStudentsRemove = function (cid, mid) {
   const c = (state.schedule || []).find(x => x && String(x.id) === String(cid)); const g = c && _clsGroupOf(c); if (!g) return;
   g.memberIds = (g.memberIds || []).filter(id => id !== parseInt(mid));
+  g.mixedIds = (g.mixedIds || []).filter(id => id !== parseInt(mid));
   save(); openClassStudents(c.id);
 };
 window._clsGroupChange = function (cid, val) {
@@ -11836,7 +11842,7 @@ window.openClassStudents = function (cid) {
   const groupOf = m => gs.find(x => (x.memberIds || []).includes(m.id)) || null;
   const cands = groupSubscribers(c.sport).filter(m => !inThis.has(m.id)).map(m => ({ m, g: groupOf(m) }))
     .sort((a, b) => (a.g ? 1 : 0) - (b.g ? 1 : 0) || String(a.m.name || '').localeCompare(String(b.m.name || '')));
-  const rosterHtml = rows.length ? rows.map(r => `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--border);${r.current ? '' : 'opacity:.55'}"><span style="flex:1;min-width:0"><b>${escapeHtml(r.m.name || '')}</b>${r.m.nameArabic ? ` <span class="text-mute" style="font-size:11px">${escapeHtml(r.m.nameArabic)}</span>` : ''}${r.current ? '' : ` <span class="badge" style="font-size:9px">${t('package ended', 'انتهت الباقة')}</span>`}</span><button class="btn ghost sm" style="color:var(--red)" title="${t('Take him out of this class', 'شيله من الحصة')}" onclick="window._clsStudentsRemove(${c.id}, ${r.m.id})">✕</button></div>`).join('')
+  const rosterHtml = rows.length ? rows.map(r => `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--border);${r.current ? '' : 'opacity:.55'}"><span style="flex:1;min-width:0"><b>${escapeHtml(r.m.name || '')}</b>${r.m.nameArabic ? ` <span class="text-mute" style="font-size:11px">${escapeHtml(r.m.nameArabic)}</span>` : ''}${r.mixed ? ` <span class="badge" style="font-size:9px;background:rgba(139,92,246,.15);color:#7c3aed">🎯 ${t('Mixed guest', 'ضيف ميكس')}</span>` : ''}${r.current ? '' : ` <span class="badge" style="font-size:9px">${t('package ended', 'انتهت الباقة')}</span>`}</span><button class="btn ghost sm" style="color:var(--red)" title="${t('Take him out of this class', 'شيله من الحصة')}" onclick="window._clsStudentsRemove(${c.id}, ${r.m.id})">✕</button></div>`).join('')
     : `<div class="text-mute" style="padding:14px;text-align:center;font-size:12px">${g ? t('No students in this class yet — add them below.', 'لا يوجد طلاب في هذه الحصة بعد — أضفهم بالأسفل.') : t('No group for this class yet — add students below and a group is created for it automatically.', 'لا توجد مجموعة لهذه الحصة بعد — أضف طلاباً بالأسفل وتُنشأ لها مجموعة تلقائياً.')}</div>`;
   const candHtml = cands.length ? cands.map(x => `<label class="cs-row" data-q="${escapeHtml(((x.m.name || '') + ' ' + (x.m.nameArabic || '') + ' ' + (x.m.phone || '')).toLowerCase())}" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--border);cursor:pointer;font-size:13px"><input type="checkbox" class="cs-cb" data-mid="${x.m.id}" data-nog="${x.g ? '0' : '1'}" /><span style="flex:1;min-width:0"><b>${escapeHtml(x.m.name || '')}</b>${x.m.nameArabic ? ` <span class="text-mute" style="font-size:11px">${escapeHtml(x.m.nameArabic)}</span>` : ''}</span>${x.g ? `<span class="text-mute" style="font-size:11px">${t('now in', 'حالياً في')} ${escapeHtml(x.g.name || '')} →</span>` : `<span class="badge" style="background:rgba(239,68,68,.12);color:var(--red);font-size:10px">${t('no group', 'بدون مجموعة')}</span>`}</label>`).join('')
     : `<div class="text-mute" style="padding:12px;text-align:center;font-size:12px">${t('Every subscriber of this sport is already in this class.', 'كل مشتركي هذه الرياضة في هذه الحصة بالفعل.')}</div>`;
@@ -11866,8 +11872,8 @@ window._classXlsx = function (id) {
   const c = _classById(id);
   if (!c) { toast(t('Class not found', 'الحصة غير موجودة'), 'error'); return; }
   if (!window.XlsxMini || typeof window.XlsxMini.downloadFile !== 'function') { toast(t('Excel export unavailable', 'تصدير Excel غير متاح'), 'error'); return; }
-  const HEADER = ['#', 'Student', 'Arabic name', 'Mobile', 'Status'];
-  const rows = c.roster.map((m, i) => [i + 1, m.name || '', m.nameArabic || '', m.phone || '', (typeof memberStatus === 'function') ? memberStatus(m) : '']);
+  const HEADER = ['#', 'Student', 'Arabic name', 'Mobile', 'Status', 'Group'];
+  const rows = c.roster.map((m, i) => [i + 1, m.name || '', m.nameArabic || '', m.phone || '', (typeof memberStatus === 'function') ? memberStatus(m) : '', (c.mixedIds && c.mixedIds.has(m.id)) ? 'Mixed' : (c.linked ? c.groups.map(g => g.name).join(', ') : '')]);
   const safe = _classTitle(c).replace(/[^\w؀-ۿ -]+/g, '').replace(/\s+/g, '-').slice(0, 60);
   try {
     window.XlsxMini.downloadFile(`class-${safe}.xlsx`, { sheets: [{ name: 'Roster', rows: [HEADER, ...rows] }] });
@@ -11913,6 +11919,59 @@ function memberGroupsFor(m) {
 function groupsForSlot(slotId) { return (state.swimGroups || []).filter(g => (g.slotIds || []).some(id => String(id) === String(slotId))); }
 const GRP_DAY_SHORT = { sun: 'Sun', mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat' };
 function _grpSlotLabel(c) { return (GRP_DAY_SHORT[c.day] || c.day || '') + ' ' + String(c.slot).padStart(2, '0') + ':00'; }
+// ═══ MIXED + CLASS ROSTER (v6.1067) ═══
+// A Mixed package ("try any sport") has no group of its own: a Mixed subscriber is a GUEST of the groups he picks, any sport (group.mixedIds). Guests show in the class roster with a 🎯 Mixed tag.
+function memberHasMixedNow(m) {
+  if (!m || m.deleted) return false;
+  const subs = (m.subscriptions || []).filter(s => s && !s.deleted && s.activity === MIXED);
+  if (subs.length) return subs.some(s => !s.end || String(s.end) >= TODAY);
+  return [m.sport, ...((m.enrollments || []).map(e => e && e.sport))].includes(MIXED);
+}
+function memberMixedGroups(m) { return (state.swimGroups || []).filter(g => m && (g.mixedIds || []).includes(m.id)); }
+window.setMemberMixedGroups = function (mid, gids) {
+  mid = parseInt(mid);
+  const m = (state.members || []).find(x => x.id === mid); if (!m) return;
+  (state.swimGroups || []).forEach(g => {
+    const has = (g.mixedIds || []).includes(mid), want = gids.includes(g.id);
+    if (want && !has) g.mixedIds = (g.mixedIds || []).concat([mid]);
+    else if (!want && has) g.mixedIds = (g.mixedIds || []).filter(id => id !== mid);
+  });
+  if (typeof audit === 'function') audit('group.mixed', 'member:' + mid, m.name + ': Mixed groups → ' + (gids.length ? (state.swimGroups || []).filter(g => gids.includes(g.id)).map(g => g.name).join(', ') : 'none'));
+  save();
+};
+// pick ANY of the groups (all sports) for a Mixed subscriber
+window.openMixedGroups = function (mid) {
+  const m = (state.members || []).find(x => x.id === parseInt(mid)); if (!m) return;
+  const mine = new Set(memberMixedGroups(m).map(g => g.id));
+  const bySport = {};
+  (state.swimGroups || []).filter(g => _grpGroupable(_grpSportOf(g))).forEach(g => { (bySport[_grpSportOf(g)] = bySport[_grpSportOf(g)] || []).push(g); });
+  const sports = Object.keys(bySport).sort();
+  const slotTxt = g => (g.slotIds || []).map(id => (state.schedule || []).find(c => c && String(c.id) === String(id))).filter(Boolean).map(_grpSlotLabel).join(' · ');
+  const body = sports.length ? sports.map(sp => `<div style="margin-bottom:10px"><div class="grp-lbl" style="margin-bottom:4px">${_grpEmoji(sp)} ${escapeHtml(sp)}</div>${bySport[sp].map(g => `<label style="display:flex;align-items:center;gap:8px;padding:5px 4px;cursor:pointer;font-size:13px"><input type="checkbox" class="mx-cb" value="${g.id}" ${mine.has(g.id) ? 'checked' : ''} /> <b>${escapeHtml(g.name || '')}</b> <span class="text-mute">${escapeHtml(slotTxt(g))}</span> <span class="text-mute" style="font-size:11px">(${(g.memberIds || []).length})</span></label>`).join('')}</div>`).join('')
+    : `<div class="text-mute">${t('There are no groups yet — create them on the Groups screen first.', 'لا توجد مجموعات بعد — أنشئها من شاشة المجموعات أولاً.')}</div>`;
+  showModal({
+    title: '🎯 ' + t('Mixed — the groups he can attend', 'ميكس — المجموعات اللي يقدر يحضرها') + ' · ' + escapeHtml(m.name || ''),
+    body: `<div class="text-mute" style="font-size:12px;margin-bottom:10px">${t('A Mixed subscriber can try any sport. Tick every group (of any sport) he is welcome in: he appears in those classes as a Mixed guest, and the Schedule filter shows only those classes for him.', 'مشترك الميكس بيجرّب أي رياضة. علّم كل مجموعة (من أي رياضة) يقدر يحضرها: بيظهر في حصصها كضيف ميكس، وفلتر الجدول بيعرض له هذه الحصص بس.')}</div><div style="max-height:380px;overflow:auto">${body}</div>`,
+    actions: [
+      { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
+      { label: '✓ ' + t('Save', 'حفظ'), class: 'btn primary', onclick: () => { window.setMemberMixedGroups(m.id, [...document.querySelectorAll('.mx-cb:checked')].map(cb => cb.value)); closeModal(); toast(t('Saved', 'تم الحفظ'), 'success'); if (typeof viewMember === 'function') viewMember(m.id); } },
+    ],
+  });
+};
+window._grpGuestRemove = function (gid, mid) {
+  const g = (state.swimGroups || []).find(x => x.id === gid); if (!g) return;
+  g.mixedIds = (g.mixedIds || []).filter(id => id !== parseInt(mid));
+  save(); _swimRerender();
+};
+// who is in a class, and why: the linked group(s) (members + Mixed guests) or, with no group, the old coach-based list
+function classRosterInfo(c) {
+  const gs = groupsForSlot(c.id).filter(g => _grpSportOf(g) === c.sport);
+  if (gs.length) {
+    const studs = classStudentsOf(c) || [];
+    return { linked: true, groups: gs, list: studs.map(x => x.m), mixed: new Set(studs.filter(x => x.mixed).map(x => x.m.id)) };
+  }
+  return { linked: false, groups: [], list: (typeof classRoster === 'function') ? classRoster(c.sport, c.coachId, c.day, c.slot) : [], mixed: new Set() };
+}
 window.openGroupsFor = function (sport) { if (sport) window._grpSport = sport; if (typeof closeModal === 'function') closeModal(); navigate('swimgroups'); };
 // the strip on the member profile: his group per sport — a select to put him in a group (optional), or "no group"
 window.setMemberGroup = function (mid, sport, gid, el, quiet) {
@@ -11940,8 +11999,8 @@ window.setSlotGroup = function (slotId, sport, coachId, gid) {
   if (typeof audit === 'function') audit('group.slots', 'swimgroup', `Schedule slot ${slotId} (${sport}) → ${g ? g.name : 'no group'}`);
 };
 window.memberGroupsHtml = function (m) {
-  const rows = memberGroupsFor(m);
-  if (!rows.length) return '';
+  const rows = memberGroupsFor(m), mixed = memberHasMixedNow(m);
+  if (!rows.length && !mixed) return '';
   const canSet = ['admin', 'receptionist'].includes(currentRole());
   const label = g => (g.name || '') + ((g.slotIds || []).length ? ' · ' + (g.slotIds || []).map(id => (state.schedule || []).find(c => c && String(c.id) === String(id))).filter(Boolean).map(_grpSlotLabel).join(' · ') : '') + ' (' + (g.memberIds || []).length + ')';
   const one = r => {
@@ -11949,7 +12008,7 @@ window.memberGroupsHtml = function (m) {
     if (!canSet) return `<span class="badge" style="background:${r.group ? 'rgba(16,185,129,.14);color:var(--green)' : 'rgba(239,68,68,.12);color:var(--red)'};font-weight:700">${_grpEmoji(r.sport)} ${escapeHtml(r.sport)} → ${r.group ? escapeHtml(r.group.name || '') : t('no group', 'بدون مجموعة')}</span>`;
     return `<span style="display:inline-flex;align-items:center;gap:6px"><span style="font-size:12px;font-weight:700">${_grpEmoji(r.sport)} ${escapeHtml(r.sport)}</span><select class="grp-member-sel ${r.group ? '' : 'none'}" data-sport="${escapeHtml(r.sport)}" onchange="window.setMemberGroup(${m.id}, this.dataset.sport, this.value, this)" title="${t('Choose his group (optional)', 'اختر مجموعته (اختياري)')}"><option value="">${t('— no group —', '— بدون مجموعة —')}</option>${groups.map(g => `<option value="${g.id}" ${r.group && r.group.id === g.id ? 'selected' : ''}>${escapeHtml(label(g))}</option>`).join('')}</select></span>`;
   };
-  return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 10px;padding:8px 10px;background:var(--surface-2);border-radius:10px"><span class="text-mute" style="font-size:11px;text-transform:uppercase;font-weight:700">👥 ${t('Groups', 'المجموعات')}</span>${rows.map(one).join('')}${canSet ? `<a href="javascript:void(0)" style="font-size:11px;margin-inline-start:auto" onclick="openGroupsFor('${rows[0].sport}')">${t('Open the Groups screen', 'افتح شاشة المجموعات')} ›</a>` : ''}</div>`;
+  return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 10px;padding:8px 10px;background:var(--surface-2);border-radius:10px"><span class="text-mute" style="font-size:11px;text-transform:uppercase;font-weight:700">👥 ${t('Groups', 'المجموعات')}</span>${rows.map(one).join('')}${mixed ? (() => { const mg = memberMixedGroups(m); return `<span style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap"><span style="font-size:12px;font-weight:700">🎯 Mixed</span>${mg.length ? mg.map(g => `<span class="badge" style="background:rgba(139,92,246,.15);color:#7c3aed">${_grpEmoji(_grpSportOf(g))} ${escapeHtml(g.name || '')}</span>`).join('') : `<span class="text-mute" style="font-size:12px">${t('any class (no groups picked)', 'أي حصة (لم تُحدَّد مجموعات)')}</span>`}${canSet ? `<button class="btn ghost sm" onclick="openMixedGroups(${m.id})">${mg.length ? '✏️ ' + t('Change', 'تغيير') : '＋ ' + t('Choose groups', 'اختر المجموعات')}</button>` : ''}</span>`; })() : ''}${canSet && rows.length ? `<a href="javascript:void(0)" style="font-size:11px;margin-inline-start:auto" onclick="openGroupsFor('${rows[0].sport}')">${t('Open the Groups screen', 'افتح شاشة المجموعات')} ›</a>` : ''}</div>`;
 };
 
 PAGES.swimgroups = (main) => {
@@ -12018,6 +12077,7 @@ PAGES.swimgroups = (main) => {
           <span style="color:var(--text-mute)">${t('to', 'إلى')}</span>
           <input type="time" value="${g.timeTo || ''}" onchange="window._swimSetTime('${g.id}','to',this.value)" style="padding:4px 6px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px" />
         </div></details>`}
+      ${(g.mixedIds || []).length ? `<div class="grp-guests"><span class="grp-lbl">🎯 ${t('Mixed guests', 'ضيوف الميكس')} (${(g.mixedIds || []).length})</span> ${(g.mixedIds || []).map(id => (state.members || []).find(m => m && m.id === id)).filter(Boolean).map(m => `<span class="badge" style="background:rgba(139,92,246,.15);color:#7c3aed">${escapeHtml(m.name || '')} <a href="javascript:void(0)" onclick="window._grpGuestRemove('${g.id}', ${m.id})" style="color:inherit;text-decoration:none">✕</a></span>`).join(' ')}</div>` : ''}
       <div class="swim-dropzone grp-drop" data-gid="${g.id}">
         ${mems.length ? mems.map(m => memberChip(m, g.id)).join('') : `<div class="grp-empty">${t('Drag subscribers here, or tick them on the left and press Assign', 'اسحب المشتركين هنا، أو علّم عليهم من اليسار واضغط إسناد')}</div>`}
       </div>
@@ -12414,7 +12474,7 @@ PAGES.schedule = (main) => {
   // For coaches: empty means all; otherwise only listed coach ids match.
   // For sports: empty means all; otherwise only listed sport names match.
   // A signed-in coach is pre-locked to themselves (and the picker is hidden).
-  let filter = { coaches: myCoachId != null ? [myCoachId] : [], sports: [], classes: [], days: [], memberId: null };   // v6.732: classes = custom class names   // v6.675: memberId = show only this member's classes
+  let filter = { coaches: myCoachId != null ? [myCoachId] : [], sports: [], classes: [], groups: [], days: [], memberId: null };   // v6.732: classes = custom class names   // v6.675: memberId = show only this member's classes
   let _memKeys = null;   // the selected member's (sport, coach) pairs — rebuilt on every refresh()
   // Days actually shown in the grid: all of DAYS, narrowed to filter.days when set.
   const visibleDays = () => (filter.days.length ? DAYS.filter(d => filter.days.includes(d.key)) : DAYS);
@@ -12430,6 +12490,10 @@ PAGES.schedule = (main) => {
     if (filter.coaches.length && !filter.coaches.includes(c.coachId)) return false;
     if (filter.sports.length && !filter.sports.includes(c.sport)) return false;
     if (filter.classes.length && !filter.classes.includes(classKey(c))) return false;   // v6.732
+    if (filter.groups.length) {   // v6.1067 — by group (or the classes without one)
+      const gs = groupsForSlot(c.id).filter(g => _grpSportOf(g) === c.sport);
+      if (!(gs.some(g => filter.groups.includes(g.id)) || (filter.groups.includes('__none__') && !gs.length && _grpGroupable(c.sport)))) return false;
+    }
     if (filter.memberId != null && !scheduleClassMatchesMember(c, _memKeys)) return false;   // v6.675
     return true;
   }
@@ -12459,7 +12523,7 @@ PAGES.schedule = (main) => {
     if (studs) {
       const cur = studs.filter(x => x.current), gn = groupsForSlot(cls.id).filter(g => _grpSportOf(g) === sport).map(g => g.name).join(', ');
       pop.innerHTML = head + sub('👥 ' + escapeHtml(gn) + ' · ' + cur.length + ' ' + t('students', 'طالب'))
-        + (cur.length ? cur.slice(0, 14).map((x, i) => `<div style="padding:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${i + 1}. ${escapeHtml(x.m.name || '')}</div>`).join('') + (cur.length > 14 ? `<div style="color:var(--text-mute);padding-top:3px">+${cur.length - 14} ${t('more', 'آخرين')}</div>` : '') : `<div style="color:var(--text-mute)">${t('No current students in this class', 'لا يوجد طلاب حاليون في هذه الحصة')}</div>`)
+        + (cur.length ? cur.slice(0, 14).map((x, i) => `<div style="padding:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${i + 1}. ${escapeHtml(x.m.name || '')}${x.mixed ? ' 🎯' : ''}</div>`).join('') + (cur.length > 14 ? `<div style="color:var(--text-mute);padding-top:3px">+${cur.length - 14} ${t('more', 'آخرين')}</div>` : '') : `<div style="color:var(--text-mute)">${t('No current students in this class', 'لا يوجد طلاب حاليون في هذه الحصة')}</div>`)
         + `<div style="color:var(--text-mute);font-size:10px;margin-top:7px">${t('Click the class → 👥 Students to change', 'اضغط على الحصة ← 👥 الطلاب للتعديل')}</div>`;
     } else {
       const top = topActiveMembersForClass(sport, coachId, 5);
@@ -13222,6 +13286,17 @@ PAGES.schedule = (main) => {
           </div>
         </div>
         <div style="position:relative">
+          <button type="button" id="sch-filter-group-btn" class="btn ghost" style="min-width:150px;text-align:left;display:inline-flex;align-items:center;justify-content:space-between;gap:8px" title="${t('Filter by group', 'تصفية بالمجموعة')}">
+            <span id="sch-filter-group-label">👥 ${filter.groups.length ? (filter.groups.length === 1 ? escapeHtml(filter.groups[0] === '__none__' ? t('Without a group', 'بدون مجموعة') : ((state.swimGroups || []).find(g => g.id === filter.groups[0]) || {}).name || '') : filter.groups.length + ' ' + t('groups', 'مجموعات')) : t('All groups', 'كل المجموعات')}</span>
+            <span style="opacity:.6;font-size:10px">▾</span>
+          </button>
+          <div id="sch-filter-group-menu" style="display:none;position:absolute;left:0;top:100%;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-top:4px;padding:8px;min-width:260px;max-height:340px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.4)">
+            <label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px;color:var(--red);font-weight:700"><input type="checkbox" class="sch-group-cb" value="__none__" ${filter.groups.includes('__none__') ? 'checked' : ''} /> ⚠ ${t('Classes without a group', 'حصص بدون مجموعة')}</label>
+            ${(state.swimGroups || []).filter(g => _grpGroupable(_grpSportOf(g))).sort((a, b) => _grpSportOf(a).localeCompare(_grpSportOf(b)) || (a.order ?? 0) - (b.order ?? 0)).map(g => `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:13px"><input type="checkbox" class="sch-group-cb" value="${g.id}" ${filter.groups.includes(g.id) ? 'checked' : ''} /> ${_grpEmoji(_grpSportOf(g))} ${escapeHtml(g.name || '')} <span class="text-mute" style="font-size:11px">${escapeHtml(_grpSportOf(g))} · ${(g.memberIds || []).length}</span></label>`).join('')}
+            <div style="border-top:1px solid var(--border);margin-top:6px;padding-top:6px;display:flex;justify-content:flex-end"><button type="button" class="btn ghost sm" id="sch-filter-group-clear">${t('Clear', 'مسح')}</button></div>
+          </div>
+        </div>
+        <div style="position:relative">
           <button type="button" id="sch-filter-day-btn" class="btn ghost" style="min-width:140px;text-align:left;display:inline-flex;align-items:center;justify-content:space-between;gap:8px" title="Filter by one or more days">
             <span id="sch-filter-day-label">${filter.days.length ? (filter.days.length === 1 ? (DAYS.find(d => d.key === filter.days[0]) || {}).label : filter.days.length + ' days') : 'All days'}</span>
             <span style="opacity:.6;font-size:10px">▾</span>
@@ -13236,7 +13311,7 @@ PAGES.schedule = (main) => {
           <div id="sch-member-menu" style="display:none;position:absolute;left:0;top:100%;z-index:60;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-top:4px;min-width:290px;max-height:290px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.4)"></div>
         </div>
         <span id="sch-member-chip"></span>` : ''}
-        ${(filter.coaches.length || filter.sports.length || filter.classes.length || filter.days.length) ? `<button type="button" class="btn ghost sm" id="sch-filter-reset">✕ ${t('Clear filters', 'مسح الفلاتر')}</button>` : ''}
+        ${(filter.coaches.length || filter.sports.length || filter.classes.length || filter.groups.length || filter.days.length) ? `<button type="button" class="btn ghost sm" id="sch-filter-reset">✕ ${t('Clear filters', 'مسح الفلاتر')}</button>` : ''}
         <div style="font-size:11px;color:var(--text-mute);margin-left:auto">Filters dim non-matching classes; export honors the filter</div>
       </div>
     </div>
@@ -13276,7 +13351,7 @@ PAGES.schedule = (main) => {
       e.stopPropagation();
       const open = menu.style.display === 'block';
       // Close any other open menus first
-      $$('#sch-filter-coach-menu, #sch-filter-sport-menu, #sch-filter-class-menu, #sch-filter-day-menu').forEach(m => { if (m !== menu) m.style.display = 'none'; });
+      $$('#sch-filter-coach-menu, #sch-filter-sport-menu, #sch-filter-class-menu, #sch-filter-day-menu, #sch-filter-group-menu').forEach(m => { if (m !== menu) m.style.display = 'none'; });
       menu.style.display = open ? 'none' : 'block';
     });
   }
@@ -13284,6 +13359,13 @@ PAGES.schedule = (main) => {
   toggleMenu('sch-filter-sport-btn', 'sch-filter-sport-menu');
   toggleMenu('sch-filter-day-btn', 'sch-filter-day-menu');
   toggleMenu('sch-filter-class-btn', 'sch-filter-class-menu');
+  toggleMenu('sch-filter-group-btn', 'sch-filter-group-menu');
+  $$('.sch-group-cb').forEach(cb => cb.addEventListener('change', e => {   // v6.1067
+    const k = e.target.value;
+    if (e.target.checked) { if (!filter.groups.includes(k)) filter.groups.push(k); } else filter.groups = filter.groups.filter(x => x !== k);
+    updateFilterLabels(); refresh();
+  }));
+  $('#sch-filter-group-clear')?.addEventListener('click', () => { filter.groups = []; $$('.sch-group-cb').forEach(cb => cb.checked = false); updateFilterLabels(); refresh(); });
   // v6.732 — the Class dropdown lists the custom class names on the schedule (hidden when there are none); re-built on every refresh
   function renderClassFilter() {
     const wrap = $('#sch-class-wrap'), list = $('#sch-class-list'); if (!wrap || !list) return;
@@ -13316,8 +13398,8 @@ PAGES.schedule = (main) => {
   })();
   // Click outside closes the menus
   document.addEventListener('click', e => {
-    if (!e.target.closest('#sch-filter-coach-menu, #sch-filter-coach-btn, #sch-filter-sport-menu, #sch-filter-sport-btn, #sch-filter-day-menu, #sch-filter-day-btn, #sch-filter-class-menu, #sch-filter-class-btn')) {
-      $$('#sch-filter-coach-menu, #sch-filter-sport-menu, #sch-filter-day-menu, #sch-filter-class-menu').forEach(m => { if (m) m.style.display = 'none'; });
+    if (!e.target.closest('#sch-filter-coach-menu, #sch-filter-coach-btn, #sch-filter-sport-menu, #sch-filter-sport-btn, #sch-filter-day-menu, #sch-filter-day-btn, #sch-filter-class-menu, #sch-filter-class-btn, #sch-filter-group-menu, #sch-filter-group-btn')) {
+      $$('#sch-filter-coach-menu, #sch-filter-sport-menu, #sch-filter-day-menu, #sch-filter-class-menu, #sch-filter-group-menu').forEach(m => { if (m) m.style.display = 'none'; });
     }
   }, { once: true });
   function renderClassFilterLabelOnly() {
@@ -13332,6 +13414,8 @@ PAGES.schedule = (main) => {
     if (sL) sL.textContent = filter.sports.length ? (filter.sports.length === 1 ? filter.sports[0] : filter.sports.length + ' sports') : 'All sports';
     $$('.sport-tile').forEach(tl => { const on = filter.sports.includes(tl.dataset.sport); tl.style.outline = on ? '3px solid var(--text)' : ''; tl.style.outlineOffset = on ? '2px' : ''; tl.style.opacity = (filter.sports.length && !on) ? '.55' : ''; });
     try { renderClassFilterLabelOnly(); } catch (_) {}
+    const gL = $('#sch-filter-group-label');   // v6.1067
+    if (gL) gL.textContent = '👥 ' + (filter.groups.length ? (filter.groups.length === 1 ? (filter.groups[0] === '__none__' ? t('Without a group', 'بدون مجموعة') : (((state.swimGroups || []).find(g => g.id === filter.groups[0]) || {}).name || '')) : filter.groups.length + ' ' + t('groups', 'مجموعات')) : t('All groups', 'كل المجموعات'));
     const dL = $('#sch-filter-day-label');
     if (dL) dL.textContent = filter.days.length ? (filter.days.length === 1 ? (DAYS.find(d => d.key === filter.days[0]) || {}).label : filter.days.length + ' days') : 'All days';
   }
@@ -13366,7 +13450,7 @@ PAGES.schedule = (main) => {
   $('#sch-filter-sport-all')?.addEventListener('click', () => { filter.sports = $$('.sch-sport-cb').map(cb => cb.value); $$('.sch-sport-cb').forEach(cb => cb.checked = true); updateFilterLabels(); refresh(); });
   $('#sch-filter-day-all')?.addEventListener('click', () => { $$('.sch-day-cb').forEach(cb => cb.checked = true); filter.days = DAYS.map(d => d.key); updateFilterLabels(); refresh(); });
   // Reset all
-  $('#sch-filter-reset')?.addEventListener('click', () => { filter.coaches = []; filter.sports = []; filter.classes = []; filter.days = []; filter.memberId = null; if (typeof _renderMemberChip === 'function') _renderMemberChip(); $$('.sch-coach-cb, .sch-sport-cb, .sch-day-cb').forEach(cb => cb.checked = false); updateFilterLabels(); refresh(); });
+  $('#sch-filter-reset')?.addEventListener('click', () => { filter.coaches = []; filter.sports = []; filter.classes = []; filter.groups = []; filter.days = []; filter.memberId = null; if (typeof _renderMemberChip === 'function') _renderMemberChip(); $$('.sch-coach-cb, .sch-sport-cb, .sch-day-cb').forEach(cb => cb.checked = false); updateFilterLabels(); refresh(); });
 
   // Export PNG (weekly grid)
   $('#sch-png').addEventListener('click', () => exportPng('en'));
@@ -13406,6 +13490,7 @@ PAGES.schedule = (main) => {
       if (filter.coaches.length) chips.push(filter.coaches.map(id => coachName(id)).filter(Boolean).join(', '));
       if (filter.sports.length) chips.push(filter.sports.join(', '));
       if (filter.classes.length) chips.push(customClasses().filter(x => filter.classes.includes(x.key)).map(x => t(x.name, x.nameAr)).join(', '));   // v6.732
+      if (filter.groups.length) chips.push(filter.groups.map(k => k === '__none__' ? t('Without a group', 'بدون مجموعة') : ((state.swimGroups || []).find(g => g.id === k) || {}).name).filter(Boolean).join(', '));   // v6.1067
     }
     let n = 0;
     const rows = SLOTS.map(slot => `<tr><th>${slot.label}</th>${days.map(day => {

@@ -2017,3 +2017,5 @@ body.modal-open #bs-notif-float { z-index: 60 !important; }   /* v6.776 — belo
 .swim-chip:hover { box-shadow: 0 2px 8px rgba(0,0,0,.1); border-color: var(--accent) !important; }
 .grp-member-sel { padding: 4px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 12px; max-width: 260px; }
 .grp-member-sel.none { border-color: var(--red); background: rgba(239,68,68,.08); color: var(--red); font-weight: 700; }
+
+.grp-guests { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 2px; }

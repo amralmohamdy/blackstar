@@ -122,6 +122,9 @@
   // app computes in the background (auto-heal, status refresh) is dropped client-side, never sent — one denied
   // op would otherwise fail the whole atomic batch and lose the attendance mark with it.
   const COACH_WRITABLE = new Set(['members', 'advices', 'posts', 'trials']);
+  // v6.1066 — WRITE-ONLY histories on a member (nothing reads them back): they are sent as the device's own, already trimmed list and REPLACE the cloud one — never element-merged with it.
+  // Merging them unions every device's entries, so one auto-renew create/cancel loop grew a member document past the 1 MiB limit (members/268, 1,049,619 bytes) and nothing could be saved.
+  const _HISTORY_ARRAYS = new Set(['autoRenewCancelled', 'autoRenewLog']);
   // v6.980.0 — the member fields a coach may change: EXACTLY the list in firestore.rules (coachMemberFieldsOnly). A coach tablet that held an older copy of a member
   // (another device renewed it, auto-renew log, reminder dates…) re-sent those other fields → permission-denied → the red bar came back after every save. Only these fields are sent now.
   const COACH_MEMBER_FIELDS = new Set(['id', 'dailyAttendance', 'mixedAttendance', 'subscriptions', 'renewals', 'enrollments', 'startDate', 'expiryDate', 'status', 'months', 'updatedAt', 'updatedBy', 'updatedByName', 'createdAt', 'createdBy', 'createdByName']);
@@ -670,7 +673,7 @@
           // If the delta touches a LIST field, Firestore's merge would REPLACE the
           // list and could drop a concurrent add. Route those records through a
           // transaction that element-merges the list against the live cloud value.
-          const arrayFields = Object.keys(delta).filter(k => Array.isArray(delta[k]));
+          const arrayFields = Object.keys(delta).filter(k => Array.isArray(delta[k]) && !(name === 'members' && _HISTORY_ARRAYS.has(k)));
           // SAME hazard for a nested MAP field (member.dailyAttendance): two devices marking
           // the same day each write their whole view of the map and merge:true lets the last
           // writer win, silently dropping the other device's freshly-added cells. Route those
