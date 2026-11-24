@@ -763,7 +763,7 @@ PAGES.dashboard = (main) => {
       // v6.399: count over the CORRECTED window so "finished all classes" agrees with the member
       // card and the attendance popup (raw start/end miss pre-start + gap classes).
       const _w = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, sub) : { from: sub.start || null, to: sub.end || null };
-      const liveSp = liveAttendanceCount(m, sub.activity, _w.from, _w.to);
+      const liveSp = subLiveAttendance(m, sub, _w);   // v6.1106 — coach-specific attendance cells count too
       const att = liveSp.total > 0 ? liveSp.y : (sub.attendedClasses || 0);
       if (tot > 0 && att >= tot && st === 'Active') {
         finishedList.push({ m, sport: sub.activity || m.sport });
@@ -1421,7 +1421,7 @@ function _subFilterStatus(m, s) {
   if ((s.status || '').toLowerCase() === 'withdrawn') return 'Withdrawn';
   if (typeof isMemberFrozenAt === 'function' && isMemberFrozenAt(m, TODAY, s.activity)) return 'Frozen';
   const total = parseInt(s.totalClasses) || 0;
-  const att = (typeof liveAttendanceCount === 'function') ? (liveAttendanceCount(m, s.activity, s.start, s.end).y || 0) : (parseInt(s.attendedClasses) || 0);
+  const att = (typeof subLiveAttendance === 'function') ? (subLiveAttendance(m, s, { from: s.start, to: s.end }).y || 0) : (parseInt(s.attendedClasses) || 0);
   if (total > 0 && att >= total) return 'Completed';
   if (s.end && s.end < TODAY) return 'Expired';
   if (s.start && s.end) return 'Active';
@@ -1532,7 +1532,7 @@ PAGES.members = (main) => {
     const mr = (m.subscriptions || []).filter(s => s.totalClasses).slice(-1)[0];
     if (!mr) return -1;
     const win = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, mr) : { from: mr.start || null, to: mr.end || null };
-    const live = liveAttendanceCount(m, mr.activity, win.from, win.to);
+    const live = subLiveAttendance(m, mr, win);   // v6.1106 — same count as the member card (coach-specific cells included)
     const att = live.total > 0 ? live.y : (mr.attendedClasses || 0);
     const limit = (typeof subClassLimit === 'function') ? subClassLimit(mr) : mr.totalClasses;
     return limit ? Math.min(1, att / limit) : -1;
@@ -1541,7 +1541,7 @@ PAGES.members = (main) => {
     const mr = (m.subscriptions || []).filter(s => s.totalClasses).slice(-1)[0];
     if (!mr) return dash;
     const win = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, mr) : { from: mr.start || null, to: mr.end || null };
-    const live = liveAttendanceCount(m, mr.activity, win.from, win.to);
+    const live = subLiveAttendance(m, mr, win);   // v6.1106 — same count as the member card (coach-specific cells included)
     const att = live.total > 0 ? live.y : (mr.attendedClasses || 0);
     // Denominator = the attendable class-day LIMIT (e.g. "2 weeks" camp = 10 business
     // days), NOT the calendar validity (14). subClassLimit() converts a stored validity
@@ -3044,7 +3044,7 @@ function viewMember(id) {
     // v6.399: corrected window (this member card already uses it for the per-sport rows below —
     // this lifetime sum was the one line still on the raw start/end, so the two disagreed).
     const _w = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, x) : { from: x.start || null, to: x.end || null };
-    const lw = liveAttendanceCount(m, x.activity, _w.from, _w.to);
+    const lw = subLiveAttendance(m, x, _w);
     return acc + (lw.total > 0 ? lw.y : (x.attendedClasses || 0));
   }, 0);
   // CURRENT-membership classes for the headline card: count only the ACTIVE
@@ -5272,7 +5272,7 @@ function memberExportStats(m) {
   for (const s of (m.subscriptions || [])) {
     totalClasses += (typeof subClassLimit === 'function' ? subClassLimit(s) : (s.totalClasses || 0)) || 0;
     const w = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, s) : { from: s.start || null, to: s.end || null };
-    const lw = (typeof liveAttendanceCount === 'function') ? liveAttendanceCount(m, s.activity, w.from, w.to) : { total: 0, y: 0 };
+    const lw = (typeof subLiveAttendance === 'function') ? subLiveAttendance(m, s, w) : { total: 0, y: 0 };
     attended += (lw.total > 0 ? lw.y : (parseInt(s.attendedClasses) || 0));
   }
   const attPct = totalClasses ? Math.round(attended / totalClasses * 100) : 0;
@@ -22396,7 +22396,9 @@ function salaryRangeLines(coachId, from, to) {
     ((pe && pe.attendanceLines && pe.attendanceLines.lines) || []).forEach(l => {
       const q = prev.get(key(l)), cl = (l.classes == null ? null : (l.classes || 0) - (q ? (q.classes || 0) : 0)), base = (l.amountBase || 0) - (q ? (q.amountBase || 0) : 0);
       if (Math.abs(base) < 0.005 && !cl) return;
-      rows.push({ member: l.memberName, sport: l.sport, kind: l.kind, priv: l.priv || '', classes: cl, base: Math.round(base * 100) / 100, pay: Math.round(base * rate) / 100 });
+      let sl = l.sport;   // v6.1105 — a Mixed line says which sport the classes were
+      if (l.sport === MIXED && l.mixedEntries) { const c = {}; l.mixedEntries.forEach(e => { if (e.d >= s0 && e.d <= e0) { const k = e.s || '—'; c[k] = (c[k] || 0) + 1; } }); const parts = Object.keys(c).map(k => k + (c[k] > 1 ? ' ×' + c[k] : '')); if (parts.length) sl = MIXED + ' · ' + parts.join(', '); }
+      rows.push({ member: l.memberName, sport: l.sport, sportLabel: sl, kind: l.kind, priv: l.priv || '', classes: cl, base: Math.round(base * 100) / 100, pay: Math.round(base * rate) / 100 });
     });
     ym = _isoAddDays(_isoLastDay(ym), 1).slice(0, 7);
   }
@@ -22411,7 +22413,7 @@ window.salaryRangePrint = function (from, to, set, only) {   // v6.1091 — one 
     const c = (state.coaches || []).find(x => x && x.id === r.coachId) || {};
     const ls = salaryRangeLines(r.coachId, from, to);
     const det = ls.length ? '<h2>' + t('Commission details', 'تفاصيل العمولة') + '</h2><table><thead><tr><th>#</th><th>' + t('Member', 'العضو') + '</th><th>' + t('Sport', 'الرياضة') + '</th><th>' + t('Type', 'النوع') + '</th><th class="n">' + t('Classes', 'الحصص') + '</th><th class="n">' + t('Base', 'الأساس') + '</th><th class="n">' + t('Share', 'النصيب') + '</th></tr></thead><tbody>'
-      + ls.map((l, i) => '<tr><td>' + (i + 1) + '</td><td>' + esc(l.member || '') + (l.priv ? ' 🔒' : '') + '</td><td>' + esc(l.sport || '') + '</td><td>' + (kindTxt[l.kind] || esc(l.kind || '')) + (l.ref ? ' ' + esc(l.ref) : '') + '</td><td class="n">' + (l.classes == null ? '' : l.classes) + '</td><td class="n">' + fmt(l.base) + '</td><td class="n b">' + fmt(l.pay) + '</td></tr>').join('')
+      + ls.map((l, i) => '<tr><td>' + (i + 1) + '</td><td>' + esc(l.member || '') + (l.priv ? ' 🔒' : '') + '</td><td>' + esc(l.sportLabel || l.sport || '') + '</td><td>' + (kindTxt[l.kind] || esc(l.kind || '')) + (l.ref ? ' ' + esc(l.ref) : '') + '</td><td class="n">' + (l.classes == null ? '' : l.classes) + '</td><td class="n">' + fmt(l.base) + '</td><td class="n b">' + fmt(l.pay) + '</td></tr>').join('')
       + '<tr class="tot"><td colspan="5">' + t('Total commission', 'إجمالي العمولة') + ' (' + r.rate + '%)</td><td class="n">' + fmt(ls.reduce((x, l) => x + l.base, 0)) + '</td><td class="n">' + fmt(ls.reduce((x, l) => x + l.pay, 0)) + '</td></tr></tbody></table>' : '';
     return '<div class="slip"><div class="header"><div><div class="logo">★ Black Stars</div><div class="sub">Sports Club · Waab, Doha</div></div><div style="text-align:right"><div style="font-weight:700">PAY SLIP</div><div class="sub">' + esc(lbl) + '</div></div></div>'
       + '<div style="margin-bottom:14px"><div style="font-size:18px;font-weight:700">' + esc(r.name) + '</div><div class="sub">' + (r.role === 'staff' ? 'Staff' : 'Coach') + (c.sports && c.sports.length ? ' · ' + esc(c.sports.join(', ')) : '') + ' · Generated ' + fmtDate(TODAY) + '</div></div>'
@@ -33688,7 +33690,7 @@ PAGES.mymembership = (main) => {
     let remaining = null, pkgTotal = 0, pkgAtt = 0;
     if (sub) {
       const w = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, sub) : { from: sub.start || null, to: sub.end || null };
-      const lv = liveAttendanceCount(m, sub.activity || e.sport, w.from, w.to);
+      const lv = subLiveAttendance(m, sub.activity ? sub : Object.assign({}, sub, { activity: e.sport }), w);
       const att = lv.total > 0 ? lv.y : (parseInt(sub.attendedClasses) || 0);
       pkgTotal = parseInt(sub.totalClasses) || 0; pkgAtt = Math.min(att, pkgTotal || att);
       remaining = Math.max(0, pkgTotal - att);
@@ -36046,7 +36048,7 @@ PAGES.attreport = (main) => {
             // s.attendedClasses lags the register, so the landing view of this report used
             // to read "Total Present 0 / 0%" for a month that had marks in the grid.
             const w = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, s) : { from: s.start || null, to: s.end || null };
-            const lv = liveAttendanceCount(m, s.activity || m.sport, w.from, w.to);
+            const lv = subLiveAttendance(m, s.activity ? s : Object.assign({}, s, { activity: m.sport }), w);
             const att = lv.total > 0 ? lv.y : (s.attendedClasses || 0);
             stats[cid].students.add(m.id);
             stats[cid].attended += att;
@@ -37540,7 +37542,10 @@ window.scheduleRentalsDialog = function () {
   const guess = lb => { const l = lb.toLowerCase(); return custs.find(c => String(c.name).trim().toLowerCase() === l) || custs.find(c => String(c.name).toLowerCase().includes(l)) || null; };
   const lastRate = cid => { const r = (state.rentals || []).filter(x => x && x.customerRentalId === cid && x.hourlyRate > 0 && x.facility === COURT).sort((a, b) => String(b.date).localeCompare(String(a.date)))[0]; return r ? r.hourlyRate : 100; };
   const g0 = guess(labels[0]);
-  const rows = labels.map((lb, i) => '<div class="card" style="padding:10px 12px;margin-bottom:10px"><div style="font-weight:700;margin-bottom:6px">📅 ' + escapeHtml(lb) + '</div><div class="form-row">'
+  // v6.1107 — say WHEN each slot is (days + hours), so it is clear whose slot it is before a customer is chosen
+  const slotsOf = lb => { const key = String(lb).trim().toLowerCase(), by = {}; (state.schedule || []).filter(c => c && c.sport === 'Football' && String(c.label || '').trim().toLowerCase() === key && Number.isFinite(parseInt(c.slot, 10))).forEach(c => { (by[c.day] = by[c.day] || []).push(parseInt(c.slot, 10)); });
+    return ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'].filter(d => by[d]).map(d => { const h = by[d].sort((a, b) => a - b), out = []; let i = 0; while (i < h.length) { let j = i; while (j + 1 < h.length && h[j + 1] === h[j] + 1) j++; out.push(GRP_DAY_SHORT[d] + ' ' + String(h[i]).padStart(2, '0') + ':00–' + String(h[j] + 1).padStart(2, '0') + ':00'); i = j + 1; } return out.join(', '); }).join(' · '); };
+  const rows = labels.map((lb, i) => '<div class="card" style="padding:10px 12px;margin-bottom:10px"><div style="font-weight:700">📅 ' + escapeHtml(lb) + '</div><div class="text-mute" style="font-size:12px;margin-bottom:8px">🗓 ' + escapeHtml(slotsOf(lb) || '—') + '</div><div class="form-row">'
     + '<div class="field"><label>' + t('Customer', 'العميل') + '</label><select id="sr-c' + i + '"><option value="">' + t('— choose the customer —', '— اختر العميل —') + '</option>' + custs.map(c => '<option value="' + c.id + '"' + ((guess(lb) || {}).id === c.id ? ' selected' : '') + '>' + escapeHtml(c.name) + ' · ' + escapeHtml(c.phone || '') + '</option>').join('') + '</select></div>'
     + '<div class="field" style="max-width:130px"><label>' + t('Rate / hour', 'السعر / ساعة') + '</label><input id="sr-r' + i + '" type="number" min="0" step="1" value="' + lastRate((guess(lb) || {}).id) + '" /></div></div></div>').join('');
   showModal({
