@@ -3119,6 +3119,11 @@ function viewMember(id) {
         <div style="flex:1;min-width:0">
           <div class="mc-name-row">
             <div class="mc-name">${escapeHtml(m.name)}</div>
+            <div class="mc-status-row"><span class="badge ${memberStatus(m).toLowerCase()}">${memberStatus(m)}</span>${(m.months || []).length ? ` <span class="badge">${(m.months || []).join(' + ').toUpperCase()}</span>` : ''}${(() => {
+            const ob = memberOutstanding(m.id);
+            const editable = currentRole() === 'admin' || currentRole() === 'receptionist';
+            return ob > 0.001 ? ` <span class="badge" ${editable ? `onclick="event.stopPropagation();moneyPanel(${m.id})" style="background:rgba(242,163,60,.18);color:var(--accent-2);cursor:pointer" title="Click to record a payment / edit pricing"` : `style="background:rgba(242,163,60,.18);color:var(--accent-2)" title="Outstanding balance across this member's invoices"`}>💰 ${fmt(ob)} due</span>` : '';
+          })()}</div>
             ${m.nameArabic ? `<div class="mc-name-ar" dir="rtl">${escapeHtml(m.nameArabic)}</div>` : ''}
           </div>
           <div class="mc-meta">
@@ -3127,12 +3132,7 @@ function viewMember(id) {
             ${m.level ? `<span class="mc-chip">📶 ${escapeHtml(m.level)}</span>` : ''}
             ${m.nationality ? `<span class="mc-chip">🌍 ${escapeHtml(m.nationality)}</span>` : ''}
           </div>
-          <div class="mc-status-row"><span class="badge ${memberStatus(m).toLowerCase()}">${memberStatus(m)}</span>${(m.months || []).length ? ` <span class="badge">${(m.months || []).join(' + ').toUpperCase()}</span>` : ''}${(() => {
-            const ob = memberOutstanding(m.id);
-            const editable = currentRole() === 'admin' || currentRole() === 'receptionist';
-            return ob > 0.001 ? ` <span class="badge" ${editable ? `onclick="event.stopPropagation();moneyPanel(${m.id})" style="background:rgba(242,163,60,.18);color:var(--accent-2);cursor:pointer" title="Click to record a payment / edit pricing"` : `style="background:rgba(242,163,60,.18);color:var(--accent-2)" title="Outstanding balance across this member's invoices"`}>💰 ${fmt(ob)} due</span>` : '';
-          })()}</div>
-          ${isRealPhone(m.phone) ? `<div class="mc-phone"><span class="mc-phone-lbl">📱 ${t('Mobile', 'الجوال')}</span>${mcPhoneHtml(m.phone, 20)}${m.phone2 && isRealPhone(m.phone2) ? `<span class="mc-phone-lbl" style="margin-inline-start:6px">${t('2nd', 'ثاني')}</span>${mcPhoneHtml(m.phone2, 16)}` : ''}</div>` : ''}
+          ${isRealPhone(m.phone) ? `<div class="mc-phone"><span class="mc-phone-lbl">📱 ${t('Mobile', 'الجوال')}</span>${mcPhoneHtml(m.phone, 14)}${m.phone2 && isRealPhone(m.phone2) ? `<span class="mc-phone-lbl" style="margin-inline-start:6px">${t('2nd', 'ثاني')}</span>${mcPhoneHtml(m.phone2, 13)}` : ''}</div>` : ''}
           ${(currentRole() === 'admin' || currentRole() === 'receptionist') ? `<div class="mc-hero-actions"><button class="btn primary sm" onclick="moneyPanel(${m.id})" title="${t('Log payment installments (method + date + amount). Prices are set per-sport in the profile above.', 'تسجيل أقساط الدفع (الطريقة + التاريخ + المبلغ). الأسعار تُحدَّد لكل رياضة في الملف أعلاه.')}" style="font-weight:700">💳 ${t('Installments', 'الأقساط')}</button>${currentRole() === 'admin' ? `<button class="btn ghost sm" onclick="rebuildMemberFromProfile(${m.id})" title="${t('Sync the subscription + invoice to the current enrollments (the profile) so salary + invoice agree', 'مزامنة الاشتراك والفاتورة مع التسجيلات الحالية ليتطابق الراتب والفاتورة')}">🔄 ${t('Rebuild from profile', 'إعادة البناء من الملف')}</button>` : ''}</div>` : ''}
         </div>
       </div>
@@ -3177,7 +3177,7 @@ function viewMember(id) {
         </div>
         <div class="mc-card"><div class="mc-card-title">👤 Contact &amp; personal</div>
           <div class="mc-fields">
-        <div style="grid-column:1/-1"><div class="text-mute" style="font-size:11px;text-transform:uppercase">${t('Mobile', 'الجوال')}</div><div class="mc-phone" style="margin-top:3px">${isRealPhone(m.phone) ? mcPhoneHtml(m.phone, 20) : '<span class="text-mute">—</span>'}${m.phone2 && isRealPhone(m.phone2) ? `<span class="mc-phone-lbl">${t('2nd', 'ثاني')}</span>${mcPhoneHtml(m.phone2, 16)}` : ''}</div></div>
+        ${isRealPhone(m.phone) ? '' : `<div style="grid-column:1/-1"><div class="text-mute" style="font-size:11px;text-transform:uppercase">${t('Mobile', 'الجوال')}</div><div class="mc-phone" style="margin-top:3px">${isRealPhone(m.phone) ? mcPhoneHtml(m.phone, 14) : '<span class="text-mute">—</span>'}${m.phone2 && isRealPhone(m.phone2) ? `<span class="mc-phone-lbl">${t('2nd', 'ثاني')}</span>${mcPhoneHtml(m.phone2, 13)}` : ''}</div></div>`}
         <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">Email</div><div>${escapeHtml(m.email || '—')}</div></div>
         <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">QID</div><div class="font-mono">${escapeHtml(m.qid || '—')}</div></div>
         <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">Birthdate</div><div>${m.birthdate ? `${fmtDate(m.birthdate)}${(() => {
@@ -3364,6 +3364,16 @@ function viewMember(id) {
       kids.forEach(x => { if (x.classList.contains('primary') || /^Edit$/.test((x.textContent || '').trim())) { if (first) { x.style.marginInlineStart = 'auto'; first = false; } } else x.classList.add('sm'); });
     }
     // v6.1095 — the long tables fold: tap the heading (Subscription History / Attendance summary)
+    // v6.1097 — every section folds: tap its heading (the info cards, Payments, Subscription History, Attendance summary)
+    const _mcFold = (head, bodies, shut) => {
+      if (!head || head._fold || !bodies.length) return; head._fold = true;
+      head.style.cursor = 'pointer'; head.style.userSelect = 'none'; head.style.display = 'flex'; head.style.alignItems = 'center'; head.style.gap = '6px';
+      const chev = document.createElement('span'); chev.textContent = '▾'; chev.style.cssText = 'color:var(--text-mute);transition:transform .15s;margin-inline-start:auto'; head.appendChild(chev);
+      if (shut) { bodies.forEach(b => { b.style.display = 'none'; }); chev.style.transform = 'rotate(-90deg)'; }   // v6.1099 — starts folded
+      head.addEventListener('click', () => { const open = bodies[0].style.display !== 'none'; bodies.forEach(b => { b.style.display = open ? 'none' : ''; }); chev.style.transform = open ? 'rotate(-90deg)' : ''; });
+    };
+    document.querySelectorAll('.modal-body .mc-card').forEach(card => { const h = card.querySelector('.mc-card-title'); _mcFold(h, [...card.children].filter(x => x !== h), true); });
+    document.querySelectorAll('.modal-body .mc-sec-title').forEach(h => { const nx = h.nextElementSibling; if (nx && nx.classList.contains('table-wrap')) _mcFold(h, [nx], true); });
     document.querySelectorAll('.modal-body h3').forEach(h => {
       const nx = h.nextElementSibling; if (!nx || !nx.classList.contains('table-wrap') || h._fold) return;
       h._fold = true; h.style.cursor = 'pointer'; h.style.userSelect = 'none'; h.style.display = 'flex'; h.style.alignItems = 'center'; h.style.gap = '6px';
@@ -3381,8 +3391,8 @@ function mcPhoneFmt(p) {
 }
 function mcPhoneHtml(phone, size) {
   const tel = String(phone || '').replace(/[^\d+]/g, ''), url = (typeof waLink === 'function') ? waLink(phone) : '';
-  const icon = (typeof waIconSvg === 'function') ? waIconSvg(Math.round((size || 18) * .9)) : '💬';
-  return `<a class="mc-phone-num" href="tel:${escapeHtml(tel)}" style="font-size:${size || 18}px" title="${t('Call', 'اتصال')}" onclick="event.stopPropagation()">${escapeHtml(mcPhoneFmt(phone))}</a><a class="mc-wa" href="${url}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="WhatsApp">${icon} WhatsApp</a>`;
+  const icon = (typeof waIconSvg === 'function') ? waIconSvg(Math.round((size || 18) * 1.1)) : '💬';
+  return `<a class="mc-phone-num" href="tel:${escapeHtml(tel)}" style="font-size:${size || 18}px" title="${t('Call', 'اتصال')}" onclick="event.stopPropagation()">${escapeHtml(mcPhoneFmt(phone))}</a><a class="mc-wa" href="${url}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="WhatsApp">${icon}</a>`;
 }
 window.viewMember = viewMember;
 
@@ -7279,7 +7289,7 @@ function _paymentListHtml(m, compact) {
   const lab = { cash: t('Cash', 'نقدي'), card: t('Card', 'بطاقة'), transfer: t('Transfer', 'تحويل'), fawran: 'Fawran' };
   const total = Math.round(list.reduce((s, p) => s + p.amount, 0) * 100) / 100;
   const rows = list.map(p => { const mk = String(p.method || '').toLowerCase(); return `<tr><td style="white-space:nowrap">${p.date ? fmtDate(p.date) : '—'}</td><td class="num" style="font-weight:700;color:${p.amount < 0 ? 'var(--red)' : 'var(--green)'}">${fmt(p.amount)}</td><td>${ic[mk] || ''} ${escapeHtml(lab[mk] || p.method || '—')}</td>${compact ? '' : `<td class="text-mute" style="font-size:11px">${escapeHtml(p.ref)}${p.sport ? ' · ' + escapeHtml(p.sport) : ''}</td>`}</tr>`; }).join('');
-  return `<div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-mute);margin:14px 2px 4px">${t('Payments', 'الدفعات')} (${list.length}) · ${fmt(total)} QAR</div>
+  return `<div class="mc-sec-title" style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-mute);margin:14px 2px 4px">${t('Payments', 'الدفعات')} (${list.length}) · ${fmt(total)} QAR</div>
     <div class="table-wrap" style="max-height:${compact ? 170 : 260}px;overflow:auto"><table style="font-size:12px"><thead><tr><th>${t('Date', 'التاريخ')}</th><th>${t('Amount', 'المبلغ')}</th><th>${t('Method', 'الطريقة')}</th>${compact ? '' : `<th>${t('Invoice', 'الفاتورة')}</th>`}</tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 function _memberMoneyRows(m) {
@@ -12318,7 +12328,7 @@ window._classXlsx = function (id) {
 // A group linked to schedule slots (slotIds) drives the class roster of those slots (Classes screen) and shows on the Schedule cell; the member profile shows his group per sport,
 // or "no group". Mixed and camps are not grouped (no fixed class).
 // ═══════════════════════════════════════════════════════════════════════════════════════
-const GRP_EMOJI = { 'Swimming': '🏊', 'Football': '⚽', 'Kick Boxing': '🥊', 'Boxing': '🥊', 'MMA': '🥊', 'Karate': '🥋', 'Taekwondo': '🥋', 'Gymnastic': '🤸', 'Baby Gym': '👶' };
+const GRP_EMOJI = { 'Mixed': '🎯', 'Swimming': '🏊', 'Football': '⚽', 'Kick Boxing': '🥊', 'Boxing': '🥊', 'MMA': '🥊', 'Karate': '🥋', 'Taekwondo': '🥋', 'Gymnastic': '🤸', 'Baby Gym': '👶' };
 function _grpEmoji(sport) { return GRP_EMOJI[sport] || '🏅'; }
 function _grpSportOf(g) { return (g && g.sport) || 'Swimming'; }
 function _grpGroupable(sport) { return !!sport && sport !== MIXED && !(typeof isCampSport === 'function' && isCampSport(sport)); }
@@ -12385,7 +12395,7 @@ window.openMixedGroups = function (mid) {
     body: `<div class="text-mute" style="font-size:12px;margin-bottom:10px">${t('A Mixed subscriber can try any sport. Tick every group (of any sport) he is welcome in: he appears in those classes as a Mixed guest, and the Schedule filter shows only those classes for him.', 'مشترك الميكس بيجرّب أي رياضة. علّم كل مجموعة (من أي رياضة) يقدر يحضرها: بيظهر في حصصها كضيف ميكس، وفلتر الجدول بيعرض له هذه الحصص بس.')}</div><div style="max-height:380px;overflow:auto">${body}</div>`,
     actions: [
       { label: t('Cancel', 'إلغاء'), class: 'btn ghost', onclick: closeModal },
-      { label: '✓ ' + t('Save', 'حفظ'), class: 'btn primary', onclick: () => { window.setMemberMixedGroups(m.id, [...document.querySelectorAll('.mx-cb:checked')].map(cb => cb.value)); closeModal(); toast(t('Saved', 'تم الحفظ'), 'success'); if (typeof viewMember === 'function') viewMember(m.id); } },
+      { label: '✓ ' + t('Save', 'حفظ'), class: 'btn primary', onclick: () => { window.setMemberMixedGroups(m.id, [...document.querySelectorAll('.mx-cb:checked')].map(cb => cb.value)); closeModal(); toast(t('Saved', 'تم الحفظ'), 'success'); if (state.route === 'swimgroups') _swimRerender(); else if (typeof viewMember === 'function') viewMember(m.id); } },
     ],
   });
 };
@@ -12450,6 +12460,37 @@ window.memberGroupsHtml = function (m) {
   return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 10px;padding:8px 10px;background:var(--surface-2);border-radius:10px"><span class="text-mute" style="font-size:11px;text-transform:uppercase;font-weight:700">👥 ${t('Groups', 'المجموعات')}</span>${rows.map(one).join('')}${mixed ? (() => { const mg = memberMixedGroups(m); return `<span style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap"><span style="font-size:12px;font-weight:700">🎯 Mixed</span>${mg.length ? mg.map(g => `<span class="badge" style="background:rgba(139,92,246,.15);color:#7c3aed">${_grpEmoji(_grpSportOf(g))} ${escapeHtml(g.name || '')}</span>`).join('') : `<span class="text-mute" style="font-size:12px">${t('any class (no groups picked)', 'أي حصة (لم تُحدَّد مجموعات)')}</span>`}${canSet ? `<button class="btn ghost sm" onclick="openMixedGroups(${m.id})">${mg.length ? '✏️ ' + t('Change', 'تغيير') : '＋ ' + t('Choose groups', 'اختر المجموعات')}</button>` : ''}</span>`; })() : ''}${canSet && rows.length ? `<a href="javascript:void(0)" style="font-size:11px;margin-inline-start:auto" onclick="openGroupsFor('${rows[0].sport}')">${t('Open the Groups screen', 'افتح شاشة المجموعات')} ›</a>` : ''}</div>`;
 };
 
+// v6.1099 — the Mixed tab: every Mixed student with the groups (of ANY sport) he is a guest of, and one button to choose them
+function _grpRenderMixed(main, sportsSum) {
+  const list = (state.members || []).filter(memberHasMixedNow).sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  const q = String(window._grpMixQ || '').trim().toLowerCase(), only = window._grpMixNo || false;
+  const withG = list.filter(m => memberMixedGroups(m).length).length, none = list.length - withG;
+  const shown = list.filter(m => (!only || !memberMixedGroups(m).length) && (!q || ((m.name || '') + ' ' + (m.nameArabic || '') + ' ' + (m.phone || '')).toLowerCase().includes(q)));
+  const tabs = sportsSum.map(x => `<button class="grp-tab ${x.sport === MIXED ? 'on' : ''}" onclick="window._grpPick('${x.sport}')"><span class="grp-tab-emoji">${_grpEmoji(x.sport)}</span><span class="grp-tab-name">${escapeHtml(x.sport)}</span><span class="grp-tab-n ${x.noGroup ? 'bad' : 'ok'}" title="${t('without a group / subscribers', 'بدون مجموعة / المشتركين')}">${x.noGroup ? '⚠ ' + x.noGroup : '✓'}<small> / ${x.total}</small></span></button>`).join('');
+  const rows = shown.map((m, i) => {
+    const gs = memberMixedGroups(m);
+    const chips = gs.length ? gs.map(g => `<span class="badge" style="background:rgba(139,92,246,.15);color:#7c3aed;margin:1px 2px 1px 0">${_grpEmoji(_grpSportOf(g))} ${escapeHtml(_grpSportOf(g))} · ${escapeHtml(g.name || '')} <a href="javascript:void(0)" onclick="window._grpGuestRemove('${g.id}', ${m.id})" style="color:inherit;text-decoration:none" title="${t('Remove', 'إزالة')}">✕</a></span>`).join('') : `<span class="text-mute" style="font-size:12px">${t('no group yet', 'بدون مجموعة')}</span>`;
+    return `<tr><td class="text-mute" style="text-align:center;font-size:12px">${i + 1}</td><td><div class="font-bold">${escapeHtml(m.name || '')}</div>${m.nameArabic ? `<div class="text-mute" style="font-size:11px;direction:rtl">${escapeHtml(m.nameArabic)}</div>` : ''}</td><td style="white-space:nowrap;font-size:12px;font-weight:700;direction:ltr">${isRealPhone(m.phone) ? escapeHtml(mcPhoneFmt(m.phone)) : '—'}</td><td>${chips}</td><td class="text-right"><button class="btn ghost sm" onclick="openMixedGroups(${m.id})">🎯 ${t('Choose groups', 'اختيار المجموعات')}</button></td></tr>`;
+  }).join('');
+  main.innerHTML = `
+    <div class="topbar"><div><h1>👥 ${t('Groups', 'المجموعات')}</h1>
+      <div class="subtitle">${t('Mixed students try any sport: pick the groups (of any sport) each one can attend. He shows in those classes as a Mixed guest.', 'طلاب الميكس بيجربوا أي رياضة: اختار المجموعات (من أي رياضة) اللي كل واحد يقدر يحضرها. بيظهر في حصصها كضيف ميكس.')}</div></div></div>
+    <div class="grp-tabs">${tabs}</div>
+    <div class="grp-summary">
+      <div class="grp-stat"><div class="n">${list.length}</div><div class="l">🎯 ${t('Mixed students', 'طلاب الميكس')}</div></div>
+      <div class="grp-stat ok"><div class="n">${withG}</div><div class="l">${t('in at least one group', 'في مجموعة على الأقل')}</div></div>
+      <div class="grp-stat ${none ? 'bad' : 'ok'}"><div class="n">${none}</div><div class="l">${none ? '⚠ ' : '✓ '}${t('without a group', 'بدون مجموعة')}</div></div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="card-header"><div><div class="card-title">🎯 ${t('Mixed students', 'طلاب الميكس')} (${shown.length}${shown.length !== list.length ? ' / ' + list.length : ''})</div></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input id="grp-mix-q" type="search" value="${escapeHtml(window._grpMixQ || '')}" placeholder="🔍 ${t('Search student…', 'ابحث عن طالب…')}" style="min-width:200px;padding:6px 10px" />
+          <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="grp-mix-no" ${only ? 'checked' : ''} /> ${t('Only without a group', 'اللي بدون مجموعة فقط')}</label></div></div>
+      <div class="table-wrap"><table><thead><tr><th style="width:36px">#</th><th>${t('Student', 'الطالب')}</th><th>${t('Mobile', 'الجوال')}</th><th>${t('Groups he can attend', 'المجموعات اللي يحضرها')}</th><th></th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="5" class="text-mute" style="text-align:center;padding:16px">${t('No Mixed students.', 'لا يوجد طلاب ميكس.')}</td></tr>`}</tbody></table></div>
+    </div>`;
+  $('#grp-mix-q')?.addEventListener('input', e => { window._grpMixQ = e.target.value; const p = e.target.selectionStart; _grpRenderMixed(main, sportsSum); const n = $('#grp-mix-q'); if (n) { n.focus(); try { n.setSelectionRange(p, p); } catch (_) {} } });
+  $('#grp-mix-no')?.addEventListener('change', e => { window._grpMixNo = e.target.checked; _grpRenderMixed(main, sportsSum); });
+}
 PAGES.swimgroups = (main) => {
   const SWIM = window._grpSport || 'Swimming';   // v6.1059 — the sport being grouped (any sport; the name is from when only swimming had groups)
   const GROUP_MIN = SWIM === 'Swimming' ? 3 : 0, GROUP_MAX = SWIM === 'Swimming' ? 7 : 999;   // the 3–7 size guide is swimming's
@@ -12459,7 +12500,10 @@ PAGES.swimgroups = (main) => {
   const swimmers = groupSubscribers(SWIM);
   const swimmerById = new Map(swimmers.map(m => [m.id, m]));
   const groups = state.swimGroups.filter(g => _grpSportOf(g) === SWIM).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-  const sportsSum = groupSportsSummary(); if (!sportsSum.some(x => x.sport === SWIM)) sportsSum.unshift({ sport: SWIM, total: 0, noGroup: 0 });
+  const sportsSum = groupSportsSummary();
+  { const mx = (state.members || []).filter(memberHasMixedNow); sportsSum.push({ sport: MIXED, total: mx.length, noGroup: mx.filter(m => !memberMixedGroups(m).length).length }); }   // v6.1099 — the Mixed students get their own tab beside the sports
+  if (SWIM === MIXED) return _grpRenderMixed(main, sportsSum);
+  if (!sportsSum.some(x => x.sport === SWIM)) sportsSum.unshift({ sport: SWIM, total: 0, noGroup: 0 });
 
   // Which swimmers are already in a group?
   const assigned = new Set();
@@ -22355,8 +22399,8 @@ function salaryRangeLines(coachId, from, to) {
   }
   return rows;
 }
-window.salaryRangePrint = function (from, to, set) {   // v6.1091 — one pay slip per person, the same look as the monthly pay slip, for the chosen day / dates
-  const rows = salaryRangeRows(from, to, set || 'active'); if (!rows.length) { toast(t('Nobody has pay in this range.', 'لا يوجد راتب في هذه الفترة.'), 'info'); return; }
+window.salaryRangePrint = function (from, to, set, only) {   // v6.1091 — one pay slip per person, the same look as the monthly pay slip, for the chosen day / dates
+  const rows = salaryRangeRows(from, to, set || 'active').filter(r => only == null || r.coachId === only); if (!rows.length) { toast(t('Nobody has pay in this range.', 'لا يوجد راتب في هذه الفترة.'), 'info'); return; }
   const w = window.open('', '_blank'); if (!w) { toast(t('Allow pop-ups to print', 'اسمح بالنوافذ المنبثقة للطباعة'), 'error'); return; }
   const lbl = from === to ? fmtDate(from) : fmtDate(from) + ' → ' + fmtDate(to), esc = escapeHtml, kindTxt = { attended: t('attended', 'حضور'), trueup: t('true-up', 'تسوية'), flat: t('flat', 'ثابت'), switch: t('switch', 'تحويل'), invoice: t('invoice', 'فاتورة') };
   const row = (a, b, st) => '<div class="row"' + (st ? ' style="' + st + '"' : '') + '><span>' + a + '</span><span>' + b + '</span></div>';
@@ -22424,7 +22468,7 @@ PAGES.salaries = (main) => {
         if (r.commission) bd.push(r.rate + '% = ' + fmt(r.commission));
         if (r.privateBonus) bd.push('🔒 ' + t('private', 'خاص') + ' ' + fmt(r.privateBonus));
         if (r.receptionBonus) bd.push('🔒 ' + t('reception share', 'حصة الاستقبال') + ' ' + fmt(r.receptionBonus));
-        return '<tr><td class="text-mute" style="text-align:center;font-size:12px">' + (i + 1) + '</td><td><div class="font-bold">' + escapeHtml(r.name) + '</div><div class="text-mute" style="font-size:10px">' + (r.role === 'staff' ? '👔 Staff' : '🥋 Coach') + ' · ' + lbl + '</div></td><td class="text-mute" style="font-size:11px">' + (bd.join(' + ') || '—') + '</td><td class="text-right num font-bold">' + fmt(r.total) + '</td><td class="text-right num text-mute">—</td><td class="text-right num text-mute">—</td><td class="text-right num font-bold" style="color:var(--green)">' + fmt(r.total) + '</td><td><span class="badge" style="font-size:10px">📆 ' + t('range', 'فترة') + '</span></td><td></td></tr>';
+        return '<tr><td class="text-mute" style="text-align:center;font-size:12px">' + (i + 1) + '</td><td><div class="font-bold">' + escapeHtml(r.name) + '</div><div class="text-mute" style="font-size:10px">' + (r.role === 'staff' ? '👔 Staff' : '🥋 Coach') + ' · ' + lbl + '</div></td><td class="text-mute" style="font-size:11px">' + (bd.join(' + ') || '—') + '</td><td class="text-right num font-bold">' + fmt(r.total) + '</td><td class="text-right num text-mute">—</td><td class="text-right num text-mute">—</td><td class="text-right num font-bold" style="color:var(--green)">' + fmt(r.total) + '</td><td><span class="badge" style="font-size:10px">📆 ' + t('range', 'فترة') + '</span></td><td><button class="btn ghost sm" onclick="salaryRangePrint(&quot;' + filter.rangeFrom + '&quot;,&quot;' + filter.rangeTo + '&quot;,&quot;' + filter.coachSet + '&quot;,' + r.coachId + ')" title="' + t('Print this pay slip', 'اطبع شيت الراتب') + '">🖨</button></td></tr>';
       }).join('') + '<tr style="font-weight:800;border-top:2px solid var(--border)"><td colspan="3">' + t('Total', 'الإجمالي') + ' · ' + rows.length + '</td><td class="text-right num">' + fmt(tot('total')) + '</td><td></td><td></td><td class="text-right num">' + fmt(tot('total')) + '</td><td colspan="2"></td></tr>' : '<tr><td colspan="9" class="text-mute" style="text-align:center;padding:16px">' + t('Nobody has pay in this range.', 'لا يوجد راتب في هذه الفترة.') + '</td></tr>';
       $('#sal-count').textContent = rows.length + ' · ' + fmtMoney(tot('total')) + ' · 📆 ' + lbl + ' — ' + t('a calculation only (nothing is paid from here; the monthly target bonus is not included)', 'حساب فقط (لا يُدفع من هنا، ومكافأة التارجت الشهرية غير مشمولة)');
       const ad = document.getElementById('sal-adhoc'); if (ad) ad.innerHTML = '';
@@ -22676,7 +22720,6 @@ PAGES.salaries = (main) => {
         <span style="color:var(--text-mute)">→</span>
         <input type="date" id="sal-to" class="btn ghost" value="${filter.rangeTo || ''}" />
         <button id="sal-range-clear" class="btn ghost sm" title="${t('Back to the month', 'رجوع للشهر')}" style="${filter.rangeFrom ? '' : 'display:none'}">✕</button>
-        <button id="sal-range-print" class="btn ghost sm" title="${t('Print the report for these dates, with the details', 'اطبع تقرير هذه التواريخ بالتفاصيل')}" style="${filter.rangeFrom && filter.rangeTo ? '' : 'display:none'}">🖨 ${t('Print', 'طباعة')}</button>
       </div>
       <div class="table-wrap">
         <table>
@@ -22744,7 +22787,6 @@ PAGES.salaries = (main) => {
     if (sel) { sel.disabled = on || !!filter.settleDate; sel.style.opacity = sel.disabled ? '.5' : ''; }
     if (sd) { sd.disabled = on; sd.style.opacity = on ? '.5' : ''; }
     if (cl) cl.style.display = (filter.rangeFrom || filter.rangeTo) ? '' : 'none';
-    const pr = $('#sal-range-print'); if (pr) pr.style.display = on ? '' : 'none';
     refresh();
   };
   const _rangeChanged = () => {
@@ -22757,7 +22799,6 @@ PAGES.salaries = (main) => {
   };
   $('#sal-from')?.addEventListener('change', _rangeChanged);
   $('#sal-to')?.addEventListener('change', _rangeChanged);
-  $('#sal-range-print')?.addEventListener('click', () => { if (filter.rangeFrom && filter.rangeTo) window.salaryRangePrint(filter.rangeFrom, filter.rangeTo, filter.coachSet); });
   $('#sal-range-clear')?.addEventListener('click', () => { if ($('#sal-from')) $('#sal-from').value = ''; if ($('#sal-to')) $('#sal-to').value = ''; _rangeSet(null, null); });
   if (filter.rangeFrom && filter.rangeTo) { const sel = $('#sal-month'), sd = $('#sal-date'); if (sel) { sel.disabled = true; sel.style.opacity = '.5'; } if (sd) { sd.disabled = true; sd.style.opacity = '.5'; } }
   refresh();
