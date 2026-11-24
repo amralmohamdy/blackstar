@@ -9175,15 +9175,11 @@ PAGES.citadel = (main) => {
         <div class="kpi" style="flex:1;min-width:150px;margin:0"><div class="kpi-label">${t('Income', 'الدخل')}</div><div class="kpi-value num">${fmt(grand)}</div><div class="kpi-sub">${t('Football + Swimming', 'كرة القدم + السباحة')}</div></div>
         <div style="align-self:center;font-weight:800;font-size:20px;color:var(--text-mute)">× ${RATE}% =</div>
         <div class="kpi" style="flex:1;min-width:150px;margin:0;border-color:var(--red)"><div class="kpi-label" style="color:var(--red)">${t('Citadel share', 'حصة سيتاديل')}</div><div class="kpi-value num" style="color:var(--red)">${fmt(share)}</div><div class="kpi-sub">${t('total owed', 'إجمالي المستحق')}</div></div>
-        <div style="align-self:center;font-weight:800;font-size:20px;color:var(--text-mute)">−</div>
-        <div class="kpi" style="flex:1;min-width:150px;margin:0"><div class="kpi-label" style="color:var(--green)">${t('Already paid', 'اللي اتدفع')}</div><div class="kpi-value num" style="color:var(--green)">${fmt(paidToCompany)}</div><div class="kpi-sub">${t('expenses “Citadel Company Share”', 'مصروفات «حصة شركة سيتادل»')}</div></div>
-        <div style="align-self:center;font-weight:800;font-size:20px;color:var(--text-mute)">=</div>
-        <div class="kpi" style="flex:1;min-width:150px;margin:0;border-color:${balanceDue > 0.5 ? 'var(--red)' : 'var(--green)'};background:${balanceDue > 0.5 ? 'rgba(239,68,68,.07)' : 'rgba(16,185,129,.07)'}"><div class="kpi-label" style="color:${balanceDue > 0.5 ? 'var(--red)' : 'var(--green)'}">${t('Still to pay', 'المتبقي للدفع')}</div><div class="kpi-value num" style="color:${balanceDue > 0.5 ? 'var(--red)' : 'var(--green)'}">${fmt(balanceDue)}</div><div class="kpi-sub">${balanceDue > 0.5 ? t('to pay Citadel', 'يُدفع لسيتاديل') : '✓ ' + t('settled', 'مسدّد')}</div></div>
       </div>
       <div class="text-mute" style="font-size:12px;padding:0 4px 4px">💵 ${t('Members have paid', 'الأعضاء دفعوا')} <b>${fmt(collected)}</b> ${t('of the', 'من')} ${fmt(grand)} ${t('income. The share is NOT posted automatically: when you pay Citadel, add it as an expense with the category “Citadel Company Share”.', 'دخل. الحصة لا تُسجَّل تلقائياً: عند الدفع لسيتاديل سجّله كمصروف بفئة «حصة شركة سيتادل».')}</div>
     </div>
 
-    <div class="card">
+    <div class="card cit-fold">
       <div class="card-header"><div>
         <div class="card-title">${t('Where the income comes from', 'من أين جاء الدخل')}</div>
         <div class="card-subtitle">${escapeHtml(scopeLabel)} · ${t('each line × ', 'كل بند × ')}${RATE}% ${t('= Citadel share', '= حصة سيتاديل')}</div>
@@ -9204,7 +9200,7 @@ PAGES.citadel = (main) => {
       </table></div>
     </div>
 
-    <div class="card" style="margin-top:16px">
+    <div class="card cit-fold" style="margin-top:16px">
       <div class="card-header"><div>
         <div class="card-title">${t('Contributing invoices', 'الفواتير المساهمة')}</div>
         <div class="card-subtitle">${(_fType !== 'all' || _fAct !== 'all') ? fDetails.length + ' ' + t('of', 'من') + ' ' : ''}${details.length} ${t('lines make up the totals above', 'بند يشكّل الإجماليات أعلاه')}</div>
@@ -9237,6 +9233,7 @@ PAGES.citadel = (main) => {
     </div>`;
 
   bindMonthMulti('cit-month', (mSel) => { window._citMonths = mSel; PAGES.citadel(main); });
+  try { _wireCardCollapse({ querySelectorAll: () => main.querySelectorAll('.cit-fold') }); } catch (_) {}   // v6.1079 — the two tables fold / unfold
   $('#cit-ftype')?.addEventListener('change', e => { window._citType = e.target.value; PAGES.citadel(main); });
   $('#cit-fact')?.addEventListener('change', e => { window._citAct = e.target.value; PAGES.citadel(main); });
   $('#cit-rate')?.addEventListener('change', e => {
