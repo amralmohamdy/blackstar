@@ -5849,6 +5849,7 @@ window.editCoach = function(id, defaultRole) {
     role: startRole,
     sports: [],
     active: 'Y',
+    joinedDate: TODAY,   // v6.1085 — a new person starts today: the first month's fixed salary is counted from this day
     phone: '', qid: '', birthdate: '', email: '',
   };
   if (!c) return;
@@ -5934,7 +5935,7 @@ window.editCoach = function(id, defaultRole) {
         </div>
         <div class="field"><label>Joined the club <span class="text-mute" style="font-size:10px">(optional)</span></label>
           <input id="c-joined" type="date" value="${c.joinedDate || ''}" />
-          <div class="text-mute" style="font-size:10px;margin-top:3px">💡 Payroll won't show this person for months BEFORE they joined.</div>
+          <div class="text-mute" style="font-size:10px;margin-top:3px">💡 Payroll won't show this person for months BEFORE they joined, and the fixed salary of the joining month is counted from this day (joined on the 21st = 10 of 30 days).</div>
         </div>
       </div>
       <div class="field" id="c-left-field"><label>${t('Left the club on', 'تاريخ ترك العمل')} <span class="text-mute" style="font-size:10px">(${t('when Inactive', 'عند اختيار غير نشط')})</span></label>
@@ -22195,6 +22196,40 @@ function salaryHasMoney(p) {
   const z = v => Math.abs(Number(v) || 0) > 0.005;
   return !!p && (z(p.gross) || z(p.net) || z(p.advance) || z(p.commissionPending) || z(p.privateBonusPending) || z(p.receptionBonusPending) || z(p.carriedIn) || z(p.carriedOut) || z(p.lateIn) || z(p.paidTotal) || z(p.paidExtra) || z(p.expensePaid));
 }
+// ═══ SALARY FOR A DATE RANGE (v6.1084) — one day, or from → to. Per month: the pay "up to the last day" minus the pay "up to the day before the first"; fixed pro-rated by days. A calculation only (nothing is paid from it); the monthly target bonus is not part of it.
+function _isoAddDays(iso, n) { const d = new Date(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10) + n)); return d.toISOString().slice(0, 10); }
+function _isoLastDay(ym) { return new Date(Date.UTC(+ym.slice(0, 4), +ym.slice(5, 7), 0)).toISOString().slice(0, 10); }
+function salaryRangePay(coachId, from, to) {
+  from = String(from || '').slice(0, 10); to = String(to || from).slice(0, 10);
+  if (from > to) { const x = from; from = to; to = x; }
+  const out = { coachId, from, to, name: '', role: 'coach', basis: '', fixed: 0, commission: 0, privateBonus: 0, receptionBonus: 0, total: 0, rate: 0 };
+  let ym = from.slice(0, 7);
+  while (ym <= to.slice(0, 7)) {
+    const first = ym + '-01', s0 = from > first ? from : first, e0 = to < _isoLastDay(ym) ? to : _isoLastDay(ym);
+    const pe = computeMonthlyPay(coachId, null, e0); if (!pe) return null;
+    out.name = pe.name; out.role = pe.role; out.basis = pe.basis; out.rate = pe.commissionRate;
+    const startsMonth = s0 === first, prev = _isoAddDays(s0, -1);
+    const pm = startsMonth ? null : computeMonthlyPay(coachId, null, prev);                   // same month: fixed + attendance parts
+    const pc = (pe.basis === 'payment') ? computeMonthlyPay(coachId, null, prev) : pm;         // payment basis is cumulative: always minus the day before
+    out.fixed += (pe.fixed || 0) - (pm ? (pm.fixed || 0) : 0);
+    out.commission += (pe.commissionAmount || 0) - (pc ? (pc.commissionAmount || 0) : 0);
+    out.privateBonus += (pe.privateBonus || 0) - (pc ? (pc.privateBonus || 0) : 0);
+    out.receptionBonus += (pe.receptionBonus || 0) - (pc ? (pc.receptionBonus || 0) : 0);
+    ym = _isoAddDays(_isoLastDay(ym), 1).slice(0, 7);
+  }
+  ['fixed', 'commission', 'privateBonus', 'receptionBonus'].forEach(k => { out[k] = Math.round(out[k] * 100) / 100; });
+  out.total = Math.round((out.fixed + out.commission + out.privateBonus + out.receptionBonus) * 100) / 100;
+  return out;
+}
+function salaryRangeRows(from, to, set) {
+  const toD = String(to || from).slice(0, 10);
+  return withCalcScope(() => (state.coaches || [])
+    .filter(c => { const jd = c && c.joinedDate; return !jd || String(jd) <= toD; })
+    .filter(c => set === 'all' || (set === 'inactive' ? !isCoachActive(c) : isCoachActive(c)))
+    .map(c => ({ c, r: salaryRangePay(c.id, from, to) })).filter(x => x.r)
+    .filter(x => isCoachActive(x.c) || Math.abs(x.r.total) > 0.004)
+    .map(x => x.r).sort((a, b) => b.total - a.total));
+}
 function salaryRowShown(c, p, set) {
   if (!c || !p) return false;
   if (set === 'inactive') return !isCoachActive(c);
@@ -22208,11 +22243,26 @@ PAGES.salaries = (main) => {
   // render() → re-runs this page) KEEPS the month the user was viewing instead of snapping back to
   // the latest/current month. (v6.363)
   // v6.645: 'active' (default) | 'inactive' (deactivated coaches — so their salaries can be viewed/printed) | 'all'
-  let filter = { month: window._salMonth || latestDataMonth() || currentMonth(), settleDate: window._salSettleDate || null, coachSet: window._salCoachSet || 'active' };
+  let filter = { month: window._salMonth || latestDataMonth() || currentMonth(), settleDate: window._salSettleDate || null, coachSet: window._salCoachSet || 'active', rangeFrom: window._salFrom || null, rangeTo: window._salTo || null };
 
   // v6.646: runs inside a calc scope (repeated pure calculations are computed once per call)
   function refresh() { return withCalcScope(_refreshScoped); }
   function _refreshScoped() {
+    if (filter.rangeFrom && filter.rangeTo) {   // v6.1084 — a day / a date range: calculation only
+      const rows = salaryRangeRows(filter.rangeFrom, filter.rangeTo, filter.coachSet), tot = k => rows.reduce((a, r) => a + r[k], 0);
+      const lbl = filter.rangeFrom === filter.rangeTo ? fmtDate(filter.rangeFrom) : fmtDate(filter.rangeFrom) + ' → ' + fmtDate(filter.rangeTo);
+      $('#sal-tbody').innerHTML = rows.length ? rows.map((r, i) => {
+        const bd = [];
+        if (r.fixed) bd.push('Fixed ' + fmt(r.fixed) + ' (' + t('pro-rated by days', 'بالأيام') + ')');
+        if (r.commission) bd.push(r.rate + '% = ' + fmt(r.commission));
+        if (r.privateBonus) bd.push('🔒 ' + t('private', 'خاص') + ' ' + fmt(r.privateBonus));
+        if (r.receptionBonus) bd.push('🔒 ' + t('reception share', 'حصة الاستقبال') + ' ' + fmt(r.receptionBonus));
+        return '<tr><td class="text-mute" style="text-align:center;font-size:12px">' + (i + 1) + '</td><td><div class="font-bold">' + escapeHtml(r.name) + '</div><div class="text-mute" style="font-size:10px">' + (r.role === 'staff' ? '👔 Staff' : '🥋 Coach') + ' · ' + lbl + '</div></td><td class="text-mute" style="font-size:11px">' + (bd.join(' + ') || '—') + '</td><td class="text-right num font-bold">' + fmt(r.total) + '</td><td class="text-right num text-mute">—</td><td class="text-right num text-mute">—</td><td class="text-right num font-bold" style="color:var(--green)">' + fmt(r.total) + '</td><td><span class="badge" style="font-size:10px">📆 ' + t('range', 'فترة') + '</span></td><td></td></tr>';
+      }).join('') + '<tr style="font-weight:800;border-top:2px solid var(--border)"><td colspan="3">' + t('Total', 'الإجمالي') + ' · ' + rows.length + '</td><td class="text-right num">' + fmt(tot('total')) + '</td><td></td><td></td><td class="text-right num">' + fmt(tot('total')) + '</td><td colspan="2"></td></tr>' : '<tr><td colspan="9" class="text-mute" style="text-align:center;padding:16px">' + t('Nobody has pay in this range.', 'لا يوجد راتب في هذه الفترة.') + '</td></tr>';
+      $('#sal-count').textContent = rows.length + ' · ' + fmtMoney(tot('total')) + ' · 📆 ' + lbl + ' — ' + t('a calculation only (nothing is paid from here; the monthly target bonus is not included)', 'حساب فقط (لا يُدفع من هنا، ومكافأة التارجت الشهرية غير مشمولة)');
+      const ad = document.getElementById('sal-adhoc'); if (ad) ad.innerHTML = '';
+      return;
+    }
     // Compute pay rows for every active coach/staff — either for the selected
     // month, or (if a settlement date is set) up to and including that date.
     const upto = filter.settleDate || null;
@@ -22246,7 +22296,7 @@ PAGES.salaries = (main) => {
     $('#sal-tbody').innerHTML = people.length ? people.map((p, _n) => {
       const isStaff = p.role === 'staff';
       const breakdown = [];
-      if (p.fixed > 0) breakdown.push(`Fixed ${fmt(p.fixed)}${p.uptoDate && p.fixedFull !== p.fixed ? ` (prorated from ${fmt(p.fixedFull)})` : ''}`);
+      if (p.fixed > 0) breakdown.push(`Fixed ${fmt(p.fixed)}${p.fixedFull !== p.fixed ? ` (${t('prorated by days', 'بالأيام')}, ${t('from', 'من')} ${fmt(p.fixedFull)})` : ''}`);
       if (p.commissionRate > 0) {
         breakdown.push(`${p.commissionRate}% × ${fmt(p.commissionBase)} = ${fmt(p.commissionAmount)}`);
       }
@@ -22473,6 +22523,12 @@ PAGES.salaries = (main) => {
         <span style="font-size:12px;color:var(--text-mute)">or settle up to:</span>
         <input type="date" id="sal-date" class="btn ghost" value="${filter.settleDate || ''}" title="Calculate pay up to this date — e.g. a coach's last working day. Clear it to go back to the whole month." />
         <span id="sal-mode-note" style="font-size:11px;color:var(--accent-2);font-weight:600">${filter.settleDate ? '📅 Settlement — month up to ' + fmtDate(filter.settleDate) + ' only' : ''}</span>
+        <span style="opacity:.35">|</span>
+        <span style="font-size:12px;color:var(--text-mute)" title="${t('Calculate the pay for ONE day (fill one date) or a date range (from → to). A calculation only — nothing is paid from it.', 'احسب الراتب ليوم واحد (اكتب تاريخاً واحداً) أو لفترة (من → إلى). حساب فقط — لا يُدفع منه شيء.')}">📆 ${t('Date / range', 'يوم / فترة')}:</span>
+        <input type="date" id="sal-from" class="btn ghost" value="${filter.rangeFrom || ''}" />
+        <span style="color:var(--text-mute)">→</span>
+        <input type="date" id="sal-to" class="btn ghost" value="${filter.rangeTo || ''}" />
+        <button id="sal-range-clear" class="btn ghost sm" title="${t('Back to the month', 'رجوع للشهر')}" style="${filter.rangeFrom ? '' : 'display:none'}">✕</button>
       </div>
       <div class="table-wrap">
         <table>
@@ -22565,6 +22621,26 @@ PAGES.salaries = (main) => {
     if (note) note.textContent = filter.settleDate ? '📅 Settlement — month up to ' + fmtDate(filter.settleDate) + ' only' : '';
     refresh();
   });
+  const _rangeSet = (f, t2) => {
+    filter.rangeFrom = f || null; filter.rangeTo = t2 || null; window._salFrom = filter.rangeFrom; window._salTo = filter.rangeTo;
+    const on = !!(filter.rangeFrom && filter.rangeTo), sel = $('#sal-month'), sd = $('#sal-date'), cl = $('#sal-range-clear');
+    if (sel) { sel.disabled = on || !!filter.settleDate; sel.style.opacity = sel.disabled ? '.5' : ''; }
+    if (sd) { sd.disabled = on; sd.style.opacity = on ? '.5' : ''; }
+    if (cl) cl.style.display = (filter.rangeFrom || filter.rangeTo) ? '' : 'none';
+    refresh();
+  };
+  const _rangeChanged = () => {
+    let f = ($('#sal-from') || {}).value || '', t2 = ($('#sal-to') || {}).value || '';
+    if (f && !t2) t2 = f; else if (t2 && !f) f = t2;   // one date = that single day
+    if (f && t2 && f > t2) { const x = f; f = t2; t2 = x; }
+    if ($('#sal-from')) $('#sal-from').value = f;
+    if ($('#sal-to')) $('#sal-to').value = t2;
+    _rangeSet(f, t2);
+  };
+  $('#sal-from')?.addEventListener('change', _rangeChanged);
+  $('#sal-to')?.addEventListener('change', _rangeChanged);
+  $('#sal-range-clear')?.addEventListener('click', () => { if ($('#sal-from')) $('#sal-from').value = ''; if ($('#sal-to')) $('#sal-to').value = ''; _rangeSet(null, null); });
+  if (filter.rangeFrom && filter.rangeTo) { const sel = $('#sal-month'), sd = $('#sal-date'); if (sel) { sel.disabled = true; sel.style.opacity = '.5'; } if (sd) { sd.disabled = true; sd.style.opacity = '.5'; } }
   refresh();
 };
 
