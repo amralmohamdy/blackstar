@@ -113,7 +113,7 @@ function _expPendingFor(cm) {
   const u = _unpaidAccrualOne(cm), out = [];
   const raw = Number(state.settings && state.settings.citadelRate), rate = (isNaN(raw) || raw < 0) ? 30 : raw;
   if (u.rent > 0.004) out.push({ kind: 'rent', month: cm, amount: u.rent, category: 'Rent', label: t('Monthly rent', 'إيجار الشهر') + ' — ' + fmtMonth(cm), note: t('not paid yet · not in the total', 'غير مدفوع · غير محسوب في الإجمالي') });
-  if (u.citadel > 0.004) out.push({ kind: 'citadel', month: cm, amount: u.citadel, category: CITADEL_SHARE_CATEGORY, label: t('Citadel company share', 'حصة شركة سيتادل') + ' (' + rate + '%) — ' + fmtMonth(cm), note: t('not paid yet · not in the total', 'غير مدفوع · غير محسوب في الإجمالي') });
+  if (u.citadel > 0.004) out.push({ kind: 'citadel', month: cm, amount: u.citadel, category: CITADEL_SHARE_CATEGORY, label: t('Citadel company share', 'حصة شركة سيتادل') + ' (' + rate + '%, ' + t('max', 'حد أقصى') + ' ' + fmt(citadelCap()) + ') — ' + fmtMonth(cm), note: t('not paid yet · not in the total', 'غير مدفوع · غير محسوب في الإجمالي') });
   if (u.advertising > 0.004) { const cfg = adShareSettings(); out.push({ kind: 'advertising', month: cm, amount: u.advertising, category: ADVERTISING_CATEGORY, label: t('Advertising', 'دعاية وإعلان') + ' (' + cfg.rate + '% ' + t('of income above', 'من الدخل فوق') + ' ' + Number(cfg.threshold).toLocaleString('en-US') + ') — ' + fmtMonth(cm), note: t('due on the last day of the month · income so far (without football court bookings) ' + Math.round(adIncomeFor(cm) || 0).toLocaleString('en-US') + ' · not paid yet · not in the total', 'مستحق آخر الشهر · الدخل حتى الآن (بدون حجوزات ملعب الكرة) ' + Math.round(adIncomeFor(cm) || 0).toLocaleString('en-US') + ' · غير مدفوع · غير محسوب في الإجمالي') }); }
   if (cm === String(TODAY || '').slice(0, 7)) {   // v6.1054 — this month's salaries, as a pending row like the rent (not in the total); Pay → the Salaries screen
     const so = _salariesOwedFor(cm);
@@ -183,7 +183,7 @@ function _unpaidAccrualOne(cm) {
   try {
     const raw = Number(state.settings && state.settings.citadelRate);
     const rate = (isNaN(raw) || raw < 0) ? 30 : raw;
-    citadel = Math.max(0, Math.round((citadelCompute([cm]).grand * rate / 100 - citadelPaidToCompany([cm])) * 100) / 100);
+    citadel = Math.max(0, Math.round((Math.min(citadelCompute([cm]).grand * rate / 100, citadelCap()) - citadelPaidToCompany([cm])) * 100) / 100);   // v6.1075 — capped per month
   } catch (_) {}
   // v6.877 — advertising: 25% of the month's income above 52,000 (see advertisingAmount), minus what the Pay button already recorded
   let advertising = 0;
@@ -9247,6 +9247,182 @@ PAGES.citadel = (main) => {
   $('#cit-export-pdf')?.addEventListener('click', () => citadelExportPdf(RATE, scopeLabel));
 };
 
+// ═══ CITADEL REPORT (v6.1075) — the Citadel screen with the share CAPPED per month (default 1,500; settings.citadelCap). The original Citadel screen is untouched.
+function citadelCap() { const c = Number(state.settings && state.settings.citadelCap); return (c > 0) ? c : 1500; }
+function citadelCappedShare(months) {
+  const raw = Number(state.settings && state.settings.citadelRate), rate = (isNaN(raw) || raw < 0) ? 30 : raw, cap = citadelCap();
+  let sum = 0;
+  for (const m of (months || [])) sum += Math.min(citadelCompute([m]).grand * rate / 100, cap);
+  return Math.round(sum * 100) / 100;
+}
+function citadelReportXlsx(rows, share, paid, RATE, CAP, scopeLabel) {
+  if (!window.XlsxMini || typeof window.XlsxMini.downloadFile !== 'function') { toast(t('Excel export unavailable', 'تصدير Excel غير متاح'), 'error'); return; }
+  const r2 = n => Math.round(n * 100) / 100;
+  const sum = [['Month', 'Income', 'Calculated ' + RATE + '%', 'Share after cap (' + CAP + ')'], ...rows.map(x => [x.m, r2(x.g), r2(x.r), r2(x.c)]), ['TOTAL', r2(rows.reduce((a, x) => a + x.g, 0)), r2(rows.reduce((a, x) => a + x.r, 0)), r2(share)], [], ['Already paid', '', '', r2(paid)], ['Still to pay', '', '', r2(share - paid)]];
+  try { window.XlsxMini.downloadFile('citadel-report.xlsx', { sheets: [{ name: 'Citadel Report', rows: sum }] }); } catch (err) { toast(t('Excel export failed', 'فشل تصدير Excel') + ': ' + ((err && err.message) || err), 'error'); }
+}
+function citadelReportPdf(rows, share, paid, RATE, CAP, scopeLabel) {
+  const w = window.open('', '_blank'); if (!w) { toast(t('Allow pop-ups to print', 'اسمح بالنوافذ المنبثقة للطباعة'), 'error'); return; }
+  const tr = rows.map(x => '<tr><td>' + escapeHtml(fmtMonth(x.m)) + '</td><td class="n">' + fmt(x.g) + '</td><td class="n">' + fmt(x.r) + '</td><td class="n b">' + fmt(x.c) + '</td></tr>').join('');
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Citadel Report</title><style>body{font-family:Arial,sans-serif;margin:22px;color:#111}h1{font-size:20px;margin:0 0 4px}.sub{color:#666;font-size:12px;margin-bottom:12px}table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:14px}th,td{border:1px solid #ccc;padding:5px 8px;text-align:left}th{background:#f2f2f2}.n{text-align:right}.b{font-weight:700}</style></head><body onload="window.print()"><h1>Citadel Report · تقرير سيتاديل</h1><div class="sub">' + escapeHtml(scopeLabel || '') + ' · ' + RATE + '% · cap ' + fmt(CAP) + ' / month</div><table><thead><tr><th>Month</th><th class="n">Income</th><th class="n">' + RATE + '%</th><th class="n">Share after cap</th></tr></thead><tbody>' + tr + '<tr class="b"><td>Total</td><td></td><td></td><td class="n">' + fmt(share) + '</td></tr></tbody></table><table><tbody><tr><td>Already paid · المدفوع</td><td class="n">' + fmt(paid) + '</td></tr><tr class="b"><td>Still to pay · المتبقي</td><td class="n">' + fmt(Math.max(0, Math.round((share - paid) * 100) / 100)) + '</td></tr></tbody></table></body></html>');
+  w.document.close();
+}
+PAGES.citadelreport = (main) => {
+  if (currentRole() !== 'admin') { main.innerHTML = `<div class="card"><div class="empty">${t('Admins only.', 'المسؤولون فقط.')}</div></div>`; return; }
+
+
+  // Revenue-share rate (%). Default 30.
+  const rawRate = Number(state.settings && state.settings.citadelRate);
+  const RATE = (isNaN(rawRate) || rawRate < 0) ? 30 : rawRate;
+
+  // Month options + multi-select filter ([] = all months).
+  const monthSet = new Set([(TODAY || '').slice(0, 7)]);
+  for (const i of (state.invoices || [])) { if (!i.deleted) monthSet.add(i.month || String(i.date || '').slice(0, 7)); }
+  const months = [...monthSet].filter(Boolean).sort().reverse();
+  if (!Array.isArray(window._citMonths)) window._citMonths = [];
+
+  const { GROUPS, agg, details, grand, paid } = citadelCompute(window._citMonths);
+  const groupTotal = (k) => agg[k].membership + agg[k].rent;
+  const _selM = window._citMonths.length ? window._citMonths : months, CAP = citadelCap();
+  const rawShare = grand * RATE / 100, share = citadelCappedShare(_selM);
+  const capRows = _selM.slice().sort().map(m => { const g = citadelCompute([m]).grand, r = g * RATE / 100; return { m, g, r, c: Math.min(r, CAP) }; }).filter(x => x.g > 0.004);
+  const collected = paid || 0;                                   // paid by members for Football/Swimming
+  const paidToCompany = citadelPaidToCompany(window._citMonths); // already paid to the facility company
+  const balanceDue = Math.round((share - paidToCompany) * 100) / 100;
+
+  const scopeLabel = window._citMonths.length
+    ? (window._citMonths.length === 1 ? fmtMonth(window._citMonths[0]) : `${window._citMonths.length} ${t('months', 'أشهر')}`)
+    : t('All months', 'كل الأشهر');
+
+  // v6.1057 — ONE income table: per activity, memberships (classes attended in the month, incl. Mixed classes played there) and rent; a sub-total per activity
+  const incomeRows = GROUPS.map(g => {
+    const m = agg[g.key].membership, r = agg[g.key].rent;
+    const line = (icon, label, what, amt) => `<tr><td>${icon} ${label}</td><td class="text-mute" style="font-size:12px">${what}</td><td class="text-right num">${fmt(amt)}</td><td class="text-right num" style="color:var(--red)">${fmt(amt * RATE / 100)}</td></tr>`;
+    return `<tr style="background:var(--surface-2)"><td colspan="2" class="font-bold">${g.icon} ${escapeHtml(g.label)}</td><td class="text-right num font-bold">${fmt(m + r)}</td><td class="text-right num font-bold" style="color:var(--red)">${fmt((m + r) * RATE / 100)}</td></tr>`
+      + line('🎟', t('Memberships', 'الاشتراكات'), t('classes attended in the month (+ Mixed classes played here)', 'حصص اتحضرت في الشهر (+ حصص المكس اللي اتلعبت هنا)'), m)
+      + (r > 0.004 || g.key === 'football' ? line('🏟', t('Rent', 'الإيجار'), g.key === 'football' ? t('court bookings', 'حجوزات الملعب') : t('pool bookings', 'حجوزات المسبح'), r) : '');
+  }).join('');
+
+  // v6.981.0 — the Contributing invoices list can be narrowed: Rent / Membership and Football / Swimming (the totals above stay as they are)
+  const _fType = window._citType || 'all', _fAct = window._citAct || 'all';
+  const fDetails = details.filter(d => (_fType === 'all' || d.type === _fType) && (_fAct === 'all' || d.group.key === _fAct));
+  const fTotal = fDetails.reduce((s, d) => s + (Number(d.amount) || 0), 0);
+  const detailRows = fDetails.length ? fDetails.map((d, i) => `<tr>
+    <td class="text-mute" style="text-align:center;font-size:12px">${i + 1}</td>
+    <td class="text-mute" style="font-size:12px;white-space:nowrap">${fmtMonth(d.month)}</td>
+    <td style="font-size:12px;white-space:nowrap">${d.date ? fmtDate(d.date) : '—'}</td>
+    <td class="font-bold" style="font-size:12px">${escapeHtml(d.ref)}</td>
+    <td style="font-size:12px">${escapeHtml(d.customer)}</td>
+    <td>${d.group.icon} ${escapeHtml(d.group.label)}</td>
+    <td>${d.type === 'rent'
+      ? `<span class="badge" style="background:rgba(59,130,246,.14);color:#2563eb;font-size:10px">🏟 ${t('Rent', 'إيجار')}</span>`
+      : `<span class="badge" style="background:rgba(16,185,129,.14);color:var(--green);font-size:10px">🎟 ${t('Membership', 'اشتراك')}</span>`}
+      <span class="text-mute" style="font-size:10px">${escapeHtml(d.sport)}</span></td>
+    <td class="text-right num">${fmt(d.amount)}</td>
+  </tr>`).join('') + `<tr style="font-weight:800;border-top:2px solid var(--border)"><td colspan="7">${t('Total', 'الإجمالي')} · ${fDetails.length} ${t('lines', 'بند')}</td><td class="text-right num">${fmt(fTotal)}</td></tr>` : `<tr><td colspan="8" class="text-mute" style="text-align:center;padding:16px">${details.length ? t('No lines match the filter.', 'لا توجد بنود مطابقة للفلتر.') : t('No Football / Swimming revenue in the selected month(s).', 'لا يوجد إيراد كرة قدم / سباحة في الأشهر المحددة.')}</td></tr>`;
+
+  main.innerHTML = `
+    <div class="topbar">
+      <div>
+        <h1>🏛 Citadel Report — ${t('share capped at', 'الحصة بسقف')} ${fmt(CAP)} ${t('a month', 'في الشهر')}</h1>
+        <div class="subtitle">${t('The club pays the facility company a share of all Football + Swimming revenue (membership + rent) under a running contract', 'يدفع النادي لشركة المرافق حصة من كل إيرادات كرة القدم والسباحة (اشتراك + إيجار) بموجب عقد جارٍ')}</div>
+      </div>
+      <div class="topbar-actions" style="display:flex;gap:8px;align-items:center">
+        <label class="text-mute" style="font-size:12px;display:flex;align-items:center;gap:4px">${t('Company share', 'حصة الشركة')}
+          <input id="cit-rate" type="number" min="0" max="100" step="0.5" value="${RATE}" style="width:64px" class="btn ghost" /> %
+        </label>
+        ${monthMultiHTML('cit-month', months, window._citMonths)}
+        <button class="btn ghost" id="cit-export-xlsx" title="${t('Export the summary + contributing invoices to Excel', 'تصدير الملخص + الفواتير إلى Excel')}">📊 ${t('Excel', 'Excel')}</button>
+        <button class="btn ghost" id="cit-export-pdf" title="${t('Open a printable PDF of this report', 'فتح تقرير PDF قابل للطباعة')}">📄 ${t('PDF', 'PDF')}</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;border:2px solid var(--red)">
+      <div class="card-header"><div>
+        <div class="card-title">🏛 ${t('What we owe Citadel', 'المستحق لسيتاديل')} — ${escapeHtml(scopeLabel)}</div>
+        <div class="card-subtitle">${t('Citadel gets', 'تحصل سيتاديل على')} ${RATE}% ${t('of the Football + Swimming income below (memberships + rent)', 'من دخل كرة القدم والسباحة أدناه (اشتراكات + إيجار)')}</div>
+      </div></div>
+      <div style="display:flex;flex-wrap:wrap;align-items:stretch;gap:10px;padding:4px 4px 12px">
+        <div class="kpi" style="flex:1;min-width:150px;margin:0"><div class="kpi-label">${t('Income', 'الدخل')}</div><div class="kpi-value num">${fmt(grand)}</div><div class="kpi-sub">${t('Football + Swimming', 'كرة القدم + السباحة')}</div></div>
+        <div style="align-self:center;font-weight:800;font-size:20px;color:var(--text-mute)">× ${RATE}% = ${fmt(rawShare)} · ${t('cap', 'السقف')} ${fmt(CAP)}/${t('month', 'شهر')} →</div>
+        <div class="kpi" style="flex:1;min-width:150px;margin:0;border-color:var(--red)"><div class="kpi-label" style="color:var(--red)">${t('Citadel share', 'حصة سيتاديل')}</div><div class="kpi-value num" style="color:var(--red)">${fmt(share)}</div><div class="kpi-sub">${t('total owed', 'إجمالي المستحق')}</div></div>
+        <div style="align-self:center;font-weight:800;font-size:20px;color:var(--text-mute)">−</div>
+        <div class="kpi" style="flex:1;min-width:150px;margin:0"><div class="kpi-label" style="color:var(--green)">${t('Already paid', 'اللي اتدفع')}</div><div class="kpi-value num" style="color:var(--green)">${fmt(paidToCompany)}</div><div class="kpi-sub">${t('expenses “Citadel Company Share”', 'مصروفات «حصة شركة سيتادل»')}</div></div>
+        <div style="align-self:center;font-weight:800;font-size:20px;color:var(--text-mute)">=</div>
+        <div class="kpi" style="flex:1;min-width:150px;margin:0;border-color:${balanceDue > 0.5 ? 'var(--red)' : 'var(--green)'};background:${balanceDue > 0.5 ? 'rgba(239,68,68,.07)' : 'rgba(16,185,129,.07)'}"><div class="kpi-label" style="color:${balanceDue > 0.5 ? 'var(--red)' : 'var(--green)'}">${t('Still to pay', 'المتبقي للدفع')}</div><div class="kpi-value num" style="color:${balanceDue > 0.5 ? 'var(--red)' : 'var(--green)'}">${fmt(balanceDue)}</div><div class="kpi-sub">${balanceDue > 0.5 ? t('to pay Citadel', 'يُدفع لسيتاديل') : '✓ ' + t('settled', 'مسدّد')}</div></div>
+      </div>
+      <div class="text-mute" style="font-size:12px;padding:0 4px 4px">💵 ${t('Members have paid', 'الأعضاء دفعوا')} <b>${fmt(collected)}</b> ${t('of the', 'من')} ${fmt(grand)} ${t('income. The share is NOT posted automatically: when you pay Citadel, add it as an expense with the category “Citadel Company Share”.', 'دخل. الحصة لا تُسجَّل تلقائياً: عند الدفع لسيتاديل سجّله كمصروف بفئة «حصة شركة سيتادل».')}</div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><div>
+        <div class="card-title">${t('Where the income comes from', 'من أين جاء الدخل')}</div>
+        <div class="card-subtitle">${escapeHtml(scopeLabel)} · ${t('each line × ', 'كل بند × ')}${RATE}% ${t('= Citadel share', '= حصة سيتاديل')}</div>
+      </div></div>
+      <div class="table-wrap"><table>
+        <thead><tr>
+          <th>${t('Income', 'الدخل')}</th>
+          <th>${t('What it is', 'ما هو')}</th>
+          <th class="text-right">${t('Amount', 'المبلغ')}</th>
+          <th class="text-right">🏛 ${t('Citadel', 'سيتاديل')} (${RATE}%)</th>
+        </tr></thead>
+        <tbody>${incomeRows}</tbody>
+        <tfoot><tr style="border-top:2px solid var(--border);font-weight:800">
+          <td colspan="2">${t('TOTAL', 'الإجمالي')}</td>
+          <td class="text-right num" style="font-size:15px">${fmt(grand)}</td>
+          <td class="text-right num" style="color:var(--red);font-size:15px">${fmt(rawShare)}</td>
+        </tr><tr style="font-weight:800"><td colspan="3">${t('After the monthly cap', 'بعد سقف الشهر')} (${fmt(CAP)} × ${capRows.length})</td><td class="text-right num" style="color:var(--red);font-size:15px">${fmt(share)}</td></tr></tfoot>
+      </table></div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <div class="card-header"><div><div class="card-title">${t('Month by month — with the cap', 'شهر بشهر — بعد السقف')}</div><div class="card-subtitle">${t('each month: the smaller of the calculated share and', 'كل شهر: الأقل بين الحصة المحسوبة و')} ${fmt(CAP)}</div></div></div>
+      <div class="table-wrap"><table><thead><tr><th>${t('Month', 'الشهر')}</th><th class="text-right">${t('Income', 'الدخل')}</th><th class="text-right">${RATE}%</th><th class="text-right">${t('Share after cap', 'الحصة بعد السقف')}</th></tr></thead><tbody>${capRows.map(x => `<tr><td>${escapeHtml(fmtMonth(x.m))}</td><td class="text-right num">${fmt(x.g)}</td><td class="text-right num text-mute">${fmt(x.r)}</td><td class="text-right num font-bold" style="color:var(--red)">${fmt(x.c)}${x.r > CAP ? ' <span class="badge" style="font-size:10px">' + t('capped', 'سقف') + '</span>' : ''}</td></tr>`).join('') || `<tr><td colspan="4" class="text-mute" style="text-align:center;padding:12px">—</td></tr>`}</tbody></table></div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <div class="card-header"><div>
+        <div class="card-title">${t('Contributing invoices', 'الفواتير المساهمة')}</div>
+        <div class="card-subtitle">${(_fType !== 'all' || _fAct !== 'all') ? fDetails.length + ' ' + t('of', 'من') + ' ' : ''}${details.length} ${t('lines make up the totals above', 'بند يشكّل الإجماليات أعلاه')}</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <select id="cit-ftype" class="btn ghost" style="padding:6px 8px">
+          <option value="all" ${_fType === 'all' ? 'selected' : ''}>${t('Rent + Membership', 'إيجار + اشتراك')}</option>
+          <option value="rent" ${_fType === 'rent' ? 'selected' : ''}>${t('Rent only', 'إيجار فقط')}</option>
+          <option value="membership" ${_fType === 'membership' ? 'selected' : ''}>${t('Membership only', 'اشتراك فقط')}</option>
+        </select>
+        <select id="cit-fact" class="btn ghost" style="padding:6px 8px">
+          <option value="all" ${_fAct === 'all' ? 'selected' : ''}>${t('Football + Swimming', 'كرة القدم + السباحة')}</option>
+          <option value="football" ${_fAct === 'football' ? 'selected' : ''}>⚽ ${t('Football only', 'كرة القدم فقط')}</option>
+          <option value="swimming" ${_fAct === 'swimming' ? 'selected' : ''}>🏊 ${t('Swimming only', 'السباحة فقط')}</option>
+        </select>
+      </div></div>
+      <div class="table-wrap"><table>
+        <thead><tr>
+          <th style="width:36px;text-align:center">#</th>
+          <th>${t('Month', 'الشهر')}</th>
+          <th>${t('Date', 'التاريخ')}</th>
+          <th>${t('Invoice', 'الفاتورة')}</th>
+          <th>${t('Customer', 'العميل')}</th>
+          <th>${t('Activity', 'النشاط')}</th>
+          <th>${t('Type', 'النوع')}</th>
+          <th class="text-right">${t('Amount (QAR)', 'المبلغ')}</th>
+        </tr></thead>
+        <tbody>${detailRows}</tbody>
+      </table></div>
+    </div>`;
+
+  bindMonthMulti('cit-month', (mSel) => { window._citMonths = mSel; PAGES.citadelreport(main); });
+  $('#cit-ftype')?.addEventListener('change', e => { window._citType = e.target.value; PAGES.citadelreport(main); });
+  $('#cit-fact')?.addEventListener('change', e => { window._citAct = e.target.value; PAGES.citadelreport(main); });
+  $('#cit-rate')?.addEventListener('change', e => {
+    const v = parseFloat(e.target.value);
+    if (!isNaN(v) && v >= 0 && v <= 100) { state.settings.citadelRate = v; save(); PAGES.citadelreport(main); }
+  });
+  $('#cit-export-xlsx')?.addEventListener('click', () => citadelReportXlsx(capRows, share, paidToCompany, RATE, CAP, scopeLabel));
+  $('#cit-export-pdf')?.addEventListener('click', () => citadelReportPdf(capRows, share, paidToCompany, RATE, CAP, scopeLabel));
+};
+
 // ═══ ADVERTISING screen (v6.1071) — the statement for the advertising people: ALL the month's invoices and income, WITHOUT the Football Court bookings, and what their share is on it.
 // Income = billed in the month (the same figure every screen uses) minus the Football Court bookings; the share = rate% of what is above the threshold (Preferences: default 25% above 52,000).
 function advMonthData(ym) {
@@ -9297,7 +9473,8 @@ PAGES.advertising = (main) => {
       <div class="topbar-actions" style="display:flex;gap:8px;align-items:center">
         <select id="adv-month" class="btn ghost">${months.map(m => `<option value="${m}" ${m === ym ? 'selected' : ''}>${escapeHtml(fmtMonth(m))}</option>`).join('')}</select>
         <button class="btn ghost" id="adv-xlsx">📊 Excel</button>
-        <button class="btn ghost" id="adv-pdf">📄 PDF</button>
+        <button class="btn ghost" id="adv-pdf">📄 PDF (EN)</button>
+        <button class="btn ghost" id="adv-pdf-ar">📄 PDF (عربي)</button>
       </div>
     </div>
 
@@ -9350,15 +9527,45 @@ PAGES.advertising = (main) => {
     const inv = [['#', t('Date', 'التاريخ'), t('Invoice', 'الفاتورة'), t('Customer', 'العميل'), t('Activity', 'النشاط'), t('Amount', 'المبلغ')], ...D.rows.map((r, i) => [i + 1, r.date, r.ref, r.customer, r.acts.join(' + '), Math.round(r.amount * 100) / 100])];
     try { window.XlsxMini.downloadFile('advertising-' + ym + '.xlsx', { sheets: [{ name: 'Summary', rows: sum }, { name: 'Invoices', rows: inv }] }); } catch (err) { toast(t('Excel export failed', 'فشل تصدير Excel') + ': ' + ((err && err.message) || err), 'error'); }
   });
-  $('#adv-pdf')?.addEventListener('click', () => {
+  const _advPdf = (lang) => {
+    const ar = lang === 'ar', L = (en, a) => ar ? a : en, N = x => fmt(x);
     const w = window.open('', '_blank'); if (!w) { toast(t('Allow pop-ups to print', 'اسمح بالنوافذ المنبثقة للطباعة'), 'error'); return; }
-    const rowsH = D.rows.map((r, i) => `<tr><td>${i + 1}</td><td>${r.date}</td><td>${escapeHtml(r.ref)}</td><td>${escapeHtml(r.customer)}</td><td>${escapeHtml(r.acts.join(' + '))}</td><td class="n">${fmt(r.amount)}</td></tr>`).join('');
-    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Advertising ${ym}</title><style>body{font-family:Arial,sans-serif;color:#111;margin:22px}h1{font-size:20px;margin:0 0 4px}.sub{color:#666;font-size:12px;margin-bottom:12px}table{width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:14px}th,td{border:1px solid #ccc;padding:5px 8px;text-align:left}th{background:#f2f2f2}td.n,th.n{text-align:right}.k td{font-weight:700}</style></head><body onload="window.print()"><h1>📣 Advertising statement · كشف الدعاية — ${escapeHtml(fmtMonth(ym))}</h1><div class="sub">Black Stars Sports Club · Football Court bookings are NOT included · حجوزات ملعب الكرة غير مشمولة</div>
-      <table><tbody><tr><td>Billed in the month · المفوتر</td><td class="n">${fmt(D.billed)}</td></tr><tr><td>Football Court bookings (left out) · حجوزات الملعب (مستبعدة)</td><td class="n">${fmt(D.court)}</td></tr><tr class="k"><td>Income · الدخل</td><td class="n">${fmt(D.income)}</td></tr><tr><td>Threshold · الحد</td><td class="n">${fmt(cfg.threshold)}</td></tr><tr class="k"><td>Advertising share ${cfg.rate}% · حصة الدعاية</td><td class="n">${fmt(share)}</td></tr><tr><td>Paid · المدفوع</td><td class="n">${fmt(paid)}</td></tr><tr class="k"><td>Still to pay · المتبقي</td><td class="n">${fmt(left)}</td></tr></tbody></table>
-      <table><thead><tr><th>Activity · النشاط</th><th class="n">Amount · المبلغ</th></tr></thead><tbody>${acts.map(a => `<tr><td>${escapeHtml(a)}</td><td class="n">${fmt(D.byAct[a])}</td></tr>`).join('')}<tr class="k"><td>Total · الإجمالي</td><td class="n">${fmt(D.income)}</td></tr></tbody></table>
-      <table><thead><tr><th>#</th><th>Date</th><th>Invoice</th><th>Customer</th><th>Activity</th><th class="n">Amount</th></tr></thead><tbody>${rowsH}<tr class="k"><td colspan="5">Total · ${D.rows.length} invoices</td><td class="n">${fmt(D.income)}</td></tr></tbody></table></body></html>`);
+    const mName = (() => { try { return new Date(ym + '-15T12:00:00Z').toLocaleDateString(ar ? 'ar-QA-u-nu-latn' : 'en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }); } catch (_) { return fmtMonth(ym); } })();
+    const rowsH = D.rows.map((r, i) => `<tr><td class="c">${i + 1}</td><td class="nw">${escapeHtml(r.date)}</td><td class="nw">${escapeHtml(r.ref)}</td><td>${escapeHtml(r.customer)}</td><td>${escapeHtml(r.acts.join(' + '))}</td><td class="n">${N(r.amount)}</td></tr>`).join('');
+    const actH = acts.map(a => { const p = D.income ? D.byAct[a] / D.income * 100 : 0; return `<tr><td>${escapeHtml(a)}</td><td class="bar"><i style="width:${Math.max(1, Math.round(D.byAct[acts[0]] ? D.byAct[a] / D.byAct[acts[0]] * 100 : 0))}%"></i></td><td class="n">${N(D.byAct[a])}</td><td class="n mute">${(Math.round(p * 10) / 10).toFixed(1)}%</td></tr>`; }).join('');
+    const css = `@page{size:A4;margin:0}*{box-sizing:border-box}body{margin:0;padding:14mm 14mm 16mm;font-family:'Segoe UI',Tahoma,Arial,sans-serif;color:#1b1b1f;font-size:11px;direction:${ar ? 'rtl' : 'ltr'};-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    .head{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #111;padding-bottom:10px;margin-bottom:14px}.head .ttl{text-align:${ar ? 'left' : 'right'}}
+    h1{font-size:20px;margin:0 0 3px;letter-spacing:.2px}.sub{color:#666;font-size:11px}.pill{display:inline-block;background:#111;color:#ffc400;font-weight:700;padding:3px 12px;border-radius:12px;font-size:12px;margin-top:5px}
+    h2{font-size:12.5px;margin:18px 0 6px;padding:0 8px;border-${ar ? 'right' : 'left'}:4px solid #ffc400;text-transform:uppercase;letter-spacing:.4px;color:#111}
+    .kpis{display:flex;gap:8px;margin:2px 0 4px}.k{flex:1;border:1px solid #d9d9de;border-radius:8px;padding:9px 11px;background:#fafafb}.k b{display:block;font-size:17px;margin-top:3px}.k span{font-size:9.5px;color:#777;text-transform:uppercase;letter-spacing:.3px}.k.hi{background:#111;border-color:#111;color:#fff}.k.hi span{color:#ffc400}
+    table{width:100%;border-collapse:collapse;margin:0}th{background:#111;color:#fff;font-weight:600;text-align:${ar ? 'right' : 'left'};padding:6px 8px;font-size:10px;text-transform:uppercase;letter-spacing:.3px}td{padding:5px 8px;border-bottom:1px solid #e6e6ea;vertical-align:top}tr:nth-child(even) td{background:#f7f7f9}
+    th.n,td.n{text-align:${ar ? 'left' : 'right'};white-space:nowrap;font-variant-numeric:tabular-nums}td.c{text-align:center;color:#888;width:26px}td.nw{white-space:nowrap}td.mute{color:#888}thead{display:table-header-group}tr{page-break-inside:avoid}
+    tfoot td{font-weight:800;border-top:2px solid #111;background:#fff!important}td.bar{width:34%}td.bar i{display:block;height:7px;background:#ffc400;border-radius:4px}
+    .calc td{padding:6px 10px}.calc td.n{font-weight:600}.calc tr.tot td{font-weight:800;background:#fff7d6!important;border-top:2px solid #111}.calc tr.out td{color:#888}
+    .note{margin-top:16px;padding:9px 12px;border:1px dashed #bbb;border-radius:6px;color:#555;font-size:10px}.foot{margin-top:18px;border-top:1px solid #ccc;padding-top:7px;color:#888;font-size:9.5px;display:flex;justify-content:space-between}`;
+    w.document.write(`<!doctype html><html lang="${ar ? 'ar' : 'en'}" dir="${ar ? 'rtl' : 'ltr'}"><head><meta charset="utf-8"><title>${escapeHtml(L('Advertising statement', 'كشف الدعاية'))} ${ym}</title><style>${css}</style></head><body onload="setTimeout(function(){window.print()},350)">
+      <div class="head"><div>${clubLogoHTML(54)}</div><div class="ttl"><h1>${L('Advertising Statement', 'كشف الدعاية والإعلان')}</h1><div class="sub">${L('Monthly income & invoices statement', 'كشف الدخل والفواتير الشهري')}</div><span class="pill">${escapeHtml(mName)}</span></div></div>
+      <div class="kpis"><div class="k"><span>${L('Income', 'الدخل')}</span><b>${N(D.income)}</b></div><div class="k"><span>${L('Invoices', 'عدد الفواتير')}</span><b>${D.rows.length}</b></div><div class="k"><span>${L('Threshold', 'الحد')}</span><b>${N(cfg.threshold)}</b></div><div class="k hi"><span>${L('Advertising share', 'حصة الدعاية')} (${cfg.rate}%)</span><b>${N(share)}</b></div></div>
+      <h2>${L('Calculation', 'الحسبة')}</h2>
+      <table class="calc"><tbody>
+        <tr><td>${L('Total billed in the month', 'إجمالي المفوتر في الشهر')}</td><td class="n">${N(D.billed)}</td></tr>
+        <tr class="out"><td>− ${L('Football Court bookings (not included)', 'حجوزات ملعب كرة القدم (غير مشمولة)')}</td><td class="n">${N(D.court)}</td></tr>
+        <tr class="tot"><td>${L('Income for the advertising share', 'الدخل المحتسب للدعاية')}</td><td class="n">${N(D.income)}</td></tr>
+        <tr><td>− ${L('Threshold (not counted)', 'الحد (غير محسوب)')}</td><td class="n">${N(cfg.threshold)}</td></tr>
+        <tr><td>${L('Income above the threshold', 'الدخل فوق الحد')}</td><td class="n">${N(over)}</td></tr>
+        <tr class="tot"><td>${L('Advertising share', 'حصة الدعاية')} (${cfg.rate}%)</td><td class="n">${N(share)}</td></tr>
+        <tr><td>− ${L('Already paid', 'المدفوع')}</td><td class="n">${N(paid)}</td></tr>
+        <tr class="tot"><td>${L('Balance due', 'المتبقي للدفع')}</td><td class="n">${N(left)}</td></tr></tbody></table>
+      <h2>${L('Income by activity', 'الدخل حسب النشاط')}</h2>
+      <table><thead><tr><th>${L('Activity', 'النشاط')}</th><th></th><th class="n">${L('Amount (QAR)', 'المبلغ (ريال)')}</th><th class="n">%</th></tr></thead><tbody>${actH}</tbody><tfoot><tr><td colspan="2">${L('Total', 'الإجمالي')}</td><td class="n">${N(D.income)}</td><td></td></tr></tfoot></table>
+      <h2>${L('Invoices', 'الفواتير')} (${D.rows.length})</h2>
+      <table><thead><tr><th class="c">#</th><th>${L('Date', 'التاريخ')}</th><th>${L('Invoice', 'الفاتورة')}</th><th>${L('Customer', 'العميل')}</th><th>${L('Activity', 'النشاط')}</th><th class="n">${L('Amount (QAR)', 'المبلغ (ريال)')}</th></tr></thead><tbody>${rowsH}</tbody><tfoot><tr><td colspan="5">${L('Total', 'الإجمالي')} · ${D.rows.length} ${L('invoices', 'فاتورة')}</td><td class="n">${N(D.income)}</td></tr></tfoot></table>
+      <div class="note">${L('All amounts are in Qatari Riyals (QAR). Football Court bookings are not part of this statement.', 'جميع المبالغ بالريال القطري. حجوزات ملعب كرة القدم غير مشمولة في هذا الكشف.')}</div>
+      <div class="foot"><span>Black Stars Sports Club</span><span>${L('Generated', 'تاريخ الإصدار')}: ${escapeHtml(String(TODAY))}</span></div></body></html>`);
     w.document.close();
-  });
+  };
+  $('#adv-pdf')?.addEventListener('click', () => _advPdf('en'));
+  $('#adv-pdf-ar')?.addEventListener('click', () => _advPdf('ar'));
 };
 
 // Export the Citadel company-share report — recomputed from the CURRENT month filter so it matches
