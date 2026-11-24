@@ -114,7 +114,7 @@ function _expPendingFor(cm) {
   const raw = Number(state.settings && state.settings.citadelRate), rate = (isNaN(raw) || raw < 0) ? 30 : raw;
   if (u.rent > 0.004) out.push({ kind: 'rent', month: cm, amount: u.rent, category: 'Rent', label: t('Monthly rent', 'إيجار الشهر') + ' — ' + fmtMonth(cm), note: t('not paid yet · not in the total', 'غير مدفوع · غير محسوب في الإجمالي') });
   if (u.citadel > 0.004) out.push({ kind: 'citadel', month: cm, amount: u.citadel, category: CITADEL_SHARE_CATEGORY, label: t('Citadel company share', 'حصة شركة سيتادل') + ' (' + rate + '%) — ' + fmtMonth(cm), note: t('not paid yet · not in the total', 'غير مدفوع · غير محسوب في الإجمالي') });
-  if (u.advertising > 0.004) { const cfg = adShareSettings(); out.push({ kind: 'advertising', month: cm, amount: u.advertising, category: ADVERTISING_CATEGORY, label: t('Advertising', 'دعاية وإعلان') + ' (' + cfg.rate + '% ' + t('of income above', 'من الدخل فوق') + ' ' + Number(cfg.threshold).toLocaleString('en-US') + ') — ' + fmtMonth(cm), note: t('due on the last day of the month · income so far ' + Math.round(billedInMonth(cm) || 0).toLocaleString('en-US') + ' · not paid yet · not in the total', 'مستحق آخر الشهر · الدخل حتى الآن ' + Math.round(billedInMonth(cm) || 0).toLocaleString('en-US') + ' · غير مدفوع · غير محسوب في الإجمالي') }); }
+  if (u.advertising > 0.004) { const cfg = adShareSettings(); out.push({ kind: 'advertising', month: cm, amount: u.advertising, category: ADVERTISING_CATEGORY, label: t('Advertising', 'دعاية وإعلان') + ' (' + cfg.rate + '% ' + t('of income above', 'من الدخل فوق') + ' ' + Number(cfg.threshold).toLocaleString('en-US') + ') — ' + fmtMonth(cm), note: t('due on the last day of the month · income so far (without football court bookings) ' + Math.round(adIncomeFor(cm) || 0).toLocaleString('en-US') + ' · not paid yet · not in the total', 'مستحق آخر الشهر · الدخل حتى الآن (بدون حجوزات ملعب الكرة) ' + Math.round(adIncomeFor(cm) || 0).toLocaleString('en-US') + ' · غير مدفوع · غير محسوب في الإجمالي') }); }
   if (cm === String(TODAY || '').slice(0, 7)) {   // v6.1054 — this month's salaries, as a pending row like the rent (not in the total); Pay → the Salaries screen
     const so = _salariesOwedFor(cm);
     if (so.amount > 0.004) out.push({ kind: 'salaries', month: cm, amount: so.amount, category: 'Salary', label: t('Salaries', 'المرتبات') + ' — ' + fmtMonth(cm), note: so.n + ' ' + t('people · not paid yet · not in the total', 'أشخاص · غير مدفوع · غير محسوب في الإجمالي') });
@@ -187,7 +187,7 @@ function _unpaidAccrualOne(cm) {
   } catch (_) {}
   // v6.877 — advertising: 25% of the month's income above 52,000 (see advertisingAmount), minus what the Pay button already recorded
   let advertising = 0;
-  try { advertising = Math.max(0, Math.round((advertisingAmount(billedInMonth(cm)) - expPaidFor('advertising', cm)) * 100) / 100); } catch (_) {}
+  try { advertising = Math.max(0, Math.round((advertisingAmount(adIncomeFor(cm)) - expPaidFor('advertising', cm)) * 100) / 100); } catch (_) {}
   return { rent, citadel, advertising, total: rent + citadel + advertising };
 }
 function dashUnpaidAccruals(months) {
@@ -9245,6 +9245,120 @@ PAGES.citadel = (main) => {
   });
   $('#cit-export-xlsx')?.addEventListener('click', () => citadelExportXlsx(RATE, scopeLabel));
   $('#cit-export-pdf')?.addEventListener('click', () => citadelExportPdf(RATE, scopeLabel));
+};
+
+// ═══ ADVERTISING screen (v6.1071) — the statement for the advertising people: ALL the month's invoices and income, WITHOUT the Football Court bookings, and what their share is on it.
+// Income = billed in the month (the same figure every screen uses) minus the Football Court bookings; the share = rate% of what is above the threshold (Preferences: default 25% above 52,000).
+function advMonthData(ym) {
+  const rows = []; let court = 0;
+  const byAct = {};
+  for (const inv of (state.invoices || [])) {
+    if (!inv || inv.deleted) continue;
+    const sh = invoiceMonthShare(inv, ym); if (!sh) continue;
+    const amt = invoiceTotal(inv) * sh;
+    if (isFootballCourtInvoice(inv)) { court += amt; continue; }
+    const lines = (inv.lineItems || []).filter(l => l && l.sport);
+    let acts;
+    if (lines.length) { acts = []; lines.forEach(l => { const a = (Number(l.price) || 0) * sh; acts.push(l.sport); byAct[l.sport] = (byAct[l.sport] || 0) + a; }); acts = [...new Set(acts)]; }
+    else { const k = inv.sport || inv.category || t('Other', 'أخرى'); acts = [k]; byAct[k] = (byAct[k] || 0) + amt; }
+    const ci = (typeof customerInfo === 'function') ? customerInfo(inv) : null;
+    rows.push({ inv, amount: amt, acts, customer: (ci && ci.name) || inv.customerName || '—', date: String(inv.date || '').slice(0, 10), ref: inv.ref || ('#' + inv.id) });
+  }
+  rows.sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.ref).localeCompare(String(a.ref)));
+  const income = rows.reduce((s, r) => s + r.amount, 0);
+  return { rows, court, byAct, income, billed: income + court };
+}
+window.openAdvertisingFor = function (ym) {
+  if (currentRole() !== 'admin') return;
+  window._advMonth = String(ym || TODAY || '').slice(0, 7); navigate('advertising');
+};
+PAGES.advertising = (main) => {
+  if (currentRole() !== 'admin') { main.innerHTML = `<div class="card"><div class="empty">${t('Admins only.', 'المسؤولون فقط.')}</div></div>`; return; }
+  const cfg = adShareSettings();
+  const cur = String(TODAY || '').slice(0, 7);
+  const monthSet = new Set([cur]);
+  for (const i of (state.invoices || [])) { if (!i.deleted) monthSet.add(i.month || String(i.date || '').slice(0, 7)); }
+  const months = [...monthSet].filter(m => /^\d{4}-\d{2}$/.test(m) && m >= String(commissionStartDate()).slice(0, 7)).sort().reverse();
+  const ym = window._advMonth && months.includes(window._advMonth) ? window._advMonth : cur;
+  const D = advMonthData(ym);
+  const share = advertisingAmount(D.income, cfg), paid = expPaidFor('advertising', ym);
+  const left = Math.max(0, Math.round((share - paid) * 100) / 100), over = Math.max(0, Math.round((D.income - cfg.threshold) * 100) / 100);
+  const q = String(window._advQ || '').trim().toLowerCase(), fAct = window._advAct || 'all';
+  const acts = Object.keys(D.byAct).sort((a, b) => D.byAct[b] - D.byAct[a]);
+  const shown = D.rows.filter(r => (fAct === 'all' || r.acts.includes(fAct)) && (!q || (r.customer + ' ' + r.ref + ' ' + r.acts.join(' ')).toLowerCase().includes(q)));
+  const shownTot = shown.reduce((s, r) => s + r.amount, 0);
+  const hist = months.slice(0, 12).map(m => { const d = advMonthData(m), sh = advertisingAmount(d.income, cfg), pd = expPaidFor('advertising', m); return { m, income: d.income, court: d.court, share: sh, paid: pd, left: Math.max(0, Math.round((sh - pd) * 100) / 100) }; });
+  const box = (label, value, sub, color) => `<div class="kpi" style="flex:1;min-width:150px;margin:0${color ? ';border-color:' + color : ''}"><div class="kpi-label"${color ? ` style="color:${color}"` : ''}>${label}</div><div class="kpi-value num"${color ? ` style="color:${color}"` : ''}>${value}</div><div class="kpi-sub">${sub}</div></div>`;
+  const op = s => `<div style="align-self:center;font-weight:800;font-size:20px;color:var(--text-mute)">${s}</div>`;
+  main.innerHTML = `
+    <div class="topbar">
+      <div><h1>📣 ${t('Advertising', 'الدعاية والإعلان')} — ${t('statement', 'كشف')}</h1>
+        <div class="subtitle">${t('All the invoices and income of the month — WITHOUT the Football Court bookings — and the advertising share on it.', 'كل فواتير ودخل الشهر — بدون حجوزات ملعب الكرة — وحصة الدعاية عليه.')}</div></div>
+      <div class="topbar-actions" style="display:flex;gap:8px;align-items:center">
+        <select id="adv-month" class="btn ghost">${months.map(m => `<option value="${m}" ${m === ym ? 'selected' : ''}>${escapeHtml(fmtMonth(m))}</option>`).join('')}</select>
+        <button class="btn ghost" id="adv-xlsx">📊 Excel</button>
+        <button class="btn ghost" id="adv-pdf">📄 PDF</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;border:2px solid var(--accent)">
+      <div class="card-header"><div><div class="card-title">📣 ${t('The advertising share', 'حصة الدعاية')} — ${escapeHtml(fmtMonth(ym))}</div>
+        <div class="card-subtitle">${t('Billed', 'المفوتر')} ${fmt(D.billed)} − ${t('Football Court bookings', 'حجوزات ملعب الكرة')} ${fmt(D.court)} = <b>${fmt(D.income)}</b></div></div></div>
+      <div style="display:flex;flex-wrap:wrap;align-items:stretch;gap:10px;padding:4px 4px 12px">
+        ${box(t('Income', 'الدخل'), fmt(D.income), t('without the court bookings', 'بدون حجوزات الملعب'))}
+        ${op('−')}
+        ${box(t('Threshold', 'الحد'), fmt(cfg.threshold), t('not counted', 'غير محسوب'))}
+        ${op('=')}
+        ${box(t('Above the threshold', 'فوق الحد'), fmt(over), '× ' + cfg.rate + '%')}
+        ${op('→')}
+        ${box(t('Advertising share', 'حصة الدعاية'), fmt(share), t('owed for the month', 'مستحق عن الشهر'), 'var(--accent)')}
+        ${op('−')}
+        ${box(t('Already paid', 'اللي اتدفع'), fmt(paid), t('expenses “Advertising”', 'مصروفات «Advertising»') , 'var(--green)')}
+        ${op('=')}
+        ${box(t('Still to pay', 'المتبقي'), fmt(left), left > 0.5 ? t('to pay', 'يُدفع') : '✓ ' + t('settled', 'مسدّد'), left > 0.5 ? 'var(--red)' : 'var(--green)')}
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><div><div class="card-title">${t('Income by activity', 'الدخل حسب النشاط')}</div><div class="card-subtitle">${escapeHtml(fmtMonth(ym))}</div></div></div>
+      <div class="table-wrap"><table><thead><tr><th>${t('Activity', 'النشاط')}</th><th class="text-right">${t('Amount', 'المبلغ')}</th><th class="text-right">%</th></tr></thead>
+        <tbody>${acts.map(a => `<tr><td>${_grpEmoji(a)} ${escapeHtml(a)}</td><td class="text-right num">${fmt(D.byAct[a])}</td><td class="text-right num text-mute">${D.income ? Math.round(D.byAct[a] / D.income * 1000) / 10 : 0}%</td></tr>`).join('') || `<tr><td colspan="3" class="text-mute" style="text-align:center;padding:14px">${t('No invoices this month.', 'لا توجد فواتير هذا الشهر.')}</td></tr>`}</tbody>
+        <tfoot><tr style="border-top:2px solid var(--border);font-weight:800"><td>${t('TOTAL (without the court bookings)', 'الإجمالي (بدون حجوزات الملعب)')}</td><td class="text-right num">${fmt(D.income)}</td><td></td></tr>
+          <tr class="text-mute"><td>⚽ ${t('Football Court bookings — left out', 'حجوزات ملعب الكرة — مستبعدة')}</td><td class="text-right num">${fmt(D.court)}</td><td></td></tr></tfoot></table></div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><div><div class="card-title">${t('Invoices', 'الفواتير')} (${shown.length}${shown.length !== D.rows.length ? ' / ' + D.rows.length : ''})</div><div class="card-subtitle">${t('Every invoice of the month except Football Court bookings', 'كل فواتير الشهر ما عدا حجوزات ملعب الكرة')}</div></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input id="adv-q" type="search" value="${escapeHtml(window._advQ || '')}" placeholder="🔍 ${t('Search customer / invoice…', 'بحث عميل / فاتورة…')}" style="min-width:200px;padding:6px 10px" />
+          <select id="adv-act" class="btn ghost" style="padding:6px 8px"><option value="all">${t('All activities', 'كل الأنشطة')}</option>${acts.map(a => `<option value="${escapeHtml(a)}" ${fAct === a ? 'selected' : ''}>${escapeHtml(a)}</option>`).join('')}</select></div></div>
+      <div class="table-wrap"><table><thead><tr><th style="width:36px;text-align:center">#</th><th>${t('Date', 'التاريخ')}</th><th>${t('Invoice', 'الفاتورة')}</th><th>${t('Customer', 'العميل')}</th><th>${t('Activity', 'النشاط')}</th><th class="text-right">${t('Amount (QAR)', 'المبلغ')}</th></tr></thead>
+        <tbody>${shown.map((r, i) => `<tr><td class="text-mute" style="text-align:center;font-size:12px">${i + 1}</td><td style="white-space:nowrap;font-size:12px">${r.date ? fmtDate(r.date) : '—'}</td><td class="font-bold" style="font-size:12px">${escapeHtml(r.ref)}</td><td style="font-size:12px">${escapeHtml(r.customer)}</td><td style="font-size:12px">${escapeHtml(r.acts.join(' + '))}</td><td class="text-right num">${fmt(r.amount)}</td></tr>`).join('') || `<tr><td colspan="6" class="text-mute" style="text-align:center;padding:14px">${t('No invoices match.', 'لا توجد فواتير مطابقة.')}</td></tr>`}</tbody>
+        <tfoot><tr style="border-top:2px solid var(--border);font-weight:800"><td colspan="5">${t('Total', 'الإجمالي')} · ${shown.length} ${t('invoices', 'فاتورة')}</td><td class="text-right num">${fmt(shownTot)}</td></tr></tfoot></table></div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><div><div class="card-title">${t('Month by month', 'شهر بشهر')}</div><div class="card-subtitle">${cfg.rate}% ${t('of the income above', 'من الدخل فوق')} ${fmt(cfg.threshold)}</div></div></div>
+      <div class="table-wrap"><table><thead><tr><th>${t('Month', 'الشهر')}</th><th class="text-right">${t('Income (no court)', 'الدخل (بدون الملعب)')}</th><th class="text-right">${t('Court bookings (left out)', 'حجوزات الملعب (مستبعدة)')}</th><th class="text-right">${t('Share', 'الحصة')}</th><th class="text-right">${t('Paid', 'المدفوع')}</th><th class="text-right">${t('Still to pay', 'المتبقي')}</th></tr></thead>
+        <tbody>${hist.map(h => `<tr style="${h.m === ym ? 'background:var(--surface-2);font-weight:700' : ''}"><td><a href="javascript:void(0)" onclick="openAdvertisingFor('${h.m}')" style="color:inherit">${escapeHtml(fmtMonth(h.m))}</a></td><td class="text-right num">${fmt(h.income)}</td><td class="text-right num text-mute">${fmt(h.court)}</td><td class="text-right num">${fmt(h.share)}</td><td class="text-right num" style="color:var(--green)">${fmt(h.paid)}</td><td class="text-right num" style="color:${h.left > 0.5 ? 'var(--red)' : 'var(--green)'}">${fmt(h.left)}</td></tr>`).join('')}</tbody></table></div>
+    </div>`;
+  $('#adv-month')?.addEventListener('change', e => { window._advMonth = e.target.value; window._advAct = 'all'; PAGES.advertising(main); });
+  $('#adv-act')?.addEventListener('change', e => { window._advAct = e.target.value; PAGES.advertising(main); });
+  $('#adv-q')?.addEventListener('input', e => { window._advQ = e.target.value; const p = e.target.selectionStart; PAGES.advertising(main); const n = $('#adv-q'); if (n) { n.focus(); try { n.setSelectionRange(p, p); } catch (_) {} } });
+  $('#adv-xlsx')?.addEventListener('click', () => {
+    if (!window.XlsxMini || typeof window.XlsxMini.downloadFile !== 'function') { toast(t('Excel export unavailable', 'تصدير Excel غير متاح'), 'error'); return; }
+    const sum = [[t('Advertising statement', 'كشف الدعاية'), fmtMonth(ym)], [t('Billed', 'المفوتر'), Math.round(D.billed * 100) / 100], [t('Football Court bookings (left out)', 'حجوزات ملعب الكرة (مستبعدة)'), Math.round(D.court * 100) / 100], [t('Income', 'الدخل'), Math.round(D.income * 100) / 100], [t('Threshold', 'الحد'), cfg.threshold], [t('Rate %', 'النسبة %'), cfg.rate], [t('Advertising share', 'حصة الدعاية'), share], [t('Paid', 'المدفوع'), paid], [t('Still to pay', 'المتبقي'), left], [], [t('Activity', 'النشاط'), t('Amount', 'المبلغ')], ...acts.map(a => [a, Math.round(D.byAct[a] * 100) / 100])];
+    const inv = [['#', t('Date', 'التاريخ'), t('Invoice', 'الفاتورة'), t('Customer', 'العميل'), t('Activity', 'النشاط'), t('Amount', 'المبلغ')], ...D.rows.map((r, i) => [i + 1, r.date, r.ref, r.customer, r.acts.join(' + '), Math.round(r.amount * 100) / 100])];
+    try { window.XlsxMini.downloadFile('advertising-' + ym + '.xlsx', { sheets: [{ name: 'Summary', rows: sum }, { name: 'Invoices', rows: inv }] }); } catch (err) { toast(t('Excel export failed', 'فشل تصدير Excel') + ': ' + ((err && err.message) || err), 'error'); }
+  });
+  $('#adv-pdf')?.addEventListener('click', () => {
+    const w = window.open('', '_blank'); if (!w) { toast(t('Allow pop-ups to print', 'اسمح بالنوافذ المنبثقة للطباعة'), 'error'); return; }
+    const rowsH = D.rows.map((r, i) => `<tr><td>${i + 1}</td><td>${r.date}</td><td>${escapeHtml(r.ref)}</td><td>${escapeHtml(r.customer)}</td><td>${escapeHtml(r.acts.join(' + '))}</td><td class="n">${fmt(r.amount)}</td></tr>`).join('');
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Advertising ${ym}</title><style>body{font-family:Arial,sans-serif;color:#111;margin:22px}h1{font-size:20px;margin:0 0 4px}.sub{color:#666;font-size:12px;margin-bottom:12px}table{width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:14px}th,td{border:1px solid #ccc;padding:5px 8px;text-align:left}th{background:#f2f2f2}td.n,th.n{text-align:right}.k td{font-weight:700}</style></head><body onload="window.print()"><h1>📣 Advertising statement · كشف الدعاية — ${escapeHtml(fmtMonth(ym))}</h1><div class="sub">Black Stars Sports Club · Football Court bookings are NOT included · حجوزات ملعب الكرة غير مشمولة</div>
+      <table><tbody><tr><td>Billed in the month · المفوتر</td><td class="n">${fmt(D.billed)}</td></tr><tr><td>Football Court bookings (left out) · حجوزات الملعب (مستبعدة)</td><td class="n">${fmt(D.court)}</td></tr><tr class="k"><td>Income · الدخل</td><td class="n">${fmt(D.income)}</td></tr><tr><td>Threshold · الحد</td><td class="n">${fmt(cfg.threshold)}</td></tr><tr class="k"><td>Advertising share ${cfg.rate}% · حصة الدعاية</td><td class="n">${fmt(share)}</td></tr><tr><td>Paid · المدفوع</td><td class="n">${fmt(paid)}</td></tr><tr class="k"><td>Still to pay · المتبقي</td><td class="n">${fmt(left)}</td></tr></tbody></table>
+      <table><thead><tr><th>Activity · النشاط</th><th class="n">Amount · المبلغ</th></tr></thead><tbody>${acts.map(a => `<tr><td>${escapeHtml(a)}</td><td class="n">${fmt(D.byAct[a])}</td></tr>`).join('')}<tr class="k"><td>Total · الإجمالي</td><td class="n">${fmt(D.income)}</td></tr></tbody></table>
+      <table><thead><tr><th>#</th><th>Date</th><th>Invoice</th><th>Customer</th><th>Activity</th><th class="n">Amount</th></tr></thead><tbody>${rowsH}<tr class="k"><td colspan="5">Total · ${D.rows.length} invoices</td><td class="n">${fmt(D.income)}</td></tr></tbody></table></body></html>`);
+    w.document.close();
+  });
 };
 
 // Export the Citadel company-share report — recomputed from the CURRENT month filter so it matches
@@ -21194,6 +21308,9 @@ function adShareSettings() {
   const thr = Number(s.threshold), rate = Number(s.rate);
   return { threshold: isFinite(thr) && thr >= 0 ? thr : 52000, rate: isFinite(rate) && rate >= 0 ? rate : 25, startMonth: /^\d{4}-\d{2}$/.test(String(s.startMonth || '')) ? s.startMonth : null };
 }
+// v6.1070 — the income the advertising share is taken on: everything billed in the month EXCEPT the Football Court bookings (rentals). Football memberships, the pool and every other income stay.
+function isFootballCourtInvoice(i) { return !!i && i.activityType === 'rental' && (i.sport === 'Football Court' || i.category === 'Court Rental'); }
+function adIncomeFor(ym) { return billedInMonth(ym) - billedInMonth(ym, isFootballCourtInvoice); }
 function advertisingAmount(income, cfg) { cfg = cfg || adShareSettings(); return Math.round(Math.max(0, (Number(income) || 0) - cfg.threshold) * cfg.rate) / 100; }
 function _monthEndIso(ym) { const y = parseInt(ym.slice(0, 4), 10), m = parseInt(ym.slice(5, 7), 10); return ym + '-' + String(new Date(y, m, 0).getDate()).padStart(2, '0'); }
 // v6.804 — the Citadel company share is NO LONGER an automatic expense (only the Bank Commission is). Rows that were auto-posted before are kept as ordinary expenses
@@ -21399,12 +21516,12 @@ PAGES.expenses = (main) => {
     const _cmStart = String(TODAY || '').slice(0, 7) + '-01', _cmEnd = _monthEndIso(String(TODAY || '').slice(0, 7));
     const _pend = (currentRole() === 'admin' && (true) && !filter.search && !(filter.methods || []).length)
       ? expPendingList().filter(x => (!filter.categories.length || filter.categories.includes(x.category)) && (filter.from || filter.to ? ((!filter.from || filter.from <= _monthEndIso(x.month)) && (!filter.to || filter.to >= x.month + '-01')) : (!filter.months.length || filter.months.includes(x.month)))) : [];
-    const _pendGo = x => x.baseKind === 'salaries' ? `openSalariesFor('${x.month}')` : (x.baseKind === 'citadel' ? `openCitadelFor('${x.month}')` : '');   // v6.1056 — rows that have their own screen
+    const _pendGo = x => x.baseKind === 'salaries' ? `openSalariesFor('${x.month}')` : (x.baseKind === 'citadel' ? `openCitadelFor('${x.month}')` : (x.baseKind === 'advertising' ? `openAdvertisingFor('${x.month}')` : ''));   // v6.1056 — rows that have their own screen
     const _pendHtml = _pend.map(x => `
       <tr style="background:rgba(242,163,60,.07)${_pendGo(x) ? ';cursor:pointer' : ''}"${_pendGo(x) ? ` onclick="if(!event.target.closest('button,a'))${_pendGo(x)}" title="${t('Open the page behind this amount', 'افتح الصفحة الخاصة بهذا المبلغ')}"` : ''}>
         <td class="text-mute" style="text-align:center;font-size:14px">⏳</td>
         <td class="text-dim" style="white-space:nowrap;font-size:12px">${t('due', 'مستحق')} ${fmtMonth(x.month)}</td>
-        <td><div class="font-bold">${_pendGo(x) ? `<a href="javascript:void(0)" onclick="${_pendGo(x)}" style="color:inherit;text-decoration:underline dotted" title="${x.baseKind === 'salaries' ? t('Open the Salaries screen for this month', 'افتح شاشة المرتبات لهذا الشهر') : t('Open the Citadel screen for this month', 'افتح شاشة سيتادل لهذا الشهر')}">${escapeHtml(x.label)} ${x.baseKind === 'salaries' ? '💰' : '🏛'}</a>` : escapeHtml(x.label)}</div><div class="text-mute" style="font-size:11px">${escapeHtml(x.note)}</div></td>
+        <td><div class="font-bold">${_pendGo(x) ? `<a href="javascript:void(0)" onclick="${_pendGo(x)}" style="color:inherit;text-decoration:underline dotted" title="${x.baseKind === 'salaries' ? t('Open the Salaries screen for this month', 'افتح شاشة المرتبات لهذا الشهر') : (x.baseKind === 'advertising' ? t('Open the Advertising statement for this month', 'افتح كشف الدعاية لهذا الشهر') : t('Open the Citadel screen for this month', 'افتح شاشة سيتادل لهذا الشهر'))}">${escapeHtml(x.label)} ${x.baseKind === 'salaries' ? '💰' : (x.baseKind === 'advertising' ? '📣' : '🏛')}</a>` : escapeHtml(x.label)}</div><div class="text-mute" style="font-size:11px">${escapeHtml(x.note)}</div></td>
         <td><span class="badge">${escapeHtml(x.category)}</span></td>
         <td class="text-mute">—</td>
         <td class="text-right num" style="color:var(--accent-2);font-weight:700">${fmt(x.amount)}<div style="font-size:10px;font-weight:400">${t('pending', 'معلّق')}</div></td>
@@ -27529,6 +27646,8 @@ PAGES.attendance = (main) => {
         if (!c2) { toast(t('Pick the coach', 'اختر المدرب') + ' (#' + n + ')', 'error'); return; }
         _more.push({ sport: s2, coachId: c2 });
       }
+      const _dupe = _ents.some(e => e.rec && e.rec.sport === sp && String(e.rec.coachId) === String(cid)) || _more.some(x => x.sport === sp && String(x.coachId) === String(cid)) || _more.some((x, i) => _more.findIndex(y2 => y2.sport === x.sport && String(y2.coachId) === String(x.coachId)) !== i);
+      if (_dupe && !confirm(t(sp + ' · ' + (coachName(cid) || '') + ' is already logged on this day. Add it AGAIN as a second class?', sp + ' · ' + (coachName(cid) || '') + ' مسجّلة بالفعل في هذا اليوم. تضيفها مرة تانية كحصة ثانية؟'))) return;   // v6.1071 — a double click / a second device used to count one class twice
       closeModal(); applyMixedMark(memberId, day, cid, sp, false, null, _more);
     } });
     showModal({
@@ -27600,6 +27719,28 @@ PAGES.attendance = (main) => {
   // short code of a sport for a small cell: Kick Boxing → KB, Football → Foo
   function sportCode(sp) { const w = String(sp || '').trim().split(/\s+/).filter(Boolean); if (!w.length) return '?'; return w.length > 1 ? w.slice(0, 3).map(x => x[0]).join('').toUpperCase() : w[0].slice(0, 3); }
   function mixedLegend(list) { const seen = new Map(); for (const c of list) { const key = c.code + '|' + c.coach; if (!seen.has(key)) seen.set(key, c.code + ' = ' + c.sport + (c.coach ? ' (' + c.coach + ')' : '')); } return [...seen.values()].join(' · '); }
+
+  // v6.1071 — the PACKAGE a row belongs to and how many of its classes were attended over its WHOLE window (every month). The row's TOTAL / RATE are this, never the day filter's.
+  function rowPackageCount(m, sport, coachId, isMixedRow) {
+    const all = (m.subscriptions || []).filter(s => s && !s.deleted && (s.activity || '') === sport && !s.switchedAwayTo && String(s.status || '').toLowerCase() !== 'withdrawn');
+    let pool = isMixedRow ? all : all.filter(s => String(s.coachId) === String(coachId));
+    if (!pool.length && !isMixedRow) pool = all;
+    if (!pool.length) return null;
+    const cur = pool.filter(s => (s.start || '') <= TODAY && (!s.end || s.end >= TODAY)).sort((a, b) => String(b.start || '').localeCompare(String(a.start || '')))[0]
+      || pool.slice().sort((a, b) => String(b.end || b.start || '').localeCompare(String(a.end || a.start || '')))[0];
+    const planned = parseInt(cur.totalClasses) || 0;
+    if (!planned) return null;
+    const w = (typeof subAttendanceWindow === 'function') ? subAttendanceWindow(m, cur) : { from: cur.start || null, to: cur.end || null };
+    let marked = 0;
+    if (isMixedRow) {
+      for (const mo of Object.keys(m.mixedAttendance || {})) for (const k of Object.keys(m.mixedAttendance[mo] || {})) {
+        const r = m.mixedAttendance[mo][k]; if (!r || r.mark === 'N' || !_mixedRecOk(r)) continue;
+        const iso = mo + '-' + String(parseInt(k, 10)).padStart(2, '0');
+        if ((!w.from || iso >= w.from) && (!w.to || iso <= w.to)) marked++;
+      }
+    } else marked = (typeof subLiveAttendance === 'function') ? (subLiveAttendance(m, cur, w).y || 0) : 0;
+    return { planned, marked };
+  }
 
   function refresh() { return withCalcScope(_refreshScoped); }
   function _refreshScoped() {
@@ -27795,6 +27936,10 @@ PAGES.attendance = (main) => {
         }
       }
       if (!_isMixedRow && sportPlanned > 0) total = sportPlanned;
+      // v6.1071 — TOTAL / RATE = the package's attended classes over its classes, whatever days are on screen. They used to count only the shown days over the package size ("0 / 20" on a one-day view, "1 / 20" on two),
+      // so the same student read differently on every filter / refresh.
+      const _shownY = y;
+      if (!hist && !isCampSport(sport)) { const _pk = rowPackageCount(m, sport, coachId, _isMixedRow); if (_pk && _pk.planned > 0) { y = _pk.marked; total = _pk.planned; } }
       rate = total ? Math.round(y / total * 100) : 0;
       const _due = (currentRole() === 'coach' || typeof memberOutstanding !== 'function' || hist) ? 0 : memberOutstanding(m.id);
       // Expired but fully paid → a renewal candidate: highlight in amber so reception
@@ -27845,7 +27990,7 @@ PAGES.attendance = (main) => {
             <div class="text-mute" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(sport)}${_isMixedRow ? ' · ' + escapeHtml(t('pick sport + coach per class', 'اختر الرياضة والمدرب لكل حصة')) : (!isCampSport(sport) ? ' · ' + escapeHtml(coachName(coachId)) : '')}${attPrivTag(rowPrivate(m, sport, coachId))}</div>
           </td>
           ${cells}
-          <td class="att-total"><span style="color:var(--green);font-weight:600">${y}</span><span class="text-mute"> / ${total || '—'}</span></td>
+          <td class="att-total" title="${escapeHtml(t('Classes attended in the whole package', 'الحصص المحضورة في الباقة كلها'))} · ${escapeHtml(t('in the days shown', 'في الأيام المعروضة'))}: ${_shownY}"><span style="color:var(--green);font-weight:600">${y}</span><span class="text-mute"> / ${total || '—'}</span></td>
           <td class="text-right" style="color:${rate >= 75 ? 'var(--green)' : rate >= 40 ? 'var(--accent-2)' : rate > 0 ? 'var(--red)' : 'var(--text-mute)'};font-weight:600">${total ? rate + '%' : '—'}</td>
           <td class="att-export-cell" style="text-align:center;white-space:nowrap">${needsRenewal ? `<button class="btn sm" style="background:var(--accent-2);border-color:var(--accent-2);color:#fff;margin-right:4px" onclick="window.addRenewal(${m.id})" title="Renew ${escapeHtml(m.name)}'s membership">🔄 ${t('Renew', 'تجديد')}</button>` : ''}${_canStudentPdf ? `<button class="btn ghost sm" onclick="window._attPdf(${m.id}, null, '${sportEsc}')" title="Export ${escapeHtml(m.name)} · ${escapeHtml(sport)} attendance">⬇ PDF</button>` : ''}</td>
         </tr>`;
