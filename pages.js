@@ -3114,24 +3114,14 @@ function viewMember(id) {
   showModal({
     title: `Member: ${escapeHtml(m.name)}`,
     body: `
-      <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">
-        ${memberAvatarHtml(m, 64)}
-        <div>
-          <div style="font-size:18px;font-weight:700">${escapeHtml(m.name)}</div>
-          ${m.nameArabic ? `<div style="font-size:14px;color:var(--text-dim)" dir="rtl">${escapeHtml(m.nameArabic)}</div>` : ''}
-          <div class="text-dim">${escapeHtml(m.sport)} · ${escapeHtml(coachName(m.coachId))}${m.level ? ` · ${escapeHtml(m.level)}` : ''}${m.nationality ? ` · 🌍 ${escapeHtml(m.nationality)}` : ''}</div>
-          ${(() => {
-            // Per-sport chips with an admin-only 🗑 to permanently clean up that sport's history.
-            const sports = [];
-            const seen = new Set();
-            for (const e of (m.enrollments || [])) { if (e.sport && !seen.has(e.sport)) { seen.add(e.sport); sports.push({ sport: e.sport, coachId: e.coachId, price: e.price }); } }
-            if (m.sport && !seen.has(m.sport)) sports.push({ sport: m.sport, coachId: m.coachId, price: m.price });
-            if (sports.length < 1) return '';
-            return `<div class="mt-1" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">${sports.map(e => `<span class="badge blue" style="display:inline-flex;align-items:center;gap:6px" title="${escapeHtml(coachName(e.coachId))}">${escapeHtml(e.sport)}${isViewerRole() ? '' : ` · ${fmt(e.price)} QAR`}${currentRole() === 'admin' ? ` <button onclick="event.stopPropagation();closeModal();deleteMemberSport(${m.id}, ${JSON.stringify(e.sport).replace(/"/g, '&quot;')})" title="Permanently remove this sport from this member's history" style="background:transparent;border:0;color:#fff;opacity:.75;cursor:pointer;padding:0;font-size:11px;line-height:1">🗑</button>` : ''}</span>`).join('')}</div>`;
-          })()}
-          ${m.siblingGroup ? `<div class="text-mute" style="font-size:11px;margin-top:4px">👨‍👩‍👧 Split from group registration: "${escapeHtml(m.siblingGroup)}"</div>` : ''}
-          ${(m.renewalsBySport && Object.keys(m.renewalsBySport).length) ? `<div class="mt-1" style="display:flex;flex-wrap:wrap;gap:6px">${Object.entries(m.renewalsBySport).map(([sp, c]) => `<span class="badge" style="background:rgba(242,163,60,.15);color:var(--accent-2)" title="Renewed ${c} time${c>1?'s':''}">🔄 ${escapeHtml(sp)}: ${c}</span>`).join('')}</div>` : ''}
-          ${(m.invoiceLinks && m.invoiceLinks.length && !isViewerRole()) ? `<div class="text-mute" style="font-size:11px;margin-top:4px">🧾 ${m.invoiceLinks.length} invoice${m.invoiceLinks.length>1?'s':''} · ${fmt(m.invoiceLinks.reduce((a,x)=>a+(x.amount||0),0))} QAR paid${m.invoiceLinks.filter(x=>x.ref).length?' · '+m.invoiceLinks.filter(x=>x.ref).map(x=>x.ref).join(', '):''}</div>` : ''}
+      <div class="mc-hero">
+        ${memberAvatarHtml(m, 76)}
+        <div style="flex:1;min-width:0">
+          <div class="mc-name-row">
+          <div style="font-size:21px;font-weight:800;line-height:1.2">${escapeHtml(m.name)}</div>
+          ${m.nameArabic ? `<div style="font-size:16px;color:var(--text-dim);margin-inline-start:auto" dir="rtl">${escapeHtml(m.nameArabic)}</div>` : ''}
+          </div>
+          <div class="text-dim" style="margin-top:2px">${escapeHtml(m.sport)} · ${escapeHtml(coachName(m.coachId))}${m.level ? ` · ${escapeHtml(m.level)}` : ''}${m.nationality ? ` · 🌍 ${escapeHtml(m.nationality)}` : ''}</div>
           <div class="mt-1"><span class="badge ${memberStatus(m).toLowerCase()}">${memberStatus(m)}</span> <span class="badge">${(m.months || []).join(' + ').toUpperCase()}</span>${(() => {
             const ob = memberOutstanding(m.id);
             const editable = currentRole() === 'admin' || currentRole() === 'receptionist';
@@ -3139,29 +3129,6 @@ function viewMember(id) {
           })()}</div>
           ${(currentRole() === 'admin' || currentRole() === 'receptionist') ? `<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary sm" onclick="moneyPanel(${m.id})" title="${t('Log payment installments (method + date + amount). Prices are set per-sport in the profile above.', 'تسجيل أقساط الدفع (الطريقة + التاريخ + المبلغ). الأسعار تُحدَّد لكل رياضة في الملف أعلاه.')}" style="font-weight:700">💳 ${t('Installments', 'الأقساط')}</button>${currentRole() === 'admin' ? `<button class="btn ghost sm" onclick="rebuildMemberFromProfile(${m.id})" title="${t('Sync the subscription + invoice to the current enrollments (the profile) so salary + invoice agree', 'مزامنة الاشتراك والفاتورة مع التسجيلات الحالية ليتطابق الراتب والفاتورة')}">🔄 ${t('Rebuild from profile', 'إعادة البناء من الملف')}</button>` : ''}</div>` : ''}
         </div>
-      </div>
-      <div class="row row-2 mb-3">
-        <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">Mobile</div><div>${phoneCell(m.phone, { stop: false })}${m.phone2 ? `<div style="margin-top:2px">${phoneCell(m.phone2, { stop: false })} <span class="text-mute" style="font-size:10px">(2nd)</span></div>` : ''}</div></div>
-        <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">Email</div><div>${escapeHtml(m.email || '—')}</div></div>
-        <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">QID</div><div class="font-mono">${escapeHtml(m.qid || '—')}</div></div>
-        <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">Birthdate</div><div>${m.birthdate ? `${fmtDate(m.birthdate)}${(() => {
-          const age = memberAge(m.birthdate);
-          const isBd = isBirthdayInMonth(m.birthdate);
-          const dToB = daysUntilBirthday(m.birthdate);
-          let parts = [];
-          if (age != null) parts.push(`<span class="text-mute" style="font-size:11px">· ${age} yrs</span>`);
-          if (isBd) parts.push(`<span class="badge" style="font-size:9px;padding:1px 6px;background:rgba(245,158,11,.18);color:var(--accent-2);margin-left:4px" title="Birthday this month — say happy birthday!">🎂 ${dToB === 0 ? 'today!' : dToB <= 30 ? `in ${dToB}d` : 'this month'}</span>`);
-          return parts.join(' ');
-        })()}` : '—'}</div></div>
-        <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">First Registration</div><div>${m.firstRegistration ? fmtDate(m.firstRegistration) : (m.joinDate ? fmtDate(m.joinDate) : '—')}${(() => {
-          const t = memberTenure(m.firstRegistration || m.joinDate);
-          return t ? ` <span class="text-mute" style="font-size:11px">· ${t}</span>` : '';
-        })()}</div></div>
-        <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">Start / Renewal</div><div>${m.startDate ? fmtDate(m.startDate) : '—'}</div></div>
-        <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">Expiry</div><div>${m.expiryDate ? fmtDate(m.expiryDate) : '—'}</div></div>
-        <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">Gender</div><div>${m.gender ? `<span style="color:${m.gender === 'Female' ? '#ec4899' : 'inherit'}">${escapeHtml(m.gender)}</span>` : '—'}</div></div>
-        <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">Level</div><div>${escapeHtml(m.level || '—')}</div></div>
-        <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">No. of Renewals</div><div>${m.renewalCount || (m.renewalsBySport ? Object.values(m.renewalsBySport).reduce((a,b)=>a+b,0) : 0) || 0}${(m.renewalsBySport && Object.keys(m.renewalsBySport).length) ? ` <span class="text-mute" style="font-size:10px">(${Object.entries(m.renewalsBySport).map(([s,c])=>`${escapeHtml(s)}:${c}`).join(', ')})</span>` : ''}</div></div>
       </div>
       <div class="kpi-grid mb-3" style="grid-template-columns:repeat(${isViewerRole() ? 3 : 4},1fr);gap:8px">
         <div class="kpi" style="padding:10px 12px"><div class="kpi-label" style="font-size:10px">Subs</div><div class="kpi-value" style="font-size:18px">${totalSubs}</div></div>
@@ -3183,6 +3150,53 @@ function viewMember(id) {
         <div class="kpi orange" style="padding:10px 12px;cursor:pointer;position:relative" onclick="viewMemberAttendance(${m.id})" title="See this member's attendance">
           <div class="kpi-label" style="font-size:10px">Att Rate ›</div><div class="kpi-value" style="font-size:18px">${attRatePct}%</div>
           <button onclick="event.stopPropagation();exportMemberAttendance(${m.id})" title="Export attendance history (CSV)" style="position:absolute;top:6px;right:6px;background:transparent;border:none;cursor:pointer;font-size:13px;opacity:.7;padding:2px">⬇</button>
+        </div>
+      </div>
+      <div class="mc-grid">
+        <div class="mc-card"><div class="mc-card-title">🏅 Sports &amp; packages</div>
+          <div class="mc-sports">
+          ${(() => {
+            // Per-sport chips with an admin-only 🗑 to permanently clean up that sport's history.
+            const sports = [];
+            const seen = new Set();
+            for (const e of (m.enrollments || [])) { if (e.sport && !seen.has(e.sport)) { seen.add(e.sport); sports.push({ sport: e.sport, coachId: e.coachId, price: e.price }); } }
+            if (m.sport && !seen.has(m.sport)) sports.push({ sport: m.sport, coachId: m.coachId, price: m.price });
+            if (sports.length < 1) return '';
+            return `<div class="mt-1" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">${sports.map(e => `<span class="badge blue" style="display:inline-flex;align-items:center;gap:6px" title="${escapeHtml(coachName(e.coachId))}">${escapeHtml(e.sport)}${isViewerRole() ? '' : ` · ${fmt(e.price)} QAR`}${currentRole() === 'admin' ? ` <button onclick="event.stopPropagation();closeModal();deleteMemberSport(${m.id}, ${JSON.stringify(e.sport).replace(/"/g, '&quot;')})" title="Permanently remove this sport from this member's history" style="background:transparent;border:0;color:#fff;opacity:.75;cursor:pointer;padding:0;font-size:11px;line-height:1">🗑</button>` : ''}</span>`).join('')}</div>`;
+          })()}
+          ${m.siblingGroup ? `<div class="text-mute" style="font-size:11px;margin-top:4px">👨‍👩‍👧 Split from group registration: "${escapeHtml(m.siblingGroup)}"</div>` : ''}
+          ${(m.renewalsBySport && Object.keys(m.renewalsBySport).length) ? `<div class="mt-1" style="display:flex;flex-wrap:wrap;gap:6px">${Object.entries(m.renewalsBySport).map(([sp, c]) => `<span class="badge" style="background:rgba(242,163,60,.15);color:var(--accent-2)" title="Renewed ${c} time${c>1?'s':''}">🔄 ${escapeHtml(sp)}: ${c}</span>`).join('')}</div>` : ''}
+          ${(m.invoiceLinks && m.invoiceLinks.length && !isViewerRole()) ? `<div class="text-mute" style="font-size:11px;margin-top:4px">🧾 ${m.invoiceLinks.length} invoice${m.invoiceLinks.length>1?'s':''} · ${fmt(m.invoiceLinks.reduce((a,x)=>a+(x.amount||0),0))} QAR paid${m.invoiceLinks.filter(x=>x.ref).length?' · '+m.invoiceLinks.filter(x=>x.ref).map(x=>x.ref).join(', '):''}</div>` : ''}
+          </div>
+        </div>
+        <div class="mc-card"><div class="mc-card-title">👤 Contact &amp; personal</div>
+          <div class="mc-fields">
+        <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">Mobile</div><div>${phoneCell(m.phone, { stop: false })}${m.phone2 ? `<div style="margin-top:2px">${phoneCell(m.phone2, { stop: false })} <span class="text-mute" style="font-size:10px">(2nd)</span></div>` : ''}</div></div>
+        <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">Email</div><div>${escapeHtml(m.email || '—')}</div></div>
+        <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">QID</div><div class="font-mono">${escapeHtml(m.qid || '—')}</div></div>
+        <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">Birthdate</div><div>${m.birthdate ? `${fmtDate(m.birthdate)}${(() => {
+          const age = memberAge(m.birthdate);
+          const isBd = isBirthdayInMonth(m.birthdate);
+          const dToB = daysUntilBirthday(m.birthdate);
+          let parts = [];
+          if (age != null) parts.push(`<span class="text-mute" style="font-size:11px">· ${age} yrs</span>`);
+          if (isBd) parts.push(`<span class="badge" style="font-size:9px;padding:1px 6px;background:rgba(245,158,11,.18);color:var(--accent-2);margin-left:4px" title="Birthday this month — say happy birthday!">🎂 ${dToB === 0 ? 'today!' : dToB <= 30 ? `in ${dToB}d` : 'this month'}</span>`);
+          return parts.join(' ');
+        })()}` : '—'}</div></div>
+        <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">Gender</div><div>${m.gender ? `<span style="color:${m.gender === 'Female' ? '#ec4899' : 'inherit'}">${escapeHtml(m.gender)}</span>` : '—'}</div></div>
+        <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">Level</div><div>${escapeHtml(m.level || '—')}</div></div>
+          </div>
+        </div>
+        <div class="mc-card"><div class="mc-card-title">📅 Registration &amp; dates</div>
+          <div class="mc-fields">
+        <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">First Registration</div><div>${m.firstRegistration ? fmtDate(m.firstRegistration) : (m.joinDate ? fmtDate(m.joinDate) : '—')}${(() => {
+          const t = memberTenure(m.firstRegistration || m.joinDate);
+          return t ? ` <span class="text-mute" style="font-size:11px">· ${t}</span>` : '';
+        })()}</div></div>
+        <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">Start / Renewal</div><div>${m.startDate ? fmtDate(m.startDate) : '—'}</div></div>
+        <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">Expiry</div><div>${m.expiryDate ? fmtDate(m.expiryDate) : '—'}</div></div>
+        <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">No. of Renewals</div><div>${m.renewalCount || (m.renewalsBySport ? Object.values(m.renewalsBySport).reduce((a,b)=>a+b,0) : 0) || 0}${(m.renewalsBySport && Object.keys(m.renewalsBySport).length) ? ` <span class="text-mute" style="font-size:10px">(${Object.entries(m.renewalsBySport).map(([s,c])=>`${escapeHtml(s)}:${c}`).join(', ')})</span>` : ''}</div></div>
+          </div>
         </div>
       </div>
       ${(typeof memberGroupsHtml === 'function') ? memberGroupsHtml(m) : ''}
@@ -3357,6 +3371,15 @@ function viewMember(id) {
       { label: 'Close', class: 'btn primary', onclick: closeModal },
     ],
   });
+  try {   // v6.1084 — the card's footer: the many secondary buttons on the left (small), the main ones (Renew / Welcome / Close) on the right
+    const f = document.querySelector('.modal-footer'), grid = document.querySelector('.modal-body .mc-grid'); if (f && grid) {
+      f.classList.add('mc-footer');
+      const kids = [...f.children], tools = document.createElement('div'), pri = document.createElement('div');
+      tools.className = 'mc-actions'; tools.setAttribute('data-label', t('Quick actions', 'إجراءات سريعة')); pri.className = 'mc-foot-pri';
+      kids.forEach(b => { if (b.classList.contains('primary') || /^Edit$/.test((b.textContent || '').trim())) pri.appendChild(b); else { b.classList.add('sm'); tools.appendChild(b); } });
+      grid.insertAdjacentElement('afterend', tools); f.append(pri);
+    }
+  } catch (_) {}
 }
 window.viewMember = viewMember;
 
@@ -5894,19 +5917,10 @@ window.editCoach = function(id, defaultRole) {
       <div style="margin:14px 0 6px;font-size:11px;color:var(--blue);text-transform:uppercase;letter-spacing:.6px;font-weight:600">💰 Pay configuration</div>
       <div class="form-row">
         <div class="field"><label>Fixed monthly salary (QAR)</label><input id="c-fixed" type="number" min="0" step="0.01" value="${c.fixedSalary || 0}" />
-          ${isNew ? '' : `<div style="display:flex;align-items:center;gap:6px;margin-top:4px;font-size:11px"><span class="text-mute">${t('If you change it, it applies from', 'لو غيّرته، يسري من')}</span><input id="c-fixed-from" type="month" value="${currentMonth()}" style="font-size:11px;padding:2px 4px"/></div>${(Array.isArray(c.fixedHistory) && c.fixedHistory.length) ? `<div class="text-mute" style="font-size:11px;margin-top:3px">${t('Earlier salary', 'المرتب السابق')}: ${c.fixedHistory.slice().sort((a, b) => String(a.upTo).localeCompare(String(b.upTo))).map(e => fmt(e.amount) + ' ' + t('up to', 'حتى') + ' ' + escapeHtml(fmtMonth(e.upTo))).join(' · ')}</div>` : ''}`}</div>
-        <div class="field"><label>Commission rate (%)</label><input id="c-rate" type="number" min="0" max="100" step="1" value="${c.rate || 0}" /></div>
+          ${isNew ? '' : `<div style="display:flex;align-items:center;gap:6px;margin-top:4px;font-size:11px"><span class="text-mute">${t('If you change it, it applies from', 'لو غيّرته، يسري من')}</span><input id="c-fixed-from" type="date" value="${TODAY}" style="font-size:11px;padding:2px 4px"/></div>${(Array.isArray(c.fixedHistory) && c.fixedHistory.length) ? `<div class="text-mute" style="font-size:11px;margin-top:3px">${t('Earlier salary', 'المرتب السابق')}: ${c.fixedHistory.slice().sort((a, b) => String(a.upTo).localeCompare(String(b.upTo))).map(e => fmt(e.amount) + ' ' + t('up to', 'حتى') + ' ' + (e.until ? escapeHtml(fmtDate(e.until)) : escapeHtml(fmtMonth(e.upTo)))).join(' · ')}</div>` : ''}`}</div>
+        <div class="field c-comm"><label>Commission rate (%)</label><input id="c-rate" type="number" min="0" max="100" step="1" value="${c.rate || 0}" /></div>
       </div>
-      <div class="form-row">
-        <div class="field"><label>${t('Commission basis', 'أساس العمولة')}</label>
-          <select id="c-basis">
-            <option value="" ${!c.commissionBasis ? 'selected' : ''}>${t('Use club default', 'الافتراضي للنادي')}</option>
-            <option value="attendance" ${c.commissionBasis === 'attendance' ? 'selected' : ''}>${t('By attendance (per class attended)', 'بالحضور (لكل حصة)')}</option>
-            <option value="payment" ${c.commissionBasis === 'payment' ? 'selected' : ''}>${t('By payment (full amount, in the membership\'s month)', 'بالدفع (المبلغ الكامل، في شهر الاشتراك)')}</option>
-          </select>
-        </div>
-      </div>
-      <div class="form-row">
+      <div class="form-row c-comm">
         <div class="field"><label>🔒 ${t('Private training bonus (%)', 'بونس التدريب الخاص (%)')} <span class="text-mute" style="font-size:10px">${t('empty = club default', 'فارغ = الافتراضي')} (${privateBonusPct()}%)</span></label><input id="c-privpct" type="number" min="0" max="100" step="0.5" value="${isFinite(parseFloat(c.privateBonusPct)) ? parseFloat(c.privateBonusPct) : ''}" placeholder="${privateBonusPct()}" /></div>
       </div>
       <div class="field" style="margin-top:2px" id="c-bonus-wrap" ${role === 'receptionist' ? '' : 'hidden'}>
@@ -5916,16 +5930,15 @@ window.editCoach = function(id, defaultRole) {
         </label>
         <div class="text-mute" style="font-size:10px;margin-top:3px">${t('The bonus is split equally between ALL receptionists. Untick = this person gets no bonus, and his slice is NOT given to the others.', 'تُقسَّم المكافأة بالتساوي بين كل موظفي الاستقبال. إلغاء التحديد = لا مكافأة له ولا تذهب حصته للآخرين.')}</div>
       </div>
-      <div class="field" style="margin-top:2px">
+      <div class="field c-comm" style="margin-top:2px">
         <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-weight:400">
           <input type="checkbox" id="c-attended-only" ${c.payAttendedOnly ? 'checked' : ''} />
           ${t('Pay attended only for expired memberships (no carry-forward true-up)', 'دفع المحضور فقط للعضويات المنتهية (بدون احتساب المُرحّل)')}
         </label>
         <div class="text-mute" style="font-size:10px;margin-top:3px">${t('On the attendance basis, an expired membership normally pays this coach the FULL package (attended + carried-forward). Tick this to pay only the classes actually attended. Overrides the club-wide Salaries toggle for this coach.', 'في أساس الحضور، تدفع العضوية المنتهية عادةً كامل الباقة (المحضور + المُرحّل) لهذا المدرب. فعّل هذا لدفع الحصص المحضورة فعلياً فقط. يتجاوز الإعداد العام في شاشة الرواتب لهذا المدرب.')}</div>
       </div>
-      <div class="text-mute" style="font-size:11px;margin-top:-6px;margin-bottom:10px">
+      <div class="text-mute c-comm" style="font-size:11px;margin-top:-6px;margin-bottom:10px">
         💡 Monthly pay = <b>Fixed</b> + (<b>Commission %</b> × eligible membership revenue). For a pure coach: Fixed=0, Commission=30%. For admin/cleaner: Fixed=3000, Commission=0%.
-        ${t('Commission basis sets how THIS coach is paid — pick a fixed one (e.g. a private coach = "By payment") and it overrides the club-wide toggle on the Salaries screen for them only.', 'أساس العمولة يحدد كيف يُحتسب راتب هذا المدرب — اختر أساساً ثابتاً (مثلاً مدرب خاص = «بالدفع») ليتجاوز الإعداد العام في شاشة الرواتب لهذا المدرب فقط.')}
       </div>
 
       <div style="margin:14px 0 6px;font-size:11px;color:var(--blue);text-transform:uppercase;letter-spacing:.6px;font-weight:600">⚙️ Other</div>
@@ -5978,11 +5991,12 @@ window.editCoach = function(id, defaultRole) {
         }
         // ── End validation ──
 
-        const rate = parseFloat($('#c-rate').value) || 0;
+        const _roleNow = $('#c-role').value || 'coach', _fixedOnly = _roleNow === 'staff' || _roleNow === 'cleaner';   // v6.1086 — staff / cleaner: a fixed salary only, never commission
+        const rate = _fixedOnly ? 0 : (parseFloat($('#c-rate').value) || 0);
         const fixedSalary = parseFloat($('#c-fixed').value) || 0;
-        const commissionBasis = (($('#c-basis') || {}).value) || '';   // '' = use club default; else 'attendance' | 'payment'
-        const payAttendedOnly = !!(($('#c-attended-only') || {}).checked);   // v6.535: skip expiry true-up for this coach
-        const _ppRaw = String((($('#c-privpct') || {}).value) || '').trim(), _pp = _ppRaw === '' ? null : parseFloat(_ppRaw);   // v6.665: per-coach private bonus % (empty = club default)
+        const commissionBasis = _fixedOnly ? '' : ((($('#c-basis') || {}).value) || '');   // '' = use club default; else 'attendance' | 'payment'
+        const payAttendedOnly = _fixedOnly ? false : !!(($('#c-attended-only') || {}).checked);   // v6.535: skip expiry true-up for this coach
+        const _ppRaw = String((($('#c-privpct') || {}).value) || '').trim(), _pp = (_fixedOnly || _ppRaw === '') ? null : parseFloat(_ppRaw);   // v6.665: per-coach private bonus % (empty = club default)
         if (_pp != null && (!isFinite(_pp) || _pp < 0 || _pp > 100)) { toast(t('Private bonus must be between 0 and 100', 'بونس الخاص بين 0 و100'), 'error'); return; }
         const roleVal = $('#c-role').value || 'coach';
         const noBonus = roleVal === 'receptionist' && !(($('#c-recbonus') || {}).checked);
@@ -6012,8 +6026,9 @@ window.editCoach = function(id, defaultRole) {
           // v6.947.0 — a changed fixed salary applies FROM the chosen month; the amount before it is kept for the months up to it
           { const _was = parseFloat(c.fixedSalary) || 0;
             if (Math.abs(_was - fixedSalary) > 0.004) {
-              const _from = ((document.getElementById('c-fixed-from') || {}).value || currentMonth()).slice(0, 7), _upTo = _salPrevMonth(_from);
-              c.fixedHistory = (Array.isArray(c.fixedHistory) ? c.fixedHistory : []).filter(e => e && String(e.upTo) < _upTo).concat([{ upTo: _upTo, amount: _was }]);
+              const _fromD = ((document.getElementById('c-fixed-from') || {}).value || TODAY).slice(0, 10), _fm = _fromD.slice(0, 7);   // v6.1086 — from a DATE: the days before it keep the old amount
+              if (_fromD.slice(8, 10) === '01') { const _upTo = _salPrevMonth(_fm); c.fixedHistory = (Array.isArray(c.fixedHistory) ? c.fixedHistory : []).filter(e => e && String(e.upTo) < _upTo).concat([{ upTo: _upTo, amount: _was }]); }
+              else { const _dd = new Date(Date.UTC(parseInt(_fromD.slice(0, 4), 10), parseInt(_fromD.slice(5, 7), 10) - 1, parseInt(_fromD.slice(8, 10), 10) - 1)).toISOString().slice(0, 10); c.fixedHistory = (Array.isArray(c.fixedHistory) ? c.fixedHistory : []).filter(e => e && String(e.upTo) < _fm).concat([{ upTo: _fm, until: _dd, amount: _was }]); }
             } }
           Object.assign(c, {
             name, rate, fixedSalary, commissionBasis, payAttendedOnly, role: roleVal, sports, active: activeVal,
@@ -6037,9 +6052,12 @@ window.editCoach = function(id, defaultRole) {
     const rateInp = $('#c-rate');
     const sportsField = $('#c-sports-field');
     if (!roleSel || !fixedInp || !rateInp) return;
+    const _commToggle = () => { const fo = roleSel.value === 'staff' || roleSel.value === 'cleaner'; document.querySelectorAll('.c-comm').forEach(e => { e.style.display = fo ? 'none' : ''; }); };   // v6.1086 — staff / cleaner: fixed salary only, the commission options are hidden
+    _commToggle();
     roleSel.addEventListener('change', () => {
       const isStaff = roleSel.value === 'staff';
       { const _bw = $('#c-bonus-wrap'); if (_bw) _bw.hidden = roleSel.value !== 'receptionist'; }
+      _commToggle();
       if (isStaff && parseFloat(rateInp.value) === 30 && parseFloat(fixedInp.value) === 0) {
         fixedInp.value = 3000;
         rateInp.value = 0;
@@ -22221,6 +22239,46 @@ function salaryRangePay(coachId, from, to) {
   out.total = Math.round((out.fixed + out.commission + out.privateBonus + out.receptionBonus) * 100) / 100;
   return out;
 }
+// the lines behind a coach's range pay (who, which sport, how many classes in the range, the base and his share)
+function salaryRangeLines(coachId, from, to) {
+  from = String(from || '').slice(0, 10); to = String(to || from).slice(0, 10);
+  if (from > to) { const x = from; from = to; to = x; }
+  const rows = [];
+  const first = computeMonthlyPay(coachId, null, to); if (!first) return rows;
+  const rate = first.commissionRate || 0;
+  if (first.basis === 'payment') {
+    (first.paymentLines || []).forEach(l => { if (String(l.invoiceDate || '').slice(0, 10) >= from) rows.push({ member: l.memberName, sport: l.sport, kind: 'invoice', ref: l.invoiceRef, classes: null, base: l.fee || 0, pay: Math.round((l.fee || 0) * rate) / 100 }); });
+    return rows;
+  }
+  const key = l => [l.mid, l.sport, l.kind, l.start || ''].join('|');
+  let ym = from.slice(0, 7);
+  while (ym <= to.slice(0, 7)) {
+    const f0 = ym + '-01', s0 = from > f0 ? from : f0, e0 = to < _isoLastDay(ym) ? to : _isoLastDay(ym);
+    const pe = computeMonthlyPay(coachId, null, e0), pm = s0 === f0 ? null : computeMonthlyPay(coachId, null, _isoAddDays(s0, -1));
+    const prev = new Map(); ((pm && pm.attendanceLines && pm.attendanceLines.lines) || []).forEach(l => prev.set(key(l), l));
+    ((pe && pe.attendanceLines && pe.attendanceLines.lines) || []).forEach(l => {
+      const q = prev.get(key(l)), cl = (l.classes == null ? null : (l.classes || 0) - (q ? (q.classes || 0) : 0)), base = (l.amountBase || 0) - (q ? (q.amountBase || 0) : 0);
+      if (Math.abs(base) < 0.005 && !cl) return;
+      rows.push({ member: l.memberName, sport: l.sport, kind: l.kind, priv: l.priv || '', classes: cl, base: Math.round(base * 100) / 100, pay: Math.round(base * rate) / 100 });
+    });
+    ym = _isoAddDays(_isoLastDay(ym), 1).slice(0, 7);
+  }
+  return rows;
+}
+window.salaryRangePrint = function (from, to, set) {
+  const rows = salaryRangeRows(from, to, set || 'active'); if (!rows.length) { toast(t('Nobody has pay in this range.', 'لا يوجد راتب في هذه الفترة.'), 'info'); return; }
+  const w = window.open('', '_blank'); if (!w) { toast(t('Allow pop-ups to print', 'اسمح بالنوافذ المنبثقة للطباعة'), 'error'); return; }
+  const lbl = from === to ? fmtDate(from) : fmtDate(from) + ' → ' + fmtDate(to), esc = escapeHtml, kindTxt = { attended: t('attended', 'حضور'), trueup: t('true-up', 'تسوية'), flat: t('flat', 'ثابت'), switch: t('switch', 'تحويل'), invoice: t('invoice', 'فاتورة') };
+  const sum = rows.map((r, i) => '<tr><td>' + (i + 1) + '</td><td>' + esc(r.name) + '</td><td class="n">' + fmt(r.fixed) + '</td><td class="n">' + fmt(r.commission) + '</td><td class="n">' + fmt(r.privateBonus) + '</td><td class="n">' + fmt(r.receptionBonus) + '</td><td class="n b">' + fmt(r.total) + '</td></tr>').join('');
+  const tot = k => rows.reduce((a, r) => a + r[k], 0);
+  const blocks = rows.map(r => {
+    const ls = salaryRangeLines(r.coachId, from, to);
+    const body = ls.length ? ls.map((l, i) => '<tr><td>' + (i + 1) + '</td><td>' + esc(l.member || '') + (l.priv ? ' 🔒' : '') + '</td><td>' + esc(l.sport || '') + '</td><td>' + (kindTxt[l.kind] || esc(l.kind || '')) + (l.ref ? ' ' + esc(l.ref) : '') + '</td><td class="n">' + (l.classes == null ? '' : l.classes) + '</td><td class="n">' + fmt(l.base) + '</td><td class="n b">' + fmt(l.pay) + '</td></tr>').join('') + '<tr class="tot"><td colspan="5">' + t('Total commission', 'إجمالي العمولة') + ' (' + r.rate + '%)</td><td class="n">' + fmt(ls.reduce((a, l) => a + l.base, 0)) + '</td><td class="n">' + fmt(ls.reduce((a, l) => a + l.pay, 0)) + '</td></tr>' : '<tr><td colspan="7" class="m">' + t('No commission lines in this range', 'لا توجد بنود عمولة في هذه الفترة') + '</td></tr>';
+    return '<div class="blk"><h3>' + esc(r.name) + ' <span class="m">· ' + (r.role === 'staff' ? t('Staff', 'موظف') : t('Coach', 'مدرب')) + ' · ' + t('Fixed', 'ثابت') + ' ' + fmt(r.fixed) + ' + ' + t('commission', 'عمولة') + ' ' + fmt(r.commission) + (r.privateBonus ? ' + ' + t('private', 'خاص') + ' ' + fmt(r.privateBonus) : '') + (r.receptionBonus ? ' + ' + t('reception', 'استقبال') + ' ' + fmt(r.receptionBonus) : '') + ' = <b>' + fmt(r.total) + '</b></span></h3><table><thead><tr><th>#</th><th>' + t('Member', 'العضو') + '</th><th>' + t('Sport', 'الرياضة') + '</th><th>' + t('Type', 'النوع') + '</th><th class="n">' + t('Classes', 'الحصص') + '</th><th class="n">' + t('Base', 'الأساس') + '</th><th class="n">' + t('Share', 'النصيب') + '</th></tr></thead><tbody>' + body + '</tbody></table></div>';
+  }).join('');
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Salary ' + esc(lbl) + '</title><style>body{font-family:Arial,sans-serif;color:#111;margin:22px}h1{font-size:20px;margin:0 0 4px}h3{font-size:14px;margin:18px 0 6px}.sub{color:#666;font-size:12px;margin-bottom:12px}table{width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:6px}th,td{border:1px solid #ccc;padding:4px 7px;text-align:left}th{background:#f2f2f2}.n{text-align:right}.b{font-weight:700}.m{color:#666;font-weight:400}.tot td{font-weight:800;background:#fafafa}.blk{page-break-inside:avoid}</style></head><body onload="window.print()"><h1>' + t('Salary report', 'تقرير الرواتب') + ' — ' + esc(lbl) + '</h1><div class="sub">Black Stars Sports Club · ' + t('a calculation for the dates above (fixed pro-rated by days; the monthly target bonus is not included)', 'حساب للتواريخ أعلاه (الثابت بالأيام؛ مكافأة التارجت الشهرية غير مشمولة)') + '</div><table><thead><tr><th>#</th><th>' + t('Name', 'الاسم') + '</th><th class="n">' + t('Fixed', 'ثابت') + '</th><th class="n">' + t('Commission', 'عمولة') + '</th><th class="n">' + t('Private', 'خاص') + '</th><th class="n">' + t('Reception', 'استقبال') + '</th><th class="n">' + t('Total', 'الإجمالي') + '</th></tr></thead><tbody>' + sum + '<tr class="tot"><td colspan="2">' + t('Total', 'الإجمالي') + '</td><td class="n">' + fmt(tot('fixed')) + '</td><td class="n">' + fmt(tot('commission')) + '</td><td class="n">' + fmt(tot('privateBonus')) + '</td><td class="n">' + fmt(tot('receptionBonus')) + '</td><td class="n">' + fmt(tot('total')) + '</td></tr></tbody></table>' + blocks + '</body></html>');
+  w.document.close();
+};
 function salaryRangeRows(from, to, set) {
   const toD = String(to || from).slice(0, 10);
   return withCalcScope(() => (state.coaches || [])
@@ -22484,22 +22542,15 @@ PAGES.salaries = (main) => {
     <div style="background:rgba(91,141,239,.06);border:1px solid rgba(91,141,239,.2);border-radius:8px;padding:12px;margin-bottom:14px;display:flex;gap:10px;align-items:flex-start">
       <div style="font-size:20px">💡</div>
       <div style="font-size:12px;color:var(--text-dim);line-height:1.5">
-        Salaries = <b>Fixed monthly</b> (set per person on the Team page) + <b>Commission</b>, on one of two bases:
+        Salaries = <b>Fixed monthly</b> (set per person on the Team page) + <b>Commission</b>, by attendance:
         <br>• <b>By attendance</b> (current) — <b>fee ÷ total classes × rate%</b> for <b>each class a student attends</b>, counted in the month attended; the unattended remainder stays <span style="color:var(--accent-2)">⏳ Pending</span> and is <b>trued-up</b> in the month the membership expires.
-        <br>• <b>By payment</b> — <b>rate% × the FULL fee</b> of the membership (attendance ignored, <b>whether or not the member has paid</b>), with <b>no carry-forward</b>: credited in the membership's own (billing) month. (Used for private coaches paid a full monthly fee.)
         <br>Frozen memberships don't true-up until they end. Summer Camp earns no commission.
       </div>
     </div>
     </div>
     <div class="card">
       <div class="filter-bar" style="flex-wrap:wrap;align-items:center;gap:10px">
-        <span style="font-size:12px;color:var(--text-mute)">Commission basis <span class="text-mute" style="font-size:10px">(club default)</span>:</span>
-        <span class="badge active" style="font-size:11px" title="The club-wide default. Individual coaches can override it on the Team page (Commission basis). This badge is locked to prevent accidental changes — use ‘change…’.">🔒 ${(state.settings?.commissionBasis === 'payment') ? t('By payment (full amount, in the membership\'s month)', 'بالدفع (المبلغ الكامل، في شهر الاشتراك)') : t('By attendance (per class attended)', 'بالحضور (لكل حصة)')}</span>
-        <button id="sal-basis-change" class="btn ghost sm" style="font-size:10px;opacity:.6" title="Admin: switch the club-wide default (each coach can still override it on the Team page)">change…</button>
-        <select id="sal-basis" class="btn ghost" style="display:none">
-          <option value="payment" ${(state.settings?.commissionBasis || 'payment') === 'payment' ? 'selected' : ''}>By payment (the full fee, in the membership's month — paid or not)</option>
-          <option value="attendance" ${state.settings?.commissionBasis === 'attendance' ? 'selected' : ''}>By attendance (per class attended)</option>
-        </select>
+        <span style="font-size:12px;color:var(--text-mute)">${t('Commission', 'العمولة')}:</span> <span class="badge active" style="font-size:11px">${t('By attendance (per class attended)', 'بالحضور (لكل حصة)')}</span>
         <label id="sal-attended-only" style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-mute);cursor:pointer" title="${t('When ON, an EXPIRED membership pays the coach ONLY for classes actually attended — no true-up of carried-forward / unused sessions. Applies to every coach except those overridden on the Team page. (Attendance basis only.)', 'عند التفعيل، العضوية المنتهية تدفع للمدرب مقابل الحصص المحضورة فقط — دون احتساب الحصص المُرحّلة/غير المحضورة. تنطبق على كل المدربين إلا من له إعداد خاص في صفحة الفريق. (أساس الحضور فقط.)')}">
           <input type="checkbox" id="sal-attended-only-cb" ${state.settings?.payAttendedOnly ? 'checked' : ''} /> ${t('Exclude carried-forward for expired (pay attended only)', 'استبعاد المُرحّل للمنتهية (دفع المحضور فقط)')}
         </label>
@@ -22515,10 +22566,6 @@ PAGES.salaries = (main) => {
         <span style="opacity:.35">|</span>
         <span style="font-size:12px;color:var(--text-mute)" title="Commission only counts memberships dated on or after this date. Fixed salary is not affected.">Commission from:</span>
         <input type="date" id="sal-comm-start" value="${commissionStartDate()}" disabled class="btn ghost" style="font-size:12px;opacity:.85" title="${t('Fixed: the system started on 1 June 2026 and May was paid in full, so only packages starting on or after this date earn commission.', 'ثابت: النظام بدأ يوم 1 يونيو 2026 ومايو اتصرف بالكامل، فالعمولة على الباقات التي تبدأ من هذا التاريخ فقط.')}" />
-        ${currentRole() === 'admin' ? `<span style="opacity:.35">|</span>
-        <span style="font-size:12px;color:var(--text-mute)" title="${t('Private packages: the extra every coach earns on top of his commission (a coach can have his own % on the Team page), and reception\'s own share when reception brought the customer. Default 10 and 10.', 'الباقات الخاصة: الإضافة التي يكسبها كل مدرب فوق عمولته (ولكل مدرب نسبته الخاصة من صفحة الفريق)، وحصة الاستقبال عندما يجلب العميل. الافتراضي 10 و10.')}">🔒 ${t('Private', 'الخاص')}:</span>
-        <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text-mute)">${t('coach +', 'المدرب +')}<input type="number" id="sal-priv-coach" min="0" max="100" step="0.5" value="${privateCoachPctDefault()}" class="btn ghost" style="width:64px;font-size:12px" />%</label>
-        <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text-mute)">${t('reception', 'الاستقبال')}<input type="number" id="sal-priv-rec" min="0" max="100" step="0.5" value="${privateBonusPct()}" class="btn ghost" style="width:64px;font-size:12px" />%</label>` : ''}
         <span style="opacity:.35">|</span>
         <span style="font-size:12px;color:var(--text-mute)">or settle up to:</span>
         <input type="date" id="sal-date" class="btn ghost" value="${filter.settleDate || ''}" title="Calculate pay up to this date — e.g. a coach's last working day. Clear it to go back to the whole month." />
@@ -22529,6 +22576,7 @@ PAGES.salaries = (main) => {
         <span style="color:var(--text-mute)">→</span>
         <input type="date" id="sal-to" class="btn ghost" value="${filter.rangeTo || ''}" />
         <button id="sal-range-clear" class="btn ghost sm" title="${t('Back to the month', 'رجوع للشهر')}" style="${filter.rangeFrom ? '' : 'display:none'}">✕</button>
+        <button id="sal-range-print" class="btn ghost sm" title="${t('Print the report for these dates, with the details', 'اطبع تقرير هذه التواريخ بالتفاصيل')}" style="${filter.rangeFrom && filter.rangeTo ? '' : 'display:none'}">🖨 ${t('Print', 'طباعة')}</button>
       </div>
       <div class="table-wrap">
         <table>
@@ -22553,29 +22601,6 @@ PAGES.salaries = (main) => {
   window._salRecalc = refresh;   // v6.436 — the 🔄 Recalculate button re-runs the live commission compute
   $('#sal-month').addEventListener('change', e => { filter.month = e.target.value; window._salMonth = filter.month; refresh(); });
   $('#sal-coachset').addEventListener('change', e => { filter.coachSet = e.target.value; window._salCoachSet = filter.coachSet; refresh(); });
-  const salBasisChange = $('#sal-basis-change');
-  if (salBasisChange) salBasisChange.addEventListener('click', () => {
-    if (currentRole() !== 'admin') { toast('Only an admin can change the commission basis.'); return; }
-    const sel = $('#sal-basis');
-    if (sel) { sel.style.display = ''; sel.focus(); }
-    salBasisChange.style.display = 'none';
-  });
-  const salBasis = $('#sal-basis');
-  if (salBasis) salBasis.addEventListener('change', e => {
-    if (!state.settings) state.settings = {};
-    const next = e.target.value === 'attendance' ? 'attendance' : 'payment';
-    // Switching away from attendance changes how every coach is paid — confirm.
-    if (next === 'payment') {
-      if (!confirm('Switch to "By payment"? This pays each coach rate% of the FULL fee (whether or not it has been paid), credited in the membership\'s own (billing) month — full rate, attendance ignored, no carry-forward across months — used for private coaches on a full monthly fee. It replaces the attendance basis + expiry true-up for everyone.\n\nAre you sure?')) {
-        e.target.value = 'attendance';   // revert the select
-        return;
-      }
-    }
-    state.settings.commissionBasis = next;
-    
-    refresh();
-    confirmSaved('Commission basis: ' + (state.settings.commissionBasis === 'attendance' ? 'by attendance ✅' : 'by payment'));
-  });
   const salAttendedOnly = $('#sal-attended-only-cb');
   if (salAttendedOnly) salAttendedOnly.addEventListener('change', e => {
     if (currentRole() !== 'admin') { toast('Only an admin can change this', 'error'); e.target.checked = !!(state.settings && state.settings.payAttendedOnly); return; }
@@ -22603,14 +22628,6 @@ PAGES.salaries = (main) => {
     try { if (typeof audit === 'function') audit('settings.private_pct', 'settings', 'Private %: coach +' + before.coach + '% → +' + privateCoachPctDefault() + '%, reception ' + before.reception + '% → ' + privateBonusPct() + '%', before); } catch (_) {}
     return { ok: true, coach: privateCoachPctDefault(), reception: privateBonusPct() };
   };
-  const _savePriv = () => {
-    const r = window.setPrivatePcts(($('#sal-priv-coach') || {}).value, ($('#sal-priv-rec') || {}).value);
-    if (!r.ok) { const ci = $('#sal-priv-coach'), ri = $('#sal-priv-rec'); if (ci) ci.value = privateCoachPctDefault(); if (ri) ri.value = privateBonusPct(); return; }
-    save(); refresh();
-    toast(t('Private %: coach +' + r.coach + '% · reception ' + r.reception + '%', 'نسبة الخاص: المدرب +' + r.coach + '% · الاستقبال ' + r.reception + '%'));
-  };
-  $('#sal-priv-coach')?.addEventListener('change', _savePriv);
-  $('#sal-priv-rec')?.addEventListener('change', _savePriv);
   const salDate = $('#sal-date');
   if (salDate) salDate.addEventListener('change', e => {
     filter.settleDate = e.target.value || null;
@@ -22627,6 +22644,7 @@ PAGES.salaries = (main) => {
     if (sel) { sel.disabled = on || !!filter.settleDate; sel.style.opacity = sel.disabled ? '.5' : ''; }
     if (sd) { sd.disabled = on; sd.style.opacity = on ? '.5' : ''; }
     if (cl) cl.style.display = (filter.rangeFrom || filter.rangeTo) ? '' : 'none';
+    const pr = $('#sal-range-print'); if (pr) pr.style.display = on ? '' : 'none';
     refresh();
   };
   const _rangeChanged = () => {
@@ -22639,6 +22657,7 @@ PAGES.salaries = (main) => {
   };
   $('#sal-from')?.addEventListener('change', _rangeChanged);
   $('#sal-to')?.addEventListener('change', _rangeChanged);
+  $('#sal-range-print')?.addEventListener('click', () => { if (filter.rangeFrom && filter.rangeTo) window.salaryRangePrint(filter.rangeFrom, filter.rangeTo, filter.coachSet); });
   $('#sal-range-clear')?.addEventListener('click', () => { if ($('#sal-from')) $('#sal-from').value = ''; if ($('#sal-to')) $('#sal-to').value = ''; _rangeSet(null, null); });
   if (filter.rangeFrom && filter.rangeTo) { const sel = $('#sal-month'), sd = $('#sal-date'); if (sel) { sel.disabled = true; sel.style.opacity = '.5'; } if (sd) { sd.disabled = true; sd.style.opacity = '.5'; } }
   refresh();
@@ -26303,6 +26322,10 @@ PAGES.settings = (main, section) => {
         <div class="field"><label>📣 ${t('Advertising: % of income above', 'دعاية وإعلان: نسبة من الدخل فوق')}</label><div style="display:flex;gap:8px"><input id="pref-ad-rate" type="number" min="0" max="100" step="0.5" value="${adShareSettings().rate}" style="width:90px" /><span style="align-self:center">%</span><input id="pref-ad-threshold" type="number" min="0" step="500" value="${adShareSettings().threshold}" style="flex:1" /><span style="align-self:center">QAR</span></div><div class="text-mute" style="font-size:11px;margin-top:4px">${t('Shown each month on the Expenses screen as a pending item (like rent and Citadel), due on the last day. Press Pay there to record it.', 'تظهر كل شهر في المصروفات كبند مستحق (مثل الإيجار وسيتادل) وتُستحق آخر يوم. اضغط سداد لتسجيلها.')}</div></div>
       </div>
       <div class="form-row">
+        <div class="field"><label>🔒 ${t('Private packages: coach extra (club default)', 'الباقات الخاصة: زيادة المدرب (الافتراضي)')}</label><div style="display:flex;gap:8px;align-items:center"><input id="pref-priv-coach" type="number" min="0" max="100" step="0.5" value="${privateCoachPctDefault()}" style="width:90px" /><span>%</span></div><div class="text-mute" style="font-size:11px;margin-top:4px">${t('Every coach gets this extra on a private package, unless you set his own % on the Team page.', 'كل مدرب يأخذ هذه الزيادة على الباقة الخاصة، إلا لو حدّدت له نسبة خاصة من صفحة الفريق.')}</div></div>
+        <div class="field"><label>🔒 ${t('Private packages: reception share', 'الباقات الخاصة: حصة الاستقبال')}</label><div style="display:flex;gap:8px;align-items:center"><input id="pref-priv-rec" type="number" min="0" max="100" step="0.5" value="${receptionPoolPct(String(TODAY || '').slice(0, 7))}" style="width:90px" /><span>%</span></div><div class="text-mute" style="font-size:11px;margin-top:4px">${t("Reception's share of a private package, split equally between the reception staff (default 5%).", 'حصة الاستقبال من الباقة الخاصة، توزع بالتساوي على موظفي الاستقبال (الافتراضي 5%).')}</div></div>
+      </div>
+      <div class="form-row">
         <div class="field"><label>🔒 ${t('Close the books through', 'إقفال الدفاتر حتى')}</label><select id="pref-lockedthrough"><option value="">${t('— not locked —', '— غير مقفل —')}</option>${(() => { const o = []; const d = new Date(TODAY + 'T00:00:00'); for (let k = 0; k < 24; k++) { const ym = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); o.push(`<option value="${ym}" ${cur.lockedThrough === ym ? 'selected' : ''}>${ym}</option>`); d.setMonth(d.getMonth() - 1); } return o.join(''); })()}</select>
           <div class="text-mute" style="font-size:11px;margin-top:4px">${t('Reception can no longer add or change payments, invoices, returns or expenses dated in or before this month. Admin is not blocked.', 'الاستقبال لا يستطيع إضافة أو تعديل مدفوعات أو فواتير أو مرتجعات أو مصروفات في هذا الشهر أو قبله. المسؤول غير مقيّد.')}</div></div>
         <div class="field"><label>🔑 ${t('System PIN', 'رمز النظام')}</label><button type="button" class="btn ghost" onclick="changeSystemPin()">${t('Change PIN', 'تغيير الرمز')}</button></div>
@@ -26318,16 +26341,7 @@ PAGES.settings = (main, section) => {
 
     <div class="card" data-sset="club">
       <div class="card-header"><div><div class="card-title">${t('Coach Commission Rates', 'نسب عمولة المدربين')}</div><div class="card-subtitle">Commission is calculated as this % of each coach's total paid amount (subscription value)</div></div></div>
-      <div style="background:var(--surface-2);border-radius:8px;padding:12px;margin-bottom:14px">
-        <label style="font-weight:600;font-size:13px;display:block;margin-bottom:6px">Commission basis</label>
-        <select id="pref-commbasis" style="min-width:300px">
-          <option value="payment" ${(cur.commissionBasis || 'payment') === 'payment' ? 'selected' : ''}>By payment — the full fee counts in the membership's month, paid or not (current)</option>
-          <option value="attendance" ${cur.commissionBasis === 'attendance' ? 'selected' : ''}>By attendance — per class attended; the rest shows as pending</option>
-        </select>
-        <div class="text-mute" style="font-size:11px;margin-top:6px;line-height:1.5">
-          <b>By payment</b> is the original behaviour. <b>By attendance</b> pays each coach per class the member actually attends, in the month attended; paid-but-unattended classes appear as <b>pending</b> and pay out as they're attended or when the membership ends. Memberships with no class count and sport-switch credits stay on the payment basis. This changes how payroll is calculated from now on — it does <b>not</b> rewrite past payments. <b>Requires attendance to be marked each month.</b>
-        </div>
-      </div>
+      <div class="text-mute" style="font-size:12px;margin-bottom:14px">${t('Every coach is paid by attendance — per class the member attends, in the month attended; the rest shows as pending.', 'كل المدربين بيقبضوا بحضور الطلاب — لكل حصة بيحضرها العضو، في شهر الحضور؛ والباقي يظهر معلّق.')}</div>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Coach</th><th>Status</th><th style="width:160px">Commission rate (%)</th></tr></thead>
@@ -26553,6 +26567,15 @@ PAGES.settings = (main, section) => {
     }
     const auditEl = $('#pref-auditenabled');
     if (auditEl && currentRole() === 'admin') { if (!!state.settings.auditEnabled !== !!auditEl.checked) audit('settings.audit_toggle', 'settings:audit', 'Full audit log turned ' + (auditEl.checked ? 'ON' : 'OFF')); state.settings.auditEnabled = !!auditEl.checked; }   // v6.580
+    { const _pc = $('#pref-priv-coach'), _pr = $('#pref-priv-rec');   // v6.1089 — the private % defaults live here (Preferences), not on the Salaries bar
+      if (_pc && _pr && currentRole() === 'admin') {
+        const c = parseFloat(_pc.value), r = parseFloat(_pr.value);
+        if (isFinite(c) && c >= 0 && c <= 100 && isFinite(r) && r >= 0 && r <= 100) {
+          const before = { coach: privateCoachPctDefault(), reception: receptionPoolPct(String(TODAY || '').slice(0, 7)) };
+          state.settings.privateCoachPct = c; state.settings.receptionPctNew = r;
+          if (before.coach !== c || before.reception !== r) { try { if (typeof audit === 'function') audit('settings.private_pct', 'settings', 'Private %: coach +' + before.coach + '% → +' + c + '%, reception ' + before.reception + '% → ' + r + '%', before); } catch (_) {} }
+        }
+      } }
     { const _r = $('#pref-ad-rate'), _t = $('#pref-ad-threshold'); if (_r && _t && currentRole() === 'admin') { const rate = parseFloat(_r.value), thr = parseFloat(_t.value); if (isFinite(rate) && rate >= 0 && isFinite(thr) && thr >= 0) state.settings.adShare = Object.assign({}, state.settings.adShare, { rate, threshold: thr }); } }   // v6.877
     const lockEl = $('#pref-lockedthrough');
     if (lockEl && currentRole() === 'admin') { const nv = lockEl.value || null; if ((state.settings.lockedThrough || null) !== nv) audit('settings.lock', 'settings:lock', 'Books locked through ' + (nv || '(none)') + ' (was ' + (state.settings.lockedThrough || 'none') + ')'); state.settings.lockedThrough = nv; }   // v6.868
@@ -26580,8 +26603,7 @@ PAGES.settings = (main, section) => {
       if (c && c.rate !== rate) { c.rate = rate; changed++; }
     });
     if (!state.settings) state.settings = {};
-    const basisSel = $('#pref-commbasis');
-    const newBasis = basisSel && basisSel.value === 'attendance' ? 'attendance' : 'payment';
+    const newBasis = 'attendance';
     const basisChanged = state.settings.commissionBasis !== newBasis;
     state.settings.commissionBasis = newBasis;
     
