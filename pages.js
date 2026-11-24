@@ -458,7 +458,7 @@ PAGES.targets = (main) => {
     const _cntCard = `<div ${role === 'admin' ? `style="cursor:pointer" onclick="coachTargetDetail('*', '${ym}')" title="${t('Show every new / renew transaction this month', 'عرض كل عمليات الجديد/التجديد هذا الشهر')}"` : ''}>${_targetCard('🧾', t('Reception — New / Renew Target', 'الاستقبال — هدف الجديد والتجديد'), t('New members + renewals this month (same as the Dashboard)', 'الأعضاء الجدد + التجديدات هذا الشهر (نفس الداشبورد)'), income, _rTiers, 'count')}</div>`;
     const receptionCard = `<div style="max-width:420px;margin:0 auto 6px">${_byCnt ? _cntCard : role === 'admin' ? _targetCard('🧾', t('Reception — Income Target', 'الاستقبال — هدف الدخل'), t('Income this month (membership + rentals + shop)', 'الدخل هذا الشهر (اشتراكات + إيجارات + متجر)'), income, _rTiers, 'QAR') : _targetCardNoIncome('🧾', t('Reception — Income Target', 'الاستقبال — هدف الدخل'), t('Progress this month', 'التقدم هذا الشهر'), income, _rTiers)}</div>`;
     const _recTT = targetTier(income, _rTiers);
-    const _recAll = (state.coaches || []).filter(c => _coachActive(c) && isReceptionStaff(c));
+    const _recAll = (state.coaches || []).filter(c => _coachActive(c) && isReceptionStaff(c) && (!c.joinedDate || String(c.joinedDate).slice(0, 10) <= ym + '-31'));   // v6.1101 — only those who had joined the club by this month share the bonus
     const _recps = _recAll;   // v6.840 — equal slices for ALL receptionists; an unticked one forfeits his slice
     const _n = _recps.length;
     const per = _n > 0 ? Math.round(_recTT.bonus / _n) : _recTT.bonus;
@@ -495,7 +495,10 @@ PAGES.targets = (main) => {
             <div class="text-mute" style="font-size:11px;margin-top:3px">${t('Reception bonus', 'مكافأة الاستقبال')} ${fmt(_recTT.bonus)} QAR${_n > 1 ? ` · ${t('split', 'مقسّمة')} ${_n} ${t('ways', 'حصص')}` : ''}</div>
           </div>`
         : `<div class="card" style="max-width:420px;margin:6px auto 0;padding:12px 14px;text-align:center"><div style="font-size:12px">${_recTT.next ? `🎯 ${t('Next goal pays', 'الهدف التالي يدفع')} <b style="color:var(--green)">${fmt(_recTT.next.bonus)} QAR</b>${_n > 1 ? ` (${t('split', 'مقسّمة')} ${_n} ${t('ways', 'حصص')})` : ''}` : ''}</div></div>`;
-      bodyHtml = receptionCard + mine;
+      const _jd = _me && _me.joinedDate ? String(_me.joinedDate).slice(0, 10) : '';   // v6.1101 — counted from the day he joined the club
+      const _late = _jd && _jd.slice(0, 7) > ym;
+      const since = _jd ? `<div class="card" style="max-width:420px;margin:6px auto 0;padding:10px 14px;text-align:center;font-size:12px">📅 ${t('In the club since', 'في النادي منذ')} <b>${fmtDate(_jd)}</b>${_late ? ` — ${t('your share of the bonus starts from', 'نصيبك من المكافأة يبدأ من')} <b>${fmtMonth(_jd.slice(0, 7))}</b>` : ''}</div>` : '';
+      bodyHtml = receptionCard + since + (_late ? '' : mine);
     }
   }
 
@@ -3392,7 +3395,7 @@ function mcPhoneFmt(p) {
 function mcPhoneHtml(phone, size) {
   const tel = String(phone || '').replace(/[^\d+]/g, ''), url = (typeof waLink === 'function') ? waLink(phone) : '';
   const icon = (typeof waIconSvg === 'function') ? waIconSvg(Math.round((size || 18) * 1.1)) : '💬';
-  return `<a class="mc-phone-num" href="tel:${escapeHtml(tel)}" style="font-size:${size || 18}px" title="${t('Call', 'اتصال')}" onclick="event.stopPropagation()">${escapeHtml(mcPhoneFmt(phone))}</a><a class="mc-wa" href="${url}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="WhatsApp">${icon}</a>`;
+  return `<span class="mc-phone-num" style="font-size:${size || 18}px;user-select:text">${escapeHtml(mcPhoneFmt(phone))}</span><a class="mc-wa" href="${url}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="WhatsApp">${icon}</a>`;
 }
 window.viewMember = viewMember;
 
@@ -3912,12 +3915,12 @@ function enrollRowHtml(row, idx) {
       ${expiryHint ? `<div style="font-size:10px;color:var(--blue);margin-top:7px;padding-left:2px">${expiryHint}</div>` : ''}${isCamp ? `<div style="font-size:10px;color:var(--blue);margin-top:5px;padding-left:2px">🌞 Summer Camp · revenue goes to club, no coach commission</div>` : ''}${isMixed ? `<div style="font-size:10px;color:var(--blue);margin-top:5px;padding-left:2px">🎯 ${t('Mixed · one package to try many sports · pick the sport + coach for each class in Attendance · commission splits to the coach who taught each class', 'مختلط · باقة واحدة لتجربة عدة رياضات · اختر الرياضة والمدرب لكل حصة في الحضور · تُقسَّم العمولة على المدرب الذي درّب كل حصة')}</div>` : ''}${row.paid ? `<div style="font-size:10px;color:var(--text-mute);margin-top:5px;padding-left:2px">🔒 Paid — editing the <b>price</b> adjusts the linked invoice (revenue + commission update too); editing start/validity adjusts this sport's window. ${(row.attended || 0) > 0 ? `The sport is <b>locked</b> because the member already attended <b>${row.attended}</b> class${(row.attended) === 1 ? '' : 's'} — use <b style="color:var(--accent-2)">↩ Withdraw</b> or <b style="color:var(--blue)">Switch Sport</b> to change it.` : `No classes attended yet, so you can still <b>change the sport directly</b> here — the linked invoice and commission move with it.`} <b style="color:var(--red)">🗑</b> deletes a mistake (no refund).</div>` : ''}
       ${(isCamp || isMixed) ? '' : `<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:8px;padding-top:8px;border-top:1px dashed var(--border)">
         <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;cursor:pointer"><input type="checkbox" data-en="private" data-i="${idx}" ${row.private ? 'checked' : ''} /> 🔒 ${t('Private', 'خاص')}</label>
-        ${(!row.private && (() => { const rc = (state.coaches || []).find(c => String(c.id) === String(row.coachId)); return !!(rc && isPrivateSport(rc.name || '')); })()) ? `<span style="font-size:11px;font-weight:600;color:var(--accent-2)">⚠ ${t('This is a private coach — tick Private so the 10% bonus is paid.', 'هذا مدرب خاص — فعّل «خاص» ليُدفع بونس 10%.')}</span>` : ''}
+        ${(!row.private && (() => { const rc = (state.coaches || []).find(c => String(c.id) === String(row.coachId)); return !!(rc && isPrivateSport(rc.name || '')); })()) ? `<span style="font-size:11px;font-weight:600;color:var(--accent-2)">⚠ ${t('This is a private coach — tick Private so the private bonus is paid.', 'هذا مدرب خاص — فعّل «خاص» ليُدفع البونس.')}</span>` : ''}
         ${row.private ? `<div class="field" style="margin:0;min-width:230px"><select data-en="approach" data-i="${idx}" style="${(row.approach === 'coach' || row.approach === 'reception') ? '' : 'border-color:var(--accent)'}">
             <option value="">${t('— Approached by… —', '— تم التواصل عن طريق… —')}</option>
             <option value="coach" ${row.approach === 'coach' ? 'selected' : ''}>${t('Approached by the coach', 'عن طريق المدرب')}</option>
             <option value="reception" ${row.approach === 'reception' ? 'selected' : ''}>${t('Approached by reception', 'عن طريق الاستقبال')}</option></select></div>
-          <span class="text-mute" style="font-size:11px">${row.approach === 'coach' ? t('The coach earns +' + privateCoachPctDefault() + '% on top of his commission.', 'يحصل المدرب على +' + privateCoachPctDefault() + '% فوق عمولته.') : row.approach === 'reception' ? t(receptionPoolPct() + '% goes to the reception staff, shared equally.', receptionPoolPct() + '% لموظفي الاستقبال بالتساوي.') : t('Required: who brought this customer?', 'مطلوب: من أحضر هذا العميل؟')}</span>` : ''}
+          <span class="text-mute" style="font-size:11px">${(row.approach === 'coach' || row.approach === 'reception') ? '' : t('Required: who brought this customer?', 'مطلوب: من أحضر هذا العميل؟')}</span>` : ''}
       </div>`}
     </div>`;
 }
@@ -22320,14 +22323,14 @@ window.openPrivateCheck = function (monthKey) {
       <td style="font-size:11px;white-space:nowrap">${x.sub.start ? fmtDate(x.sub.start) : '—'} → ${x.sub.end ? fmtDate(x.sub.end) : '—'}</td>
       <td class="text-right num">${fmt(x.sub.amountPaid || 0)}</td>
       <td style="white-space:nowrap">
-        <button class="btn ghost sm" onclick="markPackagePrivate(${i}, 'coach')" title="${t('Approached by the coach: coach +' + privateCoachPctDefault() + '%', 'عن طريق المدرب')}">🏃 ${t('Coach', 'مدرب')}</button>
-        <button class="btn ghost sm" onclick="markPackagePrivate(${i}, 'reception')" title="${t('Approached by reception: ' + receptionPoolPct() + '% shared by reception', 'عن طريق الاستقبال')}">🧾 ${t('Reception', 'استقبال')}</button>
+        <button class="btn ghost sm" onclick="markPackagePrivate(${i}, 'coach')" title="${t('Approached by the coach', 'عن طريق المدرب')}">🏃 ${t('Coach', 'مدرب')}</button>
+        <button class="btn ghost sm" onclick="markPackagePrivate(${i}, 'reception')" title="${t('Approached by reception', 'عن طريق الاستقبال')}">🧾 ${t('Reception', 'استقبال')}</button>
         <button class="btn ghost sm" onclick="markPackagePrivate(${i}, 'none')" title="${t('Not a private package — stop listing it', 'ليست باقة خاصة')}">✕ ${t('Not private', 'ليست خاصة')}</button>
       </td></tr>`).join('');
   showModal({
     title: '🔒 ' + t('Private check', 'فحص الخاص') + ' · ' + escapeHtml(label),
     size: 'xl',
-    body: `<div class="text-mute" style="font-size:12px;margin-bottom:8px;line-height:1.6">${t('These packages are with a private coach (or a private sport) but not marked Private, so no private bonus is paid on them. For each one say who approached the customer — the coach (coach earns +' + privateBonusPct() + '%) or reception (' + receptionPoolPct() + '% shared by the reception staff) — or mark it Not private.', 'هذه الباقات لدى مدرب خاص (أو رياضة خاصة) لكنها غير معلَّمة كخاصة، فلا يُدفع عليها بونس. لكل واحدة حدّد من أحضر العميل — المدرب أو الاستقبال — أو علّمها ليست خاصة.')}</div>
+    body: `<div class="text-mute" style="font-size:12px;margin-bottom:8px;line-height:1.6">${t('These packages are with a private coach (or a private sport) but not marked Private, so no private bonus is paid on them. For each one say who approached the customer — the coach or reception — or mark it Not private.', 'هذه الباقات لدى مدرب خاص (أو رياضة خاصة) لكنها غير معلَّمة كخاصة، فلا يُدفع عليها بونس. لكل واحدة حدّد من أحضر العميل — المدرب أو الاستقبال — أو علّمها ليست خاصة.')}</div>
       ${list.length ? `<div class="table-wrap"><table style="width:100%;font-size:12.5px"><thead><tr><th>#</th><th style="text-align:left">${t('Member', 'العضو')}</th><th style="text-align:left">${t('Sport', 'الرياضة')}</th><th style="text-align:left">${t('Coach', 'المدرب')}</th><th style="text-align:left">${t('Period', 'الفترة')}</th><th class="text-right">${t('Paid', 'المدفوع')}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
         : `<div style="text-align:center;padding:22px;color:var(--green);font-weight:700">✅ ${t('Nothing to check — every package under a private coach is classified.', 'لا شيء للفحص — كل باقة لدى مدرب خاص مصنَّفة.')}</div>`}`,
     actions: [{ label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal }],
@@ -31312,7 +31315,7 @@ window.addRenewal = function(memberId, opts) {   // opts.start / opts.sport (v6.
           <select id="rn-approach" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)">
             <option value="">${t('— Approached by… —', '— تم التواصل عن طريق… —')}</option>
             <option value="coach">${t('Approached by the coach (coach +' + privateCoachPctDefault() + '%)', 'عن طريق المدرب (المدرب +' + privateCoachPctDefault() + '%)')}</option>
-            <option value="reception">${t('Approached by reception (' + receptionPoolPct() + '% shared by reception)', 'عن طريق الاستقبال (' + receptionPoolPct() + '% للاستقبال)')}</option>
+            <option value="reception">${t('Approached by reception', 'عن طريق الاستقبال')}</option>
           </select>
         </div>
         <div id="rn-priv-hint" class="text-mute" style="font-size:11px"></div>
@@ -31573,8 +31576,7 @@ window.addRenewal = function(memberId, opts) {   // opts.start / opts.sport (v6.
     const chk = $('#rn-private'), sel = $('#rn-approach'), wrap = $('#rn-priv-wrap'), hint = $('#rn-priv-hint');
     if (!chk || !sel) return;
     if (wrap) wrap.style.display = chk.checked ? 'grid' : 'none';
-    if (hint) hint.textContent = !chk.checked ? '' : (sel.value === 'coach' ? t('The coach earns +' + privateCoachPctDefault() + '% on top of his commission.', 'يحصل المدرب على +' + privateCoachPctDefault() + '% فوق عمولته.')
-      : sel.value === 'reception' ? t(receptionPoolPct() + '% goes to the reception staff, shared equally.', receptionPoolPct() + '% لموظفي الاستقبال بالتساوي.') : t('Required: who brought this customer?', 'مطلوب: من أحضر هذا العميل؟'));
+    if (hint) hint.textContent = !chk.checked ? '' : ((sel.value === 'coach' || sel.value === 'reception') ? '' : t('Required: who brought this customer?', 'مطلوب: من أحضر هذا العميل؟'));
   }
   function applyRnPrivateDefault() {
     const box = $('#rn-priv-box'), chk = $('#rn-private'), sel = $('#rn-approach'); if (!box || !chk || !sel) return;
@@ -31894,12 +31896,12 @@ window.editSubscription = function(memberId, sid) {
         </div>` : ''}
         ${(isCampSport(sub.activity || '') || sub.activity === MIXED) ? '' : `<div style="display:grid;gap:6px;padding:8px 10px;border:1px dashed var(--border);border-radius:8px">
           <label style="display:flex;align-items:center;gap:6px;font-weight:600;cursor:pointer"><input type="checkbox" id="es-private" ${sub.private ? 'checked' : ''} onchange="var w=document.getElementById('es-approach-wrap');if(w)w.style.display=this.checked?'grid':'none'" /> 🔒 ${t('Private', 'خاص')}</label>
-          ${(!sub.private && isPrivateSport(((state.coaches || []).find(c => String(c.id) === String(sub.coachId)) || {}).name || '')) ? `<div style="font-size:11px;font-weight:600;color:var(--accent-2)">⚠ ${t('This is a private coach — tick Private so the 10% bonus is paid.', 'هذا مدرب خاص — فعّل «خاص» ليُدفع بونس 10%.')}</div>` : ''}
+          ${(!sub.private && isPrivateSport(((state.coaches || []).find(c => String(c.id) === String(sub.coachId)) || {}).name || '')) ? `<div style="font-size:11px;font-weight:600;color:var(--accent-2)">⚠ ${t('This is a private coach — tick Private so the private bonus is paid.', 'هذا مدرب خاص — فعّل «خاص» ليُدفع البونس.')}</div>` : ''}
           <div id="es-approach-wrap" style="display:${sub.private ? 'grid' : 'none'};gap:4px">
             <select id="es-approach" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text)">
               <option value="">${t('— Approached by… —', '— تم التواصل عن طريق… —')}</option>
               <option value="coach" ${sub.approach === 'coach' ? 'selected' : ''}>${t('Approached by the coach (coach +' + privateCoachPctDefault() + '%)', 'عن طريق المدرب (المدرب +' + privateCoachPctDefault() + '%)')}</option>
-              <option value="reception" ${sub.approach === 'reception' ? 'selected' : ''}>${t('Approached by reception (' + receptionPoolPct() + '% shared by reception)', 'عن طريق الاستقبال (' + receptionPoolPct() + '% للاستقبال)')}</option>
+              <option value="reception" ${sub.approach === 'reception' ? 'selected' : ''}>${t('Approached by reception', 'عن طريق الاستقبال')}</option>
             </select>
           </div></div>`}
         <label style="display:grid;gap:4px">${t('Status', 'الحالة')}
