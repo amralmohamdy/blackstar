@@ -113,7 +113,7 @@ function _expPendingFor(cm) {
   const u = _unpaidAccrualOne(cm), out = [];
   const raw = Number(state.settings && state.settings.citadelRate), rate = (isNaN(raw) || raw < 0) ? 30 : raw;
   if (u.rent > 0.004) out.push({ kind: 'rent', month: cm, amount: u.rent, category: 'Rent', label: t('Monthly rent', 'إيجار الشهر') + ' — ' + fmtMonth(cm), note: t('not paid yet · not in the total', 'غير مدفوع · غير محسوب في الإجمالي') });
-  if (u.citadel > 0.004) out.push({ kind: 'citadel', month: cm, amount: u.citadel, category: CITADEL_SHARE_CATEGORY, label: t('Citadel company share', 'حصة شركة سيتادل') + ' (' + rate + '%, ' + t('max', 'حد أقصى') + ' ' + fmt(citadelCap()) + ') — ' + fmtMonth(cm), note: t('not paid yet · not in the total', 'غير مدفوع · غير محسوب في الإجمالي') });
+  if (u.citadel > 0.004) out.push({ kind: 'citadel', month: cm, amount: u.citadel, category: CITADEL_SHARE_CATEGORY, label: t('Citadel company share', 'حصة شركة سيتادل') + ' (' + rate + '%, ' + t('stops past', 'تقف بعد') + ' ' + fmt(citadelCap()) + ') — ' + fmtMonth(cm), note: t('not paid yet · not in the total', 'غير مدفوع · غير محسوب في الإجمالي') });
   if (u.advertising > 0.004) { const cfg = adShareSettings(); out.push({ kind: 'advertising', month: cm, amount: u.advertising, category: ADVERTISING_CATEGORY, label: t('Advertising', 'دعاية وإعلان') + ' (' + cfg.rate + '% ' + t('of income above', 'من الدخل فوق') + ' ' + Number(cfg.threshold).toLocaleString('en-US') + ') — ' + fmtMonth(cm), note: t('due on the last day of the month · income so far (without football court bookings) ' + Math.round(adIncomeFor(cm) || 0).toLocaleString('en-US') + ' · not paid yet · not in the total', 'مستحق آخر الشهر · الدخل حتى الآن (بدون حجوزات ملعب الكرة) ' + Math.round(adIncomeFor(cm) || 0).toLocaleString('en-US') + ' · غير مدفوع · غير محسوب في الإجمالي') }); }
   if (cm === String(TODAY || '').slice(0, 7)) {   // v6.1054 — this month's salaries, as a pending row like the rent (not in the total); Pay → the Salaries screen
     const so = _salariesOwedFor(cm);
@@ -183,7 +183,7 @@ function _unpaidAccrualOne(cm) {
   try {
     const raw = Number(state.settings && state.settings.citadelRate);
     const rate = (isNaN(raw) || raw < 0) ? 30 : raw;
-    citadel = Math.max(0, Math.round((Math.min(citadelCompute([cm]).grand * rate / 100, citadelCap()) - citadelPaidToCompany([cm])) * 100) / 100);   // v6.1075 — capped per month
+    citadel = Math.max(0, Math.round((citadelMonthShare(cm).share - citadelPaidToCompany([cm])) * 100) / 100);   // v6.1075 — capped per month
   } catch (_) {}
   // v6.877 — advertising: 25% of the month's income above 52,000 (see advertisingAmount), minus what the Pay button already recorded
   let advertising = 0;
@@ -9246,10 +9246,18 @@ PAGES.citadel = (main) => {
 
 // ═══ CITADEL REPORT (v6.1075) — the Citadel screen with the share CAPPED per month (default 1,500; settings.citadelCap). The original Citadel screen is untouched.
 function citadelCap() { const c = Number(state.settings && state.settings.citadelCap); return (c > 0) ? c : 1500; }
-function citadelCappedShare(months) {
+// v6.1083 — a month's Citadel share, invoice by invoice from the oldest: it stops at the invoice that takes the share past the cap and that invoice counts IN FULL (so the share can be a little above the cap)
+function citadelMonthShare(m) {
   const raw = Number(state.settings && state.settings.citadelRate), rate = (isNaN(raw) || raw < 0) ? 30 : raw, cap = citadelCap();
+  const c = citadelCompute([m]);
+  const ds = (c.details || []).slice().sort((p, q) => String(p.date).localeCompare(String(q.date)) || String(p.ref).localeCompare(String(q.ref)));
+  let run = 0;
+  for (let i = 0; i < ds.length; i++) { run += (Number(ds[i].amount) || 0) * rate / 100; if (run >= cap - 0.004) return { share: Math.round(run * 100) / 100, hit: ds[i], n: i + 1 }; }
+  return { share: Math.round(c.grand * rate / 100 * 100) / 100, hit: null, n: 0 };
+}
+function citadelCappedShare(months) {
   let sum = 0;
-  for (const m of (months || [])) sum += Math.min(citadelCompute([m]).grand * rate / 100, cap);
+  for (const m of (months || [])) sum += citadelMonthShare(m).share;
   return Math.round(sum * 100) / 100;
 }
 function citadelReportXlsx(rows, share, paid, RATE, CAP, scopeLabel) {
@@ -9282,7 +9290,7 @@ PAGES.citadelreport = (main) => {
   const groupTotal = (k) => agg[k].membership + agg[k].rent;
   const _selM = window._citMonths.length ? window._citMonths : months, CAP = citadelCap();
   const rawShare = grand * RATE / 100, share = citadelCappedShare(_selM);
-  const capRows = _selM.slice().sort().map(m => { const g = citadelCompute([m]).grand, r = g * RATE / 100; return { m, g, r, c: Math.min(r, CAP) }; }).filter(x => x.g > 0.004);
+  const capRows = _selM.slice().sort().map(m => { const g = citadelCompute([m]).grand, r = g * RATE / 100; return { m, g, r, c: citadelMonthShare(m).share }; }).filter(x => x.g > 0.004);
   const collected = paid || 0;                                   // paid by members for Football/Swimming
   const paidToCompany = citadelPaidToCompany(window._citMonths); // already paid to the facility company
   const balanceDue = Math.round((share - paidToCompany) * 100) / 100;
@@ -9324,7 +9332,7 @@ PAGES.citadelreport = (main) => {
   main.innerHTML = `
     <div class="topbar">
       <div>
-        <h1>🏛 Citadel Report — ${t('share capped at', 'الحصة بسقف')} ${fmt(CAP)} ${t('a month', 'في الشهر')}</h1>
+        <h1>🏛 Citadel Report — ${t('share stops at the invoice that passes', 'الحصة تقف عند الفاتورة اللي تعدّي')} ${fmt(CAP)} ${t('a month', 'في الشهر')}</h1>
         <div class="subtitle">${t('The club pays the facility company a share of all Football + Swimming revenue (membership + rent) under a running contract', 'يدفع النادي لشركة المرافق حصة من كل إيرادات كرة القدم والسباحة (اشتراك + إيجار) بموجب عقد جارٍ')}</div>
       </div>
       <div class="topbar-actions" style="display:flex;gap:8px;align-items:center">
@@ -9343,18 +9351,11 @@ PAGES.citadelreport = (main) => {
         <div class="card-subtitle">${t('Citadel gets', 'تحصل سيتاديل على')} ${RATE}% ${t('of the Football + Swimming income below (memberships + rent)', 'من دخل كرة القدم والسباحة أدناه (اشتراكات + إيجار)')}</div>
       </div></div>
       <div style="display:flex;flex-wrap:wrap;align-items:stretch;gap:10px;padding:4px 4px 12px">
-        <div class="kpi" style="flex:1;min-width:150px;margin:0"><div class="kpi-label">${t('Income', 'الدخل')}</div><div class="kpi-value num">${fmt(grand)}</div><div class="kpi-sub">${t('Football + Swimming', 'كرة القدم + السباحة')}</div></div>
-        <div style="align-self:center;font-weight:800;font-size:20px;color:var(--text-mute)">× ${RATE}% = ${fmt(rawShare)} · ${t('cap', 'السقف')} ${fmt(CAP)}/${t('month', 'شهر')} →</div>
         <div class="kpi" style="flex:1;min-width:150px;margin:0;border-color:var(--red)"><div class="kpi-label" style="color:var(--red)">${t('Citadel share', 'حصة سيتاديل')}</div><div class="kpi-value num" style="color:var(--red)">${fmt(share)}</div><div class="kpi-sub">${t('total owed', 'إجمالي المستحق')}</div></div>
-        <div style="align-self:center;font-weight:800;font-size:20px;color:var(--text-mute)">−</div>
-        <div class="kpi" style="flex:1;min-width:150px;margin:0"><div class="kpi-label" style="color:var(--green)">${t('Already paid', 'اللي اتدفع')}</div><div class="kpi-value num" style="color:var(--green)">${fmt(paidToCompany)}</div><div class="kpi-sub">${t('expenses “Citadel Company Share”', 'مصروفات «حصة شركة سيتادل»')}</div></div>
-        <div style="align-self:center;font-weight:800;font-size:20px;color:var(--text-mute)">=</div>
-        <div class="kpi" style="flex:1;min-width:150px;margin:0;border-color:${balanceDue > 0.5 ? 'var(--red)' : 'var(--green)'};background:${balanceDue > 0.5 ? 'rgba(239,68,68,.07)' : 'rgba(16,185,129,.07)'}"><div class="kpi-label" style="color:${balanceDue > 0.5 ? 'var(--red)' : 'var(--green)'}">${t('Still to pay', 'المتبقي للدفع')}</div><div class="kpi-value num" style="color:${balanceDue > 0.5 ? 'var(--red)' : 'var(--green)'}">${fmt(balanceDue)}</div><div class="kpi-sub">${balanceDue > 0.5 ? t('to pay Citadel', 'يُدفع لسيتاديل') : '✓ ' + t('settled', 'مسدّد')}</div></div>
       </div>
-      <div class="text-mute" style="font-size:12px;padding:0 4px 4px">💵 ${t('Members have paid', 'الأعضاء دفعوا')} <b>${fmt(collected)}</b> ${t('of the', 'من')} ${fmt(grand)} ${t('income. The share is NOT posted automatically: when you pay Citadel, add it as an expense with the category “Citadel Company Share”.', 'دخل. الحصة لا تُسجَّل تلقائياً: عند الدفع لسيتاديل سجّله كمصروف بفئة «حصة شركة سيتادل».')}</div>
     </div>
 
-    <div class="card">
+    <div class="card cit-fold">
       <div class="card-header"><div>
         <div class="card-title">${t('Where the income comes from', 'من أين جاء الدخل')}</div>
         <div class="card-subtitle">${escapeHtml(scopeLabel)} · ${t('each line × ', 'كل بند × ')}${RATE}% ${t('= Citadel share', '= حصة سيتاديل')}</div>
@@ -9371,19 +9372,14 @@ PAGES.citadelreport = (main) => {
           <td colspan="2">${t('TOTAL', 'الإجمالي')}</td>
           <td class="text-right num" style="font-size:15px">${fmt(grand)}</td>
           <td class="text-right num" style="color:var(--red);font-size:15px">${fmt(rawShare)}</td>
-        </tr><tr style="font-weight:800"><td colspan="3">${t('After the monthly cap', 'بعد سقف الشهر')} (${fmt(CAP)} × ${capRows.length})</td><td class="text-right num" style="color:var(--red);font-size:15px">${fmt(share)}</td></tr></tfoot>
+        </tr><tr style="font-weight:800"><td colspan="3">${t('Citadel share — each month stops at the invoice that passes', 'حصة سيتاديل — كل شهر يقف عند الفاتورة اللي تعدّي')} ${fmt(CAP)}</td><td class="text-right num" style="color:var(--red);font-size:15px">${fmt(share)}</td></tr></tfoot>
       </table></div>
     </div>
 
-    <div class="card" style="margin-top:16px">
-      <div class="card-header"><div><div class="card-title">${t('Month by month — with the cap', 'شهر بشهر — بعد السقف')}</div><div class="card-subtitle">${t('each month: the smaller of the calculated share and', 'كل شهر: الأقل بين الحصة المحسوبة و')} ${fmt(CAP)}</div></div></div>
-      <div class="table-wrap"><table><thead><tr><th>${t('Month', 'الشهر')}</th><th class="text-right">${t('Income', 'الدخل')}</th><th class="text-right">${RATE}%</th><th class="text-right">${t('Share after cap', 'الحصة بعد السقف')}</th></tr></thead><tbody>${capRows.map(x => `<tr><td>${escapeHtml(fmtMonth(x.m))}</td><td class="text-right num">${fmt(x.g)}</td><td class="text-right num text-mute">${fmt(x.r)}</td><td class="text-right num font-bold" style="color:var(--red)">${fmt(x.c)}${x.r > CAP ? ' <span class="badge" style="font-size:10px">' + t('capped', 'سقف') + '</span>' : ''}</td></tr>`).join('') || `<tr><td colspan="4" class="text-mute" style="text-align:center;padding:12px">—</td></tr>`}</tbody></table></div>
-    </div>
-
-    <div class="card" style="margin-top:16px">
+    <div class="card cit-fold" style="margin-top:16px">
       <div class="card-header"><div>
         <div class="card-title">${t('Contributing invoices', 'الفواتير المساهمة')}</div>
-        <div class="card-subtitle">${fDetails.length} ${t('invoice lines counted — each month stops where its share reaches', 'بند محسوب — كل شهر يقف عند وصول الحصة إلى')} ${fmt(CAP)} (${t('income up to', 'دخل حتى')} ${fmt(CAP * 100 / (RATE || 30))})${_after.size ? ' · ' + _after.size + ' ' + t('later lines are not counted', 'بند لاحق غير محسوب') : ''}</div>
+        <div class="card-subtitle">${fDetails.length} ${t('invoice lines counted — each month stops at the invoice where its share passes', 'بند محسوب — كل شهر يقف عند الفاتورة اللي حصته تعدّي فيها')} ${fmt(CAP)}${_after.size ? ' · ' + _after.size + ' ' + t('later lines are not counted', 'بند لاحق غير محسوب') : ''}</div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <select id="cit-ftype" class="btn ghost" style="padding:6px 8px">
@@ -9413,6 +9409,7 @@ PAGES.citadelreport = (main) => {
     </div>`;
 
   bindMonthMulti('cit-month', (mSel) => { window._citMonths = mSel; PAGES.citadelreport(main); });
+  try { _wireCardCollapse({ querySelectorAll: () => main.querySelectorAll('.cit-fold') }); } catch (_) {}   // v6.1083 — the sections fold / unfold
   $('#cit-ftype')?.addEventListener('change', e => { window._citType = e.target.value; PAGES.citadelreport(main); });
   $('#cit-fact')?.addEventListener('change', e => { window._citAct = e.target.value; PAGES.citadelreport(main); });
   $('#cit-rate')?.addEventListener('change', e => {
