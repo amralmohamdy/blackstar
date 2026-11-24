@@ -9305,7 +9305,7 @@ PAGES.citadelreport = (main) => {
   const _hit = new Map(), _after = new Set();   // v6.1076 — per month, invoice by invoice: the one where the share reaches the cap, and every one after it
   { const _by = {}; details.forEach(d => { (_by[d.month] = _by[d.month] || []).push(d); });
     Object.keys(_by).forEach(m => { let run = 0, hit = false; _by[m].slice().sort((p, q) => String(p.date).localeCompare(String(q.date)) || String(p.ref).localeCompare(String(q.ref))).forEach((d, i) => { if (hit) { _after.add(d); return; } run += (Number(d.amount) || 0) * RATE / 100; if (run >= CAP - 0.004) { hit = true; _hit.set(d, i + 1); } }); }); }
-  const fDetails = details.filter(d => (_fType === 'all' || d.type === _fType) && (_fAct === 'all' || d.group.key === _fAct));
+  const fDetails = details.filter(d => !_after.has(d)).filter(d => (_fType === 'all' || d.type === _fType) && (_fAct === 'all' || d.group.key === _fAct));
   const fTotal = fDetails.reduce((s, d) => s + (Number(d.amount) || 0), 0);
   const detailRows = fDetails.length ? fDetails.map((d, i) => `<tr${_after.has(d) ? ' style="opacity:.45"' : ''}>
     <td class="text-mute" style="text-align:center;font-size:12px">${i + 1}${_hit.has(d) ? '<div title="' + t('the share reached the cap here', 'الحصة وصلت للسقف هنا') + '" style="color:var(--red);font-weight:800">🔒</div>' : ''}</td>
@@ -9383,7 +9383,7 @@ PAGES.citadelreport = (main) => {
     <div class="card" style="margin-top:16px">
       <div class="card-header"><div>
         <div class="card-title">${t('Contributing invoices', 'الفواتير المساهمة')}</div>
-        <div class="card-subtitle">${(_fType !== 'all' || _fAct !== 'all') ? fDetails.length + ' ' + t('of', 'من') + ' ' : ''}${details.length} ${t('lines make up the totals above', 'بند يشكّل الإجماليات أعلاه')}</div>
+        <div class="card-subtitle">${fDetails.length} ${t('invoice lines counted — each month stops where its share reaches', 'بند محسوب — كل شهر يقف عند وصول الحصة إلى')} ${fmt(CAP)} (${t('income up to', 'دخل حتى')} ${fmt(CAP * 100 / (RATE || 30))})${_after.size ? ' · ' + _after.size + ' ' + t('later lines are not counted', 'بند لاحق غير محسوب') : ''}</div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <select id="cit-ftype" class="btn ghost" style="padding:6px 8px">
@@ -12283,6 +12283,14 @@ window.openMixedGroups = function (mid) {
     ],
   });
 };
+window._grpGuestAdd = function (gid, mids, rerender) {   // v6.1080 — Mixed members dropped / assigned onto a group become its guests
+  const g = (state.swimGroups || []).find(x => x.id === gid); if (!g) return;
+  g.mixedIds = g.mixedIds || [];
+  mids.forEach(id => { if (!g.mixedIds.includes(id)) g.mixedIds.push(id); });
+  if (typeof audit === 'function') audit('group.mixed', 'group:' + g.id, mids.length + ' Mixed member(s) → ' + (g.name || ''));
+  save(); if (rerender) _swimRerender();
+  toast(mids.length + ' ' + t('Mixed guest(s) added to', 'ضيف ميكس أُضيف إلى') + ' ' + (g.name || ''), 'success');
+};
 window._grpGuestRemove = function (gid, mid) {
   const g = (state.swimGroups || []).find(x => x.id === gid); if (!g) return;
   g.mixedIds = (g.mixedIds || []).filter(id => id !== parseInt(mid));
@@ -12351,12 +12359,15 @@ PAGES.swimgroups = (main) => {
   const assigned = new Set();
   groups.forEach(g => (g.memberIds || []).forEach(id => assigned.add(id)));
   const unassigned = swimmers.filter(m => !assigned.has(m.id));
+  // v6.1080 — the Mixed members (try any sport) are listed on EVERY sport's screen under a separator, until they are a guest of one of this sport's groups
+  const mixedPool = (state.members || []).filter(m => memberHasMixedNow(m) && !swimmerById.has(m.id) && !groups.some(g => (g.mixedIds || []).includes(m.id))).sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  const mixedById = new Map(mixedPool.map(m => [m.id, m]));
 
-  const memberChip = (m, groupId) => {
+  const memberChip = (m, groupId, mixed) => {
     const ar = m.nameArabic ? `<div style="font-size:10px;color:var(--text-mute);direction:rtl">${escapeHtml(m.nameArabic)}</div>` : '';
-    return `<div class="swim-chip" draggable="true" data-mid="${m.id}" data-from="${groupId || ''}"
+    return `<div class="swim-chip" draggable="true" data-mid="${m.id}" data-from="${groupId || ''}"${mixed ? ' data-mixed="1"' : ''}
         style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:10px;cursor:grab;user-select:none">
-      <input type="checkbox" class="swim-cb" data-mid="${m.id}" onclick="event.stopPropagation()" style="cursor:pointer" />
+      <input type="checkbox" class="swim-cb" data-mid="${m.id}"${mixed ? ' data-mixed="1"' : ''} onclick="event.stopPropagation()" style="cursor:pointer" />
       <div style="flex:1;min-width:0">
         <div style="font-weight:700;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(m.name)}">${escapeHtml(m.name)}</div>
         ${ar}
@@ -12444,6 +12455,7 @@ PAGES.swimgroups = (main) => {
         <input id="swim-search" type="search" class="grp-search" placeholder="🔍 ${t('Search subscriber…', 'ابحث عن مشترك…')}" />
         <div class="swim-dropzone grp-pool" data-gid="__pool__" id="swim-pool">
           ${unassigned.length ? unassigned.map(m => memberChip(m, '')).join('') : `<div class="grp-empty">${swimmers.length ? t('Everyone has a group 🎉', 'الكل في مجموعات 🎉') : t('No subscribers in this sport', 'لا يوجد مشتركون في هذه الرياضة')}</div>`}
+          ${mixedPool.length ? `<div class="grp-mixed-sep" style="margin:10px 0 4px;padding-top:8px;border-top:2px dashed var(--border);font-weight:800;font-size:12px;color:#7c3aed">🎯 ${t('Mixed members', 'أعضاء الميكس')} (${mixedPool.length}) <span class="text-mute" style="font-weight:500">· ${t('drag into a group to add as a guest', 'اسحب لمجموعة لإضافته كضيف')}</span></div>${mixedPool.map(m => memberChip(m, '', true)).join('')}` : ''}
         </div>
       </div>
 
@@ -12472,25 +12484,27 @@ PAGES.swimgroups = (main) => {
   document.getElementById('swim-assign')?.addEventListener('click', () => {
     const gid = document.getElementById('swim-selgroup').value;
     if (!gid) { toast(t('Create a group first', 'أنشئ مجموعة أولاً'), 'error'); return; }
-    const ids = [...document.querySelectorAll('.swim-cb:checked')].map(cb => parseInt(cb.dataset.mid));
-    window._swimAssign(gid, ids);
+    const cbs = [...document.querySelectorAll('.swim-cb:checked')];
+    const ids = cbs.filter(cb => !cb.dataset.mixed).map(cb => parseInt(cb.dataset.mid)), gst = cbs.filter(cb => cb.dataset.mixed).map(cb => parseInt(cb.dataset.mid));
+    if (gst.length) window._grpGuestAdd(gid, gst, !ids.length);
+    if (ids.length) window._swimAssign(gid, ids);
   });
 
   // ── Search filter (pool) ──
   document.getElementById('swim-search')?.addEventListener('input', e => {
     const q = e.target.value.trim().toLowerCase();
     document.querySelectorAll('#swim-pool .swim-chip').forEach(chip => {
-      const m = swimmerById.get(parseInt(chip.dataset.mid));
+      const m = swimmerById.get(parseInt(chip.dataset.mid)) || mixedById.get(parseInt(chip.dataset.mid));
       const hay = `${m?.name || ''} ${m?.nameArabic || ''} ${m?.phone || ''}`.toLowerCase();
       chip.style.display = (!q || hay.indexOf(q) >= 0) ? '' : 'none';
     });
   });
 
   // ── Drag and drop ──
-  let dragMid = null, dragFrom = null;
+  let dragMid = null, dragFrom = null, dragMixed = false;
   main.querySelectorAll('.swim-chip').forEach(chip => {
     chip.addEventListener('dragstart', e => {
-      dragMid = parseInt(chip.dataset.mid); dragFrom = chip.dataset.from || '__pool__';
+      dragMid = parseInt(chip.dataset.mid); dragFrom = chip.dataset.from || '__pool__'; dragMixed = chip.dataset.mixed === '1';
       chip.style.opacity = '.4';
       e.dataTransfer.effectAllowed = 'move';
     });
@@ -12503,6 +12517,7 @@ PAGES.swimgroups = (main) => {
       e.preventDefault(); zone.style.background = '';
       if (dragMid == null) return;
       const toGid = zone.dataset.gid;
+      if (dragMixed) { if (toGid && toGid !== '__pool__') window._grpGuestAdd(toGid, [dragMid], true); return; }
       window._swimMove(dragMid, dragFrom, toGid);
     });
   });
