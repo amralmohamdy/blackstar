@@ -9305,13 +9305,16 @@ PAGES.citadelreport = (main) => {
 
   // v6.981.0 — the Contributing invoices list can be narrowed: Rent / Membership and Football / Swimming (the totals above stay as they are)
   const _fType = window._citType || 'all', _fAct = window._citAct || 'all';
+  const _hit = new Map(), _after = new Set();   // v6.1076 — per month, invoice by invoice: the one where the share reaches the cap, and every one after it
+  { const _by = {}; details.forEach(d => { (_by[d.month] = _by[d.month] || []).push(d); });
+    Object.keys(_by).forEach(m => { let run = 0, hit = false; _by[m].slice().sort((p, q) => String(p.date).localeCompare(String(q.date)) || String(p.ref).localeCompare(String(q.ref))).forEach((d, i) => { if (hit) { _after.add(d); return; } run += (Number(d.amount) || 0) * RATE / 100; if (run >= CAP - 0.004) { hit = true; _hit.set(d, i + 1); } }); }); }
   const fDetails = details.filter(d => (_fType === 'all' || d.type === _fType) && (_fAct === 'all' || d.group.key === _fAct));
   const fTotal = fDetails.reduce((s, d) => s + (Number(d.amount) || 0), 0);
-  const detailRows = fDetails.length ? fDetails.map((d, i) => `<tr>
-    <td class="text-mute" style="text-align:center;font-size:12px">${i + 1}</td>
+  const detailRows = fDetails.length ? fDetails.map((d, i) => `<tr${_after.has(d) ? ' style="opacity:.45"' : ''}>
+    <td class="text-mute" style="text-align:center;font-size:12px">${i + 1}${_hit.has(d) ? '<div title="' + t('the share reached the cap here', 'الحصة وصلت للسقف هنا') + '" style="color:var(--red);font-weight:800">🔒</div>' : ''}</td>
     <td class="text-mute" style="font-size:12px;white-space:nowrap">${fmtMonth(d.month)}</td>
     <td style="font-size:12px;white-space:nowrap">${d.date ? fmtDate(d.date) : '—'}</td>
-    <td class="font-bold" style="font-size:12px">${escapeHtml(d.ref)}</td>
+    <td class="font-bold" style="font-size:12px">${escapeHtml(d.ref)}${_hit.has(d) ? ' <span class="badge" style="font-size:10px;background:rgba(239,68,68,.14);color:var(--red)">' + t('cap reached', 'وصل السقف') + ' #' + _hit.get(d) + '</span>' : ''}${_after.has(d) ? ' <span class="badge" style="font-size:10px">' + t('after the cap', 'بعد السقف') + '</span>' : ''}</td>
     <td style="font-size:12px">${escapeHtml(d.customer)}</td>
     <td>${d.group.icon} ${escapeHtml(d.group.label)}</td>
     <td>${d.type === 'rent'
@@ -21561,7 +21564,7 @@ window.openSalariesFor = function (ym) {
 };
 window.openCitadelFor = function (ym) {   // v6.1056 — the pending Citadel row opens the Citadel screen on its month (admin only)
   if (currentRole() !== 'admin') return;
-  window._citMonths = [String(ym || TODAY || '').slice(0, 7)]; navigate('citadel');
+  window._citMonths = [String(ym || TODAY || '').slice(0, 7)]; navigate('citadelreport');
 };
 window.openExpenseReport = function (kind, ym) { window._expRep = { kind, ym }; navigate('expensereport'); };
 PAGES.expensereport = (main) => {
