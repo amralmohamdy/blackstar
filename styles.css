@@ -2023,6 +2023,18 @@ body.modal-open #bs-notif-float { z-index: 60 !important; }   /* v6.776 — belo
 /* ─── Member card (v6.1084) — hero, KPI tiles, three titled info cards, tidy footer ─── */
 .mc-hero { display: flex; align-items: center; gap: 18px; padding: 16px 18px; margin-bottom: 14px; border: 1px solid var(--border); border-radius: var(--r-lg, 14px); background: linear-gradient(135deg, var(--surface-2), var(--surface)); }
 .mc-name-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 14px; }
+.mc-name { font-size: 22px; font-weight: 800; line-height: 1.2; }
+.mc-name-ar { font-size: 17px; color: var(--text-dim); margin-inline-start: auto; }
+.mc-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.mc-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); font-size: 12px; font-weight: 600; color: var(--text-dim); }
+.mc-status-row { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.mc-phone { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-top: 12px; }
+.mc-phone-lbl { font-size: 11px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--text-mute); }
+.mc-phone-num { font-weight: 800; letter-spacing: .03em; color: var(--text); text-decoration: none; direction: ltr; unicode-bidi: isolate; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mc-phone-num:hover { color: var(--accent); }
+.mc-wa { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; background: rgba(37,211,102,.14); color: #128c4a; font-size: 12px; font-weight: 700; text-decoration: none; white-space: nowrap; }
+.mc-wa:hover { background: rgba(37,211,102,.25); }
+.mc-hero-actions { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
 .mc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .mc-card { border: 1px solid var(--border); border-radius: var(--r-md, 12px); padding: 12px 14px; background: var(--surface); min-width: 0; }
 .mc-card-title { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--text-mute); padding-bottom: 8px; margin-bottom: 10px; border-bottom: 1px solid var(--border); }
@@ -2033,3 +2045,4 @@ body.modal-open #bs-notif-float { z-index: 60 !important; }   /* v6.776 — belo
 .mc-actions::before { content: attr(data-label); flex: 0 0 100%; font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--text-mute); }
 .mc-foot-pri { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 @media (max-width: 640px) { .mc-hero { flex-direction: column; align-items: flex-start; } .mc-fields { grid-template-columns: 1fr; } }
+.mc-footer2 { flex-wrap: wrap; gap: 6px; align-items: center; }

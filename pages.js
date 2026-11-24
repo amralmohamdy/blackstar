@@ -3118,16 +3118,22 @@ function viewMember(id) {
         ${memberAvatarHtml(m, 76)}
         <div style="flex:1;min-width:0">
           <div class="mc-name-row">
-          <div style="font-size:21px;font-weight:800;line-height:1.2">${escapeHtml(m.name)}</div>
-          ${m.nameArabic ? `<div style="font-size:16px;color:var(--text-dim);margin-inline-start:auto" dir="rtl">${escapeHtml(m.nameArabic)}</div>` : ''}
+            <div class="mc-name">${escapeHtml(m.name)}</div>
+            ${m.nameArabic ? `<div class="mc-name-ar" dir="rtl">${escapeHtml(m.nameArabic)}</div>` : ''}
           </div>
-          <div class="text-dim" style="margin-top:2px">${escapeHtml(m.sport)} · ${escapeHtml(coachName(m.coachId))}${m.level ? ` · ${escapeHtml(m.level)}` : ''}${m.nationality ? ` · 🌍 ${escapeHtml(m.nationality)}` : ''}</div>
-          <div class="mt-1"><span class="badge ${memberStatus(m).toLowerCase()}">${memberStatus(m)}</span> <span class="badge">${(m.months || []).join(' + ').toUpperCase()}</span>${(() => {
+          <div class="mc-meta">
+            ${m.sport ? `<span class="mc-chip">🏅 ${escapeHtml(m.sport)}</span>` : ''}
+            ${(m.coachId != null && coachName(m.coachId) && coachName(m.coachId) !== '—') ? `<span class="mc-chip">👤 ${escapeHtml(coachName(m.coachId))}</span>` : ''}
+            ${m.level ? `<span class="mc-chip">📶 ${escapeHtml(m.level)}</span>` : ''}
+            ${m.nationality ? `<span class="mc-chip">🌍 ${escapeHtml(m.nationality)}</span>` : ''}
+          </div>
+          <div class="mc-status-row"><span class="badge ${memberStatus(m).toLowerCase()}">${memberStatus(m)}</span>${(m.months || []).length ? ` <span class="badge">${(m.months || []).join(' + ').toUpperCase()}</span>` : ''}${(() => {
             const ob = memberOutstanding(m.id);
             const editable = currentRole() === 'admin' || currentRole() === 'receptionist';
             return ob > 0.001 ? ` <span class="badge" ${editable ? `onclick="event.stopPropagation();moneyPanel(${m.id})" style="background:rgba(242,163,60,.18);color:var(--accent-2);cursor:pointer" title="Click to record a payment / edit pricing"` : `style="background:rgba(242,163,60,.18);color:var(--accent-2)" title="Outstanding balance across this member's invoices"`}>💰 ${fmt(ob)} due</span>` : '';
           })()}</div>
-          ${(currentRole() === 'admin' || currentRole() === 'receptionist') ? `<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary sm" onclick="moneyPanel(${m.id})" title="${t('Log payment installments (method + date + amount). Prices are set per-sport in the profile above.', 'تسجيل أقساط الدفع (الطريقة + التاريخ + المبلغ). الأسعار تُحدَّد لكل رياضة في الملف أعلاه.')}" style="font-weight:700">💳 ${t('Installments', 'الأقساط')}</button>${currentRole() === 'admin' ? `<button class="btn ghost sm" onclick="rebuildMemberFromProfile(${m.id})" title="${t('Sync the subscription + invoice to the current enrollments (the profile) so salary + invoice agree', 'مزامنة الاشتراك والفاتورة مع التسجيلات الحالية ليتطابق الراتب والفاتورة')}">🔄 ${t('Rebuild from profile', 'إعادة البناء من الملف')}</button>` : ''}</div>` : ''}
+          ${isRealPhone(m.phone) ? `<div class="mc-phone"><span class="mc-phone-lbl">📱 ${t('Mobile', 'الجوال')}</span>${mcPhoneHtml(m.phone, 20)}${m.phone2 && isRealPhone(m.phone2) ? `<span class="mc-phone-lbl" style="margin-inline-start:6px">${t('2nd', 'ثاني')}</span>${mcPhoneHtml(m.phone2, 16)}` : ''}</div>` : ''}
+          ${(currentRole() === 'admin' || currentRole() === 'receptionist') ? `<div class="mc-hero-actions"><button class="btn primary sm" onclick="moneyPanel(${m.id})" title="${t('Log payment installments (method + date + amount). Prices are set per-sport in the profile above.', 'تسجيل أقساط الدفع (الطريقة + التاريخ + المبلغ). الأسعار تُحدَّد لكل رياضة في الملف أعلاه.')}" style="font-weight:700">💳 ${t('Installments', 'الأقساط')}</button>${currentRole() === 'admin' ? `<button class="btn ghost sm" onclick="rebuildMemberFromProfile(${m.id})" title="${t('Sync the subscription + invoice to the current enrollments (the profile) so salary + invoice agree', 'مزامنة الاشتراك والفاتورة مع التسجيلات الحالية ليتطابق الراتب والفاتورة')}">🔄 ${t('Rebuild from profile', 'إعادة البناء من الملف')}</button>` : ''}</div>` : ''}
         </div>
       </div>
       <div class="kpi-grid mb-3" style="grid-template-columns:repeat(${isViewerRole() ? 3 : 4},1fr);gap:8px">
@@ -3171,7 +3177,7 @@ function viewMember(id) {
         </div>
         <div class="mc-card"><div class="mc-card-title">👤 Contact &amp; personal</div>
           <div class="mc-fields">
-        <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">Mobile</div><div>${phoneCell(m.phone, { stop: false })}${m.phone2 ? `<div style="margin-top:2px">${phoneCell(m.phone2, { stop: false })} <span class="text-mute" style="font-size:10px">(2nd)</span></div>` : ''}</div></div>
+        <div style="grid-column:1/-1"><div class="text-mute" style="font-size:11px;text-transform:uppercase">${t('Mobile', 'الجوال')}</div><div class="mc-phone" style="margin-top:3px">${isRealPhone(m.phone) ? mcPhoneHtml(m.phone, 20) : '<span class="text-mute">—</span>'}${m.phone2 && isRealPhone(m.phone2) ? `<span class="mc-phone-lbl">${t('2nd', 'ثاني')}</span>${mcPhoneHtml(m.phone2, 16)}` : ''}</div></div>
         <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">Email</div><div>${escapeHtml(m.email || '—')}</div></div>
         <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">QID</div><div class="font-mono">${escapeHtml(m.qid || '—')}</div></div>
         <div><div class="text-mute" style="font-size:11px;text-transform:uppercase">Birthdate</div><div>${m.birthdate ? `${fmtDate(m.birthdate)}${(() => {
@@ -3318,23 +3324,6 @@ function viewMember(id) {
     size: 'xl',   // v6.724 — wider card (the history table no longer scrolls sideways)
     actions: [
       ...(() => {
-        // "🧾 Get Invoice" — find the latest non-deleted Membership invoice for this
-        // member and export it as PDF. Visible to admin + receptionist (who handle
-        // payment paperwork). Hidden if the member has no invoice yet.
-        if (isViewerRole() && currentRole() !== 'receptionist' && currentRole() !== 'admin') return [];
-        const memberInvs = (state.invoices || []).filter(iv => !iv.deleted && iv.customerId === id && (iv.category || 'Membership') === 'Membership' && !iv.switchCredit && (iv.amount || 0) > 0);
-        const hasEnrollments = Array.isArray(m.enrollments) && m.enrollments.some(e => e && e.sport);
-        // Show the button if there's an invoice OR any enrollment we can build one
-        // from. Only hide it when there's genuinely nothing to bill.
-        if (!memberInvs.length && !hasEnrollments) return [];
-        // v6.523: label by the number of live membership invoices being COMBINED, called "packages"
-        // (not "sports" — a member can have several same-sport packages, e.g. weekly private sessions,
-        // so "2 sports" was wrong when it was really 2 Kick Boxing packages). Deleted invoices are
-        // excluded, so a package whose invoice was voided won't be counted here (use the per-row 📄).
-        const multi = memberInvs.length > 1;
-        return [{ label: multi ? `🧾 Get Invoice (${memberInvs.length} packages)` : '🧾 Get Invoice', class: 'btn ghost', onclick: () => { closeModal(); printMemberInvoicePDF(id); } }];
-      })(),
-      ...(() => {
         // v6.488: "🔧 Rebuild invoice" — ONLY when the member has PAID subscriptions but NO membership
         // invoice (deleted-invoice case), so Paid + coach commission wrongly read 0. Admin only.
         if (currentRole() !== 'admin') return [];
@@ -3361,9 +3350,6 @@ function viewMember(id) {
       })()),
       ...((['admin', 'receptionist'].includes(currentRole()) && String(memberStatus(m)).toLowerCase() === 'expired') ? [{ label: '🔄 ' + t('Renew', 'تجديد'), class: 'btn primary', onclick: () => { closeModal(); addRenewal(id); } }] : []),   // v6.918
       ...(isViewerRole() ? [] : [{ label: '📜 Full History', class: 'btn ghost', onclick: () => { closeModal(); openMemberHistory(id); } }]),
-      { label: '🖼 ' + t('Attendance (EN)', 'الحضور (EN)'), class: 'btn ghost', onclick: () => { exportMemberAttendanceImage(id, 'en'); } },
-      { label: '🖼 ' + t('Attendance (AR)', 'الحضور (AR)'), class: 'btn ghost', onclick: () => { exportMemberAttendanceImage(id, 'ar'); } },
-      { label: '📊 ' + t('Attendance CSV', 'حضور CSV'), class: 'btn ghost', onclick: () => { exportMemberAttendance(id); } },
       ...(currentRole() === 'admin' ? [{ label: '📤 ' + t('Export profile', 'تصدير الملف'), class: 'btn ghost', onclick: () => { exportMemberProfile(id); } }] : []),
       { label: '👨‍👩‍👧 Family', class: 'btn ghost', onclick: () => { closeModal(); assignFamily(id); } },
       { label: 'Edit', class: 'btn ghost', onclick: () => { closeModal(); editMember(id); } },
@@ -3371,15 +3357,32 @@ function viewMember(id) {
       { label: 'Close', class: 'btn primary', onclick: closeModal },
     ],
   });
-  try {   // v6.1084 — the card's footer: the many secondary buttons on the left (small), the main ones (Renew / Welcome / Close) on the right
+  try {   // v6.1095 — the buttons stay in the footer at the bottom: small secondary ones on the left, the main ones (Edit / Renew / Welcome / Close) on the right
     const f = document.querySelector('.modal-footer'), grid = document.querySelector('.modal-body .mc-grid'); if (f && grid) {
-      f.classList.add('mc-footer');
-      const kids = [...f.children], tools = document.createElement('div'), pri = document.createElement('div');
-      tools.className = 'mc-actions'; tools.setAttribute('data-label', t('Quick actions', 'إجراءات سريعة')); pri.className = 'mc-foot-pri';
-      kids.forEach(b => { if (b.classList.contains('primary') || /^Edit$/.test((b.textContent || '').trim())) pri.appendChild(b); else { b.classList.add('sm'); tools.appendChild(b); } });
-      grid.insertAdjacentElement('afterend', tools); f.append(pri);
+      f.classList.add('mc-footer2');
+      const kids = [...f.children]; let first = true;
+      kids.forEach(x => { if (x.classList.contains('primary') || /^Edit$/.test((x.textContent || '').trim())) { if (first) { x.style.marginInlineStart = 'auto'; first = false; } } else x.classList.add('sm'); });
     }
+    // v6.1095 — the long tables fold: tap the heading (Subscription History / Attendance summary)
+    document.querySelectorAll('.modal-body h3').forEach(h => {
+      const nx = h.nextElementSibling; if (!nx || !nx.classList.contains('table-wrap') || h._fold) return;
+      h._fold = true; h.style.cursor = 'pointer'; h.style.userSelect = 'none'; h.style.display = 'flex'; h.style.alignItems = 'center'; h.style.gap = '6px';
+      const chev = document.createElement('span'); chev.textContent = '▾'; chev.style.cssText = 'color:var(--text-mute);transition:transform .15s;margin-inline-start:auto'; h.appendChild(chev);
+      h.addEventListener('click', () => { const open = nx.style.display !== 'none'; nx.style.display = open ? 'none' : ''; chev.style.transform = open ? 'rotate(-90deg)' : ''; });
+    });
   } catch (_) {}
+}
+// v6.1095 — a phone number that is easy to read and tap: grouped digits (Qatar: +974 3344 4049), big and bold, a call link and a WhatsApp button
+function mcPhoneFmt(p) {
+  const raw = String(p || '').trim(), d = raw.replace(/[^\d+]/g, '');
+  const q = d.match(/^\+?974(\d{4})(\d{4})$/);
+  if (q) return '+974 ' + q[1] + ' ' + q[2];
+  return raw;
+}
+function mcPhoneHtml(phone, size) {
+  const tel = String(phone || '').replace(/[^\d+]/g, ''), url = (typeof waLink === 'function') ? waLink(phone) : '';
+  const icon = (typeof waIconSvg === 'function') ? waIconSvg(Math.round((size || 18) * .9)) : '💬';
+  return `<a class="mc-phone-num" href="tel:${escapeHtml(tel)}" style="font-size:${size || 18}px" title="${t('Call', 'اتصال')}" onclick="event.stopPropagation()">${escapeHtml(mcPhoneFmt(phone))}</a><a class="mc-wa" href="${url}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="WhatsApp">${icon} WhatsApp</a>`;
 }
 window.viewMember = viewMember;
 
@@ -9152,11 +9155,21 @@ PAGES.citadel = (main) => {
   }).join('');
 
   // v6.981.0 — the Contributing invoices list can be narrowed: Rent / Membership and Football / Swimming (the totals above stay as they are)
-  const _fType = window._citType || 'all', _fAct = window._citAct || 'all';
-  const fDetails = details.filter(d => (_fType === 'all' || d.type === _fType) && (_fAct === 'all' || d.group.key === _fAct));
+  const CF = window._citCF = window._citCF || {};   // v6.1094 — the table filters sit on the column headers (no more dropdowns)
+  const _cfPass = d => (!CF.month || d.month === CF.month)
+    && (!CF.date || (String(d.date || '') + ' ' + (d.date ? fmtDate(d.date) : '')).toLowerCase().includes(String(CF.date).toLowerCase()))
+    && (!CF.ref || String(d.ref || '').toLowerCase().includes(String(CF.ref).toLowerCase()))
+    && (!CF.customer || String(d.customer || '').toLowerCase().includes(String(CF.customer).toLowerCase()))
+    && (!CF.act || d.group.key === CF.act) && (!CF.type || d.type === CF.type)
+    && (!CF.amount || (String(d.amount) + ' ' + fmt(d.amount)).includes(String(CF.amount)));
+  const fDetails = details.filter(_cfPass);
   const fTotal = fDetails.reduce((s, d) => s + (Number(d.amount) || 0), 0);
-  const detailRows = fDetails.length ? fDetails.map((d, i) => `<tr>
-    <td class="text-mute" style="text-align:center;font-size:12px">${i + 1}</td>
+  const _pg = window._citPg = window._citPg || makePager(20), pageRows = paginate(fDetails, _pg), _off = _pg.size === 'all' ? 0 : (_pg.page - 1) * _pg.size;
+  const _cfInp = (k, ph) => `<input class="col-filter" data-cf="${k}" type="text" value="${escapeHtml(CF[k] || '')}" placeholder="🔍 ${ph}" />`;
+  const _cfSel = (k, opts) => `<select class="col-filter" data-cf="${k}"><option value="">${t('All', 'الكل')}</option>${opts.map(o => `<option value="${escapeHtml(o[0])}" ${CF[k] === o[0] ? 'selected' : ''}>${escapeHtml(o[1])}</option>`).join('')}</select>`;
+  const cfRow = `<tr class="col-filter-row"><th></th><th>${_cfSel('month', [...new Set(details.map(d => d.month))].sort().map(m => [m, fmtMonth(m)]))}</th><th>${_cfInp('date', t('date', 'تاريخ'))}</th><th>${_cfInp('ref', t('invoice', 'فاتورة'))}</th><th>${_cfInp('customer', t('customer', 'عميل'))}</th><th>${_cfSel('act', GROUPS.map(g => [g.key, g.label]))}</th><th>${_cfSel('type', [['rent', t('Rent', 'إيجار')], ['membership', t('Membership', 'اشتراك')]])}</th><th>${_cfInp('amount', t('amount', 'مبلغ'))}</th></tr>`;
+  const detailRows = fDetails.length ? pageRows.map((d, i) => `<tr>
+    <td class="text-mute" style="text-align:center;font-size:12px">${_off + i + 1}</td>
     <td class="text-mute" style="font-size:12px;white-space:nowrap">${fmtMonth(d.month)}</td>
     <td style="font-size:12px;white-space:nowrap">${d.date ? fmtDate(d.date) : '—'}</td>
     <td class="font-bold" style="font-size:12px">${escapeHtml(d.ref)}</td>
@@ -9222,20 +9235,9 @@ PAGES.citadel = (main) => {
     <div class="card cit-fold" style="margin-top:16px">
       <div class="card-header"><div>
         <div class="card-title">${t('Contributing invoices', 'الفواتير المساهمة')}</div>
-        <div class="card-subtitle">${(_fType !== 'all' || _fAct !== 'all') ? fDetails.length + ' ' + t('of', 'من') + ' ' : ''}${details.length} ${t('lines make up the totals above', 'بند يشكّل الإجماليات أعلاه')}</div>
+        <div class="card-subtitle">${fDetails.length !== details.length ? fDetails.length + ' ' + t('of', 'من') + ' ' : ''}${details.length} ${t('lines make up the totals above', 'بند يشكّل الإجماليات أعلاه')}</div>
       </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <select id="cit-ftype" class="btn ghost" style="padding:6px 8px">
-          <option value="all" ${_fType === 'all' ? 'selected' : ''}>${t('Rent + Membership', 'إيجار + اشتراك')}</option>
-          <option value="rent" ${_fType === 'rent' ? 'selected' : ''}>${t('Rent only', 'إيجار فقط')}</option>
-          <option value="membership" ${_fType === 'membership' ? 'selected' : ''}>${t('Membership only', 'اشتراك فقط')}</option>
-        </select>
-        <select id="cit-fact" class="btn ghost" style="padding:6px 8px">
-          <option value="all" ${_fAct === 'all' ? 'selected' : ''}>${t('Football + Swimming', 'كرة القدم + السباحة')}</option>
-          <option value="football" ${_fAct === 'football' ? 'selected' : ''}>⚽ ${t('Football only', 'كرة القدم فقط')}</option>
-          <option value="swimming" ${_fAct === 'swimming' ? 'selected' : ''}>🏊 ${t('Swimming only', 'السباحة فقط')}</option>
-        </select>
-      </div></div>
+    </div>
       <div class="table-wrap"><table>
         <thead><tr>
           <th style="width:36px;text-align:center">#</th>
@@ -9246,15 +9248,26 @@ PAGES.citadel = (main) => {
           <th>${t('Activity', 'النشاط')}</th>
           <th>${t('Type', 'النوع')}</th>
           <th class="text-right">${t('Amount (QAR)', 'المبلغ')}</th>
-        </tr></thead>
+        </tr>${cfRow}</thead>
         <tbody>${detailRows}</tbody>
       </table></div>
+      <div id="cit-pagination"></div>
     </div>`;
 
   bindMonthMulti('cit-month', (mSel) => { window._citMonths = mSel; PAGES.citadel(main); });
   try { _wireCardCollapse({ querySelectorAll: () => main.querySelectorAll('.cit-fold') }); } catch (_) {}   // v6.1079 — the two tables fold / unfold
-  $('#cit-ftype')?.addEventListener('change', e => { window._citType = e.target.value; PAGES.citadel(main); });
-  $('#cit-fact')?.addEventListener('change', e => { window._citAct = e.target.value; PAGES.citadel(main); });
+  main.querySelectorAll('[data-cf]').forEach(el => {   // v6.1094 — header filters (selects at once, text after a short pause)
+    const isSel = el.tagName === 'SELECT'; let tm = null;
+    el.addEventListener(isSel ? 'change' : 'input', () => {
+      clearTimeout(tm);
+      tm = setTimeout(() => {
+        window._citCF = window._citCF || {}; window._citCF[el.dataset.cf] = el.value; if (window._citPg) window._citPg.page = 1;
+        const key = el.dataset.cf, pos = el.selectionStart; PAGES.citadel(main);
+        const n = main.querySelector('[data-cf="' + key + '"]'); if (n && n.tagName === 'INPUT') { n.focus(); try { n.setSelectionRange(pos, pos); } catch (_) {} }
+      }, isSel ? 0 : 250);
+    });
+  });
+  renderPagination('cit-pagination', _pg, fDetails.length, () => PAGES.citadel(main));
   $('#cit-rate')?.addEventListener('change', e => {
     const v = parseFloat(e.target.value);
     if (!isNaN(v) && v >= 0 && v <= 100) { state.settings.citadelRate = v; save(); PAGES.citadel(main); }
@@ -9279,17 +9292,84 @@ function citadelCappedShare(months) {
   for (const m of (months || [])) sum += citadelMonthShare(m).share;
   return Math.round(sum * 100) / 100;
 }
-function citadelReportXlsx(rows, share, paid, RATE, CAP, scopeLabel) {
-  if (!window.XlsxMini || typeof window.XlsxMini.downloadFile !== 'function') { toast(t('Excel export unavailable', 'تصدير Excel غير متاح'), 'error'); return; }
-  const r2 = n => Math.round(n * 100) / 100;
-  const sum = [['Month', 'Income', 'Calculated ' + RATE + '%', 'Share after cap (' + CAP + ')'], ...rows.map(x => [x.m, r2(x.g), r2(x.r), r2(x.c)]), ['TOTAL', r2(rows.reduce((a, x) => a + x.g, 0)), r2(rows.reduce((a, x) => a + x.r, 0)), r2(share)], [], ['Already paid', '', '', r2(paid)], ['Still to pay', '', '', r2(share - paid)]];
-  try { window.XlsxMini.downloadFile('citadel-report.xlsx', { sheets: [{ name: 'Citadel Report', rows: sum }] }); } catch (err) { toast(t('Excel export failed', 'فشل تصدير Excel') + ': ' + ((err && err.message) || err), 'error'); }
+// v6.1091 — the Citadel Report exports are the full report (like the original Citadel one): summaries, settlement and EVERY counted invoice (the subscriptions), with the share stopping at the invoice that passes the cap
+function citadelReportData(RATE, CAP) {
+  const sel = (window._citMonths && window._citMonths.length) ? window._citMonths.slice() : (() => { const ms = new Set([(TODAY || '').slice(0, 7)]); for (const i of (state.invoices || [])) { if (!i.deleted) ms.add(i.month || String(i.date || '').slice(0, 7)); } return [...ms].filter(Boolean); })();
+  const base = citadelCompute(window._citMonths || []);
+  const hit = new Map(), after = new Set(), by = {};
+  base.details.forEach(d => { (by[d.month] = by[d.month] || []).push(d); });
+  Object.keys(by).forEach(m => { let run = 0, stop = false; by[m].slice().sort((p, q) => String(p.date).localeCompare(String(q.date)) || String(p.ref).localeCompare(String(q.ref))).forEach((d, i) => { if (stop) { after.add(d); return; } run += (Number(d.amount) || 0) * RATE / 100; if (run >= CAP - 0.004) { stop = true; hit.set(d, i + 1); } }); });
+  const counted = base.details.filter(d => !after.has(d)).sort((p, q) => String(p.month).localeCompare(String(q.month)) || String(p.date).localeCompare(String(q.date)) || String(p.ref).localeCompare(String(q.ref)));   // oldest first: the invoice that passes the cap is the last of its month
+  const share = citadelCappedShare(sel);
+  return Object.assign({}, base, { counted, hit, after, share, rawShare: base.grand * RATE / 100, paidToCompany: citadelPaidToCompany(window._citMonths || []) });
 }
-function citadelReportPdf(rows, share, paid, RATE, CAP, scopeLabel) {
-  const w = window.open('', '_blank'); if (!w) { toast(t('Allow pop-ups to print', 'اسمح بالنوافذ المنبثقة للطباعة'), 'error'); return; }
-  const tr = rows.map(x => '<tr><td>' + escapeHtml(fmtMonth(x.m)) + '</td><td class="n">' + fmt(x.g) + '</td><td class="n">' + fmt(x.r) + '</td><td class="n b">' + fmt(x.c) + '</td></tr>').join('');
-  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Citadel Report</title><style>body{font-family:Arial,sans-serif;margin:22px;color:#111}h1{font-size:20px;margin:0 0 4px}.sub{color:#666;font-size:12px;margin-bottom:12px}table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:14px}th,td{border:1px solid #ccc;padding:5px 8px;text-align:left}th{background:#f2f2f2}.n{text-align:right}.b{font-weight:700}</style></head><body onload="window.print()"><h1>Citadel Report · تقرير سيتاديل</h1><div class="sub">' + escapeHtml(scopeLabel || '') + ' · ' + RATE + '% · cap ' + fmt(CAP) + ' / month</div><table><thead><tr><th>Month</th><th class="n">Income</th><th class="n">' + RATE + '%</th><th class="n">Share after cap</th></tr></thead><tbody>' + tr + '<tr class="b"><td>Total</td><td></td><td></td><td class="n">' + fmt(share) + '</td></tr></tbody></table><table><tbody><tr><td>Already paid · المدفوع</td><td class="n">' + fmt(paid) + '</td></tr><tr class="b"><td>Still to pay · المتبقي</td><td class="n">' + fmt(Math.max(0, Math.round((share - paid) * 100) / 100)) + '</td></tr></tbody></table></body></html>');
+function citadelReportXlsx(capRows, shareArg, paidArg, RATE, CAP, scopeLabel) {
+  if (!window.XlsxMini || typeof window.XlsxMini.downloadFile !== 'function') { toast(t('Excel export unavailable', 'تصدير Excel غير متاح'), 'error'); return; }
+  const D = citadelReportData(RATE, CAP), { GROUPS, agg, grand, paid, counted, hit, share, rawShare, paidToCompany } = D;
+  const r2 = n => Math.round((Number(n) || 0) * 100) / 100;
+  const summary = [['Activity', 'Membership', 'Rent', 'Total', `Company (${RATE}%)`]];
+  GROUPS.forEach(g => summary.push([g.label, r2(agg[g.key].membership), r2(agg[g.key].rent), r2(agg[g.key].membership + agg[g.key].rent), r2((agg[g.key].membership + agg[g.key].rent) * RATE / 100)]));
+  summary.push(['TOTAL', r2(GROUPS.reduce((s, g) => s + agg[g.key].membership, 0)), r2(GROUPS.reduce((s, g) => s + agg[g.key].rent, 0)), r2(grand), r2(rawShare)]);
+  summary.push([]);
+  summary.push(['By category', 'Amount', '', '', `Company (${RATE}%)`]);
+  citadelCategories({ GROUPS, agg }).forEach(c => summary.push([c.label, r2(c.amount), '', '', r2(c.amount * RATE / 100)]));
+  summary.push([]);
+  summary.push([`Company share — each month stops at the invoice that passes ${CAP}`, '', '', '', r2(share)]);
+  summary.push(['Collected from members', '', '', '', r2(paid || 0)]);
+  summary.push(['Paid to company', '', '', '', r2(paidToCompany)]);
+  summary.push(['Balance due to company', '', '', '', r2(share - paidToCompany)]);
+  const inv = [['#', 'Month', 'Date', 'Invoice', 'Customer', 'Activity', 'Type', 'Sport', 'Amount (QAR)', 'Note']];
+  counted.forEach((d, i) => inv.push([i + 1, d.month, d.date || '', d.ref, d.customer, d.group.label, d.type === 'rent' ? 'Rent' : 'Membership', d.sport || '', r2(d.amount), hit.has(d) ? 'cap reached #' + hit.get(d) : '']));
+  const tag = (window._citMonths && window._citMonths.length) ? window._citMonths.slice().sort().join('_') : 'all-months';
+  try {
+    window.XlsxMini.downloadFile(`citadel-report-${tag}.xlsx`, { sheets: [{ name: 'Summary', rows: summary }, { name: 'Invoices', rows: inv }] });
+    toast(t(`Exported ${counted.length} lines to Excel`, `تم تصدير ${counted.length} بند إلى Excel`), 'success');
+  } catch (err) { toast(t('Excel export failed', 'فشل تصدير Excel') + ': ' + ((err && err.message) || err), 'error'); }
+}
+function citadelReportPdf(capRows, shareArg, paidArg, RATE, CAP, scopeLabel) {
+  const D = citadelReportData(RATE, CAP), { GROUPS, agg, grand, paid, counted, hit, after, share, rawShare, paidToCompany } = D;
+  const balanceDue = Math.round((share - paidToCompany) * 100) / 100;
+  const w = window.open('', '_blank');
+  if (!w) { toast(t('Popup blocked — please allow popups', 'المنبثقة محظورة — يرجى السماح بها'), 'error'); return; }
+  const sumRows = GROUPS.map(g => `<tr><td>${escapeHtml(g.label)}</td><td class="n">${fmt(agg[g.key].membership)}</td><td class="n">${fmt(agg[g.key].rent)}</td><td class="n b">${fmt(agg[g.key].membership + agg[g.key].rent)}</td><td class="n" style="color:#dc2626">${fmt((agg[g.key].membership + agg[g.key].rent) * RATE / 100)}</td></tr>`).join('');
+  const _cats = citadelCategories({ GROUPS, agg });
+  const _catTotal = _cats.reduce((s, c) => s + c.amount, 0);
+  const catRowsPdf = _cats.map(c => `<tr><td>${escapeHtml(c.label)}</td><td class="n b">${fmt(c.amount)}</td><td class="n" style="color:#dc2626">${fmt(c.amount * RATE / 100)}</td></tr>`).join('');
+  const detRows = counted.map((d, i) => `<tr${hit.has(d) ? ' style="background:#fef2f2"' : ''}><td class="mut">${i + 1}</td><td class="mut">${escapeHtml(d.month)}</td><td>${escapeHtml(d.date || '')}</td><td>${escapeHtml(d.ref)}${hit.has(d) ? ' <b style="color:#dc2626">🔒 cap reached #' + hit.get(d) + '</b>' : ''}</td><td>${escapeHtml(d.customer)}</td><td>${escapeHtml(d.group.label)}</td><td>${d.type === 'rent' ? 'Rent' : 'Membership'}${d.sport ? ' · ' + escapeHtml(d.sport) : ''}</td><td class="n">${fmt(d.amount)}</td></tr>`).join('');
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Citadel-Report-${escapeHtml(scopeLabel || '')}</title>
+    <style>body{font-family:'Helvetica Neue',Arial,sans-serif;color:#1a1a1a;padding:36px;max-width:900px;margin:0 auto}
+      .hd{display:flex;justify-content:space-between;border-bottom:3px solid #f26060;padding-bottom:12px;margin-bottom:18px}
+      .logo{font-size:20px;font-weight:800;color:#f26060} h2{font-size:14px;margin:20px 0 8px}
+      table{width:100%;border-collapse:collapse;font-size:12px;margin:4px 0} th{background:#f5f5f7;padding:7px;text-align:left;font-size:11px;text-transform:uppercase;color:#555} th.n{text-align:right}
+      td{padding:6px 7px;border-bottom:1px solid #eee} td.n{text-align:right;font-family:'Courier New',monospace} td.b{font-weight:700} td.mut{color:#999}
+      tfoot td{font-weight:800;border-top:2px solid #ddd} .share{background:#fef2f2;border:2px solid #ef4444;padding:12px;margin-top:14px;display:flex;justify-content:space-between;font-size:16px;font-weight:800;color:#dc2626}
+      .settle{width:auto;min-width:340px;margin:14px 0} .settle td{padding:7px 10px} .settle td.lab{color:#444} .settle tr.tot td{font-weight:800;border-top:2px solid #ddd}
+      @media print{body{padding:16px}}</style></head><body>
+    <div class="hd"><div><div class="logo">★ Black Stars</div><div style="color:#666;font-size:11px">Sports Club · Waab, Doha</div></div>
+      <div style="text-align:right"><div style="font-weight:700">🏛 CITADEL REPORT — COMPANY SHARE</div><div style="color:#666;font-size:11px">${escapeHtml(scopeLabel || '')} · ${RATE}% · ${t('stops at the invoice that passes', 'تقف عند الفاتورة اللي تعدّي')} ${fmt(CAP)} ${t('a month', 'في الشهر')} · ${t('Generated', 'صدر')} ${fmtDate(TODAY)}</div></div></div>
+    <h2>Summary by category</h2>
+    <table><thead><tr><th>Category</th><th class="n">Amount</th><th class="n">Company (${RATE}%)</th></tr></thead>
+      <tbody>${catRowsPdf}</tbody>
+      <tfoot><tr><td>TOTAL</td><td class="n">${fmt(_catTotal)}</td><td class="n" style="color:#dc2626">${fmt(_catTotal * RATE / 100)}</td></tr></tfoot></table>
+    <h2>Summary by activity</h2>
+    <table><thead><tr><th>Activity</th><th class="n">Membership</th><th class="n">Rent</th><th class="n">Total</th><th class="n">Company (${RATE}%)</th></tr></thead>
+      <tbody>${sumRows}</tbody>
+      <tfoot><tr><td>TOTAL</td><td class="n">${fmt(GROUPS.reduce((s, g) => s + agg[g.key].membership, 0))}</td><td class="n">${fmt(GROUPS.reduce((s, g) => s + agg[g.key].rent, 0))}</td><td class="n">${fmt(grand)}</td><td class="n" style="color:#dc2626">${fmt(rawShare)}</td></tr></tfoot></table>
+    <div class="share"><span>🏛 ${t('Company share to pay', 'حصة الشركة المستحقة')}</span><span>${fmt(share)} QAR</span></div>
+    <h2>${t('Company settlement', 'تسوية الشركة')}</h2>
+    <table class="settle"><tbody>
+      <tr><td class="lab">${t('Total revenue (billed)', 'إجمالي الإيراد (مفوتر)')}</td><td class="n">${fmt(grand)}</td></tr>
+      <tr><td class="lab">${t('Collected from members', 'المحصّل من الأعضاء')}</td><td class="n" style="color:#059669">${fmt(paid || 0)}</td></tr>
+      <tr><td class="lab">${t('Company share', 'حصة الشركة')} (${RATE}%, ${t('after the cap', 'بعد السقف')})</td><td class="n" style="color:#dc2626">${fmt(share)}</td></tr>
+      <tr><td class="lab">${t('Paid to company', 'المدفوع للشركة')}</td><td class="n" style="color:#059669">${fmt(paidToCompany)}</td></tr>
+      <tr class="tot"><td class="lab">${t('Balance due to company', 'المتبقي للشركة')}</td><td class="n" style="color:${balanceDue > 0.5 ? '#dc2626' : '#059669'}">${fmt(balanceDue)}</td></tr>
+    </tbody></table>
+    <h2>Contributing invoices (${counted.length}${after.size ? ' · ' + after.size + ' ' + t('later lines not counted', 'بند لاحق غير محسوب') : ''})</h2>
+    <table><thead><tr><th>#</th><th>Month</th><th>Date</th><th>Invoice</th><th>Customer</th><th>Activity</th><th>Type</th><th class="n">Amount</th></tr></thead><tbody>${detRows}</tbody></table>
+    </body></html>`);
   w.document.close();
+  setTimeout(() => { try { w.print(); } catch (_) {} }, 350);
+  toast(t('Report opened — choose "Save as PDF"', 'فُتح التقرير — اختر "حفظ كـ PDF"'), 'success');
 }
 PAGES.citadelreport = (main) => {
   if (currentRole() !== 'admin') { main.innerHTML = `<div class="card"><div class="empty">${t('Admins only.', 'المسؤولون فقط.')}</div></div>`; return; }
@@ -9328,14 +9408,24 @@ PAGES.citadelreport = (main) => {
   }).join('');
 
   // v6.981.0 — the Contributing invoices list can be narrowed: Rent / Membership and Football / Swimming (the totals above stay as they are)
-  const _fType = window._citType || 'all', _fAct = window._citAct || 'all';
+  const CF = window._citCF = window._citCF || {};   // v6.1094 — the table filters sit on the column headers (no more dropdowns)
+  const _cfPass = d => (!CF.month || d.month === CF.month)
+    && (!CF.date || (String(d.date || '') + ' ' + (d.date ? fmtDate(d.date) : '')).toLowerCase().includes(String(CF.date).toLowerCase()))
+    && (!CF.ref || String(d.ref || '').toLowerCase().includes(String(CF.ref).toLowerCase()))
+    && (!CF.customer || String(d.customer || '').toLowerCase().includes(String(CF.customer).toLowerCase()))
+    && (!CF.act || d.group.key === CF.act) && (!CF.type || d.type === CF.type)
+    && (!CF.amount || (String(d.amount) + ' ' + fmt(d.amount)).includes(String(CF.amount)));
   const _hit = new Map(), _after = new Set();   // v6.1076 — per month, invoice by invoice: the one where the share reaches the cap, and every one after it
   { const _by = {}; details.forEach(d => { (_by[d.month] = _by[d.month] || []).push(d); });
     Object.keys(_by).forEach(m => { let run = 0, hit = false; _by[m].slice().sort((p, q) => String(p.date).localeCompare(String(q.date)) || String(p.ref).localeCompare(String(q.ref))).forEach((d, i) => { if (hit) { _after.add(d); return; } run += (Number(d.amount) || 0) * RATE / 100; if (run >= CAP - 0.004) { hit = true; _hit.set(d, i + 1); } }); }); }
-  const fDetails = details.filter(d => !_after.has(d)).filter(d => (_fType === 'all' || d.type === _fType) && (_fAct === 'all' || d.group.key === _fAct));
+  const fDetails = details.filter(d => !_after.has(d)).sort((p, q) => String(p.month).localeCompare(String(q.month)) || String(p.date).localeCompare(String(q.date)) || String(p.ref).localeCompare(String(q.ref))).filter(_cfPass);
   const fTotal = fDetails.reduce((s, d) => s + (Number(d.amount) || 0), 0);
-  const detailRows = fDetails.length ? fDetails.map((d, i) => `<tr${_after.has(d) ? ' style="opacity:.45"' : ''}>
-    <td class="text-mute" style="text-align:center;font-size:12px">${i + 1}${_hit.has(d) ? '<div title="' + t('the share reached the cap here', 'الحصة وصلت للسقف هنا') + '" style="color:var(--red);font-weight:800">🔒</div>' : ''}</td>
+  const _pg = window._citPg = window._citPg || makePager(20), pageRows = paginate(fDetails, _pg), _off = _pg.size === 'all' ? 0 : (_pg.page - 1) * _pg.size;
+  const _cfInp = (k, ph) => `<input class="col-filter" data-cf="${k}" type="text" value="${escapeHtml(CF[k] || '')}" placeholder="🔍 ${ph}" />`;
+  const _cfSel = (k, opts) => `<select class="col-filter" data-cf="${k}"><option value="">${t('All', 'الكل')}</option>${opts.map(o => `<option value="${escapeHtml(o[0])}" ${CF[k] === o[0] ? 'selected' : ''}>${escapeHtml(o[1])}</option>`).join('')}</select>`;
+  const cfRow = `<tr class="col-filter-row"><th></th><th>${_cfSel('month', [...new Set(details.map(d => d.month))].sort().map(m => [m, fmtMonth(m)]))}</th><th>${_cfInp('date', t('date', 'تاريخ'))}</th><th>${_cfInp('ref', t('invoice', 'فاتورة'))}</th><th>${_cfInp('customer', t('customer', 'عميل'))}</th><th>${_cfSel('act', GROUPS.map(g => [g.key, g.label]))}</th><th>${_cfSel('type', [['rent', t('Rent', 'إيجار')], ['membership', t('Membership', 'اشتراك')]])}</th><th>${_cfInp('amount', t('amount', 'مبلغ'))}</th></tr>`;
+  const detailRows = fDetails.length ? pageRows.map((d, i) => `<tr${_after.has(d) ? ' style="opacity:.45"' : ''}>
+    <td class="text-mute" style="text-align:center;font-size:12px">${_off + i + 1}${_hit.has(d) ? '<div title="' + t('the share reached the cap here', 'الحصة وصلت للسقف هنا') + '" style="color:var(--red);font-weight:800">🔒</div>' : ''}</td>
     <td class="text-mute" style="font-size:12px;white-space:nowrap">${fmtMonth(d.month)}</td>
     <td style="font-size:12px;white-space:nowrap">${d.date ? fmtDate(d.date) : '—'}</td>
     <td class="font-bold" style="font-size:12px">${escapeHtml(d.ref)}${_hit.has(d) ? ' <span class="badge" style="font-size:10px;background:rgba(239,68,68,.14);color:var(--red)">' + t('cap reached', 'وصل السقف') + ' #' + _hit.get(d) + '</span>' : ''}${_after.has(d) ? ' <span class="badge" style="font-size:10px">' + t('after the cap', 'بعد السقف') + '</span>' : ''}</td>
@@ -9400,18 +9490,7 @@ PAGES.citadelreport = (main) => {
         <div class="card-title">${t('Contributing invoices', 'الفواتير المساهمة')}</div>
         <div class="card-subtitle">${fDetails.length} ${t('invoice lines counted — each month stops at the invoice where its share passes', 'بند محسوب — كل شهر يقف عند الفاتورة اللي حصته تعدّي فيها')} ${fmt(CAP)}${_after.size ? ' · ' + _after.size + ' ' + t('later lines are not counted', 'بند لاحق غير محسوب') : ''}</div>
       </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <select id="cit-ftype" class="btn ghost" style="padding:6px 8px">
-          <option value="all" ${_fType === 'all' ? 'selected' : ''}>${t('Rent + Membership', 'إيجار + اشتراك')}</option>
-          <option value="rent" ${_fType === 'rent' ? 'selected' : ''}>${t('Rent only', 'إيجار فقط')}</option>
-          <option value="membership" ${_fType === 'membership' ? 'selected' : ''}>${t('Membership only', 'اشتراك فقط')}</option>
-        </select>
-        <select id="cit-fact" class="btn ghost" style="padding:6px 8px">
-          <option value="all" ${_fAct === 'all' ? 'selected' : ''}>${t('Football + Swimming', 'كرة القدم + السباحة')}</option>
-          <option value="football" ${_fAct === 'football' ? 'selected' : ''}>⚽ ${t('Football only', 'كرة القدم فقط')}</option>
-          <option value="swimming" ${_fAct === 'swimming' ? 'selected' : ''}>🏊 ${t('Swimming only', 'السباحة فقط')}</option>
-        </select>
-      </div></div>
+    </div>
       <div class="table-wrap"><table>
         <thead><tr>
           <th style="width:36px;text-align:center">#</th>
@@ -9422,15 +9501,26 @@ PAGES.citadelreport = (main) => {
           <th>${t('Activity', 'النشاط')}</th>
           <th>${t('Type', 'النوع')}</th>
           <th class="text-right">${t('Amount (QAR)', 'المبلغ')}</th>
-        </tr></thead>
+        </tr>${cfRow}</thead>
         <tbody>${detailRows}</tbody>
       </table></div>
+      <div id="cit-pagination"></div>
     </div>`;
 
   bindMonthMulti('cit-month', (mSel) => { window._citMonths = mSel; PAGES.citadelreport(main); });
   try { _wireCardCollapse({ querySelectorAll: () => main.querySelectorAll('.cit-fold') }); } catch (_) {}   // v6.1083 — the sections fold / unfold
-  $('#cit-ftype')?.addEventListener('change', e => { window._citType = e.target.value; PAGES.citadelreport(main); });
-  $('#cit-fact')?.addEventListener('change', e => { window._citAct = e.target.value; PAGES.citadelreport(main); });
+  main.querySelectorAll('[data-cf]').forEach(el => {   // v6.1094 — header filters (selects at once, text after a short pause)
+    const isSel = el.tagName === 'SELECT'; let tm = null;
+    el.addEventListener(isSel ? 'change' : 'input', () => {
+      clearTimeout(tm);
+      tm = setTimeout(() => {
+        window._citCF = window._citCF || {}; window._citCF[el.dataset.cf] = el.value; if (window._citPg) window._citPg.page = 1;
+        const key = el.dataset.cf, pos = el.selectionStart; PAGES.citadelreport(main);
+        const n = main.querySelector('[data-cf="' + key + '"]'); if (n && n.tagName === 'INPUT') { n.focus(); try { n.setSelectionRange(pos, pos); } catch (_) {} }
+      }, isSel ? 0 : 250);
+    });
+  });
+  renderPagination('cit-pagination', _pg, fDetails.length, () => PAGES.citadelreport(main));
   $('#cit-rate')?.addEventListener('change', e => {
     const v = parseFloat(e.target.value);
     if (!isNaN(v) && v >= 0 && v <= 100) { state.settings.citadelRate = v; save(); PAGES.citadelreport(main); }
@@ -22265,18 +22355,37 @@ function salaryRangeLines(coachId, from, to) {
   }
   return rows;
 }
-window.salaryRangePrint = function (from, to, set) {
+window.salaryRangePrint = function (from, to, set) {   // v6.1091 — one pay slip per person, the same look as the monthly pay slip, for the chosen day / dates
   const rows = salaryRangeRows(from, to, set || 'active'); if (!rows.length) { toast(t('Nobody has pay in this range.', 'لا يوجد راتب في هذه الفترة.'), 'info'); return; }
   const w = window.open('', '_blank'); if (!w) { toast(t('Allow pop-ups to print', 'اسمح بالنوافذ المنبثقة للطباعة'), 'error'); return; }
   const lbl = from === to ? fmtDate(from) : fmtDate(from) + ' → ' + fmtDate(to), esc = escapeHtml, kindTxt = { attended: t('attended', 'حضور'), trueup: t('true-up', 'تسوية'), flat: t('flat', 'ثابت'), switch: t('switch', 'تحويل'), invoice: t('invoice', 'فاتورة') };
-  const sum = rows.map((r, i) => '<tr><td>' + (i + 1) + '</td><td>' + esc(r.name) + '</td><td class="n">' + fmt(r.fixed) + '</td><td class="n">' + fmt(r.commission) + '</td><td class="n">' + fmt(r.privateBonus) + '</td><td class="n">' + fmt(r.receptionBonus) + '</td><td class="n b">' + fmt(r.total) + '</td></tr>').join('');
-  const tot = k => rows.reduce((a, r) => a + r[k], 0);
-  const blocks = rows.map(r => {
+  const row = (a, b, st) => '<div class="row"' + (st ? ' style="' + st + '"' : '') + '><span>' + a + '</span><span>' + b + '</span></div>';
+  const slips = rows.map(r => {
+    const c = (state.coaches || []).find(x => x && x.id === r.coachId) || {};
     const ls = salaryRangeLines(r.coachId, from, to);
-    const body = ls.length ? ls.map((l, i) => '<tr><td>' + (i + 1) + '</td><td>' + esc(l.member || '') + (l.priv ? ' 🔒' : '') + '</td><td>' + esc(l.sport || '') + '</td><td>' + (kindTxt[l.kind] || esc(l.kind || '')) + (l.ref ? ' ' + esc(l.ref) : '') + '</td><td class="n">' + (l.classes == null ? '' : l.classes) + '</td><td class="n">' + fmt(l.base) + '</td><td class="n b">' + fmt(l.pay) + '</td></tr>').join('') + '<tr class="tot"><td colspan="5">' + t('Total commission', 'إجمالي العمولة') + ' (' + r.rate + '%)</td><td class="n">' + fmt(ls.reduce((a, l) => a + l.base, 0)) + '</td><td class="n">' + fmt(ls.reduce((a, l) => a + l.pay, 0)) + '</td></tr>' : '<tr><td colspan="7" class="m">' + t('No commission lines in this range', 'لا توجد بنود عمولة في هذه الفترة') + '</td></tr>';
-    return '<div class="blk"><h3>' + esc(r.name) + ' <span class="m">· ' + (r.role === 'staff' ? t('Staff', 'موظف') : t('Coach', 'مدرب')) + ' · ' + t('Fixed', 'ثابت') + ' ' + fmt(r.fixed) + ' + ' + t('commission', 'عمولة') + ' ' + fmt(r.commission) + (r.privateBonus ? ' + ' + t('private', 'خاص') + ' ' + fmt(r.privateBonus) : '') + (r.receptionBonus ? ' + ' + t('reception', 'استقبال') + ' ' + fmt(r.receptionBonus) : '') + ' = <b>' + fmt(r.total) + '</b></span></h3><table><thead><tr><th>#</th><th>' + t('Member', 'العضو') + '</th><th>' + t('Sport', 'الرياضة') + '</th><th>' + t('Type', 'النوع') + '</th><th class="n">' + t('Classes', 'الحصص') + '</th><th class="n">' + t('Base', 'الأساس') + '</th><th class="n">' + t('Share', 'النصيب') + '</th></tr></thead><tbody>' + body + '</tbody></table></div>';
+    const det = ls.length ? '<h2>' + t('Commission details', 'تفاصيل العمولة') + '</h2><table><thead><tr><th>#</th><th>' + t('Member', 'العضو') + '</th><th>' + t('Sport', 'الرياضة') + '</th><th>' + t('Type', 'النوع') + '</th><th class="n">' + t('Classes', 'الحصص') + '</th><th class="n">' + t('Base', 'الأساس') + '</th><th class="n">' + t('Share', 'النصيب') + '</th></tr></thead><tbody>'
+      + ls.map((l, i) => '<tr><td>' + (i + 1) + '</td><td>' + esc(l.member || '') + (l.priv ? ' 🔒' : '') + '</td><td>' + esc(l.sport || '') + '</td><td>' + (kindTxt[l.kind] || esc(l.kind || '')) + (l.ref ? ' ' + esc(l.ref) : '') + '</td><td class="n">' + (l.classes == null ? '' : l.classes) + '</td><td class="n">' + fmt(l.base) + '</td><td class="n b">' + fmt(l.pay) + '</td></tr>').join('')
+      + '<tr class="tot"><td colspan="5">' + t('Total commission', 'إجمالي العمولة') + ' (' + r.rate + '%)</td><td class="n">' + fmt(ls.reduce((x, l) => x + l.base, 0)) + '</td><td class="n">' + fmt(ls.reduce((x, l) => x + l.pay, 0)) + '</td></tr></tbody></table>' : '';
+    return '<div class="slip"><div class="header"><div><div class="logo">★ Black Stars</div><div class="sub">Sports Club · Waab, Doha</div></div><div style="text-align:right"><div style="font-weight:700">PAY SLIP</div><div class="sub">' + esc(lbl) + '</div></div></div>'
+      + '<div style="margin-bottom:14px"><div style="font-size:18px;font-weight:700">' + esc(r.name) + '</div><div class="sub">' + (r.role === 'staff' ? 'Staff' : 'Coach') + (c.sports && c.sports.length ? ' · ' + esc(c.sports.join(', ')) : '') + ' · Generated ' + fmtDate(TODAY) + '</div></div>'
+      + '<h2>Earnings</h2>'
+      + (r.fixed ? row('Fixed salary (pro-rated by days)', fmt(r.fixed) + ' QAR') : '')
+      + (r.commission || r.rate ? row('Commission (' + r.rate + '%)', fmt(r.commission) + ' QAR') : '')
+      + (r.privateBonus ? row('Private bonus', fmt(r.privateBonus) + ' QAR') : '')
+      + (r.receptionBonus ? row('Reception private share', fmt(r.receptionBonus) + ' QAR') : '')
+      + row('Gross pay', fmt(r.total) + ' QAR', 'font-weight:700')
+      + det
+      + '<div class="net"><div class="label">NET PAY</div><div class="amount">' + fmt(r.total) + ' QAR</div></div>'
+      + '<div class="footer">Black Stars Sports Club · ' + t('A calculation for the dates above — the monthly target bonus is not included, nothing is paid from here.', 'حساب للتواريخ أعلاه — مكافأة التارجت الشهرية غير مشمولة ولا يُدفع شيء من هنا.') + '</div></div>';
   }).join('');
-  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Salary ' + esc(lbl) + '</title><style>body{font-family:Arial,sans-serif;color:#111;margin:22px}h1{font-size:20px;margin:0 0 4px}h3{font-size:14px;margin:18px 0 6px}.sub{color:#666;font-size:12px;margin-bottom:12px}table{width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:6px}th,td{border:1px solid #ccc;padding:4px 7px;text-align:left}th{background:#f2f2f2}.n{text-align:right}.b{font-weight:700}.m{color:#666;font-weight:400}.tot td{font-weight:800;background:#fafafa}.blk{page-break-inside:avoid}</style></head><body onload="window.print()"><h1>' + t('Salary report', 'تقرير الرواتب') + ' — ' + esc(lbl) + '</h1><div class="sub">Black Stars Sports Club · ' + t('a calculation for the dates above (fixed pro-rated by days; the monthly target bonus is not included)', 'حساب للتواريخ أعلاه (الثابت بالأيام؛ مكافأة التارجت الشهرية غير مشمولة)') + '</div><table><thead><tr><th>#</th><th>' + t('Name', 'الاسم') + '</th><th class="n">' + t('Fixed', 'ثابت') + '</th><th class="n">' + t('Commission', 'عمولة') + '</th><th class="n">' + t('Private', 'خاص') + '</th><th class="n">' + t('Reception', 'استقبال') + '</th><th class="n">' + t('Total', 'الإجمالي') + '</th></tr></thead><tbody>' + sum + '<tr class="tot"><td colspan="2">' + t('Total', 'الإجمالي') + '</td><td class="n">' + fmt(tot('fixed')) + '</td><td class="n">' + fmt(tot('commission')) + '</td><td class="n">' + fmt(tot('privateBonus')) + '</td><td class="n">' + fmt(tot('receptionBonus')) + '</td><td class="n">' + fmt(tot('total')) + '</td></tr></tbody></table>' + blocks + '</body></html>');
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Pay slips ' + esc(lbl) + '</title><style>'
+    + "body{font-family:'Helvetica Neue',Arial,sans-serif;color:#1a1a1a;margin:0}.slip{padding:34px 40px;max-width:700px;margin:0 auto;page-break-after:always}.slip:last-child{page-break-after:auto}"
+    + '.header{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #f26060;padding-bottom:14px;margin-bottom:22px}.logo{font-size:22px;font-weight:800;color:#f26060}.sub{color:#666;font-size:11px}'
+    + 'h2{font-size:16px;margin:18px 0 10px;color:#333}.row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #eee;font-size:13px}'
+    + '.net{background:#f0fdf4;border:2px solid #10b981;padding:14px;margin-top:16px;display:flex;justify-content:space-between;font-size:18px;font-weight:800}.net .label,.net .amount{color:#059669}'
+    + '.footer{margin-top:26px;color:#999;font-size:10px;text-align:center;border-top:1px solid #eee;padding-top:12px}'
+    + 'table{width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:6px}th,td{border:1px solid #ccc;padding:4px 7px;text-align:left}th{background:#f2f2f2}.n{text-align:right}.b{font-weight:700}.tot td{font-weight:800;background:#fafafa}'
+    + '@media print{.slip{padding:18px 24px}}</style></head><body onload="window.print()">' + slips + '</body></html>');
   w.document.close();
 };
 function salaryRangeRows(from, to, set) {
@@ -22539,18 +22648,9 @@ PAGES.salaries = (main) => {
         <button class="btn primary" onclick="downloadPayrollCSV('${filter.month}', window._salCoachSet || 'active')">📥 Export payroll</button>
       </div>
     </div>
-    <div style="background:rgba(91,141,239,.06);border:1px solid rgba(91,141,239,.2);border-radius:8px;padding:12px;margin-bottom:14px;display:flex;gap:10px;align-items:flex-start">
-      <div style="font-size:20px">💡</div>
-      <div style="font-size:12px;color:var(--text-dim);line-height:1.5">
-        Salaries = <b>Fixed monthly</b> (set per person on the Team page) + <b>Commission</b>, by attendance:
-        <br>• <b>By attendance</b> (current) — <b>fee ÷ total classes × rate%</b> for <b>each class a student attends</b>, counted in the month attended; the unattended remainder stays <span style="color:var(--accent-2)">⏳ Pending</span> and is <b>trued-up</b> in the month the membership expires.
-        <br>Frozen memberships don't true-up until they end. Summer Camp earns no commission.
-      </div>
-    </div>
     </div>
     <div class="card">
       <div class="filter-bar" style="flex-wrap:wrap;align-items:center;gap:10px">
-        <span style="font-size:12px;color:var(--text-mute)">${t('Commission', 'العمولة')}:</span> <span class="badge active" style="font-size:11px">${t('By attendance (per class attended)', 'بالحضور (لكل حصة)')}</span>
         <label id="sal-attended-only" style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-mute);cursor:pointer" title="${t('When ON, an EXPIRED membership pays the coach ONLY for classes actually attended — no true-up of carried-forward / unused sessions. Applies to every coach except those overridden on the Team page. (Attendance basis only.)', 'عند التفعيل، العضوية المنتهية تدفع للمدرب مقابل الحصص المحضورة فقط — دون احتساب الحصص المُرحّلة/غير المحضورة. تنطبق على كل المدربين إلا من له إعداد خاص في صفحة الفريق. (أساس الحضور فقط.)')}">
           <input type="checkbox" id="sal-attended-only-cb" ${state.settings?.payAttendedOnly ? 'checked' : ''} /> ${t('Exclude carried-forward for expired (pay attended only)', 'استبعاد المُرحّل للمنتهية (دفع المحضور فقط)')}
         </label>
