@@ -6706,7 +6706,7 @@ PAGES.families = (main) => {
       const q = searchEl.value.trim().toLowerCase();
       document.querySelectorAll('.fam-card').forEach(card => {
         const hay = (card.getAttribute('data-hay') || '');
-        const match = !q || hay.indexOf(q) >= 0;
+        const match = !q || searchMatchesFields(searchEl.value, [hay]);
         card.style.display = match ? '' : 'none';
         // When searching, auto-expand matches so the matching member is visible.
         if (q && match) {
@@ -6841,10 +6841,10 @@ PAGES.trash = (main) => {
   $('#trash-search')?.addEventListener('input', e => {
     f.search = e.target.value;
     const q = (e.target.value || '').trim().toLowerCase();
-    $$('.trash-row').forEach(tr => { tr.style.display = (!q || (tr.getAttribute('data-hay') || '').includes(q)) ? '' : 'none'; });
+    $$('.trash-row').forEach(tr => { tr.style.display = (!q || searchMatchesFields(e.target.value, [tr.getAttribute('data-hay') || ''])) ? '' : 'none'; });
   });
   // Re-apply an active search after a kind-change re-render.
-  if (f.search) { const q = f.search.trim().toLowerCase(); $$('.trash-row').forEach(tr => { tr.style.display = (!q || (tr.getAttribute('data-hay') || '').includes(q)) ? '' : 'none'; }); }
+  if (f.search) { const q = f.search.trim().toLowerCase(); $$('.trash-row').forEach(tr => { tr.style.display = (!q || searchMatchesFields(f.search, [tr.getAttribute('data-hay') || ''])) ? '' : 'none'; }); }
 };
 
 // ─── Summer Camp members list (admin) + transportation flag ─────────────────
@@ -9580,7 +9580,7 @@ PAGES.advertising = (main) => {
   const left = Math.max(0, Math.round((share - paid) * 100) / 100), over = Math.max(0, Math.round((D.income - cfg.threshold) * 100) / 100);
   const q = String(window._advQ || '').trim().toLowerCase(), fAct = window._advAct || 'all';
   const acts = Object.keys(D.byAct).sort((a, b) => D.byAct[b] - D.byAct[a]);
-  const shown = D.rows.filter(r => (fAct === 'all' || r.acts.includes(fAct)) && (!q || (r.customer + ' ' + r.ref + ' ' + r.acts.join(' ')).toLowerCase().includes(q)));
+  const shown = D.rows.filter(r => (fAct === 'all' || r.acts.includes(fAct)) && (!q || searchMatchesFields(q, [r.customer, r.ref, r.acts.join(' ')])));
   const shownTot = shown.reduce((s, r) => s + r.amount, 0);
   const hist = months.slice(0, 12).map(m => { const d = advMonthData(m), sh = advertisingAmount(d.income, cfg), pd = expPaidFor('advertising', m); return { m, income: d.income, court: d.court, share: sh, paid: pd, left: Math.max(0, Math.round((sh - pd) * 100) / 100) }; });
   const box = (label, value, sub, color) => `<div class="kpi" style="flex:1;min-width:150px;margin:0${color ? ';border-color:' + color : ''}"><div class="kpi-label"${color ? ` style="color:${color}"` : ''}>${label}</div><div class="kpi-value num"${color ? ` style="color:${color}"` : ''}>${value}</div><div class="kpi-sub">${sub}</div></div>`;
@@ -12468,7 +12468,7 @@ function _grpRenderMixed(main, sportsSum) {
   const list = (state.members || []).filter(memberHasMixedNow).sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
   const q = String(window._grpMixQ || '').trim().toLowerCase(), only = window._grpMixNo || false;
   const withG = list.filter(m => memberMixedGroups(m).length).length, none = list.length - withG;
-  const shown = list.filter(m => (!only || !memberMixedGroups(m).length) && (!q || ((m.name || '') + ' ' + (m.nameArabic || '') + ' ' + (m.phone || '')).toLowerCase().includes(q)));
+  const shown = list.filter(m => (!only || !memberMixedGroups(m).length) && (!q || searchMatchesFields(q, [m.name, m.nameArabic, m.phone], [m.phone])));
   const tabs = sportsSum.map(x => `<button class="grp-tab ${x.sport === MIXED ? 'on' : ''}" onclick="window._grpPick('${x.sport}')"><span class="grp-tab-emoji">${_grpEmoji(x.sport)}</span><span class="grp-tab-name">${escapeHtml(x.sport)}</span><span class="grp-tab-n ${x.noGroup ? 'bad' : 'ok'}" title="${t('without a group / subscribers', 'بدون مجموعة / المشتركين')}">${x.noGroup ? '⚠ ' + x.noGroup : '✓'}<small> / ${x.total}</small></span></button>`).join('');
   const rows = shown.map((m, i) => {
     const gs = memberMixedGroups(m);
@@ -12649,7 +12649,7 @@ PAGES.swimgroups = (main) => {
     document.querySelectorAll('#swim-pool .swim-chip').forEach(chip => {
       const m = swimmerById.get(parseInt(chip.dataset.mid)) || mixedById.get(parseInt(chip.dataset.mid));
       const hay = `${m?.name || ''} ${m?.nameArabic || ''} ${m?.phone || ''}`.toLowerCase();
-      chip.style.display = (!q || hay.indexOf(q) >= 0) ? '' : 'none';
+      chip.style.display = (!q || searchMatchesFields(e.target.value, [m && m.name, m && m.nameArabic, m && m.phone], [m && m.phone])) ? '' : 'none';
     });
   });
 
@@ -14132,7 +14132,7 @@ PAGES.coaches = (main) => {
       if (filter.active === 'active' && !isActive) return false;
       if (filter.active === 'inactive' && isActive) return false;
       if (filter.role && filter.role !== 'all' && (c.role || 'coach') !== filter.role) return false;
-      if (filter.search && !c.name.toLowerCase().includes(filter.search.toLowerCase())) return false;
+      if (filter.search && !searchMatchesFields(filter.search, [c.name, c.nameArabic, c.phone], [c.phone])) return false;
       return true;
     });
   }
@@ -17227,8 +17227,7 @@ function memberStatement() {
     let matches = (state.members || []).filter(m => !m.deleted);
     if (query) {
       matches = matches.filter(m => {
-        const hay = [m.name, m.nameArabic, m.phone, m.phone2, m.qid].filter(Boolean).join(' ').toLowerCase();
-        return hay.indexOf(query) >= 0;
+        return searchMatchesFields(query, [m.name, m.nameArabic, m.phone, m.phone2, m.qid], [m.phone, m.phone2]);
       });
     }
     matches = matches.slice(0, 50);
@@ -21352,8 +21351,7 @@ PAGES.cashcollection = (main) => {
     if (f.month !== 'all' && (e.month || (e.date || '').slice(0, 7)) !== f.month) return false;
     if (f.search) {
       const q = f.search.toLowerCase();
-      const hay = ((e.collectedBy || '') + ' ' + (e.note || '') + ' ' + (e.description || '')).toLowerCase();
-      if (!hay.includes(q)) return false;
+      if (!searchMatchesFields(f.search, [e.collectedBy, e.note, e.description])) return false;
     }
     return true;
   });
@@ -21854,7 +21852,7 @@ PAGES.expenses = (main) => {
       // GUARD: a row with no description (e.g. an auto Bank-Commission entry) made
       // undefined.toLowerCase() THROW the moment a search was typed, so refresh() crashed and
       // the list never filtered — the "search does nothing" bug. Coerce to string. (v6.424)
-      if (filter.search && !String(e.description || '').toLowerCase().includes(filter.search.toLowerCase())) return false;
+      if (filter.search && !searchMatchesFields(filter.search, [e.description])) return false;
       if (!(filter.from || filter.to) && filter.months.length && !filter.months.includes(e.month)) return false;
       if (filter.from || filter.to) { const _d = String(e.date || '').slice(0, 10) || (e.month ? e.month + '-01' : ''); if (filter.from && _d < filter.from) return false; if (filter.to && _d > filter.to) return false; }   // v6.878 — date range
       if (filter.categories.length && !filter.categories.includes(e.category || 'Others')) return false;
@@ -34934,7 +34932,7 @@ PAGES.onboarding = (main) => {
       if (filter.search) {
         const q = filter.search.toLowerCase();
         const hay = [m.name, m.nameArabic, m.phone, m.phone2, phoneToMemberEmail(m.phone)].filter(Boolean).join(' ').toLowerCase();
-        if (!hay.includes(q) && !phoneQueryMatches(m.phone, filter.search)) return false;
+        if (!searchMatchesFields(filter.search, [m.name, m.nameArabic, m.phone, m.phone2, phoneToMemberEmail(m.phone)], [m.phone, m.phone2])) return false;
       }
       return true;
     });
@@ -35254,8 +35252,7 @@ PAGES.welcome = (main) => {
       if (window._welType !== 'all' && r.kind !== window._welType) return false;
       if (window._welHideDone && r.done) return false;
       if (q) {
-        const hay = [r.m.name, r.m.nameArabic, r.m.phone].filter(Boolean).join(' ').toLowerCase();
-        if (!hay.includes(q)) return false;
+        if (!searchMatchesFields(q, [r.m.name, r.m.nameArabic, r.m.phone], [r.m.phone])) return false;
       }
       return true;
     });
@@ -37441,8 +37438,8 @@ function courtScheduleOn(date) {
   const real = (state.rentals || []).filter(r => r && r.facility === COURT && r.date === date && r.startTime);
   const covered = hh => real.some(r => { const s2 = cbMin(r.startTime), e2 = s2 + Math.round((r.hours || 0) * 60); return hh * 60 < e2 && s2 < hh * 60 + 60; });   // a real booking on the slot replaces the schedule block
   return (state.schedule || []).filter(c => c && c.sport === 'Football' && c.day === code && Number.isFinite(parseInt(c.slot, 10)) && !covered(parseInt(c.slot, 10)))
-    .map(c => ({ id: 'sch' + c.id, schedId: c.id, fromSchedule: true, academy: !c.label, unbilled: !!c.label, facility: COURT, date, startTime: String(parseInt(c.slot, 10)).padStart(2, '0') + ':00', hours: 1, amount: 0, hourlyRate: 0,
-      customerName: c.label ? c.label : 'Football', customerPhone: null, notes: (!c.label && c.coachId != null && typeof coachName === 'function') ? coachName(c.coachId) : null }));
+    .map(c => ({ id: 'sch' + c.id, schedId: c.id, fromSchedule: true, academy: true, unbilled: false, facility: COURT, date, startTime: String(parseInt(c.slot, 10)).padStart(2, '0') + ':00', hours: 1, amount: 0, hourlyRate: 0,
+      customerName: c.label ? c.label : 'Football', customerPhone: null, notes: (c.coachId != null && typeof coachName === 'function') ? coachName(c.coachId) : null }));   // v6.1110 — a Football class on the schedule is always FREE here; only a booking made on this screen is paid
 }
 // the first booking (real or from the schedule) that overlaps [start, start + hours) on a date, ignoring one real rental id
 function courtClash(date, startTime, hours, exceptId) {
@@ -37740,7 +37737,7 @@ PAGES.courtbookings = (main) => {
         <div><h1>⚽ ${t('Court Bookings', 'حجوزات ملعب كرة القدم')}</h1><div class="subtitle">${t('Football Court', 'ملعب كرة القدم')} · ${courtHours().open}–${courtHours().close}</div></div>
         <div class="topbar-actions">
           <button class="btn ghost" id="cb-rentals" title="${t('The full rentals list', 'قائمة الإيجارات الكاملة')}">📋 ${t('All rentals', 'كل الإيجارات')}</button>
-          ${currentRole() === 'admin' ? `<button class="btn ghost" id="cb-sched-rent" title="${t('Turn the customers\' weekly schedule slots (e.g. Yarid) into rentals left due, until month end', 'حوّل حجوزات العملاء الأسبوعية من الجدول (مثل Yarid) إلى حجوزات آجلة حتى آخر الشهر')}">📅 ${t('Schedule → rentals', 'الجدول ← حجوزات')}</button>` : ''}
+          ${''}
           <button class="btn ghost" id="cb-academy" title="${t('Block the court for the academy — free, no invoice', 'احجز الملعب للأكاديمية — مجاني بدون فاتورة')}">🏫 ${t('Academy (free)', 'الأكاديمية (مجاني)')}</button>
           <button class="btn primary" id="cb-new">+ ${t('New booking', 'حجز جديد')}</button>
         </div>
@@ -37792,8 +37789,7 @@ PAGES.rentals = (main) => {
     return (state.rentals || []).filter(r => {
       if (filter.search) {
         const q = filter.search.toLowerCase();
-        const hay = [r.facility, r.customerName, r.customerPhone, r.customerQid, r.notes].filter(Boolean).join(' ').toLowerCase();
-        if (!hay.includes(q)) return false;
+        if (!searchMatchesFields(filter.search, [r.facility, r.customerName, r.customerPhone, r.customerQid, r.notes], [r.customerPhone])) return false;   // v6.1111 — spaces / +974 / a trailing blank no longer hide a match
       }
       if (filter.facility !== 'all' && r.facility !== filter.facility) return false;
       if (filter.months.length && !filter.months.includes((r.date || '').slice(0,7))) return false;
@@ -38093,10 +38089,7 @@ function wireRentalForm() {
     const all = [...memberCusts, ...rentalCusts];
 
     let filtered = ql
-      ? all.filter(c =>
-          c.name.toLowerCase().includes(ql) ||
-          c.phone.toLowerCase().includes(ql) ||
-          (c.qid || '').toLowerCase().includes(ql))
+      ? all.filter(c => searchMatchesFields(ql, [c.name, c.phone, c.qid], [c.phone]))
       : all.slice(0, 20); // show first 20 if no query
 
     // De-dupe: if a rental customer shares the SAME mobile as a member, drop the rental row (member wins)
@@ -38300,7 +38293,7 @@ function showRentalCustomersList() {
       inp.addEventListener('input', () => {
         const q = inp.value.toLowerCase().trim();
         document.querySelectorAll('#rcust-tbody tr').forEach(tr => {
-          const match = !q || tr.dataset.name.includes(q) || tr.dataset.phone.includes(q);
+          const match = !q || searchMatchesFields(inp.value, [tr.dataset.name, tr.dataset.phone], [tr.dataset.phone]);
           tr.style.display = match ? '' : 'none';
         });
       });
@@ -39647,7 +39640,7 @@ PAGES.transfers = (main) => {
     if (!q) return true;
     const needle = q.trim().toLowerCase();
     const hay = [m.name, m.nameArabic].filter(Boolean).join(' ').toLowerCase();
-    if (hay.includes(needle)) return true;
+    if (searchMatchesFields(q, [hay], [m.phone, m.phone2])) return true;
     return phoneQueryMatches(m.phone, q) || phoneQueryMatches(m.phone2, q);
   };
   // Members who CAN transfer something out: have ≥1 transferable enrollment AND
@@ -40340,7 +40333,7 @@ PAGES.transactions = (main) => {
         const q = st.search.toLowerCase();
         const cust = customerInfo(inv);
         const phoneHit = phoneQueryMatches(cust.phone, st.search) || phoneQueryMatches(cust.phone2, st.search) || phoneQueryMatches(inv.customerPhone, st.search);
-        if (!(customer.toLowerCase().includes(q) || ref.toLowerCase().includes(q) || sport.toLowerCase().includes(q) || phoneHit)) continue;
+        if (!(searchMatchesFields(st.search, [customer, ref, sport]) || phoneHit)) continue;
       }
       txns.push({ id: inv.id, ref, date: (inv.date || '').slice(0, 10), payDates: (Array.isArray(inv.payments) ? inv.payments : []).filter(p => p && (Number(p.amount) || 0) > 0 && !p._recon).map(p => String(p.date || inv.date || '').slice(0, 10)).filter(Boolean).sort(), category: cat, customer, sport, coach: coachName(displayCoachId) || '—', amount: invAmount, paid, due, netDue, method: invoiceMethodLabel(inv) || inv.method || '' });
       byCategory[cat] = byCategory[cat] || { total: 0, count: 0, due: 0, netDue: 0 };
@@ -40370,7 +40363,7 @@ PAGES.transactions = (main) => {
         if (st.search) {
           const q = st.search.toLowerCase();
           const phoneHit = phoneQueryMatches(cust.phone, st.search) || phoneQueryMatches(cust.phone2, st.search) || phoneQueryMatches(inv.customerPhone, st.search);
-          if (!(customer.toLowerCase().includes(q) || ref.toLowerCase().includes(q) || sport.toLowerCase().includes(q) || phoneHit)) continue;
+          if (!(searchMatchesFields(st.search, [customer, ref, sport]) || phoneHit)) continue;
         }
         for (const p of invoicePaymentRowsDeduped(inv)) {   // v6.780
           if (!p || p._recon) continue;
