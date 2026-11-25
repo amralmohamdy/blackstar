@@ -12455,11 +12455,9 @@ window.memberGroupsHtml = function (m) {
   const rows = memberGroupsFor(m), mixed = memberHasMixedNow(m);
   if (!rows.length && !mixed) return '';
   const canSet = ['admin', 'receptionist'].includes(currentRole());
-  const label = g => (g.name || '') + ((g.slotIds || []).length ? ' · ' + (g.slotIds || []).map(id => (state.schedule || []).find(c => c && String(c.id) === String(id))).filter(Boolean).map(_grpSlotLabel).join(' · ') : '') + ' (' + (g.memberIds || []).length + ')';
   const one = r => {
-    const groups = (state.swimGroups || []).filter(g => _grpSportOf(g) === r.sport).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-    if (!canSet) return `<span class="badge" style="background:${r.group ? 'rgba(16,185,129,.14);color:var(--green)' : 'rgba(239,68,68,.12);color:var(--red)'};font-weight:700">${_grpEmoji(r.sport)} ${escapeHtml(r.sport)} → ${r.group ? escapeHtml(r.group.name || '') : t('no group', 'بدون مجموعة')}</span>`;
-    return `<span style="display:inline-flex;align-items:center;gap:6px"><span style="font-size:12px;font-weight:700">${_grpEmoji(r.sport)} ${escapeHtml(r.sport)}</span><select class="grp-member-sel ${r.group ? '' : 'none'}" data-sport="${escapeHtml(r.sport)}" onchange="window.setMemberGroup(${m.id}, this.dataset.sport, this.value, this)" title="${t('Choose his group (optional)', 'اختر مجموعته (اختياري)')}"><option value="">${t('— no group —', '— بدون مجموعة —')}</option>${groups.map(g => `<option value="${g.id}" ${r.group && r.group.id === g.id ? 'selected' : ''}>${escapeHtml(label(g))}</option>`).join('')}</select></span>`;
+    // v6.1121 — read-only: only HIS group (with the sport) is shown; the group is changed on the Groups screen
+    return `<span class="badge" style="background:${r.group ? 'rgba(16,185,129,.14);color:var(--green)' : 'rgba(239,68,68,.12);color:var(--red)'};font-weight:700">${_grpEmoji(r.sport)} ${escapeHtml(r.sport)} → ${r.group ? escapeHtml(r.group.name || '') : t('no group', 'بدون مجموعة')}</span>`;
   };
   return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 10px;padding:8px 10px;background:var(--surface-2);border-radius:10px"><span class="text-mute" style="font-size:11px;text-transform:uppercase;font-weight:700">👥 ${t('Groups', 'المجموعات')}</span>${rows.map(one).join('')}${mixed ? (() => { const mg = memberMixedGroups(m); return `<span style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap"><span style="font-size:12px;font-weight:700">🎯 Mixed</span>${mg.length ? mg.map(g => `<span class="badge" style="background:rgba(139,92,246,.15);color:#7c3aed">${_grpEmoji(_grpSportOf(g))} ${escapeHtml(g.name || '')}</span>`).join('') : `<span class="text-mute" style="font-size:12px">${t('any class (no groups picked)', 'أي حصة (لم تُحدَّد مجموعات)')}</span>`}${canSet ? `<button class="btn ghost sm" onclick="openMixedGroups(${m.id})">${mg.length ? '✏️ ' + t('Change', 'تغيير') : '＋ ' + t('Choose groups', 'اختر المجموعات')}</button>` : ''}</span>`; })() : ''}${canSet && rows.length ? `<a href="javascript:void(0)" style="font-size:11px;margin-inline-start:auto" onclick="openGroupsFor('${rows[0].sport}')">${t('Open the Groups screen', 'افتح شاشة المجموعات')} ›</a>` : ''}</div>`;
 };
@@ -12855,16 +12853,40 @@ window._swimShare = function(gid) {
   window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
 };
 
+// v6.1122 — age in years (months under 2 years) from an ISO birthdate; '' when unknown
+function _ageText(bd) {
+  const mt = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(bd || ''));
+  if (!mt) return '';
+  const tt = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(TODAY || ''));
+  if (!tt) return '';
+  let mo = (+tt[1] - +mt[1]) * 12 + (+tt[2] - +mt[2]) - (+tt[3] < +mt[3] ? 1 : 0);
+  if (mo < 0) return '';
+  return mo < 24 ? mo + ' ' + t('mo', 'شهر') : String(Math.floor(mo / 12));
+}
+
 window._swimPrint = function(gid) {
   const g = (state.swimGroups || []).find(x => x.id === gid);
   if (!g) return;
   const mems = (g.memberIds || []).map(id => (state.members || []).find(m => m.id === id)).filter(Boolean);
-  // No phone column in the print (per request). Columns: # / Name / الاسم.
-  const rows = mems.map((m, i) => `<tr>
-    <td style="border:1px solid #ddd;padding:9px 12px;text-align:center;width:44px;font-weight:600">${i + 1}</td>
-    <td style="border:1px solid #ddd;padding:9px 12px;font-size:14px">${escapeHtml(m.name)}</td>
-    <td style="border:1px solid #ddd;padding:9px 12px;direction:rtl;font-size:14px">${escapeHtml(m.nameArabic || '')}</td>
-  </tr>`).join('');
+  // v6.1119 — reception columns: phone, package status + end, classes used, amount due
+  const _sp = _grpSportOf(g);
+  const _td = 'border:1px solid #ddd;padding:7px 9px;font-size:13px';
+  const rows = mems.map((m, i) => {
+    const sub = (m.subscriptions || []).filter(s => s && !s.deleted && s.activity === _sp).sort((a, b) => String(a.end || '').localeCompare(String(b.end || ''))).pop();
+    const st = memberStatus(m);
+    const used = sub ? (liveAttendanceCount(m, _sp, sub.start || null, sub.end || null).y || 0) : 0;
+    const tot = sub ? (parseInt(sub.totalClasses) || 0) : 0;
+    const due = (state.invoices || []).filter(v => v && !v.deleted && String(v.customerId) === String(m.id)).reduce((s, v) => s + Math.max(0, invoiceBalance(v)), 0);
+    const stCol = st === 'Active' ? '#15803d' : st === 'Frozen' ? '#2563eb' : '#b91c1c';
+    return `<tr>
+    <td style="${_td};text-align:center;width:34px;font-weight:600">${i + 1}</td>
+    <td style="${_td}"><div style="font-weight:600">${escapeHtml(m.name)}</div><div style="direction:rtl;text-align:right;color:#555;font-size:12px">${escapeHtml(m.nameArabic || '')}</div></td>
+    <td style="${_td};direction:ltr;white-space:nowrap;font-weight:600">${escapeHtml(m.phone || '—')}</td>
+    <td style="${_td};white-space:nowrap"><b style="color:${stCol}">${escapeHtml(st)}</b>${sub && sub.end ? '<div style="color:#777;font-size:11px">' + fmtDate(sub.end) + '</div>' : ''}</td>
+    <td style="${_td};text-align:center;white-space:nowrap">${sub ? used + ' / ' + tot : '—'}</td>
+    <td style="${_td};text-align:right;white-space:nowrap;${due > 0.005 ? 'color:#b91c1c;font-weight:800' : 'color:#999'}">${due > 0.005 ? fmt(due) + ' QAR' : '—'}</td>
+  </tr>`;
+  }).join('');
   // Schedule banner: days (EN + AR) and the from–to time, shown prominently.
   const schedEn = _swimScheduleText(g, false);
   const schedAr = _swimScheduleText(g, true);
@@ -12874,7 +12896,7 @@ window._swimPrint = function(gid) {
       ${schedEn && schedAr && schedEn !== schedAr ? `<div style="font-size:14px;color:#555;direction:rtl;margin-top:2px">${escapeHtml(schedAr)}</div>` : ''}
     </div>` : '';
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(g.name || _grpSportOf(g) + ' Group')}</title>
-    <style>body{font-family:-apple-system,'Segoe UI',Arial,sans-serif;color:#1a1a1a;padding:28px;max-width:720px;margin:auto}
+    <style>body{font-family:-apple-system,'Segoe UI',Arial,sans-serif;color:#1a1a1a;padding:28px;max-width:900px;margin:auto}
       h1{font-size:24px;margin:0 0 4px} .sub{color:#777;font-size:13px;border-bottom:3px solid #f26060;padding-bottom:10px;margin-bottom:16px}
       table{border-collapse:collapse;width:100%} th{background:#fafafa;border:1px solid #ddd;padding:9px 12px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#777}
       .foot{margin-top:18px;color:#aaa;font-size:11px;text-align:center}</style></head>
@@ -12882,7 +12904,7 @@ window._swimPrint = function(gid) {
       <h1>${_grpEmoji(_grpSportOf(g))} ${escapeHtml(g.name || _grpSportOf(g) + ' Group')}</h1>
       <div class="sub">Black Stars Sports Club · Waab, Doha · ${mems.length} members · ${fmtDate(TODAY)}</div>
       ${schedHtml}
-      <table><thead><tr><th style="width:44px">#</th><th>Name</th><th style="text-align:right">الاسم</th></tr></thead><tbody>${rows || '<tr><td colspan="3" style="padding:14px;text-align:center;color:#999">No members</td></tr>'}</tbody></table>
+      <table><thead><tr><th style="width:34px">#</th><th>Name · الاسم</th><th>Phone · الهاتف</th><th>Status · الحالة</th><th style="text-align:center">Classes · الحصص</th><th style="text-align:right">Due · المستحق</th></tr></thead><tbody>${rows || '<tr><td colspan="6" style="padding:14px;text-align:center;color:#999">No members</td></tr>'}</tbody></table>
       <div class="foot">Black Stars CRM</div>
       <script>window.onload=function(){setTimeout(function(){window.print();},250);};<\/script>
     </body></html>`;
@@ -27642,7 +27664,7 @@ PAGES.attendance = (main) => {
     // their attendance row (see the row render below), so the over-limit state is visible without a
     // popup and the class is still recorded.
     const _prevMark = m.dailyAttendance[mo][sport][String(day)] || null;
-    if (next === null) delete m.dailyAttendance[mo][sport][String(day)];
+    if (next === null) { delete m.dailyAttendance[mo][sport][String(day)]; if (typeof window._tombstoneMapKey === 'function') window._tombstoneMapKey('members:' + m.id + ':dailyAttendance:' + mo + ':' + sport, String(day)); }   // v6.1119
     else m.dailyAttendance[mo][sport][String(day)] = next;
     // v6.815 — a mark inside a SWITCHED-AWAY package's window re-balances source / destination (classes + line values; admin and reception only — they can edit invoices)
     if (['admin', 'receptionist'].includes(currentRole()) && typeof rebalanceSwitchedAfterMark === 'function') {
@@ -28010,7 +28032,7 @@ PAGES.attendance = (main) => {
     let _key = String(clearKey || day);
     if (!clear) { _key = String(day); for (let n = 2; m.mixedAttendance[mo][_key] && m.mixedAttendance[mo][_key].mark !== 'N'; n++) _key = String(day) + '_' + n; }   // first FREE slot of the day
     const prev = m.mixedAttendance[mo][_key] || null;
-    if (clear) delete m.mixedAttendance[mo][_key];
+    if (clear) { delete m.mixedAttendance[mo][_key]; if (typeof window._tombstoneMapKey === 'function') window._tombstoneMapKey('members:' + m.id + ':mixedAttendance:' + mo, _key); }   // v6.1119 — the clear sticks even if this device never had the cell in its sync base
     else m.mixedAttendance[mo][_key] = { coachId: (coachId != null ? coachId : null), sport: sport || null, mark: 'Y' };
     if (!clear) (extra || []).forEach(e => { let k2 = String(day); for (let n = 2; m.mixedAttendance[mo][k2] && m.mixedAttendance[mo][k2].mark !== 'N'; n++) k2 = String(day) + '_' + n; m.mixedAttendance[mo][k2] = { coachId: (e.coachId != null ? e.coachId : null), sport: e.sport || null, mark: 'Y' }; });
     const iso = `${mo}-${String(day).padStart(2, '0')}`;
@@ -28464,6 +28486,8 @@ PAGES.attendance = (main) => {
             ${m.nameArabic ? `<div dir="rtl" style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isExpired ? 'color:var(--text-mute)' : ''}">${escapeHtml(m.nameArabic)}</div>` : ''}
             <div class="text-mute" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(sport)}${_isMixedRow ? ' · ' + escapeHtml(t('pick sport + coach per class', 'اختر الرياضة والمدرب لكل حصة')) : (!isCampSport(sport) ? ' · ' + escapeHtml(coachName(coachId)) : '')}${attPrivTag(rowPrivate(m, sport, coachId))}</div>
           </td>
+          <td class="text-center" style="font-size:12px;white-space:nowrap">${escapeHtml(_ageText(m.birthdate)) || '<span class="text-mute">—</span>'}</td>
+          <td style="font-size:12px;white-space:nowrap;direction:ltr;text-align:left">${m.phone ? escapeHtml(m.phone) : '<span class="text-mute">—</span>'}</td>
           ${cells}
           <td class="att-total" title="${escapeHtml(t('Classes attended in the whole package', 'الحصص المحضورة في الباقة كلها'))} · ${escapeHtml(t('in the days shown', 'في الأيام المعروضة'))}: ${_shownY}"><span style="color:var(--green);font-weight:600">${y}</span><span class="text-mute"> / ${total || '—'}</span></td>
           <td class="text-right" style="color:${rate >= 75 ? 'var(--green)' : rate >= 40 ? 'var(--accent-2)' : rate > 0 ? 'var(--red)' : 'var(--text-mute)'};font-weight:600">${total ? rate + '%' : '—'}</td>
@@ -28476,13 +28500,15 @@ PAGES.attendance = (main) => {
         <thead>
           <tr>
             <th class="att-name-h">${t('Student', 'الطالب')}</th>
+            <th class="text-center">${t('Age', 'العمر')}</th>
+            <th style="text-align:left">${t('Mobile', 'الجوال')}</th>
             ${dayHeaders}
             <th class="att-total-h">${t('Total', 'الإجمالي')}</th>
             <th class="text-right">${t('Rate', 'النسبة')}</th>
             <th class="text-right">${_canStudentPdf ? t('Export', 'تصدير') : ''}</th>
           </tr>
         </thead>
-        <tbody>${body || `<tr><td colspan="${dayList.length+4}" class="empty">No members match the current filters.</td></tr>`}</tbody>
+        <tbody>${body || `<tr><td colspan="${dayList.length+6}" class="empty">No members match the current filters.</td></tr>`}</tbody>
       </table>
     `;
     let dayNote;
