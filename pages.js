@@ -12455,9 +12455,11 @@ window.memberGroupsHtml = function (m) {
   const rows = memberGroupsFor(m), mixed = memberHasMixedNow(m);
   if (!rows.length && !mixed) return '';
   const canSet = ['admin', 'receptionist'].includes(currentRole());
+  const label = g => (g.name || '') + ((g.slotIds || []).length ? ' · ' + (g.slotIds || []).map(id => (state.schedule || []).find(c => c && String(c.id) === String(id))).filter(Boolean).map(_grpSlotLabel).join(' · ') : '') + ' (' + (g.memberIds || []).length + ')';
   const one = r => {
-    // v6.1121 — read-only: only HIS group (with the sport) is shown; the group is changed on the Groups screen
-    return `<span class="badge" style="background:${r.group ? 'rgba(16,185,129,.14);color:var(--green)' : 'rgba(239,68,68,.12);color:var(--red)'};font-weight:700">${_grpEmoji(r.sport)} ${escapeHtml(r.sport)} → ${r.group ? escapeHtml(r.group.name || '') : t('no group', 'بدون مجموعة')}</span>`;
+    const groups = (state.swimGroups || []).filter(g => _grpSportOf(g) === r.sport).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    if (!canSet) return `<span class="badge" style="background:${r.group ? 'rgba(16,185,129,.14);color:var(--green)' : 'rgba(239,68,68,.12);color:var(--red)'};font-weight:700">${_grpEmoji(r.sport)} ${escapeHtml(r.sport)} → ${r.group ? escapeHtml(r.group.name || '') : t('no group', 'بدون مجموعة')}</span>`;
+    return `<span style="display:inline-flex;align-items:center;gap:6px"><span style="font-size:12px;font-weight:700">${_grpEmoji(r.sport)} ${escapeHtml(r.sport)}</span><select class="grp-member-sel ${r.group ? '' : 'none'}" data-sport="${escapeHtml(r.sport)}" onchange="window.setMemberGroup(${m.id}, this.dataset.sport, this.value, this)" title="${t('Choose his group (optional)', 'اختر مجموعته (اختياري)')}"><option value="">${t('— no group —', '— بدون مجموعة —')}</option>${groups.map(g => `<option value="${g.id}" ${r.group && r.group.id === g.id ? 'selected' : ''}>${escapeHtml(label(g))}</option>`).join('')}</select></span>`;
   };
   return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 10px;padding:8px 10px;background:var(--surface-2);border-radius:10px"><span class="text-mute" style="font-size:11px;text-transform:uppercase;font-weight:700">👥 ${t('Groups', 'المجموعات')}</span>${rows.map(one).join('')}${mixed ? (() => { const mg = memberMixedGroups(m); return `<span style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap"><span style="font-size:12px;font-weight:700">🎯 Mixed</span>${mg.length ? mg.map(g => `<span class="badge" style="background:rgba(139,92,246,.15);color:#7c3aed">${_grpEmoji(_grpSportOf(g))} ${escapeHtml(g.name || '')}</span>`).join('') : `<span class="text-mute" style="font-size:12px">${t('any class (no groups picked)', 'أي حصة (لم تُحدَّد مجموعات)')}</span>`}${canSet ? `<button class="btn ghost sm" onclick="openMixedGroups(${m.id})">${mg.length ? '✏️ ' + t('Change', 'تغيير') : '＋ ' + t('Choose groups', 'اختر المجموعات')}</button>` : ''}</span>`; })() : ''}${canSet && rows.length ? `<a href="javascript:void(0)" style="font-size:11px;margin-inline-start:auto" onclick="openGroupsFor('${rows[0].sport}')">${t('Open the Groups screen', 'افتح شاشة المجموعات')} ›</a>` : ''}</div>`;
 };
@@ -12852,17 +12854,6 @@ window._swimShare = function(gid) {
   // Open WhatsApp share (no specific number — user picks the group chat).
   window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
 };
-
-// v6.1122 — age in years (months under 2 years) from an ISO birthdate; '' when unknown
-function _ageText(bd) {
-  const mt = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(bd || ''));
-  if (!mt) return '';
-  const tt = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(TODAY || ''));
-  if (!tt) return '';
-  let mo = (+tt[1] - +mt[1]) * 12 + (+tt[2] - +mt[2]) - (+tt[3] < +mt[3] ? 1 : 0);
-  if (mo < 0) return '';
-  return mo < 24 ? mo + ' ' + t('mo', 'شهر') : String(Math.floor(mo / 12));
-}
 
 window._swimPrint = function(gid) {
   const g = (state.swimGroups || []).find(x => x.id === gid);
@@ -28486,8 +28477,6 @@ PAGES.attendance = (main) => {
             ${m.nameArabic ? `<div dir="rtl" style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isExpired ? 'color:var(--text-mute)' : ''}">${escapeHtml(m.nameArabic)}</div>` : ''}
             <div class="text-mute" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(sport)}${_isMixedRow ? ' · ' + escapeHtml(t('pick sport + coach per class', 'اختر الرياضة والمدرب لكل حصة')) : (!isCampSport(sport) ? ' · ' + escapeHtml(coachName(coachId)) : '')}${attPrivTag(rowPrivate(m, sport, coachId))}</div>
           </td>
-          <td class="text-center" style="font-size:12px;white-space:nowrap">${escapeHtml(_ageText(m.birthdate)) || '<span class="text-mute">—</span>'}</td>
-          <td style="font-size:12px;white-space:nowrap;direction:ltr;text-align:left">${m.phone ? escapeHtml(m.phone) : '<span class="text-mute">—</span>'}</td>
           ${cells}
           <td class="att-total" title="${escapeHtml(t('Classes attended in the whole package', 'الحصص المحضورة في الباقة كلها'))} · ${escapeHtml(t('in the days shown', 'في الأيام المعروضة'))}: ${_shownY}"><span style="color:var(--green);font-weight:600">${y}</span><span class="text-mute"> / ${total || '—'}</span></td>
           <td class="text-right" style="color:${rate >= 75 ? 'var(--green)' : rate >= 40 ? 'var(--accent-2)' : rate > 0 ? 'var(--red)' : 'var(--text-mute)'};font-weight:600">${total ? rate + '%' : '—'}</td>
@@ -28500,15 +28489,13 @@ PAGES.attendance = (main) => {
         <thead>
           <tr>
             <th class="att-name-h">${t('Student', 'الطالب')}</th>
-            <th class="text-center">${t('Age', 'العمر')}</th>
-            <th style="text-align:left">${t('Mobile', 'الجوال')}</th>
             ${dayHeaders}
             <th class="att-total-h">${t('Total', 'الإجمالي')}</th>
             <th class="text-right">${t('Rate', 'النسبة')}</th>
             <th class="text-right">${_canStudentPdf ? t('Export', 'تصدير') : ''}</th>
           </tr>
         </thead>
-        <tbody>${body || `<tr><td colspan="${dayList.length+6}" class="empty">No members match the current filters.</td></tr>`}</tbody>
+        <tbody>${body || `<tr><td colspan="${dayList.length+4}" class="empty">No members match the current filters.</td></tr>`}</tbody>
       </table>
     `;
     let dayNote;
