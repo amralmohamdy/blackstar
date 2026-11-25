@@ -22364,8 +22364,9 @@ function salaryRangePay(coachId, from, to) {
     const pe = computeMonthlyPay(coachId, null, e0); if (!pe) return null;
     out.name = pe.name; out.role = pe.role; out.basis = pe.basis; out.rate = pe.commissionRate;
     const startsMonth = s0 === first, prev = _isoAddDays(s0, -1);
-    const pm = startsMonth ? null : computeMonthlyPay(coachId, null, prev);                   // same month: fixed + attendance parts
-    const pc = (pe.basis === 'payment') ? computeMonthlyPay(coachId, null, prev) : pm;         // payment basis is cumulative: always minus the day before
+    const pPrev = computeMonthlyPay(coachId, null, prev);
+    const pm = startsMonth ? null : pPrev;                                                     // fixed salary is per month: only a mid-month start subtracts it
+    const pc = pPrev;                                                                         // v6.1107 — an "up to a date" pay is CUMULATIVE (from the start of commissions): a range is always cum(end) − cum(day before the start). A range that began on the 1st kept every earlier month too (Aziz 1–25 Nov showed 14,107 instead of ≈6,500)
     out.fixed += (pe.fixed || 0) - (pm ? (pm.fixed || 0) : 0);
     out.commission += (pe.commissionAmount || 0) - (pc ? (pc.commissionAmount || 0) : 0);
     out.privateBonus += (pe.privateBonus || 0) - (pc ? (pc.privateBonus || 0) : 0);
@@ -22391,7 +22392,7 @@ function salaryRangeLines(coachId, from, to) {
   let ym = from.slice(0, 7);
   while (ym <= to.slice(0, 7)) {
     const f0 = ym + '-01', s0 = from > f0 ? from : f0, e0 = to < _isoLastDay(ym) ? to : _isoLastDay(ym);
-    const pe = computeMonthlyPay(coachId, null, e0), pm = s0 === f0 ? null : computeMonthlyPay(coachId, null, _isoAddDays(s0, -1));
+    const pe = computeMonthlyPay(coachId, null, e0), pm = computeMonthlyPay(coachId, null, _isoAddDays(s0, -1));   // v6.1107 — always minus the day before the start (cumulative pay)
     const prev = new Map(); ((pm && pm.attendanceLines && pm.attendanceLines.lines) || []).forEach(l => prev.set(key(l), l));
     ((pe && pe.attendanceLines && pe.attendanceLines.lines) || []).forEach(l => {
       const q = prev.get(key(l)), cl = (l.classes == null ? null : (l.classes || 0) - (q ? (q.classes || 0) : 0)), base = (l.amountBase || 0) - (q ? (q.amountBase || 0) : 0);
@@ -37623,7 +37624,7 @@ PAGES.courtbookings = (main) => {
     const blocks = lanes.map(o => {
       const r = o.r, due = courtBookingDue(r), top = (o.s - open) / 60 * ROW, h = Math.max(24, (o.e - o.s) / 60 * ROW - 3), w = 100 / o.lanes;
       const col = r.academy ? 'var(--blue)' : (r.unbilled ? 'var(--accent-2)' : (due > 0.5 ? 'var(--red)' : 'var(--green)'));
-      return `<div class="cb-block" data-id="${r.id}"${r.fromSchedule ? ' data-sch="1"' : ''} style="position:absolute;left:calc(58px + (100% - 64px) * ${o.l / o.lanes});width:calc((100% - 64px) * ${1 / o.lanes} - 3px);top:${top}px;height:${h}px;box-sizing:border-box;padding:4px 8px;border-radius:8px;border:1px solid ${col};border-left:4px solid ${col};background:color-mix(in srgb, ${col} 12%, var(--surface));overflow:hidden;cursor:pointer;font-size:12px;line-height:1.35">
+      return `<div class="cb-block" data-id="${r.id}"${String(r.id).startsWith('sch') ? ' data-sch="1"' : ''} style="position:absolute;left:calc(58px + (100% - 64px) * ${o.l / o.lanes});width:calc((100% - 64px) * ${1 / o.lanes} - 3px);top:${top}px;height:${h}px;box-sizing:border-box;padding:4px 8px;border-radius:8px;border:1px solid ${col};border-left:4px solid ${col};background:color-mix(in srgb, ${col} 12%, var(--surface));overflow:hidden;cursor:pointer;font-size:12px;line-height:1.35">
         <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${cbClock(o.s)}–${cbClock(o.e)} · ${r.academy ? '🏫 ' : ''}${escapeHtml(r.customerName || '—')}</div>
         <div class="text-mute" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.academy ? (r.fromSchedule ? '📅 ' + t('Schedule', 'الجدول') + ' · ' : '') + t('Academy · free', 'الأكاديمية · مجاني') + (r.notes ? ' · ' + escapeHtml(r.notes) : '') : ''}${(!r.academy && r.unbilled) ? '📅 ' + t('From the schedule — not billed yet', 'من الجدول — لم تُفوتر بعد') : ''}${(r.academy || r.unbilled) ? '' : r.customerPhone ? escapeHtml(r.customerPhone) : ''}${money ? ' · ' + fmt(r.amount || 0) + ' QAR' : ''}${due > 0.5 ? (money ? ' · ⏳ ' + fmt(due) + ' ' + t('due', 'متبقي') : ' · ⏳ ' + t('unpaid', 'غير مدفوع')) : ''}</div>
       </div>`;
@@ -37674,9 +37675,11 @@ PAGES.courtbookings = (main) => {
         ${r.customerPhone ? `<div class="text-dim">📱 ${phoneCell(r.customerPhone)}</div>` : ''}
         <div>📅 ${fmtDate(r.date)}${s != null ? ' · ' + cbClock(s) + '–' + cbClock(e) : ' · ' + t('no start time', 'بدون وقت بدء')} · ${r.hours || 1}h</div>
         ${money ? `<div>💰 ${fmt(r.amount || 0)} QAR${due > 0.5 ? ` · <b style="color:var(--red)">⏳ ${fmt(due)} ${t('due', 'متبقي')}</b>` : ' · <span style="color:var(--green)">✓ ' + t('paid', 'مدفوع') + '</span>'}</div>` : (due > 0.5 ? `<div style="color:var(--red)">⏳ ${t('unpaid', 'غير مدفوع')}</div>` : '')}
+        ${(!inv && (Number(r.amount) || 0) > 0) ? `<div style="color:var(--red);font-weight:600">⚠ ${t('No invoice for this booking — nothing to collect. Press “Create invoice”.', 'لا توجد فاتورة لهذا الحجز — لا يوجد ما يُحصَّل. اضغط «إنشاء فاتورة».')}</div>` : ''}
         ${r.notes ? `<div class="text-mute">📝 ${escapeHtml(r.notes)}</div>` : ''}</div>`,
       actions: [
         { label: t('Close', 'إغلاق'), class: 'btn ghost', onclick: closeModal },
+        ...((!inv && (Number(r.amount) || 0) > 0 && moneyActs) ? [{ label: '🧾 ' + t('Create invoice', 'إنشاء فاتورة') + ' (' + fmt(r.amount) + ')', class: 'btn primary', onclick: () => { closeModal(); createRentalInvoice(r.id); } }] : []),   // v6.1109
         ...(due > 0.5 ? [{ label: '💵 ' + t('Collect', 'تحصيل') + ' ' + fmt(due), class: 'btn primary', onclick: () => { closeModal(); collectRental(r.id); } }] : []),
         ...(r.customerPhone ? [{ label: '💬 ' + t('Send WhatsApp', 'إرسال واتساب'), class: 'btn ghost', style: 'color:#128C7E;border-color:#25D366', onclick: () => sendRentalBookingWhatsApp(r.id) }] : []),   // v6.821
         ...(moneyActs && inv ? [{ label: '📄 ' + t('Invoice', 'الفاتورة'), class: 'btn ghost', onclick: () => { closeModal(); printInvoicePDF(inv.id); } }] : []),
@@ -38707,6 +38710,20 @@ function saveRental(existingId, onDone) {
 }
 
 // v6.635 — collect a due rental's balance (works for walk-in renters too, right from the Rentals list).
+// v6.1109 — a booking whose invoice is gone (purged / never made) gets a fresh DUE invoice, linked to it, so Collect works again
+window.createRentalInvoice = function (rentalId) {
+  if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast('Admins or receptionists only', 'error'); return; }
+  const r = (state.rentals || []).find(x => x && x.id === rentalId); if (!r) { toast('Rental not found', 'error'); return; }
+  if (rentalInvoiceFor(r)) { toast(t('This booking already has an invoice', 'لهذا الحجز فاتورة بالفعل'), 'info'); return; }
+  const amount = Number(r.amount) || 0; if (!(amount > 0)) { toast(t('The booking has no amount', 'الحجز بلا مبلغ'), 'error'); return; }
+  const ref = nextInvoiceRef();
+  const inv = { id: nextId(state.invoices), date: r.date, description: '🏟 ' + (r.facility || COURT) + ' rental — ' + (r.hours || 1) + 'h' + (r.startTime ? ' @ ' + r.startTime : '') + ' — ' + (r.customerName || ''), amount, method: r.method || 'cash', month: String(r.date || TODAY).slice(0, 7), ref, category: 'Court Rental', activityType: 'rental', sport: r.facility || COURT, coach: null, coachId: null,
+    customerId: r.memberId || null, customerName: r.customerName || null, customerPhone: r.customerPhone || null, amountPaid: 0, payments: [], rentalId: r.id };
+  stampUpdate(inv); state.invoices.push(inv); r.invoiceId = inv.id; stampUpdate(r);
+  if (typeof audit === 'function') audit('invoice.create', 'invoice:' + inv.id, 'Created the invoice ' + ref + ' for the ' + (r.facility || COURT) + ' booking of ' + (r.customerName || '—') + ' on ' + r.date + ' (' + amount + ' QAR, due)', { rentalId: r.id });
+  if (typeof withCloudConfirm === 'function') withCloudConfirm({ verify: [{ collection: 'invoices', id: inv.id }], okMsg: t('Invoice ' + ref + ' created — press Collect', 'تم إنشاء الفاتورة ' + ref + ' — اضغط تحصيل'), afterOk: () => render() });
+  else { save(); render(); toast('Invoice ' + ref + ' created', 'success'); }
+};
 window.collectRental = function(rentalId) {
   if (currentRole() !== 'admin' && currentRole() !== 'receptionist') { toast('Admins or receptionists only', 'error'); return; }
   const r = (state.rentals || []).find(x => x.id === rentalId);
