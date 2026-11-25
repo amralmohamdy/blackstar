@@ -17530,21 +17530,22 @@ window._fixFileCheck = function (fx) {
   const OK = { members: 1, invoices: 1, coaches: 1, salaries: 1, expenses: 1, rentals: 1, rentalCustomers: 1, schedule: 1 };   // v6.1018 — schedule too (class colours)   // v6.948.0 — salary records + expense rows too (a file that pays coaches); v6.952.0 — court bookings + their customers too
   const bad = m => ({ ok: false, error: m });
   if (!fx || fx.format !== 'bs-fix/1' || !Array.isArray(fx.ops) || !fx.ops.length) return bad(t('This is not a fix file', 'هذا ليس ملف إصلاح'));
-  const plan = [];
+  const plan = [], virt = [];   // v6.1118 — virt: packages this very file adds (pushTo) — an invoice created later in the file may link to them
   for (const op of fx.ops) {
     if (op && op.settings && typeof op.settings === 'object' && !op.collection) { plan.push({ op, doc: null, label: op.label || 'Settings' }); continue; }   // v6.958.0 — an op may set club settings (e.g. close the salary months)
     if (!op || !OK[op.collection] || op.id == null) return bad(t('The file has a bad operation', 'الملف يحتوي عملية غير صالحة'));
     if (op.create) {   // v6.933 — create an invoice and re-point one package row to it
       if (!{ invoices: 1, salaries: 1, expenses: 1, rentals: 1, rentalCustomers: 1 }[op.collection] || typeof op.create !== 'object') return bad(t('The file has a bad operation', 'الملف يحتوي عملية غير صالحة'));
       if ((state[op.collection] || []).some(x => x && String(x.id) === String(op.id))) return bad((op.label || '#' + op.id) + ': ' + t('already created', 'تم إنشاؤه مسبقاً'));
-      let _sub = null;
+      let _sub = null, _late = false;
       if (op.linkSub) {
         const _m = (state.members || []).find(x => x && String(x.id) === String(op.linkSub.memberId));
         _sub = _m && (_m.subscriptions || []).find(s => s && s._sid === op.linkSub._sid);
+        if (!_sub) { const v = virt.find(x => String(x.memberId) === String(op.linkSub.memberId) && x.sub && x.sub._sid === op.linkSub._sid); if (v) { _sub = v.sub; _late = true; } }
         if (!_sub) return bad((op.label || '#' + op.id) + ': ' + t('package not found', 'الباقة غير موجودة'));
         if (op.linkSub.expectInvoice != null && _sub.invoiceNumber !== op.linkSub.expectInvoice) return bad((op.label || '#' + op.id) + ': ' + t('the package is no longer on invoice ', 'الباقة لم تعد على الفاتورة ') + op.linkSub.expectInvoice);
       }
-      plan.push({ op, doc: null, sub: _sub, label: op.label || ('#' + op.id) });
+      plan.push({ op, doc: null, sub: _sub, late: _late, label: op.label || ('#' + op.id) });
       continue;
     }
     const doc = (state[op.collection] || []).find(x => x && String(x.id) === String(op.id));
@@ -17552,6 +17553,9 @@ window._fixFileCheck = function (fx) {
     for (const k of Object.keys(op.expectFields || {})) if (JSON.stringify(doc[k] === undefined ? null : doc[k]) !== JSON.stringify(op.expectFields[k])) return bad((op.label || '#' + op.id) + ': ' + t('"' + k + '" is not what the file expects — already fixed or changed since', '"' + k + '" ليس كما يتوقع الملف — تم إصلاحه أو تغيّر')); 
     for (const arr of Object.keys(op.removeFrom || {})) for (const key of Object.keys(op.removeFrom[arr])) for (const id of op.removeFrom[arr][key]) if (!(doc[arr] || []).some(r => r && String(r[key]) === String(id))) return bad((op.label || '#' + op.id) + ': ' + arr + ' ' + id + ' ' + t('not found — already fixed?', 'غير موجود — تم إصلاحه؟'));
     for (const arr of Object.keys(op.updateIn || {})) for (const u of op.updateIn[arr]) { const ks = Object.keys(u.match || {}); if (!ks.length || !(doc[arr] || []).some(r => r && ks.every(k => String(r[k]) === String(u.match[k])))) return bad((op.label || '#' + op.id) + ': ' + arr + ' ' + t('row not found', 'السطر غير موجود')); }
+    // v6.1118 — a Mixed class recorded in the plain grid (e.g. Kick Boxing after that package ended) can be MOVED to the Mixed grid: the plain mark must be there
+    for (const mv of (op.moveMarks || [])) { const cell = doc.dailyAttendance && doc.dailyAttendance[mv.month] && doc.dailyAttendance[mv.month][mv.fromKey]; if (!cell || cell[String(mv.day)] !== 'Y') return bad((op.label || '#' + op.id) + ': ' + t('the attendance mark to move is not there (' + mv.fromKey + ' ' + mv.month + '-' + mv.day + ')', 'علامة الحضور المطلوب نقلها غير موجودة')); }
+    if (op.collection === 'members') for (const sRow of ((op.pushTo && op.pushTo.subscriptions) || [])) virt.push({ memberId: op.id, sub: sRow });
     plan.push({ op, doc, label: op.label || ('#' + op.id) });
   }
   return { ok: true, plan };
@@ -17560,9 +17564,10 @@ window._fixFileApply = function (fx) {
   const chk = window._fixFileCheck(fx);
   if (!chk.ok) return chk;
   const removedDocs = [];
-  for (const { op, doc, sub } of chk.plan) {
+  for (let { op, doc, sub, late } of chk.plan) {
     if (op.settings && !op.collection) { if (!state.settings || typeof state.settings !== 'object') state.settings = {}; Object.assign(state.settings, JSON.parse(JSON.stringify(op.settings))); continue; }   // v6.958.0
     if (op.create) {   // v6.933
+      if (late && op.linkSub) { const _om = (state.members || []).find(x => x && String(x.id) === String(op.linkSub.memberId)); sub = _om && (_om.subscriptions || []).find(s => s && s._sid === op.linkSub._sid); }   // v6.1118
       const nd = JSON.parse(JSON.stringify(op.create)); nd.id = op.id; if (op.collection === 'invoices') nd.ref = nextInvoiceRef();
       if (typeof stampUpdate === 'function') stampUpdate(nd);
       if (!Array.isArray(state[op.collection])) state[op.collection] = [];
@@ -17579,6 +17584,13 @@ window._fixFileApply = function (fx) {
     for (const arr of Object.keys(op.pushTo || {})) doc[arr] = (Array.isArray(doc[arr]) ? doc[arr] : []).concat(JSON.parse(JSON.stringify(op.pushTo[arr])));   // v6.948.0 — add rows to an array (e.g. a salary payment)
     for (const arr of Object.keys(op.updateIn || {})) for (const u of op.updateIn[arr]) { const ks = Object.keys(u.match); (doc[arr] || []).filter(r => r && ks.every(k => String(r[k]) === String(u.match[k]))).forEach(r => Object.assign(r, JSON.parse(JSON.stringify(u.set)))); }
     if (op.set) Object.assign(doc, JSON.parse(JSON.stringify(op.set)));
+    for (const mv of (op.moveMarks || [])) {   // v6.1118 — the plain mark goes, a Mixed class (sport + coach) takes its place on the same day (first free slot of the day, like the Attendance screen)
+      const cell = doc.dailyAttendance[mv.month][mv.fromKey]; delete cell[String(mv.day)];
+      if (!doc.mixedAttendance) doc.mixedAttendance = {};
+      if (!doc.mixedAttendance[mv.month]) doc.mixedAttendance[mv.month] = {};
+      const mm = doc.mixedAttendance[mv.month]; let key = String(mv.day); for (let n = 2; mm[key] && mm[key].mark !== 'N'; n++) key = String(mv.day) + '_' + n;
+      mm[key] = { coachId: mv.coachId != null ? mv.coachId : null, sport: mv.sport || null, mark: 'Y' };
+    }
     if (typeof stampUpdate === 'function') stampUpdate(doc);
   }
   if (typeof audit === 'function') audit('fixfile.apply', 'fixfile', 'Applied fix file: ' + (fx.title || '') + ' (' + chk.plan.map(x => (x.op.collection || 'settings') + ':' + x.label).join(', ') + ')', { ops: chk.plan.length });
