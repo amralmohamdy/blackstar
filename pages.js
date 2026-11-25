@@ -416,6 +416,7 @@ function moneyStripHtml(o) {
   return parts.join('');
 }
 PAGES.targets = (main) => {
+  if (currentRole() !== 'admin') { main.innerHTML = `<div class="card"><div class="empty">${t('Admins only.', 'المسؤولون فقط.')}</div></div>`; return; }   // v6.1113 — bonus targets are for the admin only
   const role = currentRole();
   const isCoach = role === 'coach';
   // v6.911 — every month from the club's data start (2026-06) to this month is a choice, with or without invoices in it (the list was built from data only, so a month could be missing)
