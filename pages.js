@@ -37654,6 +37654,32 @@ PAGES.courtbookings = (main) => {
           ${money && s.due > 0.5 ? `<div style="font-size:11px;color:var(--red);font-weight:700;margin-top:4px">⏳ ${fmt(s.due)}</div>` : ''}
         </div>`; }).join('')}</div>`;
   }
+  // v6.1112 — MONTH view: the whole month as a calendar, every day with its bookings (the free schedule classes are left out — only real bookings); tap a day for its board, tap a booking to open it
+  function monthHtml() {
+    const ym = S.date.slice(0, 7), first = ym + '-01', last = new Date(+ym.slice(0, 4), +ym.slice(5, 7), 0).getDate();
+    const lead = dow(first), days = Array.from({ length: last }, (_, i) => ym + '-' + String(i + 1).padStart(2, '0'));
+    const dayList = d => courtBookingsOn(d).filter(r => !String(r.id).startsWith('sch') && cbMatch(r)).sort((x, y) => (cbMin(x.startTime) ?? 9999) - (cbMin(y.startTime) ?? 9999));
+    const byDay = {}; days.forEach(d => { byDay[d] = dayList(d); });
+    const tot = sum(days.flatMap(d => byDay[d])), busy = days.filter(d => byDay[d].length).length;
+    const sun = addDays_(first, -lead);
+    const head = [0, 1, 2, 3, 4, 5, 6].map(i => '<div class="text-mute" style="font-size:11px;font-weight:700;text-align:center;padding:2px 0">' + dayName(addDays_(sun, i)) + '</div>').join('');
+    const cells = Array.from({ length: lead }, () => '<div></div>').join('') + days.map(d => {
+      const l = byDay[d], s2 = sum(l);
+      return '<div class="card cb-day" data-date="' + d + '" style="cursor:pointer;padding:6px 7px;min-height:96px;' + (d === TODAY ? 'border:2px solid var(--accent);' : '') + (!l.length ? 'opacity:.78;' : '') + '">'
+        + '<div style="display:flex;justify-content:space-between;align-items:baseline"><b style="font-size:13px">' + (+d.slice(8)) + '</b><span class="text-mute" style="font-size:10px">' + (s2.n ? s2.n + ' · ' + s2.hours + 'h' : '') + '</span></div>'
+        + l.slice(0, 5).map(r => '<div class="cb-mb" data-id="' + r.id + '" data-date="' + d + '" title="' + escapeHtml((r.customerName || '') + (r.startTime ? ' · ' + r.startTime : '') + ' · ' + (r.hours || 1) + 'h · ' + fmt(r.amount || 0)) + '" style="font-size:10.5px;margin-top:3px;padding:1px 4px;border-radius:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:' + (r.academy ? 'rgba(59,130,246,.14)' : (courtBookingDue(r) > 0.5 ? 'rgba(239,68,68,.14)' : 'rgba(16,185,129,.14)')) + '">' + (r.startTime ? escapeHtml(String(r.startTime).slice(0, 5)) + ' ' : '') + escapeHtml(r.customerName || '—') + '</div>').join('')
+        + (l.length > 5 ? '<div class="text-mute" style="font-size:10px;margin-top:2px">+' + (l.length - 5) + '</div>' : '')
+        + (money && s2.due > 0.5 ? '<div style="font-size:10px;color:var(--red);font-weight:700;margin-top:3px">⏳ ' + fmt(s2.due) + '</div>' : '')
+        + '</div>';
+    }).join('');
+    return '<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:14px">'
+      + '<div class="kpi green"><div class="kpi-label">⚽ ' + t('Bookings this month', 'حجوزات الشهر') + '</div><div class="kpi-value num">' + tot.n + '</div><div class="kpi-sub">' + busy + ' ' + t('days with bookings', 'يوم فيه حجوزات') + '</div></div>'
+      + '<div class="kpi blue"><div class="kpi-label">⏱ ' + t('Hours booked', 'ساعات محجوزة') + '</div><div class="kpi-value num">' + tot.hours + 'h</div></div>'
+      + (money ? '<div class="kpi"><div class="kpi-label">💰 ' + t('Billed', 'المفوتر') + '</div><div class="kpi-value num">' + fmt(tot.amount) + '</div><div class="kpi-sub">QAR</div></div><div class="kpi' + (tot.due > 0.5 ? ' orange' : '') + '"><div class="kpi-label">⏳ ' + t('Due', 'متبقي') + '</div><div class="kpi-value num">' + fmt(tot.due) + '</div><div class="kpi-sub">' + (tot.due > 0.5 ? t('to collect', 'للتحصيل') : '✓') + '</div></div>' : '')
+      + '</div><div style="overflow-x:auto"><div style="min-width:760px"><div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px">' + head + cells + '</div></div></div>'
+      + '<div class="text-mute" style="font-size:11px;margin-top:8px">🟢 ' + t('paid', 'مدفوع') + ' · 🔴 ' + t('due', 'متبقي') + ' · 🔵 ' + t('academy (free)', 'أكاديمية (مجاني)') + ' — ' + t('tap a day to open it, tap a booking to open the booking', 'اضغط اليوم لفتحه، واضغط الحجز لفتح الحجز') + '</div>';
+  }
+  function monthShift(d, n) { const dt = new Date(+d.slice(0, 4), +d.slice(5, 7) - 1 + n, 1, 12); return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-01'; }
   function openBooking(id) {
     if (String(id).startsWith('sch')) {   // v6.848 — a Football class from the schedule
       const sc = courtScheduleOn(S.date).find(x => x.id === id); if (!sc) return;
@@ -37731,7 +37757,7 @@ PAGES.courtbookings = (main) => {
   let _quiet = false;   // a filter repaint must not scroll the board
   function paint() {
     const date = S.date, step = S.view === 'week' ? 7 : 1;
-    const label = S.view === 'week' ? (fmtDate(weekStart(date)) + ' – ' + fmtDate(addDays_(weekStart(date), 6))) : (dayName(date) + ' · ' + fmtDate(date));
+    const label = S.view === 'month' ? fmtMonth(date.slice(0, 7)) : S.view === 'week' ? (fmtDate(weekStart(date)) + ' – ' + fmtDate(addDays_(weekStart(date), 6))) : (dayName(date) + ' · ' + fmtDate(date));
     main.innerHTML = `
       <div class="topbar">
         <div><h1>⚽ ${t('Court Bookings', 'حجوزات ملعب كرة القدم')}</h1><div class="subtitle">${t('Football Court', 'ملعب كرة القدم')} · ${courtHours().open}–${courtHours().close}</div></div>
@@ -37749,9 +37775,9 @@ PAGES.courtbookings = (main) => {
         ${S.view === 'cust' ? '' : `<select id="cb-hour" title="${t('Filter by hour', 'تصفية بالساعة')}" style="max-width:130px"><option value="">${t('All hours', 'كل الساعات')}</option>${Array.from({ length: Math.max(1, Math.round((cbMin(courtHours().close) - cbMin(courtHours().open)) / 60)) }, (_, i) => { const m = cbMin(courtHours().open) + i * 60; return `<option value="${m / 60}"${String(m / 60) === String(S.hour) ? ' selected' : ''}>${cbClock(m)}</option>`; }).join('')}</select>
         <input type="search" id="cb-q" value="${escapeHtml(S.q || '')}" placeholder="${t('Customer name or phone', 'اسم العميل أو رقم الهاتف')}" style="max-width:210px" />
         ${(S.hour || S.q) ? `<button class="btn ghost sm" id="cb-fclear">✕ ${t('Clear', 'مسح')}</button>` : ''}`}
-        <span style="margin-inline-start:auto;display:flex;gap:6px"><button class="btn sm ${S.view === 'day' ? 'primary' : 'ghost'}" id="cb-vday">${t('Day', 'يوم')}</button><button class="btn sm ${S.view === 'week' ? 'primary' : 'ghost'}" id="cb-vweek">${t('Week', 'أسبوع')}</button><button class="btn sm ${S.view === 'cust' ? 'primary' : 'ghost'}" id="cb-vcust">👤 ${t('Customer', 'عميل')}</button></span>
+        <span style="margin-inline-start:auto;display:flex;gap:6px"><button class="btn sm ${S.view === 'day' ? 'primary' : 'ghost'}" id="cb-vday">${t('Day', 'يوم')}</button><button class="btn sm ${S.view === 'week' ? 'primary' : 'ghost'}" id="cb-vweek">${t('Week', 'أسبوع')}</button><button class="btn sm ${S.view === 'month' ? 'primary' : 'ghost'}" id="cb-vmonth">${t('Month', 'شهر')}</button><button class="btn sm ${S.view === 'cust' ? 'primary' : 'ghost'}" id="cb-vcust">👤 ${t('Customer', 'عميل')}</button></span>
       </div></div>
-      ${S.view === 'cust' ? custHtml() : (S.view === 'week' ? weekHtml() : dayHtml())}`;
+      ${S.view === 'cust' ? custHtml() : (S.view === 'month' ? monthHtml() : (S.view === 'week' ? weekHtml() : dayHtml()))}`;
     const go = d => { S.date = d; paint(); };
     $('#cb-vcust').onclick = () => { S.view = 'cust'; paint(); const i = $('#cb-cphone'); if (i) i.focus(); };
     { const ci = $('#cb-cphone'); if (ci) ci.oninput = e => { S.cphone = e.target.value; const p = ci.selectionStart; _quiet = true; paint(); const n = $('#cb-cphone'); if (n) { n.focus(); try { n.setSelectionRange(p, p); } catch (_) {} } }; }
@@ -37762,10 +37788,10 @@ PAGES.courtbookings = (main) => {
     $('#cb-hour').onchange = e => { S.hour = e.target.value; _quiet = true; paint(); };
     { const qi = $('#cb-q'); qi.oninput = e => { S.q = e.target.value; const p = qi.selectionStart; _quiet = true; paint(); const n = $('#cb-q'); if (n) { n.focus(); try { n.setSelectionRange(p, p); } catch (_) {} } }; }
     { const fc = $('#cb-fclear'); if (fc) fc.onclick = () => { S.hour = ''; S.q = ''; paint(); }; }
-    $('#cb-prev').onclick = () => go(addDays_(S.date, -step)); $('#cb-next').onclick = () => go(addDays_(S.date, step)); $('#cb-today').onclick = () => go(TODAY);
+    $('#cb-prev').onclick = () => go(S.view === 'month' ? monthShift(S.date, -1) : addDays_(S.date, -step)); $('#cb-next').onclick = () => go(S.view === 'month' ? monthShift(S.date, 1) : addDays_(S.date, step)); $('#cb-today').onclick = () => go(TODAY);
     $('#cb-date').onchange = e => { if (e.target.value) go(e.target.value); };
     }
-    $('#cb-vday').onclick = () => { S.view = 'day'; paint(); }; $('#cb-vweek').onclick = () => { S.view = 'week'; paint(); };
+    $('#cb-vday').onclick = () => { S.view = 'day'; paint(); }; $('#cb-vweek').onclick = () => { S.view = 'week'; paint(); }; $('#cb-vmonth').onclick = () => { S.view = 'month'; paint(); };
     $('#cb-new').onclick = () => addRental(() => render(), { facility: COURT, date: S.date, hours: 1 });
     { const _sb = $('#cb-sched-rent'); if (_sb) _sb.onclick = () => scheduleRentalsDialog(); }
     $('#cb-academy').onclick = () => academyBookingDialog({ date: S.date }, null, () => render());
@@ -37774,6 +37800,7 @@ PAGES.courtbookings = (main) => {
     main.querySelectorAll('.cb-row').forEach(el => el.addEventListener('click', e => { if (e.target.closest('.cb-block')) return; pickSlot(S.date, el.dataset.slot); }));
     main.querySelectorAll('.cb-block').forEach(el => el.addEventListener('click', e => { e.stopPropagation(); openBooking(el.dataset.sch ? el.dataset.id : +el.dataset.id); }));
     main.querySelectorAll('.cb-day').forEach(el => el.addEventListener('click', () => { S.date = el.dataset.date; S.view = 'day'; paint(); }));
+    main.querySelectorAll('.cb-mb').forEach(el => el.addEventListener('click', e => { e.stopPropagation(); S.date = el.dataset.date; openBooking(+el.dataset.id); }));   // v6.1112
     // bring the current time (today) or the first booking of the day into view — the early rows are usually empty
     if (S.view === 'day' && !_quiet) { const tg = main.querySelector('#cb-now') || main.querySelector('#cb-board .cb-block'); if (tg && tg.scrollIntoView) tg.scrollIntoView({ block: 'center' }); }
     _quiet = false;
