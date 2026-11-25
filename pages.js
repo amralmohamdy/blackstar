@@ -32626,6 +32626,9 @@ PAGES.unrenewed = (main) => {
     </table></div>
     <div class="text-mute" style="font-size:11px;margin-top:8px">${t('Renewing creates a new package for that sport only — same coach, classes, validity and price — starting on the first extra class, recorded as DUE (nothing is marked paid).', 'التجديد ينشئ باقة جديدة لهذه الرياضة فقط — نفس المدرب والحصص والمدة والسعر — تبدأ من أول حصة زائدة، وتُسجَّل مستحقة (لا شيء يُعتبر مدفوعاً).')}</div></div>`;
 };
+window._expWaHref = function (a) {   // v6.1114 — builds the bilingual WhatsApp reminder link for ONE member when the button is pressed
+  try { const m = (state.members || []).find(x => x && String(x.id) === String(a.dataset.wid)); if (!m) return; a.href = 'https://wa.me/' + a.dataset.wp + '?text=' + encodeURIComponent(buildReminderMessage(m, a.dataset.wk, +a.dataset.wd)); } catch (_) {}
+};
 PAGES.expiring = (main) => {
   const threshold = state.settings?.expiringSoonDays || 3;
   // Average renewal value used to estimate potential revenue (per KPI card + per section).
@@ -32633,6 +32636,8 @@ PAGES.expiring = (main) => {
   let filter = { sports: [], coach: 'all', search: '', bucket: 'all', sort: 'expiry', reminded: 'all' };   // v6.519: sports is a MULTI-select
   // Which sections are collapsed (default: all open)
   const collapsed = { soon: false, week: false, expired: false, upcoming: false, completed: false };
+  const showAll = {};   // v6.1114 — a long section (342 expired) draws its first 80 rows; “Show all” draws the rest
+  const ROW_LIMIT = 80;
   // Bulk-selected member IDs (across all sections)
   const selectedIds = new Set();
 
@@ -32791,14 +32796,14 @@ PAGES.expiring = (main) => {
     const lastR = lastRenewalDate(m);
     const isChecked = selectedIds.has(m.id);
     // Pre-build the WhatsApp reminder link (bilingual template, EN + AR)
-    let reminderHref = '';
+    let reminderHref = '', reminderKind = '', reminderPhone = '';
     if (phone) {
       // 'completed' when the member finished their classes (camp limit reached OR live attendance
       // completed a sport) — a more accurate, congratulatory message; else expired/expiring by date.
       const kind = (completed || _completedRenewIds.has(m.id)) ? 'completed' : ((bucket === 'expired' || days < 0) ? 'expired' : 'expiring');
-      const msg = buildReminderMessage(m, kind, days);
       const cleanPhone = String(phone).replace(/[^\d]/g, '');
-      reminderHref = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`;
+      reminderKind = kind; reminderPhone = cleanPhone;
+      reminderHref = `https://wa.me/${cleanPhone}`;   // v6.1114 — the message is added on press (window._expWaHref), not stored in every row
     }
     return `
       <tr style="cursor:pointer" data-id="${m.id}">
@@ -32835,7 +32840,7 @@ PAGES.expiring = (main) => {
                   ? 'background:var(--green);border-color:var(--green);color:#fff'
                   : '';
                 const btnLabel = wasReminded ? `✓ ${t('Remind again', 'تذكير مجدداً')}` : `💬 Remind`;
-                return `<a class="btn primary sm" style="${btnStyle}" href="${reminderHref}" target="_blank" onclick="event.stopPropagation();markReminded(${m.id}, { rerender: false });window._expRerender && window._expRerender()" title="${wasReminded ? 'Already reminded — click to send another reminder' : 'Send bilingual reminder via WhatsApp'}">${btnLabel}</a>`;
+                return `<a class="btn primary sm" style="${btnStyle}" href="${reminderHref}" data-wid="${m.id}" data-wk="${reminderKind}" data-wd="${days}" data-wp="${reminderPhone}" onpointerdown="window._expWaHref(this)" target="_blank" onclick="window._expWaHref(this);event.stopPropagation();markReminded(${m.id}, { rerender: false });window._expRerender && window._expRerender()" title="${wasReminded ? 'Already reminded — click to send another reminder' : 'Send bilingual reminder via WhatsApp'}">${btnLabel}</a>`;
               })()
             : `<span class="text-mute" style="font-size:11px">No phone</span>`}
           <button class="btn ghost sm" onclick="event.stopPropagation();addRenewal(${m.id})" title="Record renewal">🔄 Renew</button>
@@ -32875,9 +32880,10 @@ PAGES.expiring = (main) => {
                   <th style="width:36px;text-align:center">#</th>
                   <th>Member</th><th>Mobile</th><th>Last Renewal</th><th>Expiry</th><th>When</th><th class="text-right">Attended</th><th class="text-right">💰 Due</th><th class="text-right">Actions</th>
                 </tr></thead>
-                <tbody>${list.map((x, i) => rowHtml(x, bucket, i)).join('')}</tbody>
+                <tbody>${(showAll[bucket] || list.length <= ROW_LIMIT * 1.25 ? list : list.slice(0, ROW_LIMIT)).map((x, i) => rowHtml(x, bucket, i)).join('')}</tbody>
               </table>
             </div>
+            ${(!showAll[bucket] && list.length > ROW_LIMIT * 1.25) ? `<div style="text-align:center;padding:10px"><button class="btn ghost exp-show-all" data-bucket="${bucket}">${t('Show all', 'عرض الكل')} ${list.length} (${list.length - ROW_LIMIT} ${t('more', 'أخرى')})</button></div>` : ''}
           ` : `<div class="empty" style="padding:24px;font-size:13px">No members in this group 🎉</div>`}
         </div>
       </div>
@@ -33075,6 +33081,7 @@ PAGES.expiring = (main) => {
         renderSectionHeadersOnly();
       });
     });
+    $$('.exp-show-all').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); showAll[b.dataset.bucket] = true; renderSections(); updateBulkBar(); }));   // v6.1114
     // Wire select-all-in-section checkbox
     $$('.exp-select-all').forEach(cb => {
       cb.addEventListener('click', e => e.stopPropagation());
@@ -34951,7 +34958,7 @@ PAGES.onboarding = (main) => {
       const invited = pa.invitedAt ? `<div class="text-mute" style="font-size:10px">${t('Invited by', 'دعاه')} ${escapeHtml(pa.invitedBy || '—')} · ${fmtDate(pa.invitedAt.slice(0,10))}</div>` : '';
       return `<tr>
         <td><div class="font-bold">${escapeHtml(m.name || '—')}</div><div class="text-mute" style="font-size:10px;font-family:monospace">${escapeHtml(email)}</div></td>
-        <td>${phoneCell(m.phone)}</td>
+        <td>${phoneCell(m.phone, { inlineIcon: true })}</td>
         <td><span class="badge ${STATUS_BADGE[st] || ''}">${t(st, st === 'Not Created' ? 'بدون حساب' : st === 'Created' ? 'تم الإنشاء' : 'تم إرسال الدعوة')}</span>${invited}</td>
         <td class="text-right">
           <button class="btn ${st === 'Invitation Sent' ? 'ghost' : 'primary'} sm" onclick="sendMemberInvite(${m.id})" style="color:${st==='Invitation Sent'?'#25D366':''}" title="${t('Create account (if needed) and open WhatsApp invite', 'إنشاء الحساب (إن لزم) وفتح دعوة واتساب')}">💬 ${st === 'Invitation Sent' ? t('Resend', 'إعادة إرسال') : t('Send WhatsApp', 'إرسال واتساب')}</button>

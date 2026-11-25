@@ -2047,3 +2047,7 @@ body.modal-open #bs-notif-float { z-index: 60 !important; }   /* v6.776 — belo
 .mc-foot-pri { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 @media (max-width: 640px) { .mc-hero { flex-direction: column; align-items: flex-start; } .mc-fields { grid-template-columns: 1fr; } }
 .mc-footer2 { flex-wrap: wrap; gap: 6px; align-items: center; }
+
+/* v6.1114 — screens that draw dozens of cards: the browser skips layout + paint of the ones scrolled out of view (Classes: 13,800 elements → fast first paint) */
+.cls-card { content-visibility: auto; contain-intrinsic-size: auto 300px; }
+@media print { .cls-card { content-visibility: visible; } }
