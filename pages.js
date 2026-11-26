@@ -204,7 +204,15 @@ function computeStats(arg) {
   const activeMembersList = activeMembers();
   const _mc = memberCounts();
   const _unpaid = dashUnpaidAccruals(months);
-  const _cmNow = String(TODAY || '').slice(0, 7), _so = months.includes(_cmNow) ? _salariesOwedFor(_cmNow) : { amount: 0, n: 0 };   // v6.1125 — NET salaries still to pay this month (the same figure as the Salaries screen's Pay buttons)
+  const _cmNow = String(TODAY || '').slice(0, 7), _closedThru = String((state.settings && state.settings.salaryClosedThrough) || '');
+  let _profitAdj = 0;
+  const _so = months.filter(m => m <= _cmNow && m > _closedThru).reduce((a, m) => {
+    const o = _salariesOwedFor(m);
+    // v6.1128 — in an OPEN month the salary cost = what was already paid out + what is still to pay (so a payment moves from 'to pay' to 'paid', the profit stays honest)
+    const paidOut = (state.expenses || []).reduce((s, e) => (e && !e.deleted && expenseMonth(e) === m && !isCashMovementExpense(e.category) && isSalaryCategory(e.category)) ? s + (Number(e.amount) || 0) : s, 0);
+    _profitAdj += (typeof salariesEarnedInMonth === 'function' ? salariesEarnedInMonth(m) : 0) - paidOut - o.amount;
+    return { amount: a.amount + o.amount, n: a.n + o.n };
+  }, { amount: 0, n: 0 });   // v6.1126 — NET salaries still to pay in the period's open months (same figure as the Salaries screen's Pay buttons)
   return {
     period, months,
     currMonth: period.type === 'month' ? period.value : (period.type === 'year' ? period.value : (period.type === 'months' ? 'multi' : 'all')),
@@ -223,7 +231,7 @@ function computeStats(arg) {
     currExpenses: cur.expenses, prevExpenses: prev.expenses, currCashExpenses: cur.cashExpenses,
     currSalaries: cur.salaries, prevSalaries: prev.salaries,
     currSales: cur.sales, prevSales: prev.sales,
-    currProfit: cur.profit, prevProfit: prev.profit,
+    currProfit: cur.profit + _profitAdj, currProfitAccrual: cur.profit, prevProfit: prev.profit,   // v6.1128 — the profit follows what is still to pay in the open months
     salOwed: _so.amount, salOwedN: _so.n,
     unpaidRent: _unpaid.rent, unpaidCitadel: _unpaid.citadel, unpaidAdvertising: _unpaid.advertising || 0, unpaidTotal: _unpaid.total,
     activeMembers: _mc.active, expiredMembers: _mc.expired, completedMembers: _mc.completed, frozenMembers: _mc.frozen, withdrawnMembers: _mc.withdrawn,
@@ -949,7 +957,7 @@ PAGES.dashboard = (main) => {
         <div class="kpi-label" title="${t('Accrual view — operating expenses PLUS all coach pay EARNED this month (fixed salaries + commission), whether paid yet or not. This differs from the Expenses screen, which shows cash actually PAID OUT; coach commission earned but not yet paid is the main gap.', 'عرض الاستحقاق — مصروفات التشغيل + كامل أجور المدربين المستحقة هذا الشهر (رواتب ثابتة + عمولة)، سواء دُفعت أم لا. يختلف عن شاشة المصروفات التي تعرض النقد المدفوع فعلياً؛ الفرق الأساسي هو عمولة المدربين المستحقة غير المدفوعة.')}">${t('Total Expenses','إجمالي المصروفات')} (${s.periodShort})</div>
         <div class="kpi-value num">${fmt(s.currExpenses + s.currSalaries + s.unpaidTotal)} <span style="font-size:13px;color:var(--text-dim);font-weight:500">QAR · ${t('accrual', 'استحقاق')}</span></div>
         <div class="kpi-delta flat" title="${t('Cash paid out = what the Expenses screen shows (all recorded expenses this month, incl. salary payments entered). Payroll earned = all coach pay earned this month whether paid yet or not — the accrual headline above = Ops + payroll earned.', 'النقد المدفوع = ما تعرضه شاشة المصروفات (كل المصروفات المسجّلة هذا الشهر شاملة رواتب مدفوعة). الرواتب المستحقة = كامل أجور المدربين هذا الشهر سواء دُفعت أم لا — رقم الاستحقاق بالأعلى = التشغيل + الرواتب المستحقة.')}">💵 ${fmt(s.currCashExpenses)} ${t('cash paid', 'مدفوع نقداً')} · 🧮 ${fmt(s.currSalaries)} ${t('payroll earned', 'رواتب مستحقة')}</div>
-        ${s.salOwedN > 0 ? `<div class="kpi-delta flat" style="margin-top:4px;font-weight:700;cursor:pointer" onclick="event.stopPropagation();navigate('salaries')" title="${t('NET salaries still to pay for this month, person by person, exactly as the Salaries screen shows them (after advances, late adjustments and what was already paid). The payroll earned figure above is the GROSS earned by the coaches and staff plus external coaches, so it is bigger. A person with a negative balance (advance more than pay) is not counted here.', 'صافي المرتبات المتبقية لهذا الشهر، شخصًا بشخص، كما تعرضها شاشة المرتبات (بعد السلف والتعديلات المتأخرة وما دُفع). رقم الرواتب المستحقة بالأعلى هو الإجمالي المكتسب للمدربين والموظفين مع المدربين الخارجيين فهو أكبر. من رصيده سالب (سلفة أكبر من راتبه) غير محسوب هنا.')}">👥 ${fmt(s.salOwed)} ${t('net salaries still to pay', 'صافي المرتبات المتبقية')} · ${s.salOwedN} ${t('people', 'أشخاص')}</div>` : ''}
+        ${s.salOwedN > 0 ? `<div class="kpi-delta flat" style="margin-top:4px;font-weight:700;cursor:pointer" onclick="event.stopPropagation();navigate('salaries')" title="${t('NET salaries still to pay, person by person, exactly as the Salaries screen shows them (after advances, late adjustments and what was already paid). The payroll earned figure above is the GROSS earned, so it is bigger. A person with a negative balance (advance more than pay) is not counted here. The Net Profit below uses this figure: what was already paid + what is still to pay. Click to open the Salaries screen.', 'صافي المرتبات المتبقية للدفع، شخصًا بشخص، كما تعرضها شاشة المرتبات (بعد السلف والتعديلات المتأخرة وما دُفع). رقم الرواتب المستحقة بالأعلى هو الإجمالي المكتسب فهو أكبر. من رصيده سالب (سلفة أكبر من راتبه) غير محسوب هنا. صافي الربح بالأسفل يعتمد على هذا الرقم: ما دُفع + ما تبقى. اضغط لفتح شاشة المرتبات.')}">👥 ${fmt(s.salOwed)} ${t('net salaries still to pay', 'صافي المرتبات المتبقية')} · ${s.salOwedN} ${t('people', 'أشخاص')}</div>` : ''}
         ${s.unpaidTotal > 0 ? `<div class="kpi-delta flat" style="margin-top:4px" title="${t('Owed but not paid yet, added to this card and to Net Profit on the Dashboard only (nothing is recorded as an expense): the monthly rent, the Citadel share and the marketing share (25% of the income above 52,000) still unpaid.', 'مستحق ولم يُدفع بعد، يُضاف لهذا الكارت وصافي الربح في لوحة المعلومات فقط (لا يُسجَّل كمصروف): إيجار الشهر + حصة سيتادل + حصة التسويق (25% من الدخل فوق 52,000) غير المدفوعة.')}">⏳ ${fmt(s.unpaidRent)} ${t('rent', 'إيجار')} + ${fmt(s.unpaidCitadel)} Citadel${s.unpaidAdvertising > 0.004 ? ` + ${fmt(s.unpaidAdvertising)} ${t('Marketing 25%', 'تسويق 25%')}` : ''} ${t('not paid yet', 'لم تُدفع بعد')}${currentRole() === 'admin' ? ` <a href="#" onclick="event.stopPropagation();window.dashEditUnpaidRent();return false" title="${t('Change the monthly rent amount', 'تغيير مبلغ الإيجار الشهري')}">✎</a>` : ''}</div>` : ''}
       </div>
       <div class="kpi ${(s.currProfit - s.unpaidTotal) >= 0 ? 'green' : 'red'}" style="cursor:pointer" onclick="navigate('reports')" title="${t('Click to open the Reports', 'اضغط لفتح التقارير')}${s.unpaidTotal > 0 ? ' · ' + t('after the unpaid rent + Citadel shown on the expenses card', 'بعد الإيجار وسيتادل غير المدفوعين الظاهرين في كارت المصروفات') : ''}">
@@ -22550,6 +22558,8 @@ PAGES.salaries = (main) => {
     const totalPending = people.reduce((s,p) => s + ((p.basis === 'attendance' ? p.commissionPending : 0) || 0), 0);
     const paidCount = people.filter(p => p.paidStatus === 'paid').length;
     const totalExtraPaid = people.reduce((s, p) => s + (p.paidExtra || 0), 0);   // v6.693
+    const _leftOf = p => { const r = p.salaryRecord ? (Number(p.paidRemaining) || 0) : (Number(p.net) || 0); return r > 0.5 ? r : 0; };   // v6.1128 — what is still to pay per person (same rule as the Dashboard)
+    const totalLeft = people.reduce((s, p) => s + _leftOf(p), 0), peopleLeft = people.filter(p => _leftOf(p) > 0).length;
 
     $('#sal-tbody').innerHTML = people.length ? people.map((p, _n) => {
       const isStaff = p.role === 'staff';
@@ -22669,7 +22679,7 @@ PAGES.salaries = (main) => {
           <td class="text-right num" style="color:var(--accent-2)">${totalPending > 0 ? '⏳ ' + fmt(totalPending) : '—'}</td>
           <td class="text-right num text-dim">${totalAdv > 0 ? fmt(totalAdv) : '—'}</td>
           <td class="text-right num" style="color:var(--green);font-size:15px">${fmt(totalNet)}</td>
-          <td colspan="2" class="text-mute" style="font-size:11px">${paidCount} of ${people.length} paid${totalExtraPaid > 0.5 ? `<div style="color:#7c3aed;font-weight:700">⬆ ${t('Extra paid', 'دفع زائد')} ${fmt(totalExtraPaid)}</div>` : ''}</td>
+          <td colspan="2" class="text-mute" style="font-size:11px">${paidCount} of ${people.length} paid${totalLeft > 0.5 ? `<div style="color:var(--accent-2);font-weight:800;font-size:12px" title="${t('Still to pay = the net of every person not paid yet (or what is left of a part payment). People already paid and negative balances are not in it, so it differs from the Net total on the left.', 'المتبقي للدفع = صافي كل شخص لم يُدفع له بعد (أو ما بقي من دفعة جزئية). من دُفع له ومن رصيده سالب غير محسوبين، لذلك يختلف عن إجمالي الصافي.')}">💰 ${t('Still to pay', 'المتبقي للدفع')} ${fmt(totalLeft)} · ${peopleLeft}</div>` : ''}${totalExtraPaid > 0.5 ? `<div style="color:#7c3aed;font-weight:700">⬆ ${t('Extra paid', 'دفع زائد')} ${fmt(totalExtraPaid)}</div>` : ''}</td>
         </tr>` : '';
     }
     // Commission is recomputed LIVE from the latest attendance/invoices/payments on every open and
@@ -27265,7 +27275,7 @@ PAGES.attendance = (main) => {
   // filter.days is an array of day-numbers; empty = all days
   const _defaultDays = _defaultMonth === _todayMonth ? [_now.getDate()] : [];
   // v6.398: `coaches` and `atts` are ARRAYS (empty = all), matching the sports filter beside them.
-  let filter = { month: _defaultMonth, coaches: [], search: '', sports: [], memberId: null, days: _defaultDays, atts: [], statuses: [] };
+  let filter = { month: _defaultMonth, coaches: [], search: '', sports: [], memberId: null, days: _defaultDays, atts: (currentRole() === 'admin' ? ['attended'] : []), statuses: [] };   // v6.1127 — the admin's default view = who attended
   // Month MULTI-select: filter.months = [] → summary over ALL months; exactly ONE →
   // the editable day-grid for that month; TWO+ → summary over just those months.
   // filter.month stays derived (single month or 'all') so all the grid logic below
@@ -28673,6 +28683,7 @@ PAGES.attendance = (main) => {
         ${_coachLockToday ? '' : `${multiFilterHTML('att-mstatus', [['Active', '🟢 ' + t('Active', 'نشط')], ['Frozen', '🔵 ' + t('Frozen', 'مجمّد')], ['Expired', '⚪ ' + t('Expired', 'منتهي')], ['Completed', '🟣 ' + t('Completed', 'مكتمل')], ['Withdrawn', '🔴 ' + t('Withdrawn', 'منسحب')]], filter.statuses, { allText: t('All statuses', 'كل الحالات'), noun: t('statuses', 'حالات'), minWidth: 150 })}`}
         ${multiFilterHTML('att-status', [['attended', '✓ ' + t('Attended', 'حضر')], ['notattended', '✗ ' + t('Not attended', 'لم يحضر')]], filter.atts, { allText: t('All attendance', 'كل الحضور'), noun: t('selected', 'محدد'), minWidth: 150 })}
         ${multiFilterHTML('att-sport', _attSportList, filter.sports, { allText: t('All sports', 'كل الرياضات'), noun: t('sports', 'رياضات'), minWidth: 150, sort: false })}
+        <button type="button" class="btn ghost" id="att-clear-filters" title="${t('Clear every filter: coach, status, attendance, sport, student and week — back to today with everyone shown', 'مسح كل الفلاتر: المدرب والحالة والحضور والرياضة والطالب والأسبوع — والعودة لليوم مع عرض الجميع')}">✕ ${t('Clear filters', 'مسح الفلاتر')}</button>
         <div style="min-width:260px;flex:1;max-width:340px">${memberPickerHtml('att-student', { placeholder: t('All students (type to search)', 'كل الطلاب (اكتب للبحث)') })}${recentSearchChipsHtml('attendance', 'att-recent-search', 3)}</div>
         <div class="text-mute" style="margin-left:auto;font-size:11px;align-self:center">
           <span class="att-cell att-y" style="display:inline-block;padding:2px 6px;border-radius:3px">Y</span> ${t('present', 'حاضر')} ·
@@ -28801,6 +28812,27 @@ PAGES.attendance = (main) => {
     filter.memberId = null;
     filter.search = term.trim();
     refresh();
+  });
+
+  // v6.1127 — Clear filters: coach / status / attendance / sport / student / week back to "all" (the month stays; the days go back to today)
+  const _attClearBtn = $('#att-clear-filters');
+  if (_attClearBtn) _attClearBtn.addEventListener('click', () => {
+    const reset = (id, allText) => {
+      const w = $('#' + id); if (!w) return;
+      w.querySelectorAll('.mf-cb').forEach(cb => { cb.checked = false; });
+      const lb = w.querySelector('.mf-label'); if (lb) lb.textContent = allText;
+    };
+    reset('att-coach', t('All coaches', 'كل المدربين'));
+    reset('att-mstatus', t('All statuses', 'كل الحالات'));
+    reset('att-status', t('All attendance', 'كل الحضور'));
+    reset('att-sport', t('All sports', 'كل الرياضات'));
+    filter.coaches = []; filter.statuses = []; filter.atts = []; filter.sports = [];
+    filter.memberId = null; filter.search = '';
+    if (attStudentSearch) attStudentSearch.value = '';
+    if (attStudentHidden) attStudentHidden.value = '';
+    const wk = $('#att-week'); if (wk) wk.value = 'all';
+    filter.days = _defaultDays.slice();
+    buildDayGrid(); applyDays();
   });
 
   // Multi-select sports dropdown (searchable — see multiFilterHTML)
