@@ -204,6 +204,7 @@ function computeStats(arg) {
   const activeMembersList = activeMembers();
   const _mc = memberCounts();
   const _unpaid = dashUnpaidAccruals(months);
+  const _cmNow = String(TODAY || '').slice(0, 7), _so = months.includes(_cmNow) ? _salariesOwedFor(_cmNow) : { amount: 0, n: 0 };   // v6.1125 — NET salaries still to pay this month (the same figure as the Salaries screen's Pay buttons)
   return {
     period, months,
     currMonth: period.type === 'month' ? period.value : (period.type === 'year' ? period.value : (period.type === 'months' ? 'multi' : 'all')),
@@ -223,6 +224,7 @@ function computeStats(arg) {
     currSalaries: cur.salaries, prevSalaries: prev.salaries,
     currSales: cur.sales, prevSales: prev.sales,
     currProfit: cur.profit, prevProfit: prev.profit,
+    salOwed: _so.amount, salOwedN: _so.n,
     unpaidRent: _unpaid.rent, unpaidCitadel: _unpaid.citadel, unpaidAdvertising: _unpaid.advertising || 0, unpaidTotal: _unpaid.total,
     activeMembers: _mc.active, expiredMembers: _mc.expired, completedMembers: _mc.completed, frozenMembers: _mc.frozen, withdrawnMembers: _mc.withdrawn,
     totalMembers: activeMembersList.length,
@@ -947,6 +949,7 @@ PAGES.dashboard = (main) => {
         <div class="kpi-label" title="${t('Accrual view — operating expenses PLUS all coach pay EARNED this month (fixed salaries + commission), whether paid yet or not. This differs from the Expenses screen, which shows cash actually PAID OUT; coach commission earned but not yet paid is the main gap.', 'عرض الاستحقاق — مصروفات التشغيل + كامل أجور المدربين المستحقة هذا الشهر (رواتب ثابتة + عمولة)، سواء دُفعت أم لا. يختلف عن شاشة المصروفات التي تعرض النقد المدفوع فعلياً؛ الفرق الأساسي هو عمولة المدربين المستحقة غير المدفوعة.')}">${t('Total Expenses','إجمالي المصروفات')} (${s.periodShort})</div>
         <div class="kpi-value num">${fmt(s.currExpenses + s.currSalaries + s.unpaidTotal)} <span style="font-size:13px;color:var(--text-dim);font-weight:500">QAR · ${t('accrual', 'استحقاق')}</span></div>
         <div class="kpi-delta flat" title="${t('Cash paid out = what the Expenses screen shows (all recorded expenses this month, incl. salary payments entered). Payroll earned = all coach pay earned this month whether paid yet or not — the accrual headline above = Ops + payroll earned.', 'النقد المدفوع = ما تعرضه شاشة المصروفات (كل المصروفات المسجّلة هذا الشهر شاملة رواتب مدفوعة). الرواتب المستحقة = كامل أجور المدربين هذا الشهر سواء دُفعت أم لا — رقم الاستحقاق بالأعلى = التشغيل + الرواتب المستحقة.')}">💵 ${fmt(s.currCashExpenses)} ${t('cash paid', 'مدفوع نقداً')} · 🧮 ${fmt(s.currSalaries)} ${t('payroll earned', 'رواتب مستحقة')}</div>
+        ${s.salOwedN > 0 ? `<div class="kpi-delta flat" style="margin-top:4px;font-weight:700;cursor:pointer" onclick="event.stopPropagation();navigate('salaries')" title="${t('NET salaries still to pay for this month, person by person, exactly as the Salaries screen shows them (after advances, late adjustments and what was already paid). The payroll earned figure above is the GROSS earned by the coaches and staff plus external coaches, so it is bigger. A person with a negative balance (advance more than pay) is not counted here.', 'صافي المرتبات المتبقية لهذا الشهر، شخصًا بشخص، كما تعرضها شاشة المرتبات (بعد السلف والتعديلات المتأخرة وما دُفع). رقم الرواتب المستحقة بالأعلى هو الإجمالي المكتسب للمدربين والموظفين مع المدربين الخارجيين فهو أكبر. من رصيده سالب (سلفة أكبر من راتبه) غير محسوب هنا.')}">👥 ${fmt(s.salOwed)} ${t('net salaries still to pay', 'صافي المرتبات المتبقية')} · ${s.salOwedN} ${t('people', 'أشخاص')}</div>` : ''}
         ${s.unpaidTotal > 0 ? `<div class="kpi-delta flat" style="margin-top:4px" title="${t('Owed but not paid yet, added to this card and to Net Profit on the Dashboard only (nothing is recorded as an expense): the monthly rent, the Citadel share and the marketing share (25% of the income above 52,000) still unpaid.', 'مستحق ولم يُدفع بعد، يُضاف لهذا الكارت وصافي الربح في لوحة المعلومات فقط (لا يُسجَّل كمصروف): إيجار الشهر + حصة سيتادل + حصة التسويق (25% من الدخل فوق 52,000) غير المدفوعة.')}">⏳ ${fmt(s.unpaidRent)} ${t('rent', 'إيجار')} + ${fmt(s.unpaidCitadel)} Citadel${s.unpaidAdvertising > 0.004 ? ` + ${fmt(s.unpaidAdvertising)} ${t('Marketing 25%', 'تسويق 25%')}` : ''} ${t('not paid yet', 'لم تُدفع بعد')}${currentRole() === 'admin' ? ` <a href="#" onclick="event.stopPropagation();window.dashEditUnpaidRent();return false" title="${t('Change the monthly rent amount', 'تغيير مبلغ الإيجار الشهري')}">✎</a>` : ''}</div>` : ''}
       </div>
       <div class="kpi ${(s.currProfit - s.unpaidTotal) >= 0 ? 'green' : 'red'}" style="cursor:pointer" onclick="navigate('reports')" title="${t('Click to open the Reports', 'اضغط لفتح التقارير')}${s.unpaidTotal > 0 ? ' · ' + t('after the unpaid rent + Citadel shown on the expenses card', 'بعد الإيجار وسيتادل غير المدفوعين الظاهرين في كارت المصروفات') : ''}">
@@ -28491,8 +28494,7 @@ PAGES.attendance = (main) => {
             ${m.nameArabic ? `<div dir="rtl" style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isExpired ? 'color:var(--text-mute)' : ''}">${escapeHtml(m.nameArabic)}</div>` : ''}
             <div class="text-mute" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(sport)}${_isMixedRow ? ' · ' + escapeHtml(t('pick sport + coach per class', 'اختر الرياضة والمدرب لكل حصة')) : (!isCampSport(sport) ? ' · ' + escapeHtml(coachName(coachId)) : '')}${attPrivTag(rowPrivate(m, sport, coachId))}</div>
           </td>
-          <td class="text-center" style="font-size:12px;white-space:nowrap">${escapeHtml(_ageText(m.birthdate)) || '<span class="text-mute">—</span>'}</td>
-          <td style="font-size:12px;white-space:nowrap;direction:ltr;text-align:left">${m.phone ? escapeHtml(m.phone) : '<span class="text-mute">—</span>'}</td>
+          <td class="text-center" style="font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;border-inline-start:1px solid var(--border,rgba(128,128,150,.45));border-inline-end:1px solid var(--border,rgba(128,128,150,.45))">${escapeHtml(_ageText(m.birthdate)) || '<span class="text-mute" style="font-weight:400">—</span>'}</td>
           ${cells}
           <td class="att-total" title="${escapeHtml(t('Classes attended in the whole package', 'الحصص المحضورة في الباقة كلها'))} · ${escapeHtml(t('in the days shown', 'في الأيام المعروضة'))}: ${_shownY}"><span style="color:var(--green);font-weight:600">${y}</span><span class="text-mute"> / ${total || '—'}</span></td>
           <td class="text-right" style="color:${rate >= 75 ? 'var(--green)' : rate >= 40 ? 'var(--accent-2)' : rate > 0 ? 'var(--red)' : 'var(--text-mute)'};font-weight:600">${total ? rate + '%' : '—'}</td>
@@ -28505,15 +28507,14 @@ PAGES.attendance = (main) => {
         <thead>
           <tr>
             <th class="att-name-h">${t('Student', 'الطالب')}</th>
-            <th class="text-center">${t('Age', 'العمر')}</th>
-            <th style="text-align:left">${t('Mobile', 'الجوال')}</th>
+            <th class="text-center" style="border-inline-start:1px solid var(--border,rgba(128,128,150,.45));border-inline-end:1px solid var(--border,rgba(128,128,150,.45))">${t('Age', 'العمر')}</th>
             ${dayHeaders}
             <th class="att-total-h">${t('Total', 'الإجمالي')}</th>
             <th class="text-right">${t('Rate', 'النسبة')}</th>
             <th class="text-right">${_canStudentPdf ? t('Export', 'تصدير') : ''}</th>
           </tr>
         </thead>
-        <tbody>${body || `<tr><td colspan="${dayList.length+6}" class="empty">No members match the current filters.</td></tr>`}</tbody>
+        <tbody>${body || `<tr><td colspan="${dayList.length+5}" class="empty">No members match the current filters.</td></tr>`}</tbody>
       </table>
     `;
     let dayNote;
